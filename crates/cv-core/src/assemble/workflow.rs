@@ -134,6 +134,12 @@ fn count(v: Option<f64>) -> u32 {
     v.map(|x| x.max(0.0) as u32).unwrap_or(0)
 }
 
+/// One Workflow Run from its own files alone, for readers following a live Session (no index, so
+/// no per-agent figures beyond what the files carry; `tool_use_id` is left unset).
+pub fn run_from_files(w: &WorkflowFiles) -> WorkflowRun {
+    build_run(w, &SessionSidecar::default())
+}
+
 fn build_run(w: &WorkflowFiles, sidecar: &SessionSidecar) -> WorkflowRun {
     let mut run = WorkflowRun {
         run_id: w.run_id.clone(),

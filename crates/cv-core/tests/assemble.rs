@@ -714,6 +714,25 @@ fn subagent_scope_assembles_the_agent_file() {
 // ---- workflow ----
 
 #[test]
+fn workflow_run_from_its_own_files() {
+    let session_dir = fixture_dir("workflow")
+        .join("projects")
+        .join(ids::WORKFLOW_DIR)
+        .join(ids::WORKFLOW);
+    let sidecar = load_sidecar(&session_dir);
+    let files = |run: &str| sidecar.workflows.iter().find(|w| w.run_id == run).unwrap();
+    let done = cv_core::assemble::workflow::run_from_files(files("wf_6e7e94b2-011"));
+    assert_eq!(done.status.as_deref(), Some("completed"));
+    assert_eq!(done.phases.len(), 2);
+    assert_eq!(done.agents[0].label.as_deref(), Some("core-loop"));
+    assert_eq!(done.tool_use_id, None);
+    // Only a journal: still a run, from the journal.
+    let running = cv_core::assemble::workflow::run_from_files(files("wf_d83f7287-279"));
+    assert_eq!(running.status.as_deref(), Some("running"));
+    assert!(!running.agents.is_empty());
+}
+
+#[test]
 fn workflow_runs_from_json_and_from_journal() {
     let s = open("workflow", ids::WORKFLOW_DIR, ids::WORKFLOW);
     let t = main_t(&s, false);
