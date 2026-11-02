@@ -1341,7 +1341,7 @@ impl Engine {
                 return err("bad_request", format!("图片路径里有控制字符：{p:?}"));
             }
             // Absolute: Claude Code resolves a relative path against its own cwd.
-            match std::fs::canonicalize(p) {
+            match std::path::absolute(p) {
                 Ok(abs) if abs.is_file() => paths.push(abs.display().to_string()),
                 _ => return err("bad_request", format!("图片文件不存在：{p}")),
             }
@@ -1800,20 +1800,17 @@ impl Engine {
         if task.status != "running" {
             return err("bad_request", format!("后台任务 {id} 已经结束（{}）", task.status));
         }
-        // The panel shows a shell by its command and an agent by its description.
-        let needles: Vec<String> = [task.command.clone(), task.description.clone()]
-            .into_iter()
-            .flatten()
-            .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(30).collect::<String>())
-            .filter(|t| !t.trim().is_empty())
-            .collect();
-        if needles.is_empty() {
-            return err("unrecognized_screen", format!("后台任务 {id} 没有可在面板里比对的描述"));
+        // The panel shows a shell by its command and an agent or a Workflow by its description.
+        let needle = match task.kind {
+            "shell" => task.command.clone(),
+            _ => task.description.clone(),
         }
-        let fits = |text: &str| {
-            let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            needles.iter().any(|n| t.contains(n.trim()))
-        };
+        .unwrap_or_default();
+        let needle = recognize::collapse_ws(&needle);
+        if needle.is_empty() {
+            return err("unrecognized_screen", format!("后台任务 {id} 没有可在面板里比对的命令或描述"));
+        }
+        let fits = |text: &str| recognize::collapse_ws(text).contains(&needle);
         self.slash("tasks")?;
         let Some((panel, s)) = self.wait_screen(Duration::from_secs(3), |_, s| recognize::tasks_panel(&s.lines))
         else {
@@ -1827,8 +1824,8 @@ impl Engine {
                 }
             }
             recognize::TasksPanel::List(rows) => {
-                let target = match recognize::task_row(&rows, &needles) {
-                    Ok(i) => rows[i].0.clone(),
+                match recognize::task_row(&rows, &needle) {
+                    Ok(_) => {}
                     Err(why) => {
                         self.keys(b"\x1b")?;
                         self.emit(json!({"type": "unrecognized", "context": format!("stop_task：{why}"), "lines": s.lines}));
@@ -1844,9 +1841,10 @@ impl Engine {
                     else {
                         break;
                     };
-                    let (Some(cur), Some(want)) = (
+                    // Found afresh each time: a running row's timer may change between frames.
+                    let (Some(cur), Ok(want)) = (
                         now.iter().position(|(_, sel)| *sel),
-                        now.iter().position(|(t, _)| *t == target),
+                        recognize::task_row(&now, &needle),
                     ) else {
                         break;
                     };
@@ -1868,10 +1866,7 @@ impl Engine {
         self.keys(b"x")?;
         // The panel shows it at once; Claude Code tells the transcript only on the next turn.
         let ended = self.wait_screen(Duration::from_secs(5), |_, s| match recognize::tasks_panel(&s.lines) {
-            Some(recognize::TasksPanel::List(rows)) => (!rows
-                .iter()
-                .any(|(t, _)| fits(t) && t.contains("running")))
-            .then_some(()),
+            Some(recognize::TasksPanel::List(rows)) => recognize::task_row(&rows, &needle).is_err().then_some(()),
             Some(recognize::TasksPanel::Details(t)) => (!t.contains("running")).then_some(()),
             // The panel closed: back at the input box (not replaced by some other dialog).
             None => recognize::input_box(&s.lines).map(|_| ()),

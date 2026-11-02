@@ -640,16 +640,27 @@ pub fn tasks_panel(lines: &[String]) -> Option<TasksPanel> {
     Some(TasksPanel::Details(lines[title..hint].join("\n")))
 }
 
-/// Row of the panel list to stop: the one running row any of `needles` (whitespace collapsed)
-/// is in. `Err` with what is wrong: no such row, or more than one (which is meant is unknown).
-pub fn task_row(rows: &[(String, bool)], needles: &[String]) -> Result<usize, &'static str> {
-    let fits = |t: &str| {
-        let t = collapse_ws(t);
-        needles.iter().any(|n| !n.trim().is_empty() && t.contains(n.trim()))
-    };
+/// A panel row's text without its leading status glyphs (`⏺`, `◯`, `✔`, …), whitespace collapsed.
+fn row_text(row: &str) -> String {
+    collapse_ws(row.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.'))
+}
+
+/// Row of the panel list to stop: the one running row that starts with `needle` (a shell's
+/// command, an agent's description). `Err` with what is wrong: no such row, more than one, or an
+/// ended row that starts the same (the target may have ended and another one be running).
+pub fn task_row(rows: &[(String, bool)], needle: &str) -> Result<usize, &'static str> {
+    let needle = collapse_ws(needle);
+    if needle.is_empty() {
+        return Err("没有可比对的命令或描述");
+    }
+    let fits = |t: &str| row_text(t).starts_with(&needle);
+    let running = |t: &str| t.split_whitespace().any(|w| w == "running");
     let hits: Vec<usize> = (0..rows.len())
-        .filter(|&i| fits(&rows[i].0) && rows[i].0.contains("running"))
+        .filter(|&i| fits(&rows[i].0) && running(&rows[i].0))
         .collect();
+    if rows.iter().any(|(t, _)| fits(t) && !running(t)) {
+        return Err("面板上有同样的已结束任务，分不清是哪一个");
+    }
     match hits.as_slice() {
         [i] => Ok(*i),
         [] => Err("面板上没有对得上的运行中任务"),
@@ -667,12 +678,16 @@ mod task_row_tests {
 
     #[test]
     fn exactly_one_running_row() {
-        let r = rows(&["Shells (2)", "⏺ npm run dev   running", "⏺ sleep 300   running", "Completed (1)", "✔ sleep 300   done"]);
-        assert_eq!(task_row(&r, &["sleep 300".into()]), Ok(2));
-        assert!(task_row(&r, &["sleep 9".into()]).is_err());
+        let r = rows(&["Shells (2)", "⏺ npm run dev   running", "⏺ sleep 300   running", "Local agents (1)", "◯ wait for deploy   running · m"]);
+        assert_eq!(task_row(&r, "sleep 300"), Ok(2));
+        assert_eq!(task_row(&r, "wait for deploy"), Ok(4));
+        // Only a whole leading match: `dev` is not `npm run dev`.
+        assert!(task_row(&r, "dev").is_err());
+        assert!(task_row(&r, "sleep 9").is_err());
         let two = rows(&["⏺ npm run dev   running", "⏺ npm run dev   running"]);
-        assert!(task_row(&two, &["npm run dev".into()]).is_err());
-        let only_done = rows(&["✔ sleep 300   done"]);
-        assert!(task_row(&only_done, &["sleep 300".into()]).is_err());
+        assert!(task_row(&two, "npm run dev").is_err());
+        // The same command already ended: the target may be that one.
+        let ended = rows(&["⏺ sleep 300   running", "Completed (1)", "✔ sleep 300   done"]);
+        assert!(task_row(&ended, "sleep 300").is_err());
     }
 }

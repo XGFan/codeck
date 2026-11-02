@@ -81,7 +81,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `reclaim {force?}` | 被接手后 | 接手的 Client 已断开（没有在线的尺寸所有者）时重新发 Resize、恢复写入并发 `reclaimed`；对方还在、或 Holder 不报尺寸所有者时返回 `taken_over`，`force` 跳过 | `size` |
 | `set_mode {mode}` | idle / busy | `manual` / `accept_edits` / `plan` / `auto`：按 shift+tab，每次等输入框下的模式行变化，直到显示目标模式；转一圈没有则 `not_offered` | `mode` |
 | `get_tasks` | 任意 | transcript 里的后台任务：后台 Subagent、后台 shell、Workflow Run（启动结果里的 id；`<task-notification>` 的 `status` 结束它，无论是普通用户消息还是忙时的 `queued_command` 附件） | `tasks`：`id`、`kind`（`agent` / `shell` / `workflow`）、`tool_use_id`、`description`、`command`（后台 shell）、`status`（`running`、Claude Code 给的结束状态，或 ccrpc 停掉后的 `stopped`） |
-| `stop_task {task_id}` | idle | 输入 `/tasks` 打开后台面板，按命令或描述找到唯一一个运行中的行（没有或多于一个都不按键，报 `unrecognized_screen`），一行一行移过去、确认光标在它上面后按 `x`；以面板为准确认它不再运行（≤5s，Claude Code 的结束通知要等主线下一轮才写进 transcript），关面板 | `status` |
+| `stop_task {task_id}` | idle | 输入 `/tasks` 打开后台面板，按命令（后台 shell）或描述（Subagent、Workflow）找到以它开头的唯一一个运行中的行（没有、多于一个、或有同样的已结束行时都不按键，报 `unrecognized_screen`），一行一行移过去、确认光标在它上面后按 `x`；以面板为准确认它不再运行（≤5s，Claude Code 的结束通知要等主线下一轮才写进 transcript），关面板 | `status` |
 | `answer_choice {request_id, option}` | waiting（有挂起的 choice） | 另取一次 Snapshot 确认屏幕上仍是该布局，`option` 按选项文字（完全一致，否则唯一前缀）找到编号按下 | `state` |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 
@@ -125,7 +125,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 ## 7. 屏幕识别
 
-- 布局库（[ADR-0002](./adr/0002-ai-learned-layouts-take-effect-at-once.md)）：内置布局在仓库 `layouts/*.json`，编译时嵌入（`CCRPC_BUILTIN_LAYOUTS=0` 关闭，测试用）；学到的布局在 `CCRPC_LAYOUT_DIR`，缺省 `$XDG_DATA_HOME/ccrpc/layouts`（`~/.local/share/ccrpc/layouts`），每个布局一个文件，含当时的屏幕与 Claude Code 版本。布局 = 问题行（原文）+ 编号选项（编号、文字的稳定开头、含义）。用前做结构检查：屏幕上有该问题行，其后是 strict 编号菜单（编号不超过 9），编号与布局一致、每项文字以布局的文字开头；含义另有不依赖模型的字面检查：`Yes…` 只能是允许（含 `auto mode` / `bypass` 的不能是 allow_always）、`No…` 只能是拒绝，审批类恰好一个拒绝且在最后，其余文字的选项在审批类里只能是 `other`；`Do you want…` / `Run a dynamic workflow?` 不能是 choice；审批类还要对得上一个挂起的工具调用。审批等待中只有挂起的工具是 ExitPlanMode 时才发 choice。学到的布局加载时重算 id、在它自己的屏幕上复核。
+- 布局库（[ADR-0002](./adr/0002-ai-learned-layouts-take-effect-at-once.md)）：内置布局在仓库 `layouts/*.json`，编译时嵌入（`CCRPC_BUILTIN_LAYOUTS=0` 关闭，测试用）；学到的布局在 `CCRPC_LAYOUT_DIR`，缺省 `$XDG_DATA_HOME/ccrpc/layouts`（`~/.local/share/ccrpc/layouts`），每个布局一个文件，含当时的屏幕与 Claude Code 版本。布局 = 问题行（原文）+ 编号选项（编号、文字的稳定开头、含义）。用前做结构检查：屏幕上有该问题行，其后是 strict 编号菜单（编号不超过 9），编号与布局一致、每项文字以布局的文字开头；含义另有不依赖模型的字面检查：`No…` 只能是拒绝，`Yes…` 不能是拒绝（含 `auto mode` / `bypass` 的在审批类里只能是 `other`，在选择里不能是 allow_always），审批类恰好一个拒绝且在最后，其余文字的选项在审批类里只能是 `other`；`Do you want…` / `Run a dynamic workflow?` 不能是 choice；审批类还要对得上一个挂起的工具调用。审批等待中只有挂起的工具是 ExitPlanMode 时才发 choice。学到的布局加载时重算 id、在它自己的屏幕上复核。
 - 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。内置识别器认得的屏幕不送分析；审批等待满 3 秒（给 transcript 写出工具调用的时间）才分析；同一对话框只分析一次，每小时最多 10 次，同时只有一个分析；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
 
 - 屏幕 = 常驻的 `alacritty_terminal` VT：每收到 Holder 的 Snapshot 从头重建，之后的 Output 增量喂入；VT 尺寸跟 PTY 一致（被接手后按 tty 的 `TIOCGWINSZ` 跟随，变了就重新要一次 Snapshot）。

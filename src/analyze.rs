@@ -32,7 +32,10 @@ impl std::fmt::Debug for Analyzer {
 /// Plain http only to this machine; the key never goes out in clear.
 fn is_loopback(url: &str) -> bool {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
-    let host = rest.split(['/', ':']).next().unwrap_or_default();
+    let authority = rest.split('/').next().unwrap_or_default();
+    // `user:pass@host`: the host is after the last `@`.
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    let host = authority.split(':').next().unwrap_or_default();
     matches!(host, "localhost" | "127.0.0.1")
 }
 
@@ -246,6 +249,7 @@ mod tests {
         assert!(is_loopback("http://127.0.0.1:8080/v1"));
         assert!(is_loopback("http://localhost/anthropic"));
         assert!(!is_loopback("http://api.example.com/anthropic"));
+        assert!(!is_loopback("http://localhost:x@evil.example/anthropic"));
     }
 
     #[test]

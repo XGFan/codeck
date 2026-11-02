@@ -81,9 +81,10 @@ fn lexical(label: &str) -> Option<Meaning> {
     }
 }
 
-/// The checks on meanings that do not trust the model: an option reading `Yes…` / `No…` must
-/// mean go ahead / refuse; in a permission layout an option that reads as neither may not allow
-/// or deny, and exactly one option denies, the last.
+/// The checks on meanings that do not trust the model: an option reading `No…` must refuse, one
+/// reading `Yes…` may not refuse (and one that switches to auto / bypass mode is `other` in a
+/// permission layout, never allow_always); in a permission layout an option that reads as
+/// neither is `other`, and exactly one option denies, the last.
 fn meanings_sane(kind: LayoutKind, opts: &[ScreenOption]) -> bool {
     let each = opts.iter().all(|o| match (lexical(&o.label), o.meaning) {
         (Some(Meaning::Deny), m) => {
@@ -95,10 +96,12 @@ fn meanings_sane(kind: LayoutKind, opts: &[ScreenOption]) -> bool {
                 let l = o.label.to_lowercase();
                 l.contains("auto mode") || l.contains("bypass")
             };
-            match m {
-                Meaning::Allow => true,
-                Meaning::AllowAlways => !mode_switch,
-                _ => kind == LayoutKind::Choice && m == Meaning::Other,
+            match (kind, m) {
+                // In a permission dialog switching mode is neither "allow" nor "always": other.
+                (LayoutKind::Permission, _) if mode_switch => m == Meaning::Other,
+                (_, Meaning::Allow | Meaning::Other) => true,
+                (_, Meaning::AllowAlways) => !mode_switch,
+                _ => false,
             }
         }
         (None, m) => kind == LayoutKind::Choice || m == Meaning::Other,
@@ -441,6 +444,49 @@ mod tests {
         c.kind = LayoutKind::Choice;
         assert!(c.match_screen(&screen).is_none());
         assert!(perm([Allow, AllowAlways, Deny]).body(&screen).unwrap().contains("rm-rfbuild"));
+    }
+
+    #[test]
+    fn the_real_bash_permission_dialog_can_be_learned_safely() {
+        let screen: Vec<String> = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/screens/permission_bash.txt"),
+        )
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+        let title = screen
+            .iter()
+            .find(|l| l.trim().starts_with("Do you want"))
+            .unwrap()
+            .trim()
+            .to_string();
+        let layout = |m: [Meaning; 4]| Layout {
+            id: String::new(),
+            kind: LayoutKind::Permission,
+            title: title.clone(),
+            options: ["Yes", "Yes, and always allow", "Yes, and switch to auto mode", "No"]
+                .iter()
+                .zip(m)
+                .enumerate()
+                .map(|(i, (l, meaning))| LayoutOption {
+                    number: i as u32 + 1,
+                    label: l.to_string(),
+                    meaning,
+                    description: None,
+                })
+                .collect(),
+            source: String::new(),
+            claude_version: None,
+            learned_at: None,
+            screen: vec![],
+        };
+        use Meaning::*;
+        assert!(layout([Allow, AllowAlways, Other, Deny]).match_screen(&screen).is_some());
+        // Switching to auto mode is never allow / allow_always in a permission dialog.
+        assert!(layout([Allow, AllowAlways, Allow, Deny]).match_screen(&screen).is_none());
+        assert!(layout([Allow, AllowAlways, AllowAlways, Deny]).match_screen(&screen).is_none());
     }
 
     #[test]
