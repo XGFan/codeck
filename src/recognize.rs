@@ -639,3 +639,40 @@ pub fn tasks_panel(lines: &[String]) -> Option<TasksPanel> {
         .rposition(|l| l.trim().ends_with("details"))?;
     Some(TasksPanel::Details(lines[title..hint].join("\n")))
 }
+
+/// Row of the panel list to stop: the one running row any of `needles` (whitespace collapsed)
+/// is in. `Err` with what is wrong: no such row, or more than one (which is meant is unknown).
+pub fn task_row(rows: &[(String, bool)], needles: &[String]) -> Result<usize, &'static str> {
+    let fits = |t: &str| {
+        let t = collapse_ws(t);
+        needles.iter().any(|n| !n.trim().is_empty() && t.contains(n.trim()))
+    };
+    let hits: Vec<usize> = (0..rows.len())
+        .filter(|&i| fits(&rows[i].0) && rows[i].0.contains("running"))
+        .collect();
+    match hits.as_slice() {
+        [i] => Ok(*i),
+        [] => Err("面板上没有对得上的运行中任务"),
+        _ => Err("面板上有多个对得上的运行中任务"),
+    }
+}
+
+#[cfg(test)]
+mod task_row_tests {
+    use super::*;
+
+    fn rows(v: &[&str]) -> Vec<(String, bool)> {
+        v.iter().enumerate().map(|(i, s)| (s.to_string(), i == 0)).collect()
+    }
+
+    #[test]
+    fn exactly_one_running_row() {
+        let r = rows(&["Shells (2)", "⏺ npm run dev   running", "⏺ sleep 300   running", "Completed (1)", "✔ sleep 300   done"]);
+        assert_eq!(task_row(&r, &["sleep 300".into()]), Ok(2));
+        assert!(task_row(&r, &["sleep 9".into()]).is_err());
+        let two = rows(&["⏺ npm run dev   running", "⏺ npm run dev   running"]);
+        assert!(task_row(&two, &["npm run dev".into()]).is_err());
+        let only_done = rows(&["✔ sleep 300   done"]);
+        assert!(task_row(&only_done, &["sleep 300".into()]).is_err());
+    }
+}

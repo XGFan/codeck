@@ -655,7 +655,7 @@ fn controls_a_real_session() {
     assert!(rpc.branches.is_empty(), "误报 branch：{:?}", rpc.branches);
 
     // Rewind: Esc Esc on an empty input opens the picker (newest message last, `❯ (current)`);
-    // pick the Workflow prompt, restore the conversation only, then ask something else there.
+    // pick the newest prompt, restore the conversation only, then ask something else there.
     rpc.forget();
     rpc.call("r1", json!({"type": "send_keys", "keys": ["esc", "esc"]}));
     let picker = wait_screen(&mut rpc, "r2", |ls| ls.iter().any(|l| l.contains("Restore the code and/or conversation")));
@@ -686,7 +686,9 @@ fn controls_a_real_session() {
         .filter_map(|b| b["text"].as_str())
         .collect();
     assert!(texts.iter().any(|t| t.contains("REWOUND")));
-    assert!(!texts.iter().any(|t| t.starts_with("Call the Workflow tool")), "{texts:#?}");
+    // `up` picked the newest prompt before the rewind: the background shell one.
+    assert!(!texts.iter().any(|t| t.starts_with("Use the Bash tool exactly once with run_in_background")), "{texts:#?}");
+    assert!(texts.iter().any(|t| t.starts_with("Call the Workflow tool")), "{texts:#?}");
 
     // /clear changes the session id
     rpc.forget();

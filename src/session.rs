@@ -272,8 +272,10 @@ pub struct Engine {
     /// Dialog signatures already analyzed (never twice).
     analyzed: HashSet<String>,
     analyses: VecDeque<Instant>,
-    /// Layout of the choice announced.
+    /// Layout of the choice announced, the event, and since when it is off the screen.
     choice_layout: Option<String>,
+    choice_event: Option<Value>,
+    choice_gone_since: Option<Instant>,
     choice_seq: u64,
     /// The Holder reports size owners (not an older Holder).
     holder_reports_owner: bool,
@@ -354,6 +356,8 @@ impl Engine {
             analyzed: HashSet::new(),
             analyses: VecDeque::new(),
             choice_layout: None,
+            choice_event: None,
+            choice_gone_since: None,
             choice_seq: 0,
             holder_reports_owner,
             announced: None,
@@ -732,7 +736,41 @@ impl Engine {
         ) {
             return;
         }
-        if id.starts_with("dialog:") || id.starts_with("choice:") {
+        if id.starts_with("dialog:") {
+            return;
+        }
+        // A choice is over once its tool got a result, or its layout has been off the screen a
+        // moment (two waits can merge into one waiting period): announce afresh.
+        if id.starts_with("choice:") {
+            let tool_done = self
+                .choice_event
+                .as_ref()
+                .and_then(|v| v["tool_use_id"].as_str())
+                .is_some_and(|tid| self.tailer.as_ref().is_some_and(|t| t.pending_by_id(tid).is_none()));
+            let shown = self.choice_layout.as_ref().is_some_and(|lid| {
+                self.screen()
+                    .ok()
+                    .and_then(|s| self.library.find_kind(&s.lines, LayoutKind::Choice).map(|(l, _)| &l.id == lid))
+                    .unwrap_or(false)
+            });
+            if shown {
+                self.choice_gone_since = None;
+            } else if self.choice_gone_since.is_none() {
+                self.choice_gone_since = Some(Instant::now());
+            }
+            let gone = self
+                .choice_gone_since
+                .is_some_and(|t| t.elapsed() >= Duration::from_millis(250));
+            if tool_done || gone {
+                self.announced = None;
+                self.choice_layout = None;
+                self.choice_event = None;
+                self.choice_gone_since = None;
+                self.raw_since = Some((
+                    self.raw_since.take().map(|r| r.0).unwrap_or_default(),
+                    Instant::now(),
+                ));
+            }
             return;
         }
         if self
@@ -759,10 +797,7 @@ impl Engine {
         if let Some(d) = recognize::permission(lines) {
             return Some((d, recognize::permission_body(lines)?));
         }
-        let (l, opts) = self.library.find(lines)?;
-        if l.kind != LayoutKind::Permission {
-            return None;
-        }
+        let (l, opts) = self.library.find_kind(lines, LayoutKind::Permission)?;
         let options = opts
             .into_iter()
             .map(|o| {
@@ -827,7 +862,11 @@ impl Engine {
                     let layout = screen.as_ref().and_then(|s| {
                         recognize::permission(&s.lines)
                             .is_none()
-                            .then(|| self.library.find(&s.lines).map(|(l, _)| (l.id.clone(), l.source.clone())))
+                            .then(|| {
+                                self.library
+                                    .find_kind(&s.lines, LayoutKind::Permission)
+                                    .map(|(l, _)| (l.id.clone(), l.source.clone()))
+                            })
                             .flatten()
                     });
                     self.announced = Some(p.id.clone());
@@ -843,10 +882,15 @@ impl Engine {
                 if self.waiting_age() < Duration::from_millis(250) {
                     return;
                 }
-                if self.announce_choice(&s) || self.analyzing(&s, &waiting_for) {
+                if self.announce_choice(&s) {
                     return;
                 }
+                // The tool_use may still be on its way: give the transcript time before asking
+                // the analyzer about a dialog that may simply not be matched yet.
                 if self.waiting_age() >= MATCH_GRACE {
+                    if self.analyzing(&s, &waiting_for) {
+                        return;
+                    }
                     // Cannot tie the dialog to a tool: hand the screen to the caller.
                     self.announced = Some(format!("dialog:{waiting_for}"));
                     self.emit(
@@ -886,12 +930,9 @@ impl Engine {
 
     /// A choice layout on screen: announce it. True when announced.
     fn announce_choice(&mut self, s: &Screen) -> bool {
-        let Some((l, opts)) = self.library.find(&s.lines) else {
+        let Some((l, opts)) = self.library.find_kind(&s.lines, LayoutKind::Choice) else {
             return false;
         };
-        if l.kind != LayoutKind::Choice {
-            return false;
-        }
         // While a tool waits for permission, only a tool whose approval is a menu (ExitPlanMode)
         // may be answered as a choice: anything else would hide the tool from the caller.
         if let State::Waiting {
@@ -900,11 +941,13 @@ impl Engine {
         } = &self.state
         {
             let tools_ok = self.tailer.as_ref().is_some_and(|t| {
-                t.pending()
+                let tools: Vec<_> = t
+                    .pending()
                     .into_iter()
                     .filter(|p| !self.resolved.contains(&p.id))
                     .filter(|p| !NO_PERMISSION_TOOLS.contains(&p.name.as_str()))
-                    .all(|p| CHOICE_TOOLS.contains(&p.name.as_str()))
+                    .collect();
+                !tools.is_empty() && tools.iter().all(|p| CHOICE_TOOLS.contains(&p.name.as_str()))
             });
             if !tools_ok {
                 return false;
@@ -924,22 +967,30 @@ impl Engine {
         let rid = format!("choice:{}", self.choice_seq);
         self.announced = Some(rid.clone());
         self.choice_layout = Some(id.clone());
+        self.choice_gone_since = None;
         let options: Vec<Value> = opts
             .iter()
             .map(|o| json!({"label": o.label, "meaning": o.meaning, "description": o.description}))
             .collect();
-        self.emit(json!({"type": "choice", "request_id": rid, "title": title, "options": options,
-            "tool_use_id": tool, "layout": id}));
+        let ev = json!({"type": "choice", "request_id": rid, "title": title, "options": options,
+            "tool_use_id": tool, "layout": id});
+        self.choice_event = Some(ev.clone());
+        self.emit(ev);
         true
     }
 
     /// Hands an unrecognized dialog to the analyzer (once per dialog, rate-limited). True while
     /// its analysis is in flight: the dialog is not reported as unrecognized meanwhile.
     fn analyzing(&mut self, s: &Screen, waiting_for: &str) -> bool {
-        let sig = dialog_signature(&s.lines);
-        if let Some((pending, _)) = &self.analysis {
-            return *pending == sig;
+        // One analysis at a time; meanwhile nothing else is reported for the dialog.
+        if self.analysis.is_some() {
+            return true;
         }
+        // What the built-in recognizers know is never sent out.
+        if recognize::permission(&s.lines).is_some() || recognize::ask(&s.lines).is_some() {
+            return false;
+        }
+        let sig = dialog_signature(&s.lines);
         let Some(analyzer) = self.analyzer.clone() else {
             return false;
         };
@@ -1030,7 +1081,7 @@ impl Engine {
             return err("unknown_request", format!("当前挂起的选择不是 {request_id}"));
         }
         let now = self.fresh_screen()?;
-        let Some((l, opts)) = self.library.find(&now.lines) else {
+        let Some((l, opts)) = self.library.find_kind(&now.lines, LayoutKind::Choice) else {
             return Err(self.unrecognized("answer_choice", Some(&now)));
         };
         if Some(&l.id) != self.choice_layout.as_ref() {
@@ -1298,14 +1349,13 @@ impl Engine {
         let images = &paths;
         self.clear_input()?;
         // Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
-        for (k, p) in images.iter().enumerate() {
-            let mark = format!("[Image #{}]", k + 1);
+        for p in images {
+            let had = self.input_box_now()?.matches("[Image #").count();
             self.paste(p)?;
-            // The path itself is gone from the box and one more placeholder is there.
+            // One more `[Image #n]` placeholder, and the path itself is gone from the box.
             let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
-                recognize::input_box(&s.lines).filter(|t| {
-                    t.contains(&mark) && !t.contains(p.as_str()) && t.matches("[Image #").count() == k + 1
-                })
+                recognize::input_box(&s.lines)
+                    .filter(|t| !t.contains(p.as_str()) && t.matches("[Image #").count() == had + 1)
             });
             if shown.is_none() {
                 return err("bad_request", format!("Claude Code 没有把 {p} 当成图片"));
@@ -1718,7 +1768,9 @@ impl Engine {
                 recognize::permission_mode(&s.lines).filter(|m| *m != was)
             });
             let Some((m, _)) = next else {
-                return Err(self.unrecognized("set_mode", None));
+                let now = self.mode_now().map_or("未知", |m| m.name());
+                self.unrecognized("set_mode", None);
+                return err("unrecognized_screen", format!("set_mode：模式行没有变化，当前为 {now}"));
             };
             cur = m;
             // Never stop on bypass permissions: it is passed through, not a target.
@@ -1727,7 +1779,8 @@ impl Engine {
             }
         }
         if cur == rpc::PermissionMode::Bypass {
-            return Err(self.unrecognized("set_mode", None));
+            self.unrecognized("set_mode", None);
+            return err("unrecognized_screen", "set_mode：停在了 bypass permissions，当前为 bypass");
         }
         if cur == mode {
             return Ok(json!({"mode": mode.name()}));
@@ -1768,46 +1821,45 @@ impl Engine {
         };
         match panel {
             recognize::TasksPanel::Details(text) => {
-                if !fits(&text) {
+                if !fits(&text) || !text.contains("running") {
                     self.keys(b"\x1b")?;
                     return Err(self.unrecognized("stop_task", Some(&s)));
                 }
             }
             recognize::TasksPanel::List(rows) => {
-                // Ended tasks are listed too (`Completed`): prefer the running row.
-                let running: Vec<usize> = (0..rows.len())
-                    .filter(|&i| fits(&rows[i].0) && rows[i].0.contains("running"))
-                    .collect();
-                // Two running rows that both fit: which one is meant is not known.
-                if running.len() > 1 {
-                    self.keys(b"\x1b")?;
-                    return Err(self.unrecognized("stop_task", Some(&s)));
-                }
-                let target = running
-                    .first()
-                    .copied()
-                    .or_else(|| rows.iter().position(|(t, _)| fits(t)));
-                let Some(target) = target else {
-                    self.keys(b"\x1b")?;
-                    return Err(self.unrecognized("stop_task", Some(&s)));
+                let target = match recognize::task_row(&rows, &needles) {
+                    Ok(i) => rows[i].0.clone(),
+                    Err(why) => {
+                        self.keys(b"\x1b")?;
+                        self.emit(json!({"type": "unrecognized", "context": format!("stop_task：{why}"), "lines": s.lines}));
+                        return err("unrecognized_screen", format!("stop_task：{why}"));
+                    }
                 };
-                let Some(cur) = rows.iter().position(|(_, sel)| *sel) else {
-                    self.keys(b"\x1b")?;
-                    return Err(self.unrecognized("stop_task", Some(&s)));
-                };
-                let key: &[u8] = if target > cur { b"\x1b[B" } else { b"\x1b[A" };
-                for _ in 0..target.abs_diff(cur) {
+                // Move one row at a time (group titles are skipped by the cursor) until the
+                // cursor is on the target row.
+                let mut moved = false;
+                for _ in 0..=rows.len() {
+                    let Some(recognize::TasksPanel::List(now)) =
+                        self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines))
+                    else {
+                        break;
+                    };
+                    let (Some(cur), Some(want)) = (
+                        now.iter().position(|(_, sel)| *sel),
+                        now.iter().position(|(t, _)| *t == target),
+                    ) else {
+                        break;
+                    };
+                    if cur == want {
+                        moved = true;
+                        break;
+                    }
+                    let key: &[u8] = if want > cur { b"\x1b[B" } else { b"\x1b[A" };
+                    let before = self.conn.generation();
                     self.keys(key)?;
+                    self.conn.wait_change(before, Duration::from_millis(500));
                 }
-                let on_target = self.wait_screen(Duration::from_secs(2), |_, s| match recognize::tasks_panel(&s.lines) {
-                    Some(recognize::TasksPanel::List(rows)) => rows
-                        .iter()
-                        .find(|(_, sel)| *sel)
-                        .filter(|(t, _)| fits(t))
-                        .map(|_| ()),
-                    _ => None,
-                });
-                if on_target.is_none() {
+                if !moved {
                     self.keys(b"\x1b")?;
                     return Err(self.unrecognized("stop_task", None));
                 }
@@ -1821,7 +1873,8 @@ impl Engine {
                 .any(|(t, _)| fits(t) && t.contains("running")))
             .then_some(()),
             Some(recognize::TasksPanel::Details(t)) => (!t.contains("running")).then_some(()),
-            None => Some(()),
+            // The panel closed: back at the input box (not replaced by some other dialog).
+            None => recognize::input_box(&s.lines).map(|_| ()),
         });
         if self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines)).is_some() {
             self.keys(b"\x1b")?;
@@ -1844,6 +1897,11 @@ impl Engine {
     fn get_state(&self) -> Value {
         let mut v = self.state.to_json();
         let request = self.announced.as_ref().map(|id| {
+            if id.starts_with("choice:")
+                && let Some(ev) = &self.choice_event
+            {
+                return ev.clone();
+            }
             match self.tailer.as_ref().and_then(|t| t.pending_by_id(id)) {
                 Some(p) => json!({"request_id": p.id, "tool_name": p.name, "input": p.input}),
                 None => json!({"waiting_for": id.strip_prefix("dialog:").unwrap_or(id)}),

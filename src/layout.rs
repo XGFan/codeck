@@ -90,8 +90,16 @@ fn meanings_sane(kind: LayoutKind, opts: &[ScreenOption]) -> bool {
             m == Meaning::Deny || (kind == LayoutKind::Choice && m == Meaning::Other)
         }
         (Some(_), m) => {
-            matches!(m, Meaning::Allow | Meaning::AllowAlways)
-                || (kind == LayoutKind::Choice && m == Meaning::Other)
+            // Switching to auto / bypass mode is not "always allow this".
+            let mode_switch = {
+                let l = o.label.to_lowercase();
+                l.contains("auto mode") || l.contains("bypass")
+            };
+            match m {
+                Meaning::Allow => true,
+                Meaning::AllowAlways => !mode_switch,
+                _ => kind == LayoutKind::Choice && m == Meaning::Other,
+            }
         }
         (None, m) => kind == LayoutKind::Choice || m == Meaning::Other,
     });
@@ -155,6 +163,10 @@ impl Layout {
         let start = recognize::last_menu_start(lines, q)?;
         let menu = recognize::strict_menu(lines, start)?;
         if menu.len() != self.options.len() {
+            return None;
+        }
+        // One key picks an option: two-digit numbers cannot be pressed.
+        if menu.iter().any(|(n, _)| *n > 9) {
             return None;
         }
         let mut out = Vec::new();
@@ -248,6 +260,18 @@ impl Library {
     pub fn find(&self, lines: &[String]) -> Option<(&Layout, Vec<ScreenOption>)> {
         self.layouts
             .iter()
+            .find_map(|l| l.match_screen(lines).map(|o| (l, o)))
+    }
+
+    /// [`Library::find`] among layouts of one kind.
+    pub fn find_kind(
+        &self,
+        lines: &[String],
+        kind: LayoutKind,
+    ) -> Option<(&Layout, Vec<ScreenOption>)> {
+        self.layouts
+            .iter()
+            .filter(|l| l.kind == kind)
             .find_map(|l| l.match_screen(lines).map(|o| (l, o)))
     }
 

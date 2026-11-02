@@ -35,7 +35,7 @@ _Avoid_: chunk、delta、token
 _Avoid_: prompt（prompt 指调用方发的提示词）、dialog（dialog 指其余对话框）
 
 **选择（Choice）**:
-受控 Session 停下来等人在一个编号菜单里选一项、但既不是审批也不是 AskUserQuestion 的界面，如计划审批、退出确认、启动提示。没有 `tool_use_id`，按选项文字作答。
+受控 Session 停下来等人在一个编号菜单里选一项、但既不是审批也不是 AskUserQuestion 的界面，如计划审批、退出确认。不以 `tool_use_id` 标识（可能由工具引起，如计划审批），按选项文字作答。
 _Avoid_: dialog（dialog 指认不出含义、只能按键处理的界面）、request
 
 **布局（Layout）**:

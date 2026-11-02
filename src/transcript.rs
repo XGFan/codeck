@@ -680,6 +680,24 @@ impl Tailer {
                 if v.get("type").and_then(Value::as_str) != Some("queued_command") {
                     return;
                 }
+                let prompt_text = || match v.get("prompt") {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Array(a)) => a
+                        .iter()
+                        .filter_map(|b| b.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                };
+                // A background task that ended while the main line was busy is told this way.
+                if v.get("commandMode").and_then(Value::as_str) == Some("task-notification") {
+                    if let Some((id, status)) = task_notification(&prompt_text())
+                        && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
+                    {
+                        t.status = status;
+                    }
+                    return;
+                }
                 if v.get("commandMode")
                     .and_then(Value::as_str)
                     .is_some_and(|m| m != "prompt")
@@ -1557,6 +1575,38 @@ mod tests {
         assert_eq!((usages[0].cache_write_5m, usages[0].cache_write_1h), (10.0, 30.0));
         assert!(evs.iter().any(|e| matches!(e, TxEvent::ApiError { kind: Some(k), message } if k == "rate_limit" && message == "API Error: 429")));
         assert!(evs.iter().any(|e| matches!(e, TxEvent::TurnEnd { duration_ms: Some(4200) })));
+    }
+
+    #[test]
+    fn background_tasks_start_and_end_both_ways() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let call = |id: &str, cmd: &str| {
+            json!({"type": "assistant", "uuid": format!("c-{id}"), "message": {"id": format!("m-{id}"), "role": "assistant",
+                "content": [{"type": "tool_use", "id": id, "name": "Bash",
+                    "input": {"command": cmd, "description": "wait", "run_in_background": true}}]}})
+        };
+        let note = |task: &str| format!("<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n</task-notification>");
+        write_lines(
+            &main,
+            &[
+                call("t1", "sleep 5"),
+                tool_result_entry("t1", "Command running in background with ID: bg1. Output is being written to: /x", json!({})),
+                call("t2", "sleep 6"),
+                tool_result_entry("t2", "Command running in background with ID: bg2. Output is being written to: /y", json!({})),
+                // Ended while idle: a plain user message.
+                json!({"type": "user", "uuid": "n1", "message": {"role": "user", "content": note("bg1")}}),
+                // Ended while busy: a queued_command attachment.
+                json!({"type": "attachment", "uuid": "n2", "attachment": {"type": "queued_command",
+                    "commandMode": "task-notification", "prompt": note("bg2")}}),
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        t.poll();
+        let tasks = t.tasks();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!((tasks[0].kind, tasks[0].command.as_deref()), ("shell", Some("sleep 5")));
+        assert!(tasks.iter().all(|t| t.status == "completed"), "{tasks:?}");
     }
 
     #[test]

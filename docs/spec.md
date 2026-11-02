@@ -58,7 +58,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 响应：`{"type":"response","id":"7","command":"prompt","success":true,"data":{…}}`；失败为 `"success":false,"error":{"code":"…","message":"…"}`。
 - 事件：`{"type":"<事件名>",…}`，没有 `id`。
 - 连接后先发 `ready`：`protocol`（1）、`holder_id`、`session_id`、`cwd`、`claude_version`、`state`（及 `waiting`）、`size`（`[列, 行]`）、`taken_over`、`warnings`（Claude Code 不是实测过的版本、Holder 不报尺寸所有者时各一句）。连接前就有的 Workflow Run 在 `ready` 之后各发一次当前状态。
-- **被接手**：连着时尺寸所有者变成另一个 Client（旧 Holder 则是 PTY 尺寸变了），发 `taken_over`，清空 `follow_up` 队列；此后只有 `get_state`、`get_messages`、`get_screen`、`get_tool_result` 可用，其余命令返回 `taken_over`。人离开后不会自动恢复，调用方重新 `attach`。
+- **被接手**：连着时尺寸所有者变成另一个 Client（旧 Holder 则是 PTY 尺寸变了），发 `taken_over`，清空 `follow_up` 队列；此后只有 `get_state`、`get_messages`、`get_screen`、`get_tool_result`、`get_tasks`、`cancel_follow_up`、`reclaim` 可用，其余命令返回 `taken_over`（命令执行中途被接手也在下一次写入前停下）。接手的人离开后用 `reclaim` 取回，或重新 `attach`。
 - **命令按到达顺序逐条执行**；需要等待的命令（如 `prompt` 等 transcript 确认）执行期间事件照常发出，但下一条命令要等它返回。
 
 ### 5.1 命令
@@ -74,14 +74,14 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行） | `{}` |
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
-| `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over` |
+| `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`；挂起的 choice 为它的 `choice` 事件）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over` |
 | `get_messages {since?}` | 任意 | 当前 transcript 主文件的内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）；`since` 为上次返回的 `cursor`，只返回之后写入的块。`cursor` 是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor` |
 | `get_screen` | 任意 | — | `lines`（每行去尾部空白）、`cursor`（`[行, 列]`，0 起） |
 | `cancel_follow_up {index?}` | 任意 | 撤销 follow_up 队列里第 `index` 条（0 起），不带则全部撤销 | `removed`、`follow_ups`（剩下的） |
 | `reclaim {force?}` | 被接手后 | 接手的 Client 已断开（没有在线的尺寸所有者）时重新发 Resize、恢复写入并发 `reclaimed`；对方还在、或 Holder 不报尺寸所有者时返回 `taken_over`，`force` 跳过 | `size` |
 | `set_mode {mode}` | idle / busy | `manual` / `accept_edits` / `plan` / `auto`：按 shift+tab，每次等输入框下的模式行变化，直到显示目标模式；转一圈没有则 `not_offered` | `mode` |
-| `get_tasks` | 任意 | transcript 里的后台任务：后台 Subagent、后台 shell、Workflow Run（启动结果里的 id，`<task-notification>` 的 `status` 结束它） | `tasks`：`id`、`kind`（`agent` / `shell` / `workflow`）、`tool_use_id`、`description`、`status` |
-| `stop_task {task_id}` | idle | 输入 `/tasks` 打开后台面板，按描述找到该行、移过去按 `x`，等 transcript 里它结束（≤10s）再关面板 | `status` |
+| `get_tasks` | 任意 | transcript 里的后台任务：后台 Subagent、后台 shell、Workflow Run（启动结果里的 id；`<task-notification>` 的 `status` 结束它，无论是普通用户消息还是忙时的 `queued_command` 附件） | `tasks`：`id`、`kind`（`agent` / `shell` / `workflow`）、`tool_use_id`、`description`、`command`（后台 shell）、`status`（`running`、Claude Code 给的结束状态，或 ccrpc 停掉后的 `stopped`） |
+| `stop_task {task_id}` | idle | 输入 `/tasks` 打开后台面板，按命令或描述找到唯一一个运行中的行（没有或多于一个都不按键，报 `unrecognized_screen`），一行一行移过去、确认光标在它上面后按 `x`；以面板为准确认它不再运行（≤5s，Claude Code 的结束通知要等主线下一轮才写进 transcript），关面板 | `status` |
 | `answer_choice {request_id, option}` | waiting（有挂起的 choice） | 另取一次 Snapshot 确认屏幕上仍是该布局，`option` 按选项文字（完全一致，否则唯一前缀）找到编号按下 | `state` |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 
@@ -94,8 +94,8 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `ready` | 见上 |
 | `state` | `state`；`waiting` 时另有 `waiting: {kind, waiting_for}` |
 | `block` | `kind`（`user` / `text` / `thinking` / `tool_use` / `tool_result`）、`uuid`、`index`（消息内序号）；`text`；`tool_use` 的 `id`、`name`、`input`；`tool_result` 的 `tool_use_id`、`content`（文本，超过 100KB 截断）、`is_error`，输出太大被存进 `tool-results/` 时 `content` 是 transcript 里的预览（模型看到的也只有它），另有 `persisted: {path, size}`；忙时插话送达的用户内容 `queued: true`；来自 Subagent Run 时另有 `agent_id`、`parent_tool_use_id`，属于 Workflow Run 时另有 `run_id`（`parent_tool_use_id` 为 Workflow 调用的 id） |
-| `turn_end` | `last_text`：本轮最后一段主线 assistant 文字（没有则为 null）；`error`：API 报错 `{kind, message}`（如 `server_error`、`rate_limit`），没有为 null；`aborted`：本轮被中止；`duration_ms`：`turn_duration` 的用时，没有则为 ccrpc 量的；`usage`：`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`（主线与 Subagent Run 的 assistant 消息，每个 message id 计一次）；`api_cost`：按 cv-core 价格表估算的美元，有模型没有价格时为 null |
-| `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id` |
+| `turn_end` | `last_text`：本轮最后一段主线 assistant 文字（没有则为 null）；`error`：API 报错 `{kind, message}`（如 `server_error`、`rate_limit`），没有为 null；`aborted`：本轮被中止；`duration_ms`：`turn_duration` 的用时，没有则为 ccrpc 量的；`usage`：`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`（本轮期间读到的主线与 Subagent Run 的 assistant 消息，每个 message id 计一次；连接时已在进行的一轮只算连接之后的部分）；`api_cost`：按 cv-core 价格表估算的美元，有模型没有价格时为 null |
+| `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id`、`layout`（由布局库认出时为布局 id，内置识别器认出时为 null）、`learned`（布局是否为分析器学到的） |
 | `question` | `request_id`、`questions`（AskUserQuestion 输入原样）、`agent_id` |
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键 |
@@ -106,7 +106,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `reclaimed` | — |
 | `choice` | `request_id`（`choice:<n>`）、`title`、`options`（`label` 屏幕上的全文、`meaning` `allow` / `allow_always` / `deny` / `other`、`description`）、`tool_use_id`（引起它的工具，如 ExitPlanMode；没有为 null）、`layout` |
 | `layout_learned` | 分析器学到新布局并已存进布局库：`layout`、`kind`、`title`、`path` |
-| `analysis_failed` | 分析器没给出可用的布局：`error` |
+| `analysis_failed` | 分析器没给出可用的布局：`error`；结果与屏幕对不上时另有 `title` |
 | `session_changed` | `session_id`、`previous` |
 | `session_exit` | — |
 
@@ -125,8 +125,8 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 ## 7. 屏幕识别
 
-- 布局库（[ADR-0002](./adr/0002-ai-learned-layouts-take-effect-at-once.md)）：内置布局在仓库 `layouts/*.json`，编译时嵌入（`CCRPC_BUILTIN_LAYOUTS=0` 关闭，测试用）；学到的布局在 `CCRPC_LAYOUT_DIR`，缺省 `$XDG_DATA_HOME/ccrpc/layouts`（`~/.local/share/ccrpc/layouts`），每个布局一个文件，含当时的屏幕与 Claude Code 版本。布局 = 问题行（原文）+ 编号选项（编号、文字的稳定开头、含义）。用前做结构检查：屏幕上有该问题行，其后是 strict 编号菜单，编号与布局一致、每项文字以布局的文字开头；审批类必须同时有 allow 与 deny，并且对得上一个挂起的工具调用。
-- 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。同一对话框只分析一次，每小时最多 10 次；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
+- 布局库（[ADR-0002](./adr/0002-ai-learned-layouts-take-effect-at-once.md)）：内置布局在仓库 `layouts/*.json`，编译时嵌入（`CCRPC_BUILTIN_LAYOUTS=0` 关闭，测试用）；学到的布局在 `CCRPC_LAYOUT_DIR`，缺省 `$XDG_DATA_HOME/ccrpc/layouts`（`~/.local/share/ccrpc/layouts`），每个布局一个文件，含当时的屏幕与 Claude Code 版本。布局 = 问题行（原文）+ 编号选项（编号、文字的稳定开头、含义）。用前做结构检查：屏幕上有该问题行，其后是 strict 编号菜单（编号不超过 9），编号与布局一致、每项文字以布局的文字开头；含义另有不依赖模型的字面检查：`Yes…` 只能是允许（含 `auto mode` / `bypass` 的不能是 allow_always）、`No…` 只能是拒绝，审批类恰好一个拒绝且在最后，其余文字的选项在审批类里只能是 `other`；`Do you want…` / `Run a dynamic workflow?` 不能是 choice；审批类还要对得上一个挂起的工具调用。审批等待中只有挂起的工具是 ExitPlanMode 时才发 choice。学到的布局加载时重算 id、在它自己的屏幕上复核。
+- 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。内置识别器认得的屏幕不送分析；审批等待满 3 秒（给 transcript 写出工具调用的时间）才分析；同一对话框只分析一次，每小时最多 10 次，同时只有一个分析；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
 
 - 屏幕 = 常驻的 `alacritty_terminal` VT：每收到 Holder 的 Snapshot 从头重建，之后的 Output 增量喂入；VT 尺寸跟 PTY 一致（被接手后按 tty 的 `TIOCGWINSZ` 跟随，变了就重新要一次 Snapshot）。
 - 审批框：`Do you want …?` 之后的编号菜单；Workflow 的审批框问 `Run a dynamic workflow?`，菜单在脚本说明之后（说明里可能有编号的阶段，取其后最后一个从 1 开始的编号块），选项为 `Yes, run it` / `View raw script` / `No`。按文字判断含义：`Yes`（Workflow 为 `Yes, run it`）→ allow；`Yes, …` 且含 `always allow` / `don't ask again` / `allow all`、不含 `auto mode` → allow_always；`No` 开头 → deny。必须同时有 allow 与 deny，否则不认。编号随场景变化，绝不按固定编号。

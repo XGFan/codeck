@@ -206,7 +206,11 @@
         },
         "status": {
           "type": "string",
-          "description": "running，或结束状态如 completed、failed、killed。"
+          "description": "running；Claude Code 给的结束状态，如 completed、failed、killed；或 ccrpc 停掉后的 stopped。"
+        },
+        "command": {
+          "type": "string",
+          "description": "后台 shell 的命令。"
         }
       },
       "required": [
@@ -1058,7 +1062,7 @@
             "$ref": "#/$defs/waiting"
           },
           "request": {
-            "description": "挂起的请求；没有为 null。",
+            "description": "挂起的请求；挂起的 choice 为它的 choice 事件；没有为 null。",
             "oneOf": [
               {
                 "type": "null"
@@ -1094,6 +1098,18 @@
                 },
                 "required": [
                   "waiting_for"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "挂起的 choice：它的 choice 事件。",
+                "properties": {
+                  "type": {
+                    "const": "choice"
+                  }
+                },
+                "required": [
+                  "type"
                 ]
               }
             ]
@@ -1855,8 +1871,11 @@
                 "type": "object",
                 "properties": {
                   "kind": {
-                    "type": "string",
-                    "description": "错误种类，如 server_error、rate_limit。"
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "错误种类，如 server_error、rate_limit；没有记录时为 null。"
                   },
                   "message": {
                     "type": "string",
@@ -1927,6 +1946,17 @@
               "null"
             ],
             "description": "来自 Subagent Run 时的 agent id。"
+          },
+          "layout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "由布局库认出时的布局 id，内置识别器认出时为 null。"
+          },
+          "learned": {
+            "type": "boolean",
+            "description": "该布局是否为分析器学到的。"
           }
         },
         "required": [
@@ -2266,6 +2296,10 @@
           "error": {
             "type": "string",
             "description": "失败原因。"
+          },
+          "title": {
+            "type": "string",
+            "description": "结果与屏幕对不上时，分析器给出的问题行。"
           }
         },
         "required": [
