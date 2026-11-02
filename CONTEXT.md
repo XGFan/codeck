@@ -11,7 +11,7 @@ Session、Live Session、Subagent Run、Main Line 沿用 [Claude Viewer 的定�
 _Avoid_: managed session、worker（worker 是 paaa 的词）
 
 **接手（Takeover）**:
-人在 ToH Client 上操作 Session 所在的 Pane：把它切到前台，或在其中按键。正被人接手的 Session 不能成为受控 Session；受控 Session 被接手后，ccrpc 对它只读，直到调用方重新连接。
+人在 ToH Client 上操作 Session 所在的 Pane：把它切到前台，或在其中按键。正被人接手的 Session 不能成为受控 Session；受控 Session 被接手后，ccrpc 对它只读，直到调用方取回（接手的人已离开时）或重新连接。
 _Avoid_: 抢占、冲突、人机协同
 
 **调用方（Caller）**:
@@ -33,6 +33,14 @@ _Avoid_: chunk、delta、token
 **请求（Request）**:
 受控 Session 停下来等人作答的一次交互：审批（permission）或 AskUserQuestion（question）。以触发它的 `tool_use_id` 为 `request_id`。
 _Avoid_: prompt（prompt 指调用方发的提示词）、dialog（dialog 指其余对话框）
+
+**选择（Choice）**:
+受控 Session 停下来等人在一个编号菜单里选一项、但既不是审批也不是 AskUserQuestion 的界面，如计划审批、退出确认、启动提示。没有 `tool_use_id`，按选项文字作答。
+_Avoid_: dialog（dialog 指认不出含义、只能按键处理的界面）、request
+
+**布局（Layout）**:
+ccrpc 认得的一种界面：怎么认出它、它是请求还是选择、每个选项的含义与按键。来自实测，或由 AI 分析认不出的屏幕得出并存下，之后同样的界面直接按它识别。
+_Avoid_: 模板、规则、pattern
 
 **屏幕（Screen）**:
 ccrpc 用自己的 VT 从 Holder 的 Snapshot 与 Output 维护的当前终端画面文本。只用来识别界面与选项位置，不作为内容来源。

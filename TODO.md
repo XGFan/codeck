@@ -7,21 +7,30 @@
 - 本机 `~/.local/bin/toh` 换成带尺寸所有者通知的版本；之前起的旧 Holder 只能靠 PTY 尺寸变化判断接手
 - 连接时检查依赖版本：Holder 不报尺寸所有者、Claude Code 不是实测过的版本时，`ready` 带上告警（现在只在 stderr 提示旧 Holder）
 
-## 兼容 Claude Code 升级（成熟可用的前提）
+## 兼容 Claude Code 升级（下一步，方案已定）
 
-- 屏幕识别只认 2.1.316 的布局，本机 claude 自动升级后就可能全部 `unrecognized`：要么固定 claude 版本（`DISABLE_AUTOUPDATER`），要么每次升级跑一遍探针与端到端；把这件事做成一条命令（`ccrpc doctor`：toh / Holder / claude 版本、配置目录、进程文件、识别器自检）
-- 把复核时用过的真实 transcript 回放探针收进仓库（如 `ccrpc debug replay <jsonl…>`）：改 transcript 尾随或 Branch 规则后，用本机全部 transcript 检查实时视图与 `get_messages` 一致、Branch 只落在人发的提示词上
-- 补齐常见界面的识别，目前都落到 `dialog` 交给 `send_keys`：ExitPlanMode 的计划审批、MCP 工具审批、多选题的 Other（现返回 unsupported）、登录过期、额度用尽 / 限流提示
+- 跟最新版：记下实测过的 Claude Code 版本，`ready` 与 `ccrpc doctor` 遇到没实测过的版本时告警、照常工作
+- `ccrpc doctor`：toh / Holder / claude 版本、配置目录、进程文件、TUI 模式、布局库与分析器配置
+- 布局库：识别器改为按布局（见 CONTEXT.md「布局」）识别；内置布局来自实测，认不出的屏幕交给分析器
+  - 分析器：ccrpc 自己调 Anthropic 兼容接口，缺省 DeepSeek（复用端到端的 key，可用配置改 base URL / key / 模型）；没配就关闭，行为同现在
+  - 发整屏文字和挂起工具的输入
+  - 分析完立即生效（不经人确认）；按键前仍做结构检查：审批类必须同时有允许与拒绝、transcript 里有对应的挂起工具，过不了照旧 `unrecognized`
+  - 工具审批归为 `permission_request`、提问归为 `question`，其余带编号菜单的发新事件 `choice`（见 CONTEXT.md「选择」），用新命令 `answer_choice` 按选项文字作答
+  - 存本机（每个布局一个文件，附当时的屏幕与 Claude Code 版本），另有命令导出进仓库成为内置布局与 fixture
+  - 同一屏幕只分析一次，并限制分析频率
+  - CLAUDE.md 的硬约束“只认见过的布局”随之改写
+- 全屏 TUI（日常配置是 `"tui": "fullscreen"`）：实测输入框、审批框、提问框的布局，内置布局补上；端到端在两种 TUI 下各跑一遍
+- 回放探针收进仓库（`ccrpc debug replay <jsonl…>`）：检查实时视图与 `get_messages` 一致、Branch 只落在人发的提示词上
 
-## 协议补全
+## 协议补全（下一步，方案已定）
 
-- 一轮的结果更完整：`turn_end` 带上出错（API 报错、被中止）、用时、token 用量（cv-core 的 usage / pricing）；主控调度 Worker 时需要
-- 权限模式：`set_mode`（manual / accept edits / plan / auto，按 shift+tab 并核对屏幕上的模式行）
+- `turn_end` 带出错（API 报错、被中止）、用时、token 用量与估算的 API 金额（cv-core 的 pricing，没有价格的模型为 null）
+- `set_mode`：manual / accept edits / plan / auto，按 shift+tab 并核对屏幕上的模式行
 - `follow_up` 队列可查看、可撤销
-- 接手后的交还：人离开（尺寸所有者断开）后，调用方可显式 `reclaim` 而不必重新 attach
-- 后台任务：列出 / 停止后台 Subagent 与 Workflow Run
-- 带图片或文件的提示词
-- 消息格式写成 JSON Schema，作为调用方 SDK 的依据
+- `reclaim`：接手的 Client 已断开（没有在线的尺寸所有者）时直接取回，重新发 Resize、恢复写入、发 `reclaimed`；对方还在时报错，`force` 跳过
+- 后台任务：列出 / 停止后台 Subagent 与 Workflow Run（先实测管理界面）
+- 带图片的提示词：`prompt` 带 `images: [Host 上的文件路径]`，以 bracketed paste 写入路径、确认输入框出现 `[Image #n]` 后再写正文；不碰剪贴板（先实测）
+- 消息格式写成 JSON Schema
 
 ## 形态
 
