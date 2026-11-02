@@ -958,7 +958,9 @@ struct Chunk {
 }
 
 /// Reads the complete lines of `path` from byte `from` (read-only; a partial last line is left
-/// for the next read; lines that are not JSON objects are skipped).
+/// for the next read; lines that are not JSON objects are skipped). Not cv-core's `read_entries`:
+/// that one rewrites `queued_command` attachments into user messages (steer needs them apart) and
+/// has no read cap.
 fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path)?;
