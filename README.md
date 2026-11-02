@@ -39,6 +39,8 @@ ccrpc attach <Holder ID | sessionId>
 ccrpc ls
 ```
 
+ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_CONFIG_DIR`（再缺省为 `~/.local/state/toh`、`~/.claude`），也可以在子命令前用 `--toh-state-dir DIR`、`--claude-config-dir DIR` 指定。
+
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
 
 ```
