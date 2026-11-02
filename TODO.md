@@ -5,7 +5,11 @@
 - 稳定后把 toh（`db2656c` 起）与 claude-viewer（`1f1ceb3` 起）推到 GitHub，ccrpc 去掉 `Cargo.toml` 的 `[patch]`、`cargo update` 锁定新提交
 - 本机日常用的 `~/.local/bin/toh` 换成带尺寸所有者通知的新版本；在那之前接入旧 Holder 时只靠 PTY 尺寸变化判断接手
 - 行读取与 transcript 路径解析仍是 ccrpc 自己的：cv-core 的 `read_entries` 会把 `queued_command` 附件改写成用户消息（ccrpc 要靠它区分插话），也没有按 cwd 求 transcript 路径的函数
-- Main Line 不做增量：只在一条用户提示词的父条目不是上一条时，用 cv-core 整份重算一次
+- Main Line 不做增量：只在一个非 assistant、非工具结果的条目没接在上一条后面时，用 cv-core 整份重算一次
+- 待确认：ToH Client 会不会把 `ccrpc new` 刚建的 Pane 自动切到前台并抢尺寸（会的话 ccrpc 一连上就被判为接手）
+- 待确认：后台挂着的 Mac / web Client 上次操作过的 Pane 仍算“有人在用”，`attach` 要 `--force`；是否需要按最近一次输入时间区分
+- 待确认：按键间隔现在常是 50ms（忙时 spinner 也算屏幕有反应），端到端目前都过，换慢机器或更长菜单时留意
+- Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block
 
 ## 下一步：使用方（协议之上的子项目，各自单独设计）
 
