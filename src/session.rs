@@ -3,7 +3,7 @@
 //! keep ticking, so events keep flowing while they wait (follow-ups are only sent from the top
 //! level loop, never from inside a waiting command).
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -177,6 +177,13 @@ pub struct Engine {
     startup_last: Option<Vec<String>>,
     follow_ups: VecDeque<String>,
     marks: Marks,
+    /// Lookups of the current sessionId's transcript so far (a file found on the first one is history).
+    lookups: u32,
+    /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
+    resolved: HashSet<String>,
+    /// Last time the transcript produced anything.
+    last_activity: Instant,
+    procfile_warned: bool,
     exited: bool,
     /// Events are suppressed (initial settle).
     quiet: bool,
@@ -214,6 +221,10 @@ impl Engine {
             startup_last: None,
             follow_ups: VecDeque::new(),
             marks: Marks::default(),
+            lookups: 0,
+            resolved: HashSet::new(),
+            last_activity: Instant::now(),
+            procfile_warned: false,
             exited: false,
             quiet: false,
         })
@@ -260,6 +271,7 @@ impl Engine {
             let prev = self.session_id.replace(sid.clone());
             self.tailer = None;
             self.last_switch_try = None;
+            self.lookups = 0;
             if let Some(prev) = prev {
                 self.emit(json!({"type": "session_changed", "session_id": sid, "previous": prev}));
             }
@@ -272,23 +284,32 @@ impl Engine {
             return;
         }
         self.last_switch_try = Some(Instant::now());
+        self.lookups += 1;
         let cwd = pf.cwd.clone().unwrap_or_default();
         let Some(path) = locate::transcript_path(&self.roots, &cwd, &sid) else {
             return;
         };
         let mut t = Tailer::new(&path);
-        let history = t.poll();
-        self.tailer = Some(t);
-        for ev in history {
-            match ev {
-                TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
-                TxEvent::Enqueued { content } => self.marks.enqueue(content),
-                TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
-                    self.last_text = b.text.clone();
+        // A file that already existed when this sessionId was first seen is history; one created
+        // afterwards (first prompt of a new Session, after /clear) is live and read by `tick`.
+        if self.lookups == 1 {
+            loop {
+                for ev in t.poll() {
+                    match ev {
+                        TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
+                        TxEvent::Enqueued { content } => self.marks.enqueue(content),
+                        TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
+                            self.last_text = b.text.clone();
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
+                if !t.behind() {
+                    break;
+                }
             }
         }
+        self.tailer = Some(t);
     }
 
     /// One observation step: process, Process File, transcript, state transitions, events.
@@ -312,6 +333,9 @@ impl Engine {
             }
         }
         let evs = self.tailer.as_mut().map(|t| t.poll()).unwrap_or_default();
+        if !evs.is_empty() {
+            self.last_activity = Instant::now();
+        }
         let mut saw_turn_end = false;
         for ev in evs {
             match ev {
@@ -350,6 +374,15 @@ impl Engine {
         if self.turn_end_due.is_some_and(|t| Instant::now() >= t) {
             self.emit_turn_end();
         }
+        // A turn that opened (a prompt was seen) but never went busy nor wrote its marker — an
+        // immediate error, an abort within the busy lag — ends after a quiet spell.
+        if self.turn_active
+            && self.state == State::Idle
+            && self.turn_end_due.is_none()
+            && self.last_activity.elapsed() >= Duration::from_secs(5)
+        {
+            self.emit_turn_end();
+        }
         self.refresh_announcement();
         self.announce_requests();
     }
@@ -384,6 +417,16 @@ impl Engine {
         if s == State::Idle && self.turn_active {
             self.turn_end_due = Some(Instant::now() + TURN_END_GRACE);
         }
+        if matches!(
+            self.state,
+            State::Waiting {
+                kind: WaitKind::Permission | WaitKind::Question,
+                ..
+            }
+        ) && let Some(id) = self.announced.take()
+        {
+            self.resolved.insert(id);
+        }
         self.announced = None;
         self.last_match_try = None;
         self.state = s;
@@ -395,6 +438,17 @@ impl Engine {
     fn update_state(&mut self) {
         let Some(pf) = self.pf.clone() else {
             self.report_startup_screen();
+            if !self.procfile_warned
+                && self
+                    .claude_seen_at
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(20))
+            {
+                self.procfile_warned = true;
+                eprintln!(
+                    "ccrpc: claude 已运行 20 秒，仍没有它的进程文件 {}/sessions/<pid>.json；若不是停在启动界面，可能是配置目录不对，用 --claude-config-dir 指定",
+                    self.roots.claude_config.display()
+                );
+            }
             return;
         };
         let status = pf.status.clone().unwrap_or_default();
@@ -484,7 +538,9 @@ impl Engine {
             .and_then(|t| t.pending_by_id(id))
             .is_none()
         {
-            self.announced = None;
+            if let Some(done) = self.announced.take() {
+                self.resolved.insert(done);
+            }
             self.last_match_try = None;
             self.raw_since = Some((
                 self.raw_since.take().map(|r| r.0).unwrap_or_default(),
@@ -503,13 +559,17 @@ impl Engine {
             .pending()
             .into_iter()
             .filter(|p| !NO_PERMISSION_TOOLS.contains(&p.name.as_str()))
+            .filter(|p| !self.resolved.contains(&p.id))
             .collect();
         let matched: Vec<&&PendingTool> = cands
             .iter()
             .filter(|p| dialog_needle(p).is_some_and(|n| body.contains(&n)))
             .collect();
-        if let Some(p) = matched.first() {
-            return Some((**p).clone());
+        // Exactly one tool may match; two that both fit the dialog are ambiguous.
+        match matched.len() {
+            1 => return Some((*matched[0]).clone()),
+            0 => {}
+            _ => return None,
         }
         let blind: Vec<&&PendingTool> = cands
             .iter()
@@ -720,7 +780,14 @@ impl Engine {
     }
 
     fn send_prompt(&mut self, text: &str) -> CmdResult {
-        self.require(self.state == State::Idle, "not_idle")?;
+        // Idle and no turn open (a prompt just submitted shows busy only ~1 s later). A turn that is
+        // only waiting for its end marker closes within a few seconds: wait for that.
+        if self.state == State::Idle && self.turn_active {
+            self.wait_until(Duration::from_secs(6), |e| {
+                !e.turn_active || e.state != State::Idle
+            });
+        }
+        self.require(self.state == State::Idle && !self.turn_active, "not_idle")?;
         let clean = Self::clean_text(text)?;
         self.clear_input()?;
         let before = self.marks.seq;
@@ -737,6 +804,7 @@ impl Engine {
     fn steer(&mut self, text: &str) -> CmdResult {
         self.require(matches!(self.state, State::Busy), "not_busy")?;
         let clean = Self::clean_text(text)?;
+        self.clear_input()?;
         let before = self.marks.seq;
         self.paste_and_submit(&clean)?;
         let mut how = None;

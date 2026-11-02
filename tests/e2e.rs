@@ -358,7 +358,7 @@ fn controls_a_real_session() {
 
     // steer mid-turn + follow_up after the turn
     rpc.forget();
-    rpc.call("s1", json!({"type": "prompt", "text": "Run the shell command 'sleep 6 && echo first-done' (it is safe), then reply DONE."}));
+    rpc.call("s1", json!({"type": "prompt", "text": "Run this exact shell command in the foreground (do not set run_in_background; it is safe): python3 -c \"import time; time.sleep(8); print('first-done')\" Then reply DONE."}));
     if let Some(pr) = wait_permission_or_tool(&mut rpc) {
         rpc.call(
             "s1a",
@@ -369,7 +369,8 @@ fn controls_a_real_session() {
         "s2",
         json!({"type": "follow_up", "text": "Reply with exactly FOLLOWUP-OK."}),
     );
-    std::thread::sleep(Duration::from_secs(2));
+    // The command is running now (its tool_use was seen, any permission answered).
+    std::thread::sleep(Duration::from_secs(1));
     let d = rpc.call(
         "s3",
         json!({"type": "steer", "text": "Also include the word STEERED in your final reply."}),
@@ -393,7 +394,7 @@ fn controls_a_real_session() {
 
     // abort
     rpc.forget();
-    rpc.call("a1", json!({"type": "prompt", "text": "Run the shell command 'sleep 30' (it is safe), then reply DONE."}));
+    rpc.call("a1", json!({"type": "prompt", "text": "Run this exact shell command in the foreground (do not set run_in_background; it is safe): python3 -c \"import time; time.sleep(30)\" Then reply DONE."}));
     if let Some(pr) = wait_permission_or_tool(&mut rpc) {
         rpc.call(
             "a1a",
@@ -460,7 +461,24 @@ fn controls_a_real_session() {
 
     // exit Claude Code: session_exit
     rpc.call("x1", json!({"type": "slash", "command": "exit"}));
-    rpc.event("session_exit", Duration::from_secs(20));
+    // A shell the model left running in the background makes Claude Code ask first (a `dialog`).
+    let v = rpc.until("exit", Duration::from_secs(20), |v| {
+        v["type"] == "session_exit" || v["type"] == "dialog"
+    });
+    if v["type"] == "dialog" {
+        let lines: Vec<&str> = v["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            lines.iter().any(|l| l.contains("Exit and stop tasks")),
+            "未预期的对话框：{lines:#?}"
+        );
+        rpc.call("x2", json!({"type": "send_keys", "keys": ["enter"]}));
+        rpc.event("session_exit", Duration::from_secs(20));
+    }
 }
 
 /// After a prompt that runs a shell command: returns the request id if a permission prompt comes

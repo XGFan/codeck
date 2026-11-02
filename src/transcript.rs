@@ -121,6 +121,8 @@ pub struct Tailer {
     seq: u64,
     last_text: Option<String>,
     last_discover: Option<std::time::Instant>,
+    /// The last poll hit the read cap on some file.
+    capped: bool,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -139,6 +141,7 @@ impl Tailer {
             seq: 0,
             last_text: None,
             last_discover: None,
+            capped: false,
         }
     }
 
@@ -168,8 +171,14 @@ impl Tailer {
         self.pending.get(id)
     }
 
+    /// The last `poll` stopped at the read cap: call it again to read on.
+    pub fn behind(&self) -> bool {
+        self.capped
+    }
+
     pub fn poll(&mut self) -> Vec<TxEvent> {
         let mut out = Vec::new();
+        self.capped = false;
         // A file that shrank was replaced: start it over with fresh state.
         if std::fs::metadata(&self.main).map(|m| m.len()).unwrap_or(0) < self.offset {
             self.offset = 0;
@@ -178,6 +187,7 @@ impl Tailer {
         }
         if let Ok(chunk) = read_lines(&self.main, self.offset) {
             self.offset = chunk.consumed_to;
+            self.capped |= chunk.capped;
             for l in chunk.lines {
                 self.on_entry(&l, None, None, &mut out);
             }
@@ -194,6 +204,7 @@ impl Tailer {
                 if let Some(s) = self.subs.get_mut(&id) {
                     s.offset = chunk.consumed_to;
                 }
+                self.capped |= chunk.capped;
                 for l in chunk.lines {
                     self.on_entry(&l, Some(&id), parent.as_deref(), &mut out);
                 }
@@ -313,7 +324,8 @@ impl Tailer {
                         }
                         let mut b = Block::new(BlockKind::User, &uuid, 0);
                         b.text = Some(s.clone());
-                        if agent.is_none() {
+                        // Claude Code's own interruption notes are not prompts and open no turn.
+                        if agent.is_none() && !s.starts_with("[Request interrupted by user") {
                             // A new prompt starts a new turn: its last text is not the previous one's.
                             self.last_text = None;
                             out.push(TxEvent::UserPrompt {
@@ -458,6 +470,8 @@ struct OperationField {
 struct Chunk {
     lines: Vec<Line>,
     consumed_to: u64,
+    /// The read stopped at the size cap: more complete lines may follow.
+    capped: bool,
 }
 
 /// Reads the complete lines of `path` from byte `from` (read-only; a partial last line is left
@@ -470,6 +484,7 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
         return Ok(Chunk {
             lines: Vec::new(),
             consumed_to: from.min(len),
+            capped: false,
         });
     }
     f.seek(SeekFrom::Start(from))?;
@@ -484,12 +499,14 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
             return Ok(Chunk {
                 lines: Vec::new(),
                 consumed_to: from + want,
+                capped: true,
             });
         }
         None => {
             return Ok(Chunk {
                 lines: Vec::new(),
                 consumed_to: from,
+                capped: false,
             });
         }
     };
@@ -514,6 +531,7 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
     Ok(Chunk {
         lines,
         consumed_to: from + end as u64,
+        capped: want == MAX_READ,
     })
 }
 
@@ -525,6 +543,9 @@ fn is_command_record(s: &str) -> bool {
         || t.starts_with("<command-message>")
         || t.starts_with("<local-command-stdout>")
         || t.starts_with("<local-command-stderr>")
+        || t.starts_with("<bash-input>")
+        || t.starts_with("<bash-stdout>")
+        || t.starts_with("<bash-stderr>")
 }
 
 fn result_text(raw: Option<&serde_json::value::RawValue>) -> String {
@@ -694,6 +715,17 @@ mod tests {
         let evs = t.poll();
         assert!(!evs.is_empty());
         assert!(t.pending_named("AskUserQuestion").is_none());
+    }
+
+    #[test]
+    fn interruption_note_is_a_block_but_not_a_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"[Request interrupted by user]"}}"#;
+        std::fs::write(&main, format!("{line}\n")).unwrap();
+        let evs = Tailer::new(&main).poll();
+        assert!(!evs.iter().any(|e| matches!(e, TxEvent::UserPrompt { .. })));
+        assert_eq!(blocks(&evs).len(), 1);
     }
 
     #[test]
