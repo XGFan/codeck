@@ -1,3 +1,4 @@
 target/
 .omc/
 .DS_Store
+.env
