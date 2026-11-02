@@ -10,6 +10,10 @@ Session、Live Session、Subagent Run、Main Line 沿用 [Claude Viewer 的定�
 有 ccrpc 进程连着的 Session。它一定在本机某个 clay Pane 的 Holder 里运行；ccrpc 退出后它仍在运行，只是不再受控。
 _Avoid_: managed session、worker（worker 是 paaa 的词）
 
+**接手（Takeover）**:
+人在 ToH Client 上操作 Session 所在的 Pane：把它切到前台，或在其中按键。正被人接手的 Session 不能成为受控 Session；受控 Session 被接手后，ccrpc 对它只读，直到调用方重新连接。
+_Avoid_: 抢占、冲突、人机协同
+
 **调用方（Caller）**:
 经 stdin / stdout 与 ccrpc 交换 JSONL 的程序。
 _Avoid_: client（Client 是 ToH 的 Mac / iOS / web）、host（Host 是 ToH 的机器）
