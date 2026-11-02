@@ -2,7 +2,7 @@
 
 ccrpc：让 Host 本机的脚本以 JSONL（stdin / stdout）驱动跑在 ToH clay Pane 里的交互式 Claude Code，类似 Pi RPC。
 
-- 术语以 [CONTEXT.md](CONTEXT.md) 为准；行为规格见 [docs/spec.md](docs/spec.md)；实测结论见 [docs/probes.md](docs/probes.md)；开发流程见 [docs/dev-process.md](docs/dev-process.md)；待办只记 [TODO.md](TODO.md)。改动对外行为时同步 spec 与 README。
+- 术语以 [CONTEXT.md](CONTEXT.md) 为准；行为规格见 [docs/spec.md](docs/spec.md)；实测结论见 [docs/probes.md](docs/probes.md)；开发流程见 [docs/dev-process.md](docs/dev-process.md)；关键取舍见 [docs/adr/](docs/adr/)；待办只记 [TODO.md](TODO.md)。改动对外行为时同步 spec 与 README。
 
 ## 硬约束
 

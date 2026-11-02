@@ -138,4 +138,5 @@ CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-thre
 - [docs/spec.md](docs/spec.md)：行为规格（命令行、状态、协议、写入、屏幕识别）。
 - [docs/probes.md](docs/probes.md)：Claude Code 的实测结论。
 - [CONTEXT.md](CONTEXT.md)：术语。
+- [docs/adr/](docs/adr/)：关键取舍。
 - [TODO.md](TODO.md)：待办。
