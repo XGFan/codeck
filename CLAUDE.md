@@ -29,6 +29,7 @@ CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --test-threads=1   # �
 - `pty`：Holder unix socket 连接（toh-proto 帧）、常驻 VT 与尺寸所有者、写入（bracketed paste、按键）。
 - `screen`：alacritty_terminal 维护屏幕文本；`recognize`：审批框与 AskUserQuestion 识别。
 - `wake`：事件驱动的唤醒（stdin、Holder 帧、notify 文件监听）。
+- `layout`：布局库（内置 `layouts/*.json` 由 build.rs 嵌入，学到的在本机），结构检查；`analyze`：分析器，认不出的对话框交给模型得出布局。
 - `procfile`：进程文件轮询与状态映射。
 - `transcript`：主线、Subagent Run 与 Workflow Run 的增量尾随（cv-core `raw`、`assemble`），产出内容块、Branch 与 Workflow 事件。
 - `session`：把以上合成状态机，执行命令、发事件。

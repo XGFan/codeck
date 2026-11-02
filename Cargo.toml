@@ -15,9 +15,9 @@ base64 = "0.22"
 libc = "0.2"
 notify = "8.2.0"
 ureq = { version = "2", features = ["json"] }
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 
 # 本地联调期：toh 与 claude-viewer 跟 ccrpc 一起改，指向本地仓库；稳定后推 GitHub 再去掉这段。
 [patch."ssh://git@github.com/XGFan/toh.git"]

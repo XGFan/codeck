@@ -190,7 +190,17 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
         format!("内置 {}、本机学到 {learned}（{}）", lib.layouts.len() - learned, lib.dir().display()),
     );
     match crate::analyze::Analyzer::from_env() {
-        Some(a) => line("ok", "分析器", format!("{} · {}", a.base_url, a.model)),
+        Some(a) => {
+            // Credentials written into the URL are not printed.
+            let shown = match a.base_url.split_once("://") {
+                Some((scheme, rest)) => match rest.split_once('@') {
+                    Some((_, host)) => format!("{scheme}://{host}"),
+                    None => a.base_url.clone(),
+                },
+                None => a.base_url.clone(),
+            };
+            line("ok", "分析器", format!("{shown} · {}", a.model))
+        }
         None => line("warn", "分析器", "没设 CCRPC_ANALYZER_API_KEY，认不出的界面只会报 unrecognized / dialog".into()),
     }
     if failed {
@@ -225,7 +235,7 @@ fn cmd_layouts(args: &[String]) -> Result<()> {
                 println!("{}", path.display());
                 n += 1;
             }
-            eprintln!("导出 {n} 个布局；重新构建后成为内置布局，单测会用它们各自的屏幕检查");
+            eprintln!("导出 {n} 个布局；重新构建后成为内置布局，单测会用它们各自的屏幕检查。布局文件里有当时的整屏文字，提交前检查有没有不该进仓库的内容");
             Ok(())
         }
         _ => bail!("用法：ccrpc layouts list | ccrpc layouts export <仓库目录>"),
@@ -240,8 +250,9 @@ fn cmd_replay(files: &[String]) -> Result<()> {
     if files.is_empty() {
         bail!("用法：ccrpc debug replay <transcript.jsonl>…");
     }
-    let tmp = std::env::temp_dir().join(format!("ccrpc-replay-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp)?;
+    // A fresh private directory (random name, owner-only, removed on drop).
+    let tmpdir = tempfile::Builder::new().prefix("ccrpc-replay-").tempdir()?;
+    let tmp = tmpdir.path().to_path_buf();
     let (mut branches, mut mismatches) = (0usize, 0usize);
     for (n, f) in files.iter().enumerate() {
         let Ok(data) = std::fs::read(f) else {
@@ -249,7 +260,7 @@ fn cmd_replay(files: &[String]) -> Result<()> {
             continue;
         };
         let p = tmp.join(format!("t{n}.jsonl"));
-        let mut out = std::fs::File::create(&p)?;
+        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&p)?;
         let mut t = Tailer::new(&p);
         let mut live: Vec<String> = Vec::new();
         let mut apply = |evs: Vec<TxEvent>, live: &mut Vec<String>, lineno: usize| {
@@ -301,7 +312,7 @@ fn cmd_replay(files: &[String]) -> Result<()> {
         }
         let _ = std::fs::remove_file(&p);
     }
-    let _ = std::fs::remove_dir(&tmp);
+    drop(tmpdir);
     println!("files={} branches={branches} mismatches={mismatches}", files.len());
     if mismatches > 0 {
         bail!("{mismatches} 个文件的实时视图与 get_messages 不一致");

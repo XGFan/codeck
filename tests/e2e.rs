@@ -36,9 +36,15 @@ struct Env {
     _toh: tempfile::TempDir,
     _cc: tempfile::TempDir,
     _work: tempfile::TempDir,
+    _layouts: tempfile::TempDir,
     toh_dir: PathBuf,
     cc_dir: PathBuf,
     work: PathBuf,
+    /// The test's own layout library (never the owner's).
+    layout_dir: PathBuf,
+    /// The model key, for the analyzer when `analyzer` is on.
+    key: String,
+    analyzer: bool,
 }
 
 fn setup(key: &str) -> Env {
@@ -96,13 +102,19 @@ fn setup(key: &str) -> Env {
     )
     .unwrap();
     std::fs::write(work_dir.join("a.txt"), "hello\n").unwrap();
+    let layouts = tempfile::tempdir().unwrap();
+    let layout_dir = layouts.path().to_path_buf();
     Env {
         _toh: toh,
         _cc: cc,
         _work: work,
+        _layouts: layouts,
         toh_dir,
         cc_dir,
         work: work_dir,
+        layout_dir,
+        key: key.to_string(),
+        analyzer: false,
     }
 }
 
@@ -142,7 +154,20 @@ fn toh_bin() -> Option<PathBuf> {
 fn ccrpc_cmd(env: &Env) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ccrpc"));
     cmd.env("TOH_STATE_DIR", &env.toh_dir)
-        .env("CLAUDE_CONFIG_DIR", &env.cc_dir);
+        .env("CLAUDE_CONFIG_DIR", &env.cc_dir)
+        .env("CCRPC_LAYOUT_DIR", &env.layout_dir)
+        .env_remove("CCRPC_ANALYZER_API_KEY");
+    if env.analyzer {
+        // Learning is what is tested: start from no built-in layouts.
+        cmd.env("CCRPC_BUILTIN_LAYOUTS", "0");
+        cmd.env("CCRPC_ANALYZER_API_KEY", &env.key);
+        if let Ok(b) = std::env::var("CCRPC_E2E_BASE_URL") {
+            cmd.env("CCRPC_ANALYZER_BASE_URL", b);
+        }
+        if let Ok(m) = std::env::var("CCRPC_E2E_MODEL") {
+            cmd.env("CCRPC_ANALYZER_MODEL", m);
+        }
+    }
     for k in HOST_TERMINAL_VARS {
         cmd.env_remove(k);
     }
@@ -384,6 +409,36 @@ fn controls_a_real_session() {
         te["last_text"].as_str().unwrap_or("").contains("PONG"),
         "{te}"
     );
+    // What the turn did.
+    assert!(te["error"].is_null(), "{te}");
+    assert_eq!(te["aborted"], false);
+    assert!(te["duration_ms"].as_u64().unwrap_or(0) > 0, "{te}");
+    assert!(te["usage"]["output_tokens"].as_u64().unwrap_or(0) > 0, "{te}");
+
+    // Permission modes: to plan and back.
+    let d = rpc.call("m1", json!({"type": "set_mode", "mode": "plan"}));
+    assert_eq!(d["mode"], "plan");
+    let d = rpc.call("m2", json!({"type": "set_mode", "mode": "manual"}));
+    assert_eq!(d["mode"], "manual");
+
+    // A prompt with an image, pasted by its path.
+    let png = env.work.join("dot.png");
+    std::fs::write(&png, red_dot_png()).unwrap();
+    let d = rpc.call(
+        "im1",
+        json!({"type": "prompt", "text": "What color is this image? Reply with one word and use no tools.",
+            "images": [png.display().to_string()]}),
+    );
+    assert!(d["uuid"].is_string(), "{d}");
+    loop {
+        let v = rpc.until("image turn", Duration::from_secs(90), |v| {
+            v["type"] == "turn_end" || v["type"] == "permission_request"
+        });
+        if v["type"] == "turn_end" {
+            break;
+        }
+        rpc.call("im2", json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "deny"}));
+    }
 
     // permission: allow
     rpc.call("p2", json!({"type": "prompt", "text": "Run exactly this shell command and nothing else: touch created.txt"}));
@@ -455,6 +510,11 @@ fn controls_a_real_session() {
         "s2",
         json!({"type": "follow_up", "text": "Reply with exactly FOLLOWUP-OK."}),
     );
+    // A second follow-up, dropped again.
+    rpc.call("s2b", json!({"type": "follow_up", "text": "Reply with exactly SHOULD-NOT-RUN."}));
+    let d = rpc.call("s2c", json!({"type": "cancel_follow_up", "index": 1}));
+    assert_eq!(d["removed"], 1);
+    assert_eq!(d["follow_ups"], json!(["Reply with exactly FOLLOWUP-OK."]));
     // The command is running now (its tool_use was seen, any permission answered).
     std::thread::sleep(Duration::from_secs(1));
     let d = rpc.call(
@@ -558,6 +618,24 @@ fn controls_a_real_session() {
     } else {
         eprintln!("模型没有调用 Workflow 工具，跳过 Workflow 断言");
     }
+
+    // Background shell: listed by get_tasks, stopped by stop_task.
+    run_turn_allowing(
+        &mut rpc,
+        "bg1",
+        "Use the Bash tool exactly once with run_in_background set to true to run: sleep 300 (description: long sleep). Then reply STARTED.",
+    );
+    let tasks = rpc.call("bg2", json!({"type": "get_tasks"}));
+    let shell = tasks["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "shell" && t["status"] == "running")
+        .unwrap_or_else(|| panic!("没有运行中的后台 shell：{tasks}"))
+        .clone();
+    let d = rpc.call("bg3", json!({"type": "stop_task", "task_id": shell["id"]}));
+    assert_ne!(d["status"], "running", "{d}");
+    settle_idle(&mut rpc);
 
     // get_state / get_messages / get_screen
     let st = rpc.call("g1", json!({"type": "get_state"}));
@@ -721,7 +799,33 @@ fn yields_when_a_person_takes_over() {
     let scr = rpc.call("t3", json!({"type": "get_screen"}));
     assert_eq!(scr["lines"].as_array().unwrap().len(), 30);
 
-    // Another ccrpc refuses the Session while the person holds it, unless forced.
+    // Taking it back: refused while the person is there, fine once they left.
+    rpc.send(json!({"id": "r1", "type": "reclaim"}));
+    let r = rpc.until("r1", Duration::from_secs(5), |v| v["id"] == "r1");
+    assert_eq!(r["error"]["code"], "taken_over", "{r}");
+    drop(person);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut n = 0;
+    loop {
+        n += 1;
+        rpc.send(json!({"id": format!("r2-{n}"), "type": "reclaim"}));
+        let id = format!("r2-{n}");
+        let r = rpc.until("r2", Duration::from_secs(10), |v| v["id"] == id.as_str());
+        if r["success"] == true {
+            break;
+        }
+        assert!(Instant::now() < deadline, "人离开后取不回：{r}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    rpc.event("reclaimed", Duration::from_secs(5));
+    let st = rpc.call("r3", json!({"type": "get_state"}));
+    assert_eq!(st["taken_over"], false);
+    let scr = rpc.call("r4", json!({"type": "get_screen"}));
+    assert_eq!(scr["lines"].as_array().unwrap().len(), 48);
+
+    // Another ccrpc refuses the Session while a person holds it, unless forced.
+    let person = person_takes_over(&env, &holder);
+    rpc.event("taken_over", Duration::from_secs(10));
     let out = ccrpc_cmd(&env)
         .args(["attach", &holder])
         .stdin(Stdio::null())
@@ -910,4 +1014,79 @@ fn probe_layouts() {
     rpc.call("pl4", json!({"type": "send_keys", "keys": ["esc"]}));
     std::thread::sleep(Duration::from_millis(800));
     dump(&mut rpc, "end");
+}
+
+fn red_dot_png() -> Vec<u8> {
+    base64::engine::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    )
+    .unwrap()
+}
+
+#[test]
+#[ignore = "real Claude Code and the analyzer; needs CCRPC_E2E_API_KEY"]
+fn learns_an_unknown_dialog() {
+    let Ok(key) = std::env::var("CCRPC_E2E_API_KEY") else {
+        eprintln!("跳过：没有 CCRPC_E2E_API_KEY");
+        return;
+    };
+    let mut env = setup(&key);
+    env.analyzer = true;
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    rpc.forget();
+    // The plan approval is not a built-in layout: the analyzer learns it.
+    rpc.call("m1", json!({"type": "set_mode", "mode": "plan"}));
+    rpc.call(
+        "p1",
+        json!({"type": "prompt", "text": "Make a one-step plan to create an empty file named plan.txt, then present it for approval right away with ExitPlanMode."}),
+    );
+    let v = rpc.until("learned", Duration::from_secs(180), |v| {
+        v["type"] == "choice" || v["type"] == "permission_request" || v["type"] == "dialog"
+    });
+    assert!(
+        rpc.seen.iter().any(|e| e["type"] == "layout_learned"),
+        "没有 layout_learned：{v}"
+    );
+    match v["type"].as_str() {
+        Some("choice") => {
+            let opts: Vec<&str> = v["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|o| o["label"].as_str())
+                .collect();
+            let pick = opts
+                .iter()
+                .find(|l| l.contains("manually approve"))
+                .or_else(|| opts.first())
+                .unwrap()
+                .to_string();
+            rpc.call("c1", json!({"type": "answer_choice", "request_id": v["request_id"], "option": pick}));
+        }
+        Some("permission_request") => {
+            rpc.call("c1", json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}));
+        }
+        _ => panic!("分析后仍报 dialog：{v}"),
+    }
+    // The plan goes ahead; allow what it asks for.
+    loop {
+        let v = rpc.until("plan turn", Duration::from_secs(120), |v| {
+            v["type"] == "turn_end" || v["type"] == "permission_request"
+        });
+        if v["type"] == "turn_end" {
+            break;
+        }
+        rpc.call("c2", json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}));
+    }
+    // The layout is in the library; copy it out for export when asked.
+    let learned: Vec<_> = std::fs::read_dir(&env.layout_dir).unwrap().flatten().collect();
+    assert!(!learned.is_empty());
+    if let Ok(out) = std::env::var("CCRPC_E2E_KEEP_LAYOUTS") {
+        std::fs::create_dir_all(&out).unwrap();
+        for e in learned {
+            std::fs::copy(e.path(), Path::new(&out).join(e.file_name())).unwrap();
+        }
+    }
 }

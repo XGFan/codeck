@@ -460,6 +460,14 @@ mod tests {
             "   ← to go back · Esc/Enter/Space to close · x to stop",
         ]);
         assert!(matches!(tasks_panel(&details), Some(TasksPanel::Details(t)) if t.contains("sleep 25")));
+        // Nothing left to stop: still the panel (to be closed).
+        let done = lines(&[
+            "   Background",
+            "     Completed (1)",
+            "   ❯ ✔ Echo test command   done · deepseek-flash",
+            "   ↑/↓ to select · Enter to view · Esc to close",
+        ]);
+        assert!(matches!(tasks_panel(&done), Some(TasksPanel::List(rows)) if rows.len() == 2));
     }
 
     #[test]
@@ -587,6 +595,8 @@ pub fn permission_mode(lines: &[String]) -> Option<crate::rpc::PermissionMode> {
             Some(Plan)
         } else if l.contains("auto mode on") {
             Some(Auto)
+        } else if l.contains("bypass permissions on") {
+            Some(Bypass)
         } else {
             None
         }
@@ -602,9 +612,12 @@ pub enum TasksPanel {
     Details(String),
 }
 
-/// Recognizes the panel by its hint line (`… x to stop …`): `↑/↓ to select` marks the list.
+/// Recognizes the panel by its hint line (`… x to stop …`, or `… Esc to close` once nothing is
+/// left to stop): `↑/↓ to select` marks the list.
 pub fn tasks_panel(lines: &[String]) -> Option<TasksPanel> {
-    let hint = lines.iter().rposition(|l| l.contains("x to stop"))?;
+    let hint = lines
+        .iter()
+        .rposition(|l| l.contains("x to stop") || l.contains("Esc to close") || l.contains("Esc/Enter/Space to close"))?;
     if lines[hint].contains("to select") {
         let title = lines[..hint]
             .iter()

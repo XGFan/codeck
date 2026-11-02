@@ -87,7 +87,7 @@ pub enum Command {
     },
     GetTasks,
     StopTask {
-        id: String,
+        task_id: String,
     },
     AnswerChoice {
         request_id: String,
@@ -102,6 +102,8 @@ pub enum PermissionMode {
     AcceptEdits,
     Plan,
     Auto,
+    /// `bypass permissions on`: seen in the cycle, never set.
+    Bypass,
 }
 
 impl PermissionMode {
@@ -118,6 +120,7 @@ impl PermissionMode {
             PermissionMode::AcceptEdits => "accept_edits",
             PermissionMode::Plan => "plan",
             PermissionMode::Auto => "auto",
+            PermissionMode::Bypass => "bypass",
         }
     }
 }
@@ -300,7 +303,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         }
         "get_tasks" => Ok(Command::GetTasks),
         "stop_task" => Ok(Command::StopTask {
-            id: req_text(obj, kind, "id")?,
+            task_id: req_text(obj, kind, "task_id")?,
         }),
         "answer_choice" => Ok(Command::AnswerChoice {
             request_id: req_text(obj, kind, "request_id")?,
@@ -808,5 +811,41 @@ mod tests {
         assert_eq!(text.lines().count(), 1);
         let value: Value = serde_json::from_str(text.trim_end()).unwrap();
         assert_eq!(value, json!({"type": "ready", "protocol": 1}));
+    }
+
+    #[test]
+    fn schema_covers_every_command() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../docs/protocol.schema.json")).unwrap();
+        let commands = schema["$defs"]["commands"].as_object().expect("缺少 commands 定义");
+        let declared: Vec<&str> = commands
+            .values()
+            .filter_map(|c| c["properties"]["type"]["const"].as_str())
+            .collect();
+        for name in [
+            "prompt",
+            "steer",
+            "follow_up",
+            "abort",
+            "answer_permission",
+            "answer_question",
+            "slash",
+            "set_model",
+            "compact",
+            "clear",
+            "send_keys",
+            "get_state",
+            "get_messages",
+            "get_screen",
+            "get_tool_result",
+            "cancel_follow_up",
+            "reclaim",
+            "set_mode",
+            "get_tasks",
+            "stop_task",
+            "answer_choice",
+        ] {
+            assert!(declared.contains(&name), "protocol.schema.json 缺少命令 {name}");
+        }
     }
 }

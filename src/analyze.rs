@@ -12,12 +12,32 @@ use crate::layout::{Layout, LayoutKind, LayoutOption, Meaning};
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/anthropic";
 pub const DEFAULT_MODEL: &str = "deepseek-flash";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Analyzer {
     pub base_url: String,
     pub model: String,
     key: String,
 }
+
+impl std::fmt::Debug for Analyzer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Analyzer")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("key", &"***")
+            .finish()
+    }
+}
+
+/// Plain http only to this machine; the key never goes out in clear.
+fn is_loopback(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', ':']).next().unwrap_or_default();
+    matches!(host, "localhost" | "127.0.0.1")
+}
+
+/// Largest response read from the model service.
+const MAX_RESPONSE: u64 = 1 << 20;
 
 /// What the analyzer is shown.
 pub struct Request<'a> {
@@ -53,15 +73,29 @@ impl Analyzer {
             "messages": [{"role": "user", "content": prompt(req)}],
         });
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-        let resp = ureq::post(&url)
+        // No redirects (they would carry the key elsewhere), https except to this machine.
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .https_only(!is_loopback(&self.base_url))
             .timeout(Duration::from_secs(60))
+            .build();
+        let resp = agent
+            .post(&url)
             .set("x-api-key", &self.key)
             .set("authorization", &format!("Bearer {}", self.key))
             .set("anthropic-version", "2023-06-01")
             .set("content-type", "application/json")
             .send_json(body)
             .map_err(|e| anyhow!("分析器请求失败：{e}"))?;
-        let v: Value = resp.into_json().context("分析器的响应不是 JSON")?;
+        let mut buf = Vec::new();
+        {
+            use std::io::Read;
+            resp.into_reader()
+                .take(MAX_RESPONSE)
+                .read_to_end(&mut buf)
+                .context("读不完分析器的响应")?;
+        }
+        let v: Value = serde_json::from_slice(&buf).context("分析器的响应不是 JSON")?;
         let text: String = v["content"]
             .as_array()
             .into_iter()
@@ -199,6 +233,19 @@ mod tests {
         assert_eq!(l.title, "Would you like to proceed?");
         assert_eq!(l.options[1].meaning, Meaning::Deny);
         assert!(l.learned_at.as_deref().unwrap().ends_with('Z'));
+    }
+
+    #[test]
+    fn key_stays_out_of_debug_and_http_only_to_loopback() {
+        let a = Analyzer {
+            base_url: "https://x".into(),
+            model: "m".into(),
+            key: "sk-secret".into(),
+        };
+        assert!(!format!("{a:?}").contains("sk-secret"));
+        assert!(is_loopback("http://127.0.0.1:8080/v1"));
+        assert!(is_loopback("http://localhost/anthropic"));
+        assert!(!is_loopback("http://api.example.com/anthropic"));
     }
 
     #[test]

@@ -66,6 +66,8 @@ fn dialog_signature(lines: &[String]) -> String {
 }
 /// Tools that never ask for permission themselves (their inner tools do).
 const NO_PERMISSION_TOOLS: &[&str] = &["AskUserQuestion", "Agent", "Task"];
+/// Tools whose approval is a menu of ways to go on, answered as a choice.
+const CHOICE_TOOLS: &[&str] = &["ExitPlanMode"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WaitKind {
@@ -821,9 +823,17 @@ impl Engine {
             WaitKind::Permission => {
                 let screen = self.screen().ok();
                 if let Some(p) = screen.as_ref().and_then(|s| self.permission_target(s)) {
+                    // Which layout recognized it, when not the built-in recognizer.
+                    let layout = screen.as_ref().and_then(|s| {
+                        recognize::permission(&s.lines)
+                            .is_none()
+                            .then(|| self.library.find(&s.lines).map(|(l, _)| (l.id.clone(), l.source.clone())))
+                            .flatten()
+                    });
                     self.announced = Some(p.id.clone());
                     self.emit(json!({"type": "permission_request", "request_id": p.id, "tool_name": p.name,
-                        "input": p.input, "agent_id": p.agent_id}));
+                        "input": p.input, "agent_id": p.agent_id,
+                        "layout": layout.as_ref().map(|l| &l.0), "learned": layout.is_some_and(|l| l.1 == "learned")}));
                     return;
                 }
                 let Some(s) = screen else {
@@ -881,6 +891,24 @@ impl Engine {
         };
         if l.kind != LayoutKind::Choice {
             return false;
+        }
+        // While a tool waits for permission, only a tool whose approval is a menu (ExitPlanMode)
+        // may be answered as a choice: anything else would hide the tool from the caller.
+        if let State::Waiting {
+            kind: WaitKind::Permission,
+            ..
+        } = &self.state
+        {
+            let tools_ok = self.tailer.as_ref().is_some_and(|t| {
+                t.pending()
+                    .into_iter()
+                    .filter(|p| !self.resolved.contains(&p.id))
+                    .filter(|p| !NO_PERMISSION_TOOLS.contains(&p.name.as_str()))
+                    .all(|p| CHOICE_TOOLS.contains(&p.name.as_str()))
+            });
+            if !tools_ok {
+                return false;
+            }
         }
         let (id, title) = (l.id.clone(), l.title.clone());
         // A choice raised by a tool (ExitPlanMode…): the single pending tool, if any.
@@ -1256,18 +1284,28 @@ impl Engine {
         }
         self.require(self.state == State::Idle && !self.turn_active, "not_idle")?;
         let clean = Self::clean_text(text)?;
+        let mut paths = Vec::new();
         for p in images {
-            if !std::path::Path::new(p).is_file() {
-                return err("bad_request", format!("图片文件不存在：{p}"));
+            if p.chars().any(char::is_control) {
+                return err("bad_request", format!("图片路径里有控制字符：{p:?}"));
+            }
+            // Absolute: Claude Code resolves a relative path against its own cwd.
+            match std::fs::canonicalize(p) {
+                Ok(abs) if abs.is_file() => paths.push(abs.display().to_string()),
+                _ => return err("bad_request", format!("图片文件不存在：{p}")),
             }
         }
+        let images = &paths;
         self.clear_input()?;
         // Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
         for (k, p) in images.iter().enumerate() {
             let mark = format!("[Image #{}]", k + 1);
-            self.paste(&pty::sanitize(p))?;
+            self.paste(p)?;
+            // The path itself is gone from the box and one more placeholder is there.
             let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
-                recognize::input_box(&s.lines).filter(|t| t.contains(&mark))
+                recognize::input_box(&s.lines).filter(|t| {
+                    t.contains(&mark) && !t.contains(p.as_str()) && t.matches("[Image #").count() == k + 1
+                })
             });
             if shown.is_none() {
                 return err("bad_request", format!("Claude Code 没有把 {p} 当成图片"));
@@ -1663,13 +1701,14 @@ impl Engine {
 
     /// Cycles the permission mode with shift+tab until the footer shows `mode`.
     fn set_mode(&mut self, mode: rpc::PermissionMode) -> CmdResult {
-        self.require(matches!(self.state, State::Idle | State::Busy), "not_idle")?;
+        // Idle only: on the way the cycle may pass through auto (or bypass) mode.
+        self.require(self.state == State::Idle, "not_idle")?;
         self.input_box_now()?;
         let Some(start) = self.mode_now() else {
             return Err(self.unrecognized("set_mode", None));
         };
         let mut cur = start;
-        for _ in 0..rpc::PermissionMode::CYCLE.len() {
+        for _ in 0..=rpc::PermissionMode::CYCLE.len() {
             if cur == mode {
                 return Ok(json!({"mode": mode.name()}));
             }
@@ -1682,9 +1721,13 @@ impl Engine {
                 return Err(self.unrecognized("set_mode", None));
             };
             cur = m;
+            // Never stop on bypass permissions: it is passed through, not a target.
             if cur == start {
                 break;
             }
+        }
+        if cur == rpc::PermissionMode::Bypass {
+            return Err(self.unrecognized("set_mode", None));
         }
         if cur == mode {
             return Ok(json!({"mode": mode.name()}));
@@ -1704,16 +1747,20 @@ impl Engine {
         if task.status != "running" {
             return err("bad_request", format!("后台任务 {id} 已经结束（{}）", task.status));
         }
-        let needle: String = task
-            .description
-            .clone()
-            .unwrap_or_default()
-            .chars()
-            .take(30)
+        // The panel shows a shell by its command and an agent by its description.
+        let needles: Vec<String> = [task.command.clone(), task.description.clone()]
+            .into_iter()
+            .flatten()
+            .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(30).collect::<String>())
+            .filter(|t| !t.trim().is_empty())
             .collect();
-        if needle.trim().is_empty() {
+        if needles.is_empty() {
             return err("unrecognized_screen", format!("后台任务 {id} 没有可在面板里比对的描述"));
         }
+        let fits = |text: &str| {
+            let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            needles.iter().any(|n| t.contains(n.trim()))
+        };
         self.slash("tasks")?;
         let Some((panel, s)) = self.wait_screen(Duration::from_secs(3), |_, s| recognize::tasks_panel(&s.lines))
         else {
@@ -1721,13 +1768,26 @@ impl Engine {
         };
         match panel {
             recognize::TasksPanel::Details(text) => {
-                if !text.contains(needle.trim()) {
+                if !fits(&text) {
                     self.keys(b"\x1b")?;
                     return Err(self.unrecognized("stop_task", Some(&s)));
                 }
             }
             recognize::TasksPanel::List(rows) => {
-                let Some(target) = rows.iter().position(|(t, _)| t.contains(needle.trim())) else {
+                // Ended tasks are listed too (`Completed`): prefer the running row.
+                let running: Vec<usize> = (0..rows.len())
+                    .filter(|&i| fits(&rows[i].0) && rows[i].0.contains("running"))
+                    .collect();
+                // Two running rows that both fit: which one is meant is not known.
+                if running.len() > 1 {
+                    self.keys(b"\x1b")?;
+                    return Err(self.unrecognized("stop_task", Some(&s)));
+                }
+                let target = running
+                    .first()
+                    .copied()
+                    .or_else(|| rows.iter().position(|(t, _)| fits(t)));
+                let Some(target) = target else {
                     self.keys(b"\x1b")?;
                     return Err(self.unrecognized("stop_task", Some(&s)));
                 };
@@ -1743,7 +1803,7 @@ impl Engine {
                     Some(recognize::TasksPanel::List(rows)) => rows
                         .iter()
                         .find(|(_, sel)| *sel)
-                        .filter(|(t, _)| t.contains(needle.trim()))
+                        .filter(|(t, _)| fits(t))
                         .map(|_| ()),
                     _ => None,
                 });
@@ -1754,25 +1814,30 @@ impl Engine {
             }
         }
         self.keys(b"x")?;
-        let tid = id.to_string();
-        let stopped = self.wait_until(Duration::from_secs(10), |e| {
-            e.tailer
-                .as_ref()
-                .and_then(|t| t.tasks().iter().find(|t| t.id == tid))
-                .is_some_and(|t| t.status != "running")
+        // The panel shows it at once; Claude Code tells the transcript only on the next turn.
+        let ended = self.wait_screen(Duration::from_secs(5), |_, s| match recognize::tasks_panel(&s.lines) {
+            Some(recognize::TasksPanel::List(rows)) => (!rows
+                .iter()
+                .any(|(t, _)| fits(t) && t.contains("running")))
+            .then_some(()),
+            Some(recognize::TasksPanel::Details(t)) => (!t.contains("running")).then_some(()),
+            None => Some(()),
         });
-        // Close the panel if it is still open.
         if self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines)).is_some() {
             self.keys(b"\x1b")?;
+        }
+        if ended.is_none() {
+            return err("timeout", format!("5 秒内面板上的后台任务 {id} 仍在运行"));
+        }
+        let tid = id.to_string();
+        if let Some(t) = self.tailer.as_mut() {
+            t.mark_stopped(&tid);
         }
         let status = self
             .tailer
             .as_ref()
             .and_then(|t| t.tasks().iter().find(|t| t.id == tid))
             .map(|t| t.status.clone());
-        if !stopped {
-            return err("timeout", format!("10 秒内没看到后台任务 {id} 结束"));
-        }
         Ok(json!({"status": status}))
     }
 
@@ -1824,7 +1889,7 @@ impl Engine {
             Command::GetTasks => Ok(json!({
                 "tasks": self.tailer.as_ref().map(|t| t.tasks().to_vec()).unwrap_or_default()
             })),
-            Command::StopTask { id } => self.stop_task(id),
+            Command::StopTask { task_id } => self.stop_task(task_id),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Steer { text } => self.steer(text),
             Command::FollowUp { text } => {
@@ -2116,6 +2181,7 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
         "ITERM_SESSION_ID",
         "TOH_HOLDER_ID",
         "CLAUDECODE",
+        "CCRPC_ANALYZER_API_KEY",
     ] {
         cmd.env_remove(k);
     }

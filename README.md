@@ -41,6 +41,14 @@ ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxR
 ccrpc ls
 ```
 
+检查依赖与配置（toh、claude 版本、目录、TUI、布局库、分析器），每行 `ok` / `warn` / `fail`：
+
+```sh
+ccrpc doctor
+```
+
+认不出的对话框可以交给分析器：设置 `CCRPC_ANALYZER_API_KEY`（Messages 兼容接口的 key），可选 `CCRPC_ANALYZER_BASE_URL`（缺省 `https://api.deepseek.com/anthropic`）、`CCRPC_ANALYZER_MODEL`（缺省 `deepseek-flash`）。分析得出的布局存进本机布局库（`CCRPC_LAYOUT_DIR`，缺省 `~/.local/share/ccrpc/layouts`）并立即使用；`ccrpc layouts list` 列出，`ccrpc layouts export <仓库目录>` 导出成内置布局。分析器会收到整屏文字与挂起工具的输入。
+
 ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_CONFIG_DIR`（再缺省为 `~/.local/state/toh`、`~/.claude`），也可以在子命令前用 `--toh-state-dir DIR`、`--claude-config-dir DIR` 指定。
 
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
@@ -76,7 +84,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 
 | 命令 | 说明 |
 |---|---|
-| `prompt {text}` | `idle` 时写提示词并回车，等 transcript 确认 |
+| `prompt {text, images?}` | `idle` 时写提示词并回车，等 transcript 确认；`images` 为图片文件路径，先粘贴路径 |
 | `steer {text}` | `busy` 时写入，在本轮工具调用之间送达 |
 | `follow_up {text}` | 进 ccrpc 队列，变成 `idle` 后依次发出 |
 | `abort` | 发 `Esc`，等状态离开 `busy` / `waiting` |
@@ -89,6 +97,11 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `get_messages {since?}` | 立即返回 Main Line 上的内容块与 `cursor` |
 | `get_screen` | 立即返回屏幕文本与光标 |
 | `get_tool_result {tool_use_id}` | 立即返回工具结果全文（落盘过的读文件） |
+| `answer_choice {request_id, option}` | 按选项文字作答 `choice` |
+| `set_mode {mode}` | 切权限模式：`manual` / `accept_edits` / `plan` / `auto` |
+| `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
+| `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Workflow Run |
+| `reclaim {force?}` | 接手的人离开后取回控制 |
 
 事件（没有 `id`）：
 
@@ -97,7 +110,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `ready` | 连接后的第一条，含 Holder ID、sessionId、cwd、claude 版本与状态 |
 | `state` | 状态变化，`waiting` 时带子类与 `waitingFor` |
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
-| `turn_end` | 一轮结束，`last_text` 是本轮最后一段 assistant 文字 |
+| `turn_end` | 一轮结束：`last_text`、`error`、`aborted`、`duration_ms`、`usage`、`api_cost` |
 | `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id` |
 | `question` | 挂起的 AskUserQuestion |
 | `dialog` | 其余对话框与启动界面 |
@@ -105,7 +118,9 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `follow_up_failed` | 队列里的 `follow_up` 发不出去 |
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
-| `taken_over` | 有人在 ToH 上接手了这个 Session，之后只读 |
+| `taken_over` / `reclaimed` | 有人在 ToH 上接手了这个 Session，之后只读 / 已取回 |
+| `choice` | 等待在一个非审批、非提问的编号菜单（如计划审批），用 `answer_choice` 作答 |
+| `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |
 
 响应两种：
@@ -121,7 +136,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 - 写只经 Holder 的 PTY；读只用 transcript、进程文件与屏幕；Claude Code 配置目录与 ToH 状态目录下的文件只读。
 - 只服务本机 clay 里的 Session，调用方也只在 Host 本机；不与人共用 Session（[ADR-0001](docs/adr/0001-own-pty-size-and-yield-on-takeover.md)）。
 - 命令按到达顺序逐条执行；排队只有 `follow_up`。
-- 屏幕识别只认实测过的 Claude Code 2.1.316 布局，认不出就发 `unrecognized`，不猜、不按键。
+- 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
 
 ## 测试
 
@@ -137,11 +152,12 @@ cargo test
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-可选变量：`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用同级目录 `../toh/target/debug/toh`，没有则用 PATH 里的）。
+可选变量：`CCRPC_E2E_TUI=fullscreen`（用全屏 TUI 跑）、`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用同级目录 `../toh/target/debug/toh`，没有则用 PATH 里的）。
 
 ## 文档索引
 
 - [docs/spec.md](docs/spec.md)：行为规格（命令行、状态、协议、写入、屏幕识别）。
+- [docs/protocol.schema.json](docs/protocol.schema.json)：协议消息的 JSON Schema。
 - [docs/probes.md](docs/probes.md)：Claude Code 的实测结论。
 - [CONTEXT.md](CONTEXT.md)：术语。
 - [docs/adr/](docs/adr/)：关键取舍。

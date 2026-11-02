@@ -148,6 +148,9 @@ pub struct BgTask {
     pub kind: &'static str,
     pub tool_use_id: String,
     pub description: Option<String>,
+    /// The shell command of a background shell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     /// `running` until Claude Code reports it ended (`completed`, `failed`, `killed`, …).
     pub status: String,
 }
@@ -256,6 +259,13 @@ impl Tailer {
     /// Background tasks seen so far.
     pub fn tasks(&self) -> &[BgTask] {
         &self.tasks
+    }
+
+    /// A task ccrpc stopped: `stopped` until Claude Code's own notice says otherwise.
+    pub fn mark_stopped(&mut self, id: &str) {
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id && t.status == "running") {
+            t.status = "stopped".into();
+        }
     }
 
     /// Reports every Workflow Run again on the next look (its current state).
@@ -889,7 +899,8 @@ impl Tailer {
                         id,
                         kind,
                         tool_use_id: tid.clone(),
-                        description: field("description").or(summary).or_else(|| field("command")),
+                        description: field("description").or(summary),
+                        command: field("command"),
                         status: "running".into(),
                     });
                 }

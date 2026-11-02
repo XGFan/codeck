@@ -1,0 +1,2379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccrpc.invalid/protocol.schema.json",
+  "title": "ccrpc JSONL 协议",
+  "description": "ccrpc 的 JSONL 协议消息：命令、响应、事件，每行一个 JSON 对象。",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/command"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/event"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "description": "调用方自定的请求标识，原样回在响应里；可选，字符串或数字。",
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "state": {
+      "description": "Session 状态。",
+      "enum": [
+        "starting",
+        "idle",
+        "busy",
+        "waiting",
+        "exited"
+      ]
+    },
+    "waiting": {
+      "description": "state 为 waiting 时的等待详情。",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "等待类型。",
+          "enum": [
+            "permission",
+            "question",
+            "dialog"
+          ]
+        },
+        "waiting_for": {
+          "description": "进程文件里 waitingFor 的原值。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "waiting_for"
+      ]
+    },
+    "usage": {
+      "description": "本轮 token 用量。",
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_creation_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens"
+      ]
+    },
+    "persisted": {
+      "description": "输出太大被存进 tool-results/ 的文件。",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "文件路径。"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "文件字节数。"
+        }
+      },
+      "required": [
+        "path",
+        "size"
+      ]
+    },
+    "block": {
+      "description": "transcript 的一个内容块。",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "user",
+            "text",
+            "thinking",
+            "tool_use",
+            "tool_result"
+          ],
+          "description": "内容块种类。"
+        },
+        "uuid": {
+          "type": "string",
+          "description": "所属 transcript 条目的 uuid。"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "在消息内容数组里的序号。"
+        },
+        "text": {
+          "type": "string",
+          "description": "user / text / thinking 的文字。"
+        },
+        "id": {
+          "type": "string",
+          "description": "tool_use 的 id。"
+        },
+        "name": {
+          "type": "string",
+          "description": "tool_use 的工具名。"
+        },
+        "input": {
+          "description": "tool_use 的输入。"
+        },
+        "tool_use_id": {
+          "type": "string",
+          "description": "tool_result 对应的 tool_use id。"
+        },
+        "content": {
+          "type": "string",
+          "description": "tool_result 的文本，超过 100KB 截断；落盘时为预览。"
+        },
+        "is_error": {
+          "type": "boolean",
+          "description": "tool_result 是否为错误。"
+        },
+        "persisted": {
+          "$ref": "#/$defs/persisted"
+        },
+        "queued": {
+          "type": "boolean",
+          "description": "忙时插话送达的用户内容。"
+        },
+        "agent_id": {
+          "type": "string",
+          "description": "来自 Subagent Run 时的 agent id。"
+        },
+        "parent_tool_use_id": {
+          "type": "string",
+          "description": "Subagent Run 的父 tool_use id。"
+        },
+        "run_id": {
+          "type": "string",
+          "description": "所属 Workflow Run 的 id。"
+        }
+      },
+      "required": [
+        "kind",
+        "uuid",
+        "index"
+      ]
+    },
+    "bg_task": {
+      "description": "transcript 里的后台任务。",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "任务 id。"
+        },
+        "kind": {
+          "enum": [
+            "agent",
+            "shell",
+            "workflow"
+          ],
+          "description": "任务种类。"
+        },
+        "tool_use_id": {
+          "type": "string",
+          "description": "启动它的 tool_use id。"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "任务描述。"
+        },
+        "status": {
+          "type": "string",
+          "description": "running，或结束状态如 completed、failed、killed。"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "tool_use_id",
+        "description",
+        "status"
+      ]
+    },
+    "error_code": {
+      "description": "错误码。",
+      "enum": [
+        "bad_request",
+        "unknown_command",
+        "not_idle",
+        "not_busy",
+        "not_waiting",
+        "unknown_request",
+        "taken_over",
+        "not_taken_over",
+        "not_offered",
+        "unsupported",
+        "unrecognized_screen",
+        "input_not_empty",
+        "timeout",
+        "exited",
+        "io"
+      ]
+    },
+    "choice_option": {
+      "description": "choice 的一个选项。",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "屏幕上的选项全文。"
+        },
+        "meaning": {
+          "enum": [
+            "allow",
+            "allow_always",
+            "deny",
+            "other"
+          ],
+          "description": "选项含义。"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "选项说明。"
+        }
+      },
+      "required": [
+        "label",
+        "meaning"
+      ]
+    },
+    "key": {
+      "description": "send_keys 的一个元素：命名按键、原样文字或 base64 字节。",
+      "oneOf": [
+        {
+          "enum": [
+            "enter",
+            "esc",
+            "tab",
+            "shift+tab",
+            "backspace",
+            "space",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+            "delete",
+            "ctrl+c",
+            "ctrl+d",
+            "ctrl+u",
+            "ctrl+l",
+            "ctrl+o",
+            "ctrl+r",
+            "ctrl+t"
+          ],
+          "description": "命名按键。"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "原样写入的文字。"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "string",
+              "description": "base64 编码的原始字节。"
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "answer": {
+      "description": "一道题的作答。",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "description": "选项 label。"
+              },
+              "description": "选中的选项。"
+            }
+          },
+          "required": [
+            "options"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "other": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Other 的文本。"
+            }
+          },
+          "required": [
+            "other"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "command": {
+      "description": "调用方发给 ccrpc 的命令，每行一个。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/commands/prompt"
+        },
+        {
+          "$ref": "#/$defs/commands/steer"
+        },
+        {
+          "$ref": "#/$defs/commands/follow_up"
+        },
+        {
+          "$ref": "#/$defs/commands/abort"
+        },
+        {
+          "$ref": "#/$defs/commands/answer_permission"
+        },
+        {
+          "$ref": "#/$defs/commands/answer_question"
+        },
+        {
+          "$ref": "#/$defs/commands/slash"
+        },
+        {
+          "$ref": "#/$defs/commands/set_model"
+        },
+        {
+          "$ref": "#/$defs/commands/compact"
+        },
+        {
+          "$ref": "#/$defs/commands/clear"
+        },
+        {
+          "$ref": "#/$defs/commands/send_keys"
+        },
+        {
+          "$ref": "#/$defs/commands/get_state"
+        },
+        {
+          "$ref": "#/$defs/commands/get_messages"
+        },
+        {
+          "$ref": "#/$defs/commands/get_screen"
+        },
+        {
+          "$ref": "#/$defs/commands/get_tool_result"
+        },
+        {
+          "$ref": "#/$defs/commands/cancel_follow_up"
+        },
+        {
+          "$ref": "#/$defs/commands/reclaim"
+        },
+        {
+          "$ref": "#/$defs/commands/set_mode"
+        },
+        {
+          "$ref": "#/$defs/commands/get_tasks"
+        },
+        {
+          "$ref": "#/$defs/commands/stop_task"
+        },
+        {
+          "$ref": "#/$defs/commands/answer_choice"
+        }
+      ]
+    },
+    "commands": {
+      "prompt": {
+        "title": "prompt",
+        "description": "发送提示词；idle 且上一轮已结束时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "prompt"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "提示词正文。"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Host 上的图片文件路径，正文之前逐个粘贴。"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "steer": {
+        "title": "steer",
+        "description": "忙时插话，在当前工具调用结束后送达。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "steer"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "插话正文。"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "follow_up": {
+        "title": "follow_up",
+        "description": "进 ccrpc 队列，idle 时按 prompt 依次发出；除 exited 外可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "follow_up"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "提示词正文。"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "abort": {
+        "title": "abort",
+        "description": "发 Esc 中止；busy / waiting 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "abort"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "answer_permission": {
+        "title": "answer_permission",
+        "description": "回答审批框；waiting.permission 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "answer_permission"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "挂起请求的 request_id。"
+          },
+          "decision": {
+            "enum": [
+              "allow",
+              "allow_always",
+              "deny"
+            ],
+            "description": "审批决定。"
+          },
+          "message": {
+            "type": "string",
+            "description": "拒绝后作为 prompt 发出的说明，只能配 deny。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "decision"
+        ],
+        "additionalProperties": false
+      },
+      "answer_question": {
+        "title": "answer_question",
+        "description": "回答 AskUserQuestion；waiting.question 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "answer_question"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "挂起请求的 request_id。"
+          },
+          "answers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/answer"
+            },
+            "description": "与题目一一对应的作答。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "answers"
+        ],
+        "additionalProperties": false
+      },
+      "slash": {
+        "title": "slash",
+        "description": "输入斜杠命令；idle 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "slash"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "description": "命令文本，开头的 / 可省略，单行。"
+          }
+        },
+        "required": [
+          "type",
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "set_model": {
+        "title": "set_model",
+        "description": "即 slash model X；idle 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "set_model"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "description": "模型名。"
+          }
+        },
+        "required": [
+          "type",
+          "model"
+        ],
+        "additionalProperties": false
+      },
+      "compact": {
+        "title": "compact",
+        "description": "即 slash compact；idle 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "compact"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "instructions": {
+            "type": "string",
+            "description": "压缩指令。"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "clear": {
+        "title": "clear",
+        "description": "即 slash clear；idle 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "clear"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "send_keys": {
+        "title": "send_keys",
+        "description": "依次写入按键；除 exited 外可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "send_keys"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/key"
+            },
+            "description": "按键序列。"
+          }
+        },
+        "required": [
+          "type",
+          "keys"
+        ],
+        "additionalProperties": false
+      },
+      "get_state": {
+        "title": "get_state",
+        "description": "读取当前状态，任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "get_state"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "get_messages": {
+        "title": "get_messages",
+        "description": "读取当前 transcript 主文件的内容块，任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "get_messages"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "since": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "上次返回的 cursor，只返回之后写入的块。"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "get_screen": {
+        "title": "get_screen",
+        "description": "读取屏幕文本，任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "get_screen"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "get_tool_result": {
+        "title": "get_tool_result",
+        "description": "读取工具结果全文，任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "get_tool_result"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "tool_use 的 id。"
+          }
+        },
+        "required": [
+          "type",
+          "tool_use_id"
+        ],
+        "additionalProperties": false
+      },
+      "cancel_follow_up": {
+        "title": "cancel_follow_up",
+        "description": "撤销 follow_up 队列里的条目，任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "cancel_follow_up"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "队列里的序号（0 起），不带则全部撤销。"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "reclaim": {
+        "title": "reclaim",
+        "description": "被接手后取回 Session。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "reclaim"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "对方还在时也强行取回。"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "set_mode": {
+        "title": "set_mode",
+        "description": "按 shift+tab 切换权限模式；idle / busy 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "set_mode"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "mode": {
+            "enum": [
+              "manual",
+              "accept_edits",
+              "plan",
+              "auto"
+            ],
+            "description": "目标权限模式。"
+          }
+        },
+        "required": [
+          "type",
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "get_tasks": {
+        "title": "get_tasks",
+        "description": "列出 transcript 里的后台任务，任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "get_tasks"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "stop_task": {
+        "title": "stop_task",
+        "description": "经 /tasks 面板停止后台任务；idle 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "stop_task"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "任务 id。"
+          }
+        },
+        "required": [
+          "type",
+          "task_id"
+        ],
+        "additionalProperties": false
+      },
+      "answer_choice": {
+        "title": "answer_choice",
+        "description": "回答 choice 事件的选项；有挂起的 choice 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "answer_choice"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "choice 的 request_id。"
+          },
+          "option": {
+            "type": "string",
+            "minLength": 1,
+            "description": "选项文字，完全一致，否则唯一前缀。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "option"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "response_data": {
+      "prompt": {
+        "title": "prompt",
+        "description": "提示词对应的用户消息 uuid。",
+        "type": "object",
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "description": "transcript 里该用户消息的 uuid。"
+          }
+        },
+        "required": [
+          "uuid"
+        ]
+      },
+      "steer": {
+        "title": "steer",
+        "description": "插话的送达方式。",
+        "type": "object",
+        "properties": {
+          "delivered_as": {
+            "enum": [
+              "queued",
+              "prompt"
+            ],
+            "description": "queued 为排队送达；本轮恰好结束被当作新提示词时为 prompt。"
+          }
+        },
+        "required": [
+          "delivered_as"
+        ]
+      },
+      "follow_up": {
+        "title": "follow_up",
+        "description": "队列长度。",
+        "type": "object",
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "队列长度。"
+          }
+        },
+        "required": [
+          "queued"
+        ]
+      },
+      "abort": {
+        "title": "abort",
+        "description": "中止后的状态。",
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "answer_permission": {
+        "title": "answer_permission",
+        "description": "作答后的状态。",
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state"
+          },
+          "message_uuid": {
+            "type": "string",
+            "description": "有 message 时，其作为 prompt 发出的用户消息 uuid。"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "answer_question": {
+        "title": "answer_question",
+        "description": "作答后的状态。",
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "slash": {
+        "title": "slash",
+        "description": "空对象。",
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "set_model": {
+        "title": "set_model",
+        "description": "空对象。",
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "compact": {
+        "title": "compact",
+        "description": "空对象。",
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "clear": {
+        "title": "clear",
+        "description": "空对象。",
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "send_keys": {
+        "title": "send_keys",
+        "description": "空对象。",
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "get_state": {
+        "title": "get_state",
+        "description": "当前状态快照。",
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state"
+          },
+          "waiting": {
+            "$ref": "#/$defs/waiting"
+          },
+          "request": {
+            "description": "挂起的请求；没有为 null。",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "request_id": {
+                    "type": "string",
+                    "description": "请求 id。"
+                  },
+                  "tool_name": {
+                    "type": "string",
+                    "description": "工具名。"
+                  },
+                  "input": {
+                    "description": "工具输入。"
+                  }
+                },
+                "required": [
+                  "request_id",
+                  "tool_name",
+                  "input"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "waiting_for": {
+                    "type": "string",
+                    "description": "对话框的 waiting_for。"
+                  }
+                },
+                "required": [
+                  "waiting_for"
+                ]
+              }
+            ]
+          },
+          "holder_id": {
+            "type": "string",
+            "description": "Holder id。"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code session id。"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "工作目录。"
+          },
+          "follow_up_queue": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "follow_up 队列长度。"
+          },
+          "follow_ups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "队列里的正文。"
+          },
+          "taken_over": {
+            "type": "boolean",
+            "description": "是否已被接手。"
+          }
+        },
+        "required": [
+          "state",
+          "request",
+          "holder_id",
+          "session_id",
+          "cwd",
+          "follow_up_queue",
+          "follow_ups",
+          "taken_over"
+        ]
+      },
+      "get_messages": {
+        "title": "get_messages",
+        "description": "内容块与游标。",
+        "type": "object",
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/block"
+            },
+            "description": "内容块。"
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "不透明游标，下次作为 since。"
+          }
+        },
+        "required": [
+          "blocks",
+          "cursor"
+        ]
+      },
+      "get_screen": {
+        "title": "get_screen",
+        "description": "屏幕文本与光标。",
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "每行去尾部空白。"
+          },
+          "cursor": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "行。"
+              },
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "列。"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "光标 [行, 列]，0 起。"
+          }
+        },
+        "required": [
+          "lines",
+          "cursor"
+        ]
+      },
+      "get_tool_result": {
+        "title": "get_tool_result",
+        "description": "工具结果全文。",
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "结果文本，超过 100KB 截断。"
+          },
+          "persisted": {
+            "description": "没落盘为 null。",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/persisted"
+              }
+            ]
+          }
+        },
+        "required": [
+          "content",
+          "persisted"
+        ]
+      },
+      "cancel_follow_up": {
+        "title": "cancel_follow_up",
+        "description": "撤销结果。",
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "撤销的条数"
+          },
+          "follow_ups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "队列里剩下的。"
+          }
+        },
+        "required": [
+          "removed",
+          "follow_ups"
+        ]
+      },
+      "reclaim": {
+        "title": "reclaim",
+        "description": "取回后的尺寸。",
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "列或行。"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[列, 行]。"
+          }
+        },
+        "required": [
+          "size"
+        ]
+      },
+      "set_mode": {
+        "title": "set_mode",
+        "description": "切换后的模式。",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "manual",
+              "accept_edits",
+              "plan",
+              "auto"
+            ],
+            "description": "当前权限模式。"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "get_tasks": {
+        "title": "get_tasks",
+        "description": "后台任务列表。",
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/bg_task"
+            },
+            "description": "任务。"
+          }
+        },
+        "required": [
+          "tasks"
+        ]
+      },
+      "stop_task": {
+        "title": "stop_task",
+        "description": "任务结束后的状态。",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "任务状态。"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "answer_choice": {
+        "title": "answer_choice",
+        "description": "作答后的状态。",
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      }
+    },
+    "response_success": {
+      "description": "命令成功的响应；data 随命令而定。",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "response"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "对应命令的 id，没有则为 null。"
+        },
+        "command": {
+          "type": "string",
+          "description": "对应的命令名。"
+        },
+        "success": {
+          "const": true
+        },
+        "data": {
+          "description": "命令的结果，字段见 response_data。",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "command",
+        "success",
+        "data"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "command": {
+              "const": "prompt"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/prompt"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "steer"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/steer"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "follow_up"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/follow_up"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "abort"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/abort"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "answer_permission"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/answer_permission"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "answer_question"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/answer_question"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "slash"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/slash"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "set_model"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/set_model"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "compact"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/compact"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "clear"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/clear"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "send_keys"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/send_keys"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "get_state"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/get_state"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "get_messages"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/get_messages"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "get_screen"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/get_screen"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "get_tool_result"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/get_tool_result"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "cancel_follow_up"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/cancel_follow_up"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "reclaim"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/reclaim"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "set_mode"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/set_mode"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "get_tasks"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/get_tasks"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "stop_task"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/stop_task"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "answer_choice"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/answer_choice"
+            }
+          }
+        }
+      ]
+    },
+    "response_failure": {
+      "description": "命令失败的响应。",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "response"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "对应命令的 id，没有则为 null。"
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "对应的命令名；JSON 都解析不了时为 null。"
+        },
+        "success": {
+          "const": false
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/error_code"
+            },
+            "message": {
+              "type": "string",
+              "description": "错误说明。"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "command",
+        "success",
+        "error"
+      ]
+    },
+    "response": {
+      "description": "ccrpc 对命令的响应。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/response_success"
+        },
+        {
+          "$ref": "#/$defs/response_failure"
+        }
+      ]
+    },
+    "events": {
+      "ready": {
+        "title": "ready",
+        "description": "连接后的第一条事件。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "ready"
+          },
+          "state": {
+            "$ref": "#/$defs/state"
+          },
+          "waiting": {
+            "$ref": "#/$defs/waiting"
+          },
+          "protocol": {
+            "const": 1,
+            "description": "协议版本。"
+          },
+          "holder_id": {
+            "type": "string",
+            "description": "Holder id。"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code session id。"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "工作目录。"
+          },
+          "claude_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code 版本。"
+          },
+          "size": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "列或行。"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[列, 行]。"
+          },
+          "taken_over": {
+            "type": "boolean",
+            "description": "连接时是否已被接手。"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "版本未实测、Holder 不报尺寸所有者时各一句。"
+          }
+        },
+        "required": [
+          "type",
+          "state",
+          "protocol",
+          "holder_id",
+          "session_id",
+          "cwd",
+          "claude_version",
+          "size",
+          "taken_over",
+          "warnings"
+        ]
+      },
+      "state": {
+        "title": "state",
+        "description": "状态变化。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "state"
+          },
+          "state": {
+            "$ref": "#/$defs/state"
+          },
+          "waiting": {
+            "$ref": "#/$defs/waiting"
+          }
+        },
+        "required": [
+          "type",
+          "state"
+        ]
+      },
+      "block": {
+        "title": "block",
+        "description": "transcript 新增的内容块，字段同 block 定义。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "block"
+          },
+          "kind": {
+            "enum": [
+              "user",
+              "text",
+              "thinking",
+              "tool_use",
+              "tool_result"
+            ],
+            "description": "内容块种类。"
+          },
+          "uuid": {
+            "type": "string",
+            "description": "所属 transcript 条目的 uuid。"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "在消息内容数组里的序号。"
+          },
+          "text": {
+            "type": "string",
+            "description": "user / text / thinking 的文字。"
+          },
+          "id": {
+            "type": "string",
+            "description": "tool_use 的 id。"
+          },
+          "name": {
+            "type": "string",
+            "description": "tool_use 的工具名。"
+          },
+          "input": {
+            "description": "tool_use 的输入。"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "description": "tool_result 对应的 tool_use id。"
+          },
+          "content": {
+            "type": "string",
+            "description": "tool_result 的文本，超过 100KB 截断；落盘时为预览。"
+          },
+          "is_error": {
+            "type": "boolean",
+            "description": "tool_result 是否为错误。"
+          },
+          "persisted": {
+            "$ref": "#/$defs/persisted"
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "忙时插话送达的用户内容。"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "来自 Subagent Run 时的 agent id。"
+          },
+          "parent_tool_use_id": {
+            "type": "string",
+            "description": "Subagent Run 的父 tool_use id。"
+          },
+          "run_id": {
+            "type": "string",
+            "description": "所属 Workflow Run 的 id。"
+          }
+        },
+        "required": [
+          "type",
+          "kind",
+          "uuid",
+          "index"
+        ]
+      },
+      "turn_end": {
+        "title": "turn_end",
+        "description": "一轮结束。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "turn_end"
+          },
+          "last_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "本轮最后一段主线 assistant 文字。"
+          },
+          "error": {
+            "description": "API 报错，没有为 null。",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "错误种类，如 server_error、rate_limit。"
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "错误信息。"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "message"
+                ]
+              }
+            ]
+          },
+          "aborted": {
+            "type": "boolean",
+            "description": "本轮是否被中止。"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "用时毫秒。"
+          },
+          "usage": {
+            "$ref": "#/$defs/usage"
+          },
+          "api_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "按价格表估算的美元，有模型没有价格时为 null。"
+          }
+        },
+        "required": [
+          "type",
+          "last_text",
+          "error",
+          "aborted",
+          "duration_ms",
+          "usage",
+          "api_cost"
+        ]
+      },
+      "permission_request": {
+        "title": "permission_request",
+        "description": "工具审批请求。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "permission_request"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "等于 tool_use_id。"
+          },
+          "tool_name": {
+            "type": "string",
+            "description": "工具名。"
+          },
+          "input": {
+            "description": "工具输入。"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "来自 Subagent Run 时的 agent id。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "tool_name",
+          "input"
+        ]
+      },
+      "question": {
+        "title": "question",
+        "description": "AskUserQuestion 提问。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "question"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "等于 tool_use_id。"
+          },
+          "questions": {
+            "description": "AskUserQuestion 输入原样。"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "来自 Subagent Run 时的 agent id。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "questions"
+        ]
+      },
+      "dialog": {
+        "title": "dialog",
+        "description": "认不出对应工具的对话框，交给 send_keys。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "dialog"
+          },
+          "waiting_for": {
+            "type": "string",
+            "description": "进程文件原值；启动界面为 startup。"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "屏幕文本。"
+          }
+        },
+        "required": [
+          "type",
+          "waiting_for",
+          "lines"
+        ]
+      },
+      "unrecognized": {
+        "title": "unrecognized",
+        "description": "屏幕识别失败，不按任何键。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "unrecognized"
+          },
+          "context": {
+            "type": "string",
+            "description": "识别时的上下文。"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "屏幕文本。"
+          }
+        },
+        "required": [
+          "type",
+          "context",
+          "lines"
+        ]
+      },
+      "follow_up_failed": {
+        "title": "follow_up_failed",
+        "description": "队列里的 follow_up 发送失败。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "follow_up_failed"
+          },
+          "text": {
+            "type": "string",
+            "description": "正文。"
+          },
+          "error": {
+            "type": "string",
+            "description": "失败原因。"
+          }
+        },
+        "required": [
+          "type",
+          "text",
+          "error"
+        ]
+      },
+      "branch": {
+        "title": "branch",
+        "description": "Main Line 换到了另一个 Branch。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "branch"
+          },
+          "at_uuid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "此前发出的 block 里最后一个仍在 Main Line 上的 uuid；null 表示全部作废。"
+          }
+        },
+        "required": [
+          "type",
+          "at_uuid"
+        ]
+      },
+      "workflow": {
+        "title": "workflow",
+        "description": "Workflow Run 的整份状态。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "workflow"
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run id。"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "description": "Workflow 调用的 tool_use id。"
+          },
+          "name": {
+            "type": "string",
+            "description": "Workflow 名。"
+          },
+          "status": {
+            "type": "string",
+            "description": "状态。"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "序号。"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "标题。"
+                },
+                "detail": {
+                  "type": "string",
+                  "description": "详情。"
+                }
+              }
+            },
+            "description": "阶段。"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "agent_id": {
+                  "type": "string",
+                  "description": "agent id。"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "标签。"
+                },
+                "phase_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "所属阶段序号。"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "状态。"
+                }
+              }
+            },
+            "description": "参与的 agent。"
+          }
+        },
+        "required": [
+          "type",
+          "run_id",
+          "tool_use_id",
+          "name",
+          "status",
+          "phases",
+          "agents"
+        ]
+      },
+      "taken_over": {
+        "title": "taken_over",
+        "description": "Session 被另一个 Client 接手。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "taken_over"
+          },
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "接手者的客户端标识，旧 Holder 为 null。"
+          }
+        },
+        "required": [
+          "type",
+          "client"
+        ]
+      },
+      "reclaimed": {
+        "title": "reclaimed",
+        "description": "Session 已被取回。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "reclaimed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "choice": {
+        "title": "choice",
+        "description": "其他编号菜单。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "choice"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "形如 choice:<n>。"
+          },
+          "title": {
+            "type": "string",
+            "description": "问题行。"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/choice_option"
+            },
+            "description": "选项。"
+          },
+          "tool_use_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "引起它的工具，如 ExitPlanMode。"
+          },
+          "layout": {
+            "type": "string",
+            "description": "识别用的布局名。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "title",
+          "options",
+          "tool_use_id",
+          "layout"
+        ]
+      },
+      "layout_learned": {
+        "title": "layout_learned",
+        "description": "分析器学到新布局并已存进布局库。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "layout_learned"
+          },
+          "layout": {
+            "type": "string",
+            "description": "布局名。"
+          },
+          "kind": {
+            "type": "string",
+            "description": "布局种类。"
+          },
+          "title": {
+            "type": "string",
+            "description": "问题行。"
+          },
+          "path": {
+            "type": "string",
+            "description": "布局文件路径。"
+          }
+        },
+        "required": [
+          "type",
+          "layout",
+          "kind",
+          "title",
+          "path"
+        ]
+      },
+      "analysis_failed": {
+        "title": "analysis_failed",
+        "description": "分析器没给出可用的布局。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "analysis_failed"
+          },
+          "error": {
+            "type": "string",
+            "description": "失败原因。"
+          }
+        },
+        "required": [
+          "type",
+          "error"
+        ]
+      },
+      "session_changed": {
+        "title": "session_changed",
+        "description": "Session 换了。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "session_changed"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "新 session id。"
+          },
+          "previous": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "此前的 session id。"
+          }
+        },
+        "required": [
+          "type",
+          "session_id",
+          "previous"
+        ]
+      },
+      "session_exit": {
+        "title": "session_exit",
+        "description": "Claude Code 已退出。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "session_exit"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      }
+    },
+    "event": {
+      "description": "ccrpc 主动发出的事件，没有 id。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/events/ready"
+        },
+        {
+          "$ref": "#/$defs/events/state"
+        },
+        {
+          "$ref": "#/$defs/events/block"
+        },
+        {
+          "$ref": "#/$defs/events/turn_end"
+        },
+        {
+          "$ref": "#/$defs/events/permission_request"
+        },
+        {
+          "$ref": "#/$defs/events/question"
+        },
+        {
+          "$ref": "#/$defs/events/dialog"
+        },
+        {
+          "$ref": "#/$defs/events/unrecognized"
+        },
+        {
+          "$ref": "#/$defs/events/follow_up_failed"
+        },
+        {
+          "$ref": "#/$defs/events/branch"
+        },
+        {
+          "$ref": "#/$defs/events/workflow"
+        },
+        {
+          "$ref": "#/$defs/events/taken_over"
+        },
+        {
+          "$ref": "#/$defs/events/reclaimed"
+        },
+        {
+          "$ref": "#/$defs/events/choice"
+        },
+        {
+          "$ref": "#/$defs/events/layout_learned"
+        },
+        {
+          "$ref": "#/$defs/events/analysis_failed"
+        },
+        {
+          "$ref": "#/$defs/events/session_changed"
+        },
+        {
+          "$ref": "#/$defs/events/session_exit"
+        }
+      ]
+    }
+  }
+}

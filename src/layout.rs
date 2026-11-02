@@ -68,6 +68,56 @@ pub struct ScreenOption {
     pub description: Option<String>,
 }
 
+/// What an option's own text says, independent of any model: `Yes…` goes ahead, `No…` refuses.
+fn lexical(label: &str) -> Option<Meaning> {
+    let l = label.trim().to_lowercase().replace('’', "'");
+    let word = |w: &str| l == w || l.starts_with(&format!("{w},")) || l.starts_with(&format!("{w} "));
+    if word("no") {
+        Some(Meaning::Deny)
+    } else if word("yes") {
+        Some(Meaning::Allow)
+    } else {
+        None
+    }
+}
+
+/// The checks on meanings that do not trust the model: an option reading `Yes…` / `No…` must
+/// mean go ahead / refuse; in a permission layout an option that reads as neither may not allow
+/// or deny, and exactly one option denies, the last.
+fn meanings_sane(kind: LayoutKind, opts: &[ScreenOption]) -> bool {
+    let each = opts.iter().all(|o| match (lexical(&o.label), o.meaning) {
+        (Some(Meaning::Deny), m) => {
+            m == Meaning::Deny || (kind == LayoutKind::Choice && m == Meaning::Other)
+        }
+        (Some(_), m) => {
+            matches!(m, Meaning::Allow | Meaning::AllowAlways)
+                || (kind == LayoutKind::Choice && m == Meaning::Other)
+        }
+        (None, m) => kind == LayoutKind::Choice || m == Meaning::Other,
+    });
+    if kind != LayoutKind::Permission {
+        return each;
+    }
+    let denies = opts.iter().filter(|o| o.meaning == Meaning::Deny).count();
+    each && denies == 1 && opts.last().is_some_and(|o| o.meaning == Meaning::Deny)
+}
+
+/// A tool permission question is never a choice (it would hide the tool from the caller).
+pub fn looks_like_tool_permission(title: &str) -> bool {
+    let t = title.trim();
+    t.starts_with("Do you want") || t == "Run a dynamic workflow?"
+}
+
+/// A description from the analyzer as shown to callers: one line, at most 120 characters.
+pub fn clean_description(d: &str) -> String {
+    d.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(120)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 impl Layout {
     /// Stable id from the title and option labels.
     pub fn compute_id(&self) -> String {
@@ -92,6 +142,9 @@ impl Layout {
         if self.title.trim().is_empty() || self.options.len() < 2 {
             return None;
         }
+        if self.kind == LayoutKind::Choice && looks_like_tool_permission(&self.title) {
+            return None;
+        }
         if self.kind == LayoutKind::Permission
             && !(self.options.iter().any(|o| o.meaning == Meaning::Allow)
                 && self.options.iter().any(|o| o.meaning == Meaning::Deny))
@@ -113,20 +166,21 @@ impl Layout {
                 number: n,
                 label: text,
                 meaning: o.meaning,
-                description: o.description.clone(),
+                description: o.description.as_deref().map(clean_description),
             });
         }
-        Some(out)
+        meanings_sane(self.kind, &out).then_some(out)
     }
 
     /// Rows from the frame above the title to the menu (for matching a pending tool).
     pub fn body(&self, lines: &[String]) -> Option<String> {
         let q = lines.iter().rposition(|l| l.trim() == self.title.trim())?;
         let start = recognize::last_menu_start(lines, q)?;
+        // Without the frame above the dialog the body is unknown (not the whole screen).
         let top = lines[..q]
             .iter()
-            .rposition(|l| l.trim_start().starts_with('─') && l.trim().chars().all(|c| c == '─'))
-            .map_or(0, |t| t + 1);
+            .rposition(|l| l.trim_start().starts_with('─') && l.trim().chars().all(|c| c == '─'))?
+            + 1;
         Some(
             lines[top..start]
                 .iter()
@@ -144,9 +198,7 @@ fn builtin() -> Vec<Layout> {
         .filter_map(|(name, json)| match serde_json::from_str::<Layout>(json) {
             Ok(mut l) => {
                 l.source = "builtin".into();
-                if l.id.is_empty() {
-                    l.id = l.compute_id();
-                }
+                l.id = l.compute_id();
                 Some(l)
             }
             Err(e) => {
@@ -199,17 +251,27 @@ impl Library {
             .find_map(|l| l.match_screen(lines).map(|o| (l, o)))
     }
 
-    /// Stores a learned layout (one file per layout) and uses it from now on.
+    /// Stores a learned layout (one file per layout, owner-only: it holds a whole screen) and uses
+    /// it from now on.
     pub fn save(&mut self, mut layout: Layout) -> Result<PathBuf> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
         layout.source = String::new();
-        if layout.id.is_empty() {
-            layout.id = layout.compute_id();
-        }
-        std::fs::create_dir_all(&self.dir)
+        layout.id = layout.compute_id();
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.dir)
             .with_context(|| format!("建不了布局库目录 {}", self.dir.display()))?;
         let path = self.dir.join(format!("{}.json", layout.id));
         let json = serde_json::to_string_pretty(&layout)?;
-        std::fs::write(&path, json + "\n")
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut f| f.write_all((json + "\n").as_bytes()))
             .with_context(|| format!("写不了布局 {}", path.display()))?;
         layout.source = "learned".into();
         self.layouts.retain(|l| l.id != layout.id);
@@ -218,7 +280,8 @@ impl Library {
     }
 }
 
-/// Learned layouts in `dir` (files that do not parse are skipped).
+/// Learned layouts in `dir`: files that do not parse, or whose layout fails its checks on its own
+/// screen, are skipped (with a warning); ids are recomputed, never taken from the file.
 pub fn read_dir_layouts(dir: &Path) -> Vec<Layout> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -234,8 +297,10 @@ pub fn read_dir_layouts(dir: &Path) -> Vec<Layout> {
         .filter_map(|p| {
             let mut l: Layout = serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()?;
             l.source = "learned".into();
-            if l.id.is_empty() {
-                l.id = l.compute_id();
+            l.id = l.compute_id();
+            if l.match_screen(&l.screen).is_none() {
+                eprintln!("ccrpc: 布局 {} 过不了检查，不用", p.display());
+                return None;
             }
             Some(l)
         })
@@ -313,14 +378,60 @@ mod tests {
     }
 
     #[test]
+    fn meanings_must_agree_with_the_option_text() {
+        let screen = lines(&[
+            " ────────────────",
+            " Bash command",
+            "   rm -rf build",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. Yes, and don't ask again",
+            "   3. No",
+        ]);
+        let perm = |m: [Meaning; 3]| Layout {
+            id: String::new(),
+            kind: LayoutKind::Permission,
+            title: "Do you want to proceed?".into(),
+            options: ["Yes", "Yes, and don't ask again", "No"]
+                .iter()
+                .zip(m)
+                .enumerate()
+                .map(|(i, (l, meaning))| LayoutOption {
+                    number: i as u32 + 1,
+                    label: l.to_string(),
+                    meaning,
+                    description: None,
+                })
+                .collect(),
+            source: String::new(),
+            claude_version: None,
+            learned_at: None,
+            screen: vec![],
+        };
+        use Meaning::*;
+        assert!(perm([Allow, AllowAlways, Deny]).match_screen(&screen).is_some());
+        // An injected swap: `Yes` as deny, `No` as allow.
+        assert!(perm([Deny, AllowAlways, Allow]).match_screen(&screen).is_none());
+        // A tool permission question is never learned as a choice.
+        let mut c = perm([Allow, AllowAlways, Deny]);
+        c.kind = LayoutKind::Choice;
+        assert!(c.match_screen(&screen).is_none());
+        assert!(perm([Allow, AllowAlways, Deny]).body(&screen).unwrap().contains("rm-rfbuild"));
+    }
+
+    #[test]
     fn saved_layouts_load_back() {
         let dir = tempfile::tempdir().unwrap();
         let mut lib = Library {
             layouts: vec![],
             dir: dir.path().to_path_buf(),
         };
-        let path = lib.save(plan()).unwrap();
+        let mut l = plan();
+        l.screen = plan_screen();
+        let path = lib.save(l).unwrap();
         assert!(path.exists());
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         let back = read_dir_layouts(dir.path());
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].source, "learned");
