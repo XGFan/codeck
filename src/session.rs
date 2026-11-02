@@ -387,6 +387,10 @@ impl Engine {
                     self.marks.prompt(uuid, text);
                 }
                 TxEvent::Enqueued { content } => self.marks.enqueue(content),
+                TxEvent::Branch { at_uuid } => {
+                    self.emit(json!({"type": "branch", "at_uuid": at_uuid}));
+                }
+                TxEvent::Workflow(v) => self.emit(v),
             }
         }
         self.update_state();
@@ -1213,7 +1217,10 @@ impl Engine {
     pub fn execute(&mut self, c: &Command) -> CmdResult {
         let reads = matches!(
             c,
-            Command::GetState | Command::GetMessages { .. } | Command::GetScreen
+            Command::GetState
+                | Command::GetMessages { .. }
+                | Command::GetScreen
+                | Command::GetToolResult { .. }
         );
         if self.taken_over && !reads {
             return err("taken_over", "Session 已被人接手，只读");
@@ -1250,6 +1257,15 @@ impl Engine {
             Command::GetScreen => {
                 let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
                 Ok(json!({"lines": s.lines, "cursor": [s.cursor.0, s.cursor.1]}))
+            }
+            Command::GetToolResult { tool_use_id } => {
+                let found = self.tailer.as_ref().and_then(|t| t.tool_result(tool_use_id));
+                match found {
+                    Some((content, persisted)) => {
+                        Ok(json!({"content": content, "persisted": persisted}))
+                    }
+                    None => err("unknown_request", format!("找不到 {tool_use_id} 的工具结果")),
+                }
             }
         }
     }
@@ -1391,7 +1407,8 @@ pub fn resolve_target(roots: &Roots, target: &str) -> Result<String> {
             continue;
         }
         let Some(pid) = pf.pid else { continue };
-        if !crate::procs::pid_exists(pid) {
+        // A pid reused by another process is not this Session (procStart check).
+        if !procfile::is_alive(&pf) {
             continue;
         }
         if let Some((id, _)) = locate::holder_of_pid(&table, &holders, pid) {

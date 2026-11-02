@@ -1,18 +1,34 @@
-//! Incremental tail of a Session's transcript (main file plus Subagent Run files) producing Blocks
-//! and the few markers the state machine needs. Reads only complete lines (cv-core `parse`).
+//! Incremental tail of a Session's transcript (main file, Subagent Run files, Workflow Run files)
+//! producing Blocks and the few markers the state machine needs. Reads only complete lines.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
+use cv_core::assemble::{LoadedFile, WorkflowFiles, skeleton, tree, workflow};
+use cv_core::model::FileRole;
 use cv_core::raw::{RawBlock, RawContent, RawEntry, decode_str};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Cap on one read of a transcript file.
 const MAX_READ: u64 = 8 * 1024 * 1024;
 
 /// Cap on text carried by one block event (tool outputs can be huge).
 pub const MAX_BLOCK_TEXT: usize = 100 * 1024;
+
+/// A Subagent file unchanged this long is checked only every [`COLD_CHECK`].
+const COLD_AFTER: Duration = Duration::from_secs(60);
+const COLD_CHECK: Duration = Duration::from_secs(5);
+/// Directory listings (new Subagent / Workflow files) at most this often.
+const DISCOVER_EVERY: Duration = Duration::from_millis(500);
+
+/// A tool output Claude Code saved to `tool-results/` (the transcript keeps a preview).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Persisted {
+    pub path: String,
+    pub size: u64,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +63,9 @@ pub struct Block {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+    /// tool_result whose full output is in a file (`content` is Claude Code's preview).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persisted: Option<Persisted>,
     /// User input delivered mid-turn (typed while busy).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub queued: bool,
@@ -55,6 +74,9 @@ pub struct Block {
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_tool_use_id: Option<String>,
+    /// Set when the Subagent Run belongs to a Workflow Run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 impl Block {
@@ -70,9 +92,11 @@ impl Block {
             tool_use_id: None,
             content: None,
             is_error: None,
+            persisted: None,
             queued: false,
             agent_id: None,
             parent_tool_use_id: None,
+            run_id: None,
         }
     }
 }
@@ -80,7 +104,7 @@ impl Block {
 /// What a poll found, in transcript order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TxEvent {
-    Block(Block),
+    Block(Box<Block>),
     /// `system` / `turn_duration` in the main file: the end of a turn.
     TurnEnd,
     /// `queue-operation` / `enqueue`: input typed while busy was accepted.
@@ -92,6 +116,12 @@ pub enum TxEvent {
         uuid: String,
         text: String,
     },
+    /// The Main Line moved to another Branch: blocks emitted after `at_uuid` are off it.
+    Branch {
+        at_uuid: String,
+    },
+    /// A Workflow Run's state changed (the whole state, protocol shape).
+    Workflow(Value),
 }
 
 /// A tool_use that has no tool_result yet.
@@ -110,6 +140,19 @@ struct SubFile {
     path: PathBuf,
     offset: u64,
     parent_tool_use_id: Option<String>,
+    /// Workflow Run the Subagent Run belongs to.
+    run_id: Option<String>,
+    /// Last time the file grew.
+    changed_at: Instant,
+    checked_at: Option<Instant>,
+}
+
+/// What was last seen of a Workflow Run's files.
+#[derive(Debug, Default)]
+struct WorkflowSeen {
+    sig: Vec<(u64, Option<SystemTime>)>,
+    tool_use_id: Option<String>,
+    last: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -120,9 +163,19 @@ pub struct Tailer {
     pending: HashMap<String, PendingTool>,
     seq: u64,
     last_text: Option<String>,
-    last_discover: Option<std::time::Instant>,
+    last_discover: Option<Instant>,
     /// The last poll hit the read cap on some file.
     capped: bool,
+    /// Workflow Run id → its `Workflow` tool_use id (from the tool result's `runId`).
+    run_tools: HashMap<String, String>,
+    workflows: HashMap<String, WorkflowSeen>,
+    /// tool_use id → file holding the full output.
+    persisted: HashMap<String, PathBuf>,
+    /// uuid of the last main-file entry read.
+    last_uuid: Option<String>,
+    /// Main-file entries that produced blocks, in order, with the prompt text for prompts.
+    emitted: Vec<(String, Option<String>)>,
+    emitted_set: HashSet<String>,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -142,7 +195,18 @@ impl Tailer {
             last_text: None,
             last_discover: None,
             capped: false,
+            run_tools: HashMap::new(),
+            workflows: HashMap::new(),
+            persisted: HashMap::new(),
+            last_uuid: None,
+            emitted: Vec::new(),
+            emitted_set: HashSet::new(),
         }
+    }
+
+    /// `<sessionId>/` next to the main file: subagents, workflows, tool-results.
+    fn session_dir(&self) -> PathBuf {
+        self.main.with_extension("")
     }
 
     pub fn main_path(&self) -> &Path {
@@ -184,21 +248,63 @@ impl Tailer {
             self.offset = 0;
             self.pending.clear();
             self.last_text = None;
+            self.last_uuid = None;
+            self.emitted.clear();
+            self.emitted_set.clear();
         }
         if let Ok(chunk) = read_lines(&self.main, self.offset) {
             self.offset = chunk.consumed_to;
             self.capped |= chunk.capped;
+            let mut fork: Option<(String, String)> = None;
             for l in chunk.lines {
-                self.on_entry(&l, None, None, &mut out);
+                let before = out.len();
+                if let Some(f) = self.fork_candidate(&l) {
+                    fork = Some(f);
+                }
+                self.on_entry(&l, None, None, None, &mut out);
+                self.note_emitted(&l, &out[before..]);
+            }
+            if let Some((at, text)) = fork
+                && self.branch_moved(&text)
+            {
+                out.push(TxEvent::Branch { at_uuid: at });
             }
         }
-        self.discover_subs();
+        let discover = self
+            .last_discover
+            .is_none_or(|t| t.elapsed() >= DISCOVER_EVERY);
+        if discover {
+            self.last_discover = Some(Instant::now());
+            self.discover_subs();
+        }
         let mut ids: Vec<String> = self.subs.keys().cloned().collect();
         ids.sort();
+        let now = Instant::now();
         for id in ids {
-            let (path, offset, parent) = {
-                let s = &self.subs[&id];
-                (s.path.clone(), s.offset, s.parent_tool_use_id.clone())
+            let Some(sf) = self.subs.get_mut(&id) else {
+                continue;
+            };
+            // Long-quiet files (finished Subagent Runs) are looked at less often.
+            if now.duration_since(sf.changed_at) >= COLD_AFTER
+                && sf.checked_at.is_some_and(|t| now.duration_since(t) < COLD_CHECK)
+            {
+                continue;
+            }
+            sf.checked_at = Some(now);
+            let Ok(len) = std::fs::metadata(&sf.path).map(|m| m.len()) else {
+                continue;
+            };
+            if len < sf.offset {
+                sf.offset = 0;
+            } else if len == sf.offset {
+                continue;
+            }
+            sf.changed_at = now;
+            let (path, offset) = (sf.path.clone(), sf.offset);
+            let run = sf.run_id.clone();
+            let parent = match &run {
+                Some(r) => self.run_tools.get(r).cloned(),
+                None => sf.parent_tool_use_id.clone(),
             };
             if let Ok(chunk) = read_lines(&path, offset) {
                 if let Some(s) = self.subs.get_mut(&id) {
@@ -206,23 +312,160 @@ impl Tailer {
                 }
                 self.capped |= chunk.capped;
                 for l in chunk.lines {
-                    self.on_entry(&l, Some(&id), parent.as_deref(), &mut out);
+                    self.on_entry(&l, Some(&id), parent.as_deref(), run.as_deref(), &mut out);
                 }
             }
+        }
+        if discover {
+            self.poll_workflows(&mut out);
         }
         out
     }
 
-    fn discover_subs(&mut self) {
-        if self
-            .last_discover
-            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500))
-        {
-            return;
+    /// A main-file user prompt whose parent is not the entry before it may start a new Branch:
+    /// `(parent uuid, prompt text)`.
+    fn fork_candidate(&self, line: &Line) -> Option<(String, String)> {
+        let e = &line.entry;
+        if e.entry_type() != "user" || e.is_meta == Some(true) {
+            return None;
         }
-        self.last_discover = Some(std::time::Instant::now());
+        let Some(RawContent::Text(text)) = e.message.as_ref().and_then(|m| m.content.as_ref())
+        else {
+            return None;
+        };
+        let parent = e.parent_uuid.as_ref()?;
+        (self.last_uuid.is_some() && self.last_uuid.as_ref() != Some(parent))
+            .then(|| (parent.clone(), text.clone()))
+    }
+
+    /// Records the main-file entry behind blocks just produced (for Branch checks).
+    fn note_emitted(&mut self, line: &Line, new: &[TxEvent]) {
+        let e = &line.entry;
+        if let Some(u) = &e.uuid {
+            self.last_uuid = Some(u.clone());
+        }
+        let Some(uuid) = e.uuid.clone() else {
+            return;
+        };
+        let mut prompt = None;
+        let mut any = false;
+        for ev in new {
+            match ev {
+                TxEvent::Block(b) if b.agent_id.is_none() => any = true,
+                TxEvent::UserPrompt { text, .. } => prompt = Some(text.clone()),
+                _ => {}
+            }
+        }
+        if any && self.emitted_set.insert(uuid.clone()) {
+            self.emitted.push((uuid, prompt));
+        }
+    }
+
+    /// Recomputes the Main Line (cv-core rules); true when blocks already emitted fell off it.
+    /// A Branch that only resent the same prompt with no reply does not count.
+    fn branch_moved(&mut self, new_prompt: &str) -> bool {
+        let Some(abandoned) = off_main_uuids(&self.main) else {
+            return false;
+        };
+        let off: Vec<(String, Option<String>)> = self
+            .emitted
+            .iter()
+            .filter(|(u, _)| abandoned.contains(u))
+            .cloned()
+            .collect();
+        if off.is_empty() {
+            return false;
+        }
+        for (u, _) in &off {
+            self.emitted_set.remove(u);
+        }
+        self.emitted.retain(|(u, _)| !abandoned.contains(u));
+        let resend = off
+            .iter()
+            .all(|(_, p)| p.as_deref().is_some_and(|t| t.trim() == new_prompt.trim()));
+        !resend
+    }
+
+    fn poll_workflows(&mut self, out: &mut Vec<TxEvent>) {
+        let dir = self.session_dir();
+        let json_dir = dir.join("workflows");
+        let journal_dir = dir.join("subagents").join("workflows");
+        let mut runs: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&json_dir) {
+            for e in rd.flatten() {
+                if let Some(r) = e.file_name().to_str().and_then(|n| n.strip_suffix(".json")) {
+                    runs.push(r.to_string());
+                }
+            }
+        }
+        if let Ok(rd) = std::fs::read_dir(&journal_dir) {
+            for e in rd.flatten() {
+                if e.path().join("journal.jsonl").is_file()
+                    && let Some(n) = e.file_name().to_str()
+                {
+                    runs.push(n.to_string());
+                }
+            }
+        }
+        runs.sort();
+        runs.dedup();
+        for run in runs {
+            let json_path = json_dir.join(format!("{run}.json"));
+            let journal_path = journal_dir.join(&run).join("journal.jsonl");
+            let stat = |p: &Path| {
+                std::fs::metadata(p)
+                    .map(|m| (m.len(), m.modified().ok()))
+                    .unwrap_or((0, None))
+            };
+            let sig = vec![stat(&json_path), stat(&journal_path)];
+            let tool = self.run_tools.get(&run).cloned();
+            let seen = self.workflows.entry(run.clone()).or_default();
+            if seen.sig == sig && seen.tool_use_id == tool {
+                continue;
+            }
+            seen.sig = sig;
+            seen.tool_use_id = tool.clone();
+            let files = WorkflowFiles {
+                run_id: run.clone(),
+                workflow_json: std::fs::read_to_string(&json_path).ok(),
+                journal_jsonl: std::fs::read_to_string(&journal_path).ok(),
+            };
+            let r = workflow::run_from_files(&files);
+            let v = json!({
+                "type": "workflow",
+                "run_id": r.run_id,
+                "tool_use_id": tool,
+                "name": r.name,
+                "status": r.status,
+                "phases": r.phases.iter().map(|p| json!({
+                    "index": p.index, "title": p.title, "detail": p.detail,
+                })).collect::<Vec<_>>(),
+                "agents": r.agents.iter().map(|a| json!({
+                    "agent_id": a.agent_id, "label": a.label, "phase_index": a.phase_index,
+                    "state": a.state,
+                })).collect::<Vec<_>>(),
+            });
+            if seen.last.as_ref() != Some(&v) {
+                seen.last = Some(v.clone());
+                out.push(TxEvent::Workflow(v));
+            }
+        }
+    }
+
+    fn discover_subs(&mut self) {
         let dir = subagents_dir(&self.main);
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+        self.discover_in(&dir, None);
+        if let Ok(rd) = std::fs::read_dir(dir.join("workflows")) {
+            for e in rd.flatten() {
+                if let Some(run) = e.file_name().to_str().map(str::to_string) {
+                    self.discover_in(&e.path(), Some(run));
+                }
+            }
+        }
+    }
+
+    fn discover_in(&mut self, dir: &Path, run: Option<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
             return;
         };
         for e in rd.flatten() {
@@ -237,20 +480,58 @@ impl Tailer {
                 continue;
             };
             if let Some(s) = self.subs.get_mut(agent_id) {
-                if s.parent_tool_use_id.is_none() {
-                    s.parent_tool_use_id = read_meta_tool_use_id(&dir, stem);
+                if s.parent_tool_use_id.is_none() && s.run_id.is_none() {
+                    s.parent_tool_use_id = read_meta_tool_use_id(dir, stem);
                 }
                 continue;
             }
-            let offset = 0;
+            let parent = if run.is_none() {
+                read_meta_tool_use_id(dir, stem)
+            } else {
+                None
+            };
             self.subs.insert(
                 agent_id.to_string(),
                 SubFile {
                     path: p.clone(),
-                    offset,
-                    parent_tool_use_id: read_meta_tool_use_id(&dir, stem),
+                    offset: 0,
+                    parent_tool_use_id: parent,
+                    run_id: run.clone(),
+                    changed_at: Instant::now(),
+                    checked_at: None,
                 },
             );
+        }
+    }
+
+    /// Full output of a tool result: the saved file when Claude Code persisted it (capped like a
+    /// block), otherwise the result text as the transcript has it.
+    pub fn tool_result(&self, tool_use_id: &str) -> Option<(String, Option<Persisted>)> {
+        if let Some(path) = self.persisted.get(tool_use_id) {
+            let text = read_capped(path)?;
+            let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            return Some((
+                text,
+                Some(Persisted {
+                    path: path.display().to_string(),
+                    size,
+                }),
+            ));
+        }
+        // Not persisted: read the transcript again (main file and Subagent Runs).
+        let mut t = Tailer::new(&self.main);
+        loop {
+            for ev in t.poll() {
+                if let TxEvent::Block(b) = ev
+                    && b.kind == BlockKind::ToolResult
+                    && b.tool_use_id.as_deref() == Some(tool_use_id)
+                {
+                    return Some((b.content.clone().unwrap_or_default(), None));
+                }
+            }
+            if !t.behind() {
+                return None;
+            }
         }
     }
 
@@ -259,6 +540,7 @@ impl Tailer {
         line: &Line,
         agent: Option<&str>,
         parent: Option<&str>,
+        run: Option<&str>,
         out: &mut Vec<TxEvent>,
     ) {
         let e = &line.entry;
@@ -266,6 +548,7 @@ impl Tailer {
         let tag = |mut b: Block| {
             b.agent_id = agent.map(str::to_string);
             b.parent_tool_use_id = parent.map(str::to_string);
+            b.run_id = run.map(str::to_string);
             b
         };
         match e.entry_type() {
@@ -307,7 +590,7 @@ impl Tailer {
                 let mut b = Block::new(BlockKind::User, &uuid, 0);
                 b.text = Some(text);
                 b.queued = true;
-                out.push(TxEvent::Block(b));
+                out.push(TxEvent::Block(Box::new(b)));
             }
             "user" | "assistant" => {
                 if e.is_meta == Some(true) {
@@ -333,7 +616,7 @@ impl Tailer {
                                 text: s.clone(),
                             });
                         }
-                        out.push(TxEvent::Block(tag(b)));
+                        out.push(TxEvent::Block(Box::new(tag(b))));
                     }
                     Some(RawContent::Text(s)) => {
                         let mut b = Block::new(BlockKind::Text, &uuid, 0);
@@ -341,12 +624,22 @@ impl Tailer {
                         if agent.is_none() {
                             self.last_text = Some(s.clone());
                         }
-                        out.push(TxEvent::Block(tag(b)));
+                        out.push(TxEvent::Block(Box::new(tag(b))));
                     }
                     Some(RawContent::Blocks(blocks)) => {
+                        // A Workflow tool result names its run.
+                        if agent.is_none()
+                            && let Some(run_id) = e.tool_use_result_fields().and_then(|r| r.run_id)
+                            && let Some(tid) = blocks
+                                .iter()
+                                .find(|b| b.block_type() == "tool_result")
+                                .and_then(|b| b.tool_use_id.clone())
+                        {
+                            self.run_tools.entry(run_id).or_insert(tid);
+                        }
                         for (i, rb) in blocks.iter().enumerate() {
                             if let Some(b) = self.block_of(rb, &uuid, i, assistant, agent) {
-                                out.push(TxEvent::Block(tag(b)));
+                                out.push(TxEvent::Block(Box::new(tag(b))));
                             }
                         }
                     }
@@ -417,8 +710,17 @@ impl Tailer {
                 let tid = rb.tool_use_id.clone().unwrap_or_default();
                 self.pending.remove(&tid);
                 let mut b = Block::new(BlockKind::ToolResult, uuid, i);
+                let text = result_text(rb.content.as_deref());
+                if let Some(path) = persisted_path(&text, &self.session_dir()) {
+                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    b.persisted = Some(Persisted {
+                        path: path.display().to_string(),
+                        size,
+                    });
+                    self.persisted.insert(tid.clone(), path);
+                }
                 b.tool_use_id = Some(tid);
-                b.content = Some(cap(result_text(rb.content.as_deref())));
+                b.content = Some(cap(text));
                 b.is_error = Some(rb.is_error.unwrap_or(false));
                 Some(b)
             }
@@ -427,7 +729,7 @@ impl Tailer {
     }
 }
 
-/// Every Block of the main file from the beginning (for `get_messages`).
+/// Blocks of the main file on the Main Line, from the beginning (for `get_messages`).
 pub fn main_blocks(main: &Path) -> Vec<Block> {
     let mut t = Tailer::new(main);
     let mut v = VecDeque::new();
@@ -435,15 +737,88 @@ pub fn main_blocks(main: &Path) -> Vec<Block> {
         t.offset = chunk.consumed_to;
         let mut out = Vec::new();
         for l in chunk.lines {
-            t.on_entry(&l, None, None, &mut out);
+            t.on_entry(&l, None, None, None, &mut out);
         }
+        let off = off_main_uuids(main).unwrap_or_default();
         for ev in out {
-            if let TxEvent::Block(b) = ev {
-                v.push_back(b);
+            if let TxEvent::Block(b) = ev
+                && !off.contains(&b.uuid)
+            {
+                v.push_back(*b);
             }
         }
     }
     v.into()
+}
+
+/// uuids of the entries of `main` on an abandoned Branch: in the Main Line's tree (cv-core's
+/// rules) but not on the Main Line. Entries cut off by a dangling parent are another tree, not a
+/// Branch, and are not included. `None` if unreadable.
+pub fn off_main_uuids(main: &Path) -> Option<HashSet<String>> {
+    let chunk = cv_core::parse::read_entries(main, 0).ok()?;
+    let files = [LoadedFile {
+        path: main.to_path_buf(),
+        role: FileRole::Main,
+        agent_id: None,
+        records: chunk.records,
+    }];
+    let s = skeleton::build(&files);
+    let on_main = tree::main_set(&s);
+    // Root of every node, memoized (parents are cycle-free).
+    let mut root: Vec<Option<usize>> = vec![None; s.nodes.len()];
+    let mut root_of = |i: usize| {
+        let mut path = vec![];
+        let mut v = i;
+        let r = loop {
+            if let Some(r) = root[v] {
+                break r;
+            }
+            match s.nodes[v].parent {
+                Some(p) => {
+                    path.push(v);
+                    v = p;
+                }
+                None => break v,
+            }
+        };
+        root[v] = Some(r);
+        for u in path {
+            root[u] = Some(r);
+        }
+        r
+    };
+    let main_root = root_of(*s.main_path.first()?);
+    Some(
+        (0..s.nodes.len())
+            .filter(|&i| root_of(i) == main_root && !on_main.contains(&s.nodes[i].uuid))
+            .map(|i| s.nodes[i].uuid.clone())
+            .collect(),
+    )
+}
+
+/// The file a `<persisted-output>` preview points to, only when it is in this Session's
+/// `tool-results/` (a tool's own output could imitate the preview).
+fn persisted_path(text: &str, session_dir: &Path) -> Option<PathBuf> {
+    if !text.trim_start().starts_with("<persisted-output>") {
+        return None;
+    }
+    const MARK: &str = "Full output saved to: ";
+    let rest = &text[text.find(MARK)? + MARK.len()..];
+    let p = PathBuf::from(rest.lines().next()?.trim());
+    let dir = session_dir.join("tool-results");
+    let ok = p.parent() == Some(dir.as_path())
+        && p.file_name().is_some()
+        && !p.components().any(|c| matches!(c, std::path::Component::ParentDir));
+    ok.then_some(p)
+}
+
+/// A text file read with the block cap (read-only).
+fn read_capped(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let f = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    f.take(MAX_BLOCK_TEXT as u64 + 4).read_to_end(&mut buf).ok()?;
+    Some(cap(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 fn read_meta_tool_use_id(dir: &Path, stem: &str) -> Option<String> {
@@ -590,7 +965,7 @@ mod tests {
         evs.iter()
             .filter_map(|e| {
                 if let TxEvent::Block(b) = e {
-                    Some(b)
+                    Some(b.as_ref())
                 } else {
                     None
                 }
@@ -733,5 +1108,178 @@ mod tests {
         let bs = main_blocks(&fixture("steer_ask_permission.jsonl"));
         assert!(bs.len() > 20);
         assert_eq!(bs[0].kind, BlockKind::User);
+    }
+
+    /// Writes `lines` (one JSON object each) to `path`.
+    fn write_lines(path: &Path, lines: &[Value]) {
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn prompt(uuid: &str, parent: Option<&str>, text: &str, ts: u32) -> Value {
+        json!({"type": "user", "uuid": uuid, "parentUuid": parent,
+            "timestamp": format!("2026-11-03T00:00:{ts:02}Z"),
+            "message": {"role": "user", "content": text}})
+    }
+
+    fn reply(uuid: &str, parent: &str, text: &str, ts: u32) -> Value {
+        json!({"type": "assistant", "uuid": uuid, "parentUuid": parent,
+            "timestamp": format!("2026-11-03T00:00:{ts:02}Z"),
+            "message": {"id": format!("m-{uuid}"), "role": "assistant",
+                "content": [{"type": "text", "text": text}]}})
+    }
+
+    #[test]
+    fn rewind_reports_a_branch_and_get_messages_keeps_the_main_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let mut lines = vec![
+            prompt("u1", None, "first", 1),
+            reply("a1", "u1", "one", 2),
+            prompt("u2", Some("a1"), "second", 3),
+            reply("a2", "u2", "two", 4),
+        ];
+        write_lines(&main, &lines);
+        let mut t = Tailer::new(&main);
+        assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Branch { .. })));
+        // Rewind to after "one" and ask something else.
+        lines.push(prompt("u3", Some("a1"), "other", 5));
+        lines.push(reply("a3", "u3", "three", 6));
+        write_lines(&main, &lines);
+        let evs = t.poll();
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, TxEvent::Branch { at_uuid } if at_uuid == "a1")),
+            "{evs:?}"
+        );
+        let texts: Vec<_> = main_blocks(&main)
+            .into_iter()
+            .filter_map(|b| b.text)
+            .collect();
+        assert_eq!(texts, ["first", "one", "other", "three"]);
+    }
+
+    #[test]
+    fn resending_the_same_prompt_is_not_a_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let mut lines = vec![
+            prompt("u1", None, "first", 1),
+            reply("a1", "u1", "one", 2),
+            prompt("u2", Some("a1"), "again", 3),
+        ];
+        write_lines(&main, &lines);
+        let mut t = Tailer::new(&main);
+        t.poll();
+        lines.push(prompt("u3", Some("a1"), "again", 4));
+        write_lines(&main, &lines);
+        assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Branch { .. })));
+    }
+
+    fn tool_result_entry(tool_use_id: &str, content: &str, extra: Value) -> Value {
+        let mut v = json!({"type": "user", "uuid": format!("r-{tool_use_id}"),
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}]}});
+        if let (Value::Object(m), Value::Object(x)) = (&mut v, extra) {
+            m.extend(x);
+        }
+        v
+    }
+
+    #[test]
+    fn persisted_output_points_only_into_the_sessions_tool_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let results = dir.path().join("s").join("tool-results");
+        std::fs::create_dir_all(&results).unwrap();
+        let full = results.join("abc.txt");
+        std::fs::write(&full, "FULL OUTPUT").unwrap();
+        let preview = |p: &Path| {
+            format!("<persisted-output>\nOutput too large (42.4KB). Full output saved to: {}\n\nPreview (first 2KB):\nFULL", p.display())
+        };
+        let outside = dir.path().join("elsewhere.txt");
+        std::fs::write(&outside, "SECRET").unwrap();
+        write_lines(
+            &main,
+            &[
+                tool_result_entry("t1", &preview(&full), json!({})),
+                tool_result_entry("t2", &preview(&outside), json!({})),
+                tool_result_entry("t3", "short", json!({})),
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        let evs = t.poll();
+        let bs = blocks(&evs);
+        let p = bs[0].persisted.as_ref().unwrap();
+        assert_eq!((p.path.as_str(), p.size), (full.to_str().unwrap(), 11));
+        assert!(bs[0].content.as_deref().unwrap().starts_with("<persisted-output>"));
+        assert!(bs[1].persisted.is_none(), "a path outside tool-results/ is not followed");
+        assert_eq!(t.tool_result("t1").unwrap().0, "FULL OUTPUT");
+        assert!(t.tool_result("t2").unwrap().0.starts_with("<persisted-output>"));
+        assert_eq!(t.tool_result("t3").unwrap(), ("short".to_string(), None));
+        assert!(t.tool_result("nope").is_none());
+    }
+
+    #[test]
+    fn workflow_runs_are_reported_with_their_subagent_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let sdir = dir.path().join("s");
+        std::fs::create_dir_all(sdir.join("workflows")).unwrap();
+        let agents = sdir.join("subagents").join("workflows").join("wf_1");
+        std::fs::create_dir_all(&agents).unwrap();
+        let wf = |status: &str, state: &str| {
+            json!({"workflowName": "review", "status": status,
+                "phases": [{"title": "Read", "detail": "parallel"}],
+                "workflowProgress": [
+                    {"type": "workflow_phase", "index": 1, "title": "Read"},
+                    {"type": "workflow_agent", "agentId": "ag1", "label": "reader",
+                        "phaseIndex": 1, "state": state}]})
+            .to_string()
+        };
+        std::fs::write(sdir.join("workflows/wf_1.json"), wf("running", "running")).unwrap();
+        write_lines(
+            &main,
+            &[tool_result_entry(
+                "toolu_wf",
+                "started",
+                json!({"toolUseResult": {"runId": "wf_1"}}),
+            )],
+        );
+        write_lines(&agents.join("agent-ag1.jsonl"), &[prompt("x1", None, "read it", 1)]);
+        let mut t = Tailer::new(&main);
+        let evs = t.poll();
+        let w = evs
+            .iter()
+            .find_map(|e| match e {
+                TxEvent::Workflow(v) => Some(v.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(w["run_id"], "wf_1");
+        assert_eq!(w["tool_use_id"], "toolu_wf");
+        assert_eq!(w["status"], "running");
+        assert_eq!(w["phases"][0]["title"], "Read");
+        assert_eq!(w["agents"][0]["label"], "reader");
+        let sub = blocks(&evs)
+            .into_iter()
+            .find(|b| b.agent_id.as_deref() == Some("ag1"))
+            .unwrap();
+        assert_eq!(sub.run_id.as_deref(), Some("wf_1"));
+        assert_eq!(sub.parent_tool_use_id.as_deref(), Some("toolu_wf"));
+        // Unchanged files: nothing new; a new state: a new snapshot.
+        t.last_discover = None;
+        assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Workflow(_))));
+        std::fs::write(sdir.join("workflows/wf_1.json"), wf("completed", "done")).unwrap();
+        t.last_discover = None;
+        let w = t
+            .poll()
+            .into_iter()
+            .find_map(|e| match e {
+                TxEvent::Workflow(v) => Some(v),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(w["status"], "completed");
     }
 }

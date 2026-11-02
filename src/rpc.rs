@@ -69,6 +69,9 @@ pub enum Command {
         since: Option<u64>,
     },
     GetScreen,
+    GetToolResult {
+        tool_use_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -284,6 +287,9 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             Ok(Command::GetMessages { since })
         }
         "get_screen" => Ok(Command::GetScreen),
+        "get_tool_result" => Ok(Command::GetToolResult {
+            tool_use_id: req_text(obj, kind, "tool_use_id")?,
+        }),
         other => Err(format!("unknown::{other}")),
     }
 }
@@ -337,6 +343,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::GetState => "get_state",
         Command::GetMessages { .. } => "get_messages",
         Command::GetScreen => "get_screen",
+        Command::GetToolResult { .. } => "get_tool_result",
     }
 }
 
@@ -557,6 +564,15 @@ mod tests {
             Request {
                 id: None,
                 command: Command::GetMessages { since: None },
+            }
+        );
+        assert_eq!(
+            parse(r#"{"type":"get_tool_result","tool_use_id":"toolu_1"}"#),
+            Request {
+                id: None,
+                command: Command::GetToolResult {
+                    tool_use_id: "toolu_1".into(),
+                },
             }
         );
         assert_eq!(
