@@ -105,8 +105,22 @@ impl Block {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TxEvent {
     Block(Box<Block>),
-    /// `system` / `turn_duration` in the main file: the end of a turn.
-    TurnEnd,
+    /// `system` / `turn_duration` in the main file: the end of a turn, with its duration.
+    TurnEnd {
+        duration_ms: Option<u64>,
+    },
+    /// One assistant message's token counts (once per message id; main line or Subagent Run).
+    Usage {
+        model: Option<String>,
+        usage: cv_core::pricing::Usage,
+        /// Cost Claude Code logged itself, if any.
+        logged_cost: Option<f64>,
+    },
+    /// The API failed in the main line (`kind` as Claude Code records it, e.g. `server_error`).
+    ApiError {
+        kind: Option<String>,
+        message: String,
+    },
     /// `queue-operation` / `enqueue`: input typed while busy was accepted.
     Enqueued {
         content: String,
@@ -123,6 +137,19 @@ pub enum TxEvent {
     },
     /// A Workflow Run's state changed (the whole state, protocol shape).
     Workflow(Value),
+}
+
+/// A background task Claude Code started: a Subagent Run, a shell or a Workflow Run.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BgTask {
+    /// Claude Code's task id (agentId, background shell id, Workflow task id).
+    pub id: String,
+    /// `agent`, `shell` or `workflow`.
+    pub kind: &'static str,
+    pub tool_use_id: String,
+    pub description: Option<String>,
+    /// `running` until Claude Code reports it ended (`completed`, `failed`, `killed`, …).
+    pub status: String,
 }
 
 /// A tool_use that has no tool_result yet.
@@ -188,6 +215,10 @@ pub struct Tailer {
     parents: HashMap<String, Option<String>>,
     /// Read the main file only (no Subagent / Workflow files).
     main_only: bool,
+    /// Assistant message ids whose usage was reported.
+    usage_seen: HashSet<String>,
+    /// Background tasks, in start order.
+    tasks: Vec<BgTask>,
     /// Byte offset of every main-file entry, kept when `main_only`.
     offsets: HashMap<String, u64>,
 }
@@ -217,7 +248,14 @@ impl Tailer {
             parents: HashMap::new(),
             main_only: false,
             offsets: HashMap::new(),
+            usage_seen: HashSet::new(),
+            tasks: Vec::new(),
         }
+    }
+
+    /// Background tasks seen so far.
+    pub fn tasks(&self) -> &[BgTask] {
+        &self.tasks
     }
 
     /// Reports every Workflow Run again on the next look (its current state).
@@ -612,7 +650,9 @@ impl Tailer {
         match e.entry_type() {
             "system" if agent.is_none() && e.subtype.as_deref() == Some("turn_duration") => {
                 self.pending.retain(|_, p| p.agent_id.is_some());
-                out.push(TxEvent::TurnEnd);
+                out.push(TxEvent::TurnEnd {
+                    duration_ms: line.duration_ms.map(|d| d.max(0.0) as u64),
+                });
             }
             "queue-operation" if agent.is_none() => {
                 if line.operation.as_deref() == Some("enqueue") {
@@ -658,10 +698,58 @@ impl Tailer {
                 let Some(msg) = &e.message else {
                     return;
                 };
+                if assistant {
+                    if e.is_api_error_message == Some(true) {
+                        if agent.is_none() {
+                            let message = match &msg.content {
+                                Some(RawContent::Text(t)) => t.clone(),
+                                Some(RawContent::Blocks(bs)) => bs
+                                    .iter()
+                                    .filter_map(|b| b.text_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                                None => String::new(),
+                            };
+                            out.push(TxEvent::ApiError {
+                                kind: line.error.clone(),
+                                message,
+                            });
+                        }
+                    } else if let (Some(id), Some(u)) = (&msg.id, &msg.usage)
+                        && self.usage_seen.insert(id.clone())
+                    {
+                        let n = |v: Option<f64>| v.unwrap_or(0.0).max(0.0);
+                        let cc = n(u.cache_creation_input_tokens);
+                        let cc_1h = u
+                            .cache_creation
+                            .as_ref()
+                            .map(|c| n(c.ephemeral_1h_input_tokens))
+                            .unwrap_or(0.0)
+                            .min(cc);
+                        out.push(TxEvent::Usage {
+                            model: msg.model.clone(),
+                            usage: cv_core::pricing::Usage {
+                                input: n(u.input_tokens),
+                                output: n(u.output_tokens),
+                                cache_read: n(u.cache_read_input_tokens),
+                                cache_write_5m: cc - cc_1h,
+                                cache_write_1h: cc_1h,
+                                fast: u.speed.as_deref() == Some("fast"),
+                            },
+                            logged_cost: e.cost_usd,
+                        });
+                    }
+                }
                 match &msg.content {
                     Some(RawContent::Text(s)) if !assistant => {
                         if is_command_record(s) {
                             return;
+                        }
+                        if agent.is_none()
+                            && let Some((id, status)) = task_notification(s)
+                            && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
+                        {
+                            t.status = status;
                         }
                         let mut b = Block::new(BlockKind::User, &uuid, 0);
                         b.text = Some(s.clone());
@@ -694,6 +782,19 @@ impl Tailer {
                                 .and_then(|b| b.tool_use_id.clone())
                         {
                             self.run_tools.entry(run_id).or_insert(tid);
+                        }
+                        // A prompt with images: image blocks and its text.
+                        if !assistant
+                            && agent.is_none()
+                            && blocks.iter().any(|b| b.block_type() == "image")
+                            && !blocks.iter().any(|b| b.block_type() == "tool_result")
+                        {
+                            let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).collect();
+                            self.last_text = None;
+                            out.push(TxEvent::UserPrompt {
+                                uuid: uuid.clone(),
+                                text: text.join("\n"),
+                            });
                         }
                         for (i, rb) in blocks.iter().enumerate() {
                             if let Some(b) = self.block_of(rb, &uuid, i, assistant, agent) {
@@ -766,9 +867,32 @@ impl Tailer {
             }
             "tool_result" if !assistant => {
                 let tid = rb.tool_use_id.clone().unwrap_or_default();
-                self.pending.remove(&tid);
+                let tool = self.pending.remove(&tid);
                 let mut b = Block::new(BlockKind::ToolResult, uuid, i);
                 let text = result_text(rb.content.as_deref());
+                if agent.is_none()
+                    && let Some((kind, id)) = background_launch(&text)
+                    && !self.tasks.iter().any(|t| t.id == id)
+                {
+                    let input = tool.as_ref().map(|t| &t.input);
+                    let field = |k: &str| {
+                        input
+                            .and_then(|i| i.get(k))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    };
+                    let summary = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("Summary: "))
+                        .map(str::to_string);
+                    self.tasks.push(BgTask {
+                        id,
+                        kind,
+                        tool_use_id: tid.clone(),
+                        description: field("description").or(summary).or_else(|| field("command")),
+                        status: "running".into(),
+                    });
+                }
                 if let Some(path) = persisted_path(&text, &self.session_dir()) {
                     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                     b.persisted = Some(Persisted {
@@ -940,14 +1064,25 @@ fn read_meta_tool_use_id(dir: &Path, stem: &str) -> Option<String> {
 struct Line {
     entry: RawEntry,
     operation: Option<String>,
+    error: Option<String>,
+    duration_ms: Option<f64>,
     /// Byte offset of the line in its file.
     offset: u64,
 }
 
-#[derive(serde::Deserialize)]
-struct OperationField {
+/// Fields of a few entry kinds that cv-core does not model.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ExtraFields {
+    /// `queue-operation`.
     #[serde(default)]
     operation: Option<String>,
+    /// API error messages (`isApiErrorMessage`): `server_error`, `rate_limit`, …
+    #[serde(default)]
+    error: Option<String>,
+    /// `system` / `turn_duration`.
+    #[serde(default)]
+    duration_ms: Option<f64>,
 }
 
 struct Chunk {
@@ -1007,16 +1142,19 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
         let Ok(entry) = serde_json::from_slice::<RawEntry>(raw) else {
             continue;
         };
-        let operation = if entry.entry_type() == "queue-operation" {
-            serde_json::from_slice::<OperationField>(raw)
-                .ok()
-                .and_then(|o| o.operation)
+        let wants_extra = entry.entry_type() == "queue-operation"
+            || entry.is_api_error_message == Some(true)
+            || entry.subtype.as_deref() == Some("turn_duration");
+        let extra = if wants_extra {
+            serde_json::from_slice::<ExtraFields>(raw).unwrap_or_default()
         } else {
-            None
+            ExtraFields::default()
         };
         lines.push(Line {
             entry,
-            operation,
+            operation: extra.operation,
+            error: extra.error,
+            duration_ms: extra.duration_ms,
             offset,
         });
     }
@@ -1025,6 +1163,43 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
         consumed_to: from + end as u64,
         capped: want == MAX_READ,
     })
+}
+
+/// A tool result saying a background task started: `(kind, task id)`.
+fn background_launch(text: &str) -> Option<(&'static str, String)> {
+    let after = |mark: &str| {
+        let rest = &text[text.find(mark)? + mark.len()..];
+        let id: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+        (!id.is_empty()).then_some(id)
+    };
+    if text.starts_with("Async agent launched") {
+        return after("agentId:").map(|id| ("agent", id));
+    }
+    if text.starts_with("Command running in background with ID:") {
+        return after("with ID:").map(|id| ("shell", id));
+    }
+    if text.starts_with("Workflow launched in background") {
+        return after("Task ID:").map(|id| ("workflow", id));
+    }
+    None
+}
+
+/// A `<task-notification>` that ended a task: `(task id, status)`.
+fn task_notification(text: &str) -> Option<(String, String)> {
+    let tag = |name: &str| {
+        let open = format!("<{name}>");
+        let start = text.find(&open)? + open.len();
+        let end = text[start..].find(&format!("</{name}>"))? + start;
+        Some(text[start..end].trim().to_string())
+    };
+    if !text.contains("<task-notification>") {
+        return None;
+    }
+    Some((tag("task-id")?, tag("status")?))
 }
 
 /// Slash-command bookkeeping that Claude Code records as user entries.
@@ -1108,7 +1283,7 @@ mod tests {
             prompts[0],
             "Reply with exactly the word PONG and nothing else."
         );
-        let turn_ends = evs.iter().filter(|e| matches!(e, TxEvent::TurnEnd)).count();
+        let turn_ends = evs.iter().filter(|e| matches!(e, TxEvent::TurnEnd { .. })).count();
         assert!(turn_ends >= 5, "{turn_ends}");
         let bs = blocks(&evs);
         assert!(
@@ -1335,6 +1510,42 @@ mod tests {
     fn system(uuid: &str, parent: Option<&str>, subtype: &str, logical: Option<&str>) -> Value {
         json!({"type": "system", "subtype": subtype, "uuid": uuid, "parentUuid": parent,
             "logicalParentUuid": logical, "content": ""})
+    }
+
+    #[test]
+    fn usage_once_per_message_api_errors_and_turn_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let usage = json!({"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100,
+            "cache_creation_input_tokens": 40, "cache_creation": {"ephemeral_1h_input_tokens": 30}});
+        let part = |uuid: &str, kind: &str| {
+            json!({"type": "assistant", "uuid": uuid, "message": {"id": "msg_1", "model": "claude-sonnet-5-5",
+                "role": "assistant", "usage": usage, "content": [{"type": kind, "text": "x", "thinking": ""}]}})
+        };
+        write_lines(
+            &main,
+            &[
+                prompt("u1", None, "hi", 1),
+                part("a1", "thinking"),
+                part("a2", "text"),
+                json!({"type": "assistant", "uuid": "e1", "isApiErrorMessage": true, "error": "rate_limit",
+                    "message": {"id": "e", "model": "<synthetic>", "role": "assistant",
+                        "content": [{"type": "text", "text": "API Error: 429"}]}}),
+                json!({"type": "system", "subtype": "turn_duration", "uuid": "d1", "durationMs": 4200}),
+            ],
+        );
+        let evs = Tailer::new(&main).poll();
+        let usages: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match e {
+                TxEvent::Usage { usage, .. } => Some(*usage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(usages.len(), 1, "one message, two entries");
+        assert_eq!((usages[0].cache_write_5m, usages[0].cache_write_1h), (10.0, 30.0));
+        assert!(evs.iter().any(|e| matches!(e, TxEvent::ApiError { kind: Some(k), message } if k == "rate_limit" && message == "API Error: 429")));
+        assert!(evs.iter().any(|e| matches!(e, TxEvent::TurnEnd { duration_ms: Some(4200) })));
     }
 
     #[test]

@@ -10,6 +10,10 @@ const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir D
   ccrpc new [--cwd DIR] [--size COLSxROWS] [-- claude 参数…]
   ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>
   ccrpc ls
+  ccrpc doctor
+  ccrpc layouts list
+  ccrpc layouts export <仓库目录>
+  ccrpc debug replay <transcript.jsonl>…
   ccrpc debug screen <Holder ID>
   ccrpc debug keys <Holder ID> <按键|text:文字>…
   ccrpc debug paste <Holder ID> <文字>";
@@ -33,6 +37,9 @@ pub fn run(args: Vec<String>) -> Result<()> {
     }
     match args.first().map(String::as_str) {
         Some("ls") => cmd_ls(&roots),
+        Some("doctor") => cmd_doctor(&roots),
+        Some("layouts") => cmd_layouts(&args[1..]),
+        Some("debug") if args.get(1).map(String::as_str) == Some("replay") => cmd_replay(&args[2..]),
         Some("debug") => cmd_debug(&roots, &args[1..]),
         Some("new") => crate::session::cmd_new(&roots, &args[1..]),
         Some("attach") => crate::session::cmd_attach(&roots, &args[1..]),
@@ -112,5 +119,192 @@ fn cmd_debug(roots: &Roots, args: &[String]) -> Result<()> {
     }
     std::thread::sleep(Duration::from_millis(100));
     conn.detach();
+    Ok(())
+}
+
+/// Checks what ccrpc depends on and prints one line per check (`ok` / `warn` / `fail`).
+fn cmd_doctor(roots: &Roots) -> Result<()> {
+    let mut failed = false;
+    let mut line = |level: &str, what: &str, detail: String| {
+        if level == "fail" {
+            failed = true;
+        }
+        println!("{level}\t{what}\t{detail}");
+    };
+    // toh
+    match std::process::Command::new("toh").arg("--version").output() {
+        Ok(o) if o.status.success() => line("ok", "toh", String::from_utf8_lossy(&o.stdout).trim().to_string()),
+        _ => line("fail", "toh", "PATH 里没有可用的 toh".into()),
+    }
+    // claude
+    match std::process::Command::new("claude").arg("--version").output() {
+        Ok(o) if o.status.success() => {
+            let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let ver = out.split_whitespace().next().unwrap_or_default().to_string();
+            if crate::session::TESTED_CLAUDE_VERSIONS.contains(&ver.as_str()) {
+                line("ok", "claude", out);
+            } else {
+                line("warn", "claude", format!("{out}：不是实测过的版本（{}），内置布局可能认不出", crate::session::TESTED_CLAUDE_VERSIONS.join(", ")));
+            }
+        }
+        _ => line("fail", "claude", "PATH 里没有可用的 claude".into()),
+    }
+    // directories
+    for (what, dir) in [("ToH 状态目录", &roots.toh_state), ("Claude Code 配置目录", &roots.claude_config)] {
+        if dir.is_dir() {
+            line("ok", what, dir.display().to_string());
+        } else {
+            line("fail", what, format!("{} 不存在", dir.display()));
+        }
+    }
+    let sessions = roots.sessions_dir();
+    match std::fs::read_dir(&sessions) {
+        Ok(rd) => {
+            let n = rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count();
+            line("ok", "进程文件", format!("{} 下 {n} 个", sessions.display()));
+        }
+        Err(_) => line("warn", "进程文件", format!("读不到 {}", sessions.display())),
+    }
+    // TUI mode (read-only)
+    let settings = roots.claude_config.join("settings.json");
+    let tui = std::fs::read(&settings)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v["tui"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "default".into());
+    line("ok", "TUI", tui);
+    // Holders
+    let holders = locate::list_holders(roots);
+    let table = locate::process_table()?;
+    let with_claude = holders
+        .iter()
+        .filter(|(_, m)| locate::find_claude_under(&table, m.child_pid).is_some())
+        .count();
+    line("ok", "clay Holder", format!("{} 个，其中 {with_claude} 个在跑 Claude Code", holders.len()));
+    // layouts and analyzer
+    let lib = crate::layout::Library::load(crate::layout::library_dir());
+    let learned = lib.layouts.iter().filter(|l| l.source == "learned").count();
+    line(
+        "ok",
+        "布局库",
+        format!("内置 {}、本机学到 {learned}（{}）", lib.layouts.len() - learned, lib.dir().display()),
+    );
+    match crate::analyze::Analyzer::from_env() {
+        Some(a) => line("ok", "分析器", format!("{} · {}", a.base_url, a.model)),
+        None => line("warn", "分析器", "没设 CCRPC_ANALYZER_API_KEY，认不出的界面只会报 unrecognized / dialog".into()),
+    }
+    if failed {
+        bail!("有检查未通过");
+    }
+    Ok(())
+}
+
+/// `layouts list` / `layouts export <repo dir>`.
+fn cmd_layouts(args: &[String]) -> Result<()> {
+    let lib = crate::layout::Library::load(crate::layout::library_dir());
+    match args.first().map(String::as_str) {
+        Some("list") => {
+            for l in &lib.layouts {
+                let kind = serde_json::to_value(l.kind)?;
+                println!("{}\t{}\t{}\t{}", l.id, l.source, kind.as_str().unwrap_or(""), l.title);
+            }
+            Ok(())
+        }
+        Some("export") => {
+            let Some(repo) = args.get(1) else {
+                bail!("用法：ccrpc layouts export <仓库目录>");
+            };
+            let dir = std::path::Path::new(repo).join("layouts");
+            std::fs::create_dir_all(&dir).with_context(|| format!("建不了 {}", dir.display()))?;
+            let mut n = 0;
+            for l in lib.layouts.iter().filter(|l| l.source == "learned") {
+                let mut out = l.clone();
+                out.source = String::new();
+                let path = dir.join(format!("{}.json", l.id));
+                std::fs::write(&path, serde_json::to_string_pretty(&out)? + "\n")?;
+                println!("{}", path.display());
+                n += 1;
+            }
+            eprintln!("导出 {n} 个布局；重新构建后成为内置布局，单测会用它们各自的屏幕检查");
+            Ok(())
+        }
+        _ => bail!("用法：ccrpc layouts list | ccrpc layouts export <仓库目录>"),
+    }
+}
+
+/// Replays transcripts line by line through the tail and checks that the live view (blocks minus
+/// what each `branch` drops) equals `get_messages`; prints each Branch. Fails on a mismatch.
+fn cmd_replay(files: &[String]) -> Result<()> {
+    use crate::transcript::{Tailer, TxEvent, main_blocks};
+    use std::io::Write;
+    if files.is_empty() {
+        bail!("用法：ccrpc debug replay <transcript.jsonl>…");
+    }
+    let tmp = std::env::temp_dir().join(format!("ccrpc-replay-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp)?;
+    let (mut branches, mut mismatches) = (0usize, 0usize);
+    for (n, f) in files.iter().enumerate() {
+        let Ok(data) = std::fs::read(f) else {
+            eprintln!("读不了 {f}");
+            continue;
+        };
+        let p = tmp.join(format!("t{n}.jsonl"));
+        let mut out = std::fs::File::create(&p)?;
+        let mut t = Tailer::new(&p);
+        let mut live: Vec<String> = Vec::new();
+        let mut apply = |evs: Vec<TxEvent>, live: &mut Vec<String>, lineno: usize| {
+            for ev in evs {
+                match ev {
+                    TxEvent::Block(b) if b.agent_id.is_none() => {
+                        if live.last() != Some(&b.uuid) {
+                            live.push(b.uuid.clone());
+                        }
+                    }
+                    TxEvent::Branch { at_uuid } => {
+                        branches += 1;
+                        let keep = at_uuid
+                            .as_ref()
+                            .and_then(|a| live.iter().rposition(|u| u == a))
+                            .map_or(0, |i| i + 1);
+                        println!("{f}\tline {lineno}\tbranch at={at_uuid:?} dropped={}", live.len() - keep);
+                        live.truncate(keep);
+                    }
+                    _ => {}
+                }
+            }
+        };
+        for (i, line) in data.split(|&b| b == b'\n').enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            out.write_all(line)?;
+            out.write_all(b"\n")?;
+            out.flush()?;
+            loop {
+                let evs = t.poll();
+                apply(evs, &mut live, i + 1);
+                if !t.behind() {
+                    break;
+                }
+            }
+        }
+        let (blocks, _) = main_blocks(&p, 0);
+        let mut gm: Vec<String> = Vec::new();
+        for b in blocks {
+            if gm.last() != Some(&b.uuid) {
+                gm.push(b.uuid);
+            }
+        }
+        if gm != live {
+            mismatches += 1;
+            println!("{f}\tmismatch live={} get_messages={}", live.len(), gm.len());
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+    let _ = std::fs::remove_dir(&tmp);
+    println!("files={} branches={branches} mismatches={mismatches}", files.len());
+    if mismatches > 0 {
+        bail!("{mismatches} 个文件的实时视图与 get_messages 不一致");
+    }
     Ok(())
 }

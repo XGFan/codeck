@@ -1,4 +1,6 @@
+pub mod analyze;
 pub mod cli;
+pub mod layout;
 pub mod locate;
 pub mod procfile;
 pub mod procs;

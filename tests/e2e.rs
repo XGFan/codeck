@@ -92,7 +92,7 @@ fn setup(key: &str) -> Env {
     std::fs::write(cc_dir.join(".claude.json"), claude_json.to_string()).unwrap();
     std::fs::write(
         cc_dir.join("settings.json"),
-        json!({"permissions": {"defaultMode": "default"}}).to_string(),
+        settings_json().to_string(),
     )
     .unwrap();
     std::fs::write(work_dir.join("a.txt"), "hello\n").unwrap();
@@ -104,6 +104,15 @@ fn setup(key: &str) -> Env {
         cc_dir,
         work: work_dir,
     }
+}
+
+/// `CCRPC_E2E_TUI=fullscreen` runs Claude Code with the fullscreen TUI (the owner's daily setup).
+fn settings_json() -> Value {
+    let mut v = json!({"permissions": {"defaultMode": "default"}});
+    if std::env::var("CCRPC_E2E_TUI").as_deref() == Ok("fullscreen") {
+        v["tui"] = json!("fullscreen");
+    }
+    v
 }
 
 fn toml_str(s: &str) -> String {
@@ -775,4 +784,130 @@ fn settle_idle(rpc: &mut Rpc) {
             }
         }
     }
+}
+
+/// Prints the screen under a name (layout probing).
+fn dump(rpc: &mut Rpc, name: &str) -> Vec<String> {
+    let scr = rpc.call(&format!("dump-{name}"), json!({"type": "get_screen"}));
+    let lines: Vec<String> = scr["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l.as_str().unwrap_or("").to_string())
+        .collect();
+    eprintln!("SCREEN[{name}] cursor={}", scr["cursor"]);
+    for (i, l) in lines.iter().enumerate() {
+        eprintln!("SCREEN[{name}]|{i:02}|{l}");
+    }
+    lines
+}
+
+/// Waits for a `state` event whose state is `state` (and `waiting.kind`, if given).
+fn wait_state(rpc: &mut Rpc, state: &str, secs: u64) -> Value {
+    rpc.until(state, Duration::from_secs(secs), |v| v["type"] == "state" && v["state"] == state)
+}
+
+#[test]
+#[ignore = "layout probe: prints screens of real Claude Code; needs CCRPC_E2E_API_KEY"]
+fn probe_layouts() {
+    let Ok(key) = std::env::var("CCRPC_E2E_API_KEY") else {
+        eprintln!("跳过：没有 CCRPC_E2E_API_KEY");
+        return;
+    };
+    let env = setup(&key);
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    dump(&mut rpc, "idle");
+
+    // Permission modes: shift+tab cycles; print the footer each time.
+    for i in 0..4 {
+        rpc.call(&format!("m{i}"), json!({"type": "send_keys", "keys": ["shift+tab"]}));
+        std::thread::sleep(Duration::from_millis(600));
+        dump(&mut rpc, &format!("mode{i}"));
+    }
+
+    // Image by path: a bracketed paste of a PNG file path.
+    let png = env.work.join("dot.png");
+    // 1×1 red PNG.
+    let bytes = base64::engine::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    )
+    .unwrap();
+    std::fs::write(&png, bytes).unwrap();
+    let paste = format!("\x1b[200~{}\x1b[201~", png.display());
+    rpc.call("i1", json!({"type": "send_keys", "keys": [{"text": paste}]}));
+    std::thread::sleep(Duration::from_millis(1000));
+    dump(&mut rpc, "image-pasted");
+    rpc.call("i2", json!({"type": "send_keys", "keys": [{"text": " What color is this image? Reply with one word, without using tools."}, "enter"]}));
+    let mut n = 0;
+    loop {
+        let v = rpc.until("image turn", Duration::from_secs(90), |v| {
+            v["type"] == "turn_end" || v["type"] == "permission_request"
+        });
+        if v["type"] == "turn_end" {
+            break;
+        }
+        n += 1;
+        rpc.call(&format!("i3-{n}"), json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}));
+    }
+    dump(&mut rpc, "image-answered");
+
+    // Permission dialog and question in this TUI.
+    rpc.call("p1", json!({"type": "prompt", "text": "Run exactly this shell command and nothing else: touch probe.txt"}));
+    rpc.until("permission", Duration::from_secs(60), |v| {
+        v["type"] == "state" && v["state"] == "waiting"
+    });
+    std::thread::sleep(Duration::from_millis(800));
+    dump(&mut rpc, "permission");
+    rpc.call("p2", json!({"type": "send_keys", "keys": ["esc"]}));
+    wait_state(&mut rpc, "idle", 20);
+    rpc.call("q1", json!({"type": "prompt", "text": "Call the AskUserQuestion tool once with a single question 'Pick one?' with options Alpha and Beta."}));
+    rpc.until("question", Duration::from_secs(60), |v| {
+        v["type"] == "state" && v["state"] == "waiting"
+    });
+    std::thread::sleep(Duration::from_millis(800));
+    dump(&mut rpc, "question");
+    rpc.call("q2", json!({"type": "send_keys", "keys": ["esc"]}));
+    wait_state(&mut rpc, "idle", 20);
+
+    // Background agent and its management view.
+    rpc.call("b1", json!({"type": "prompt", "text": "Use the Agent tool once with run_in_background true (subagent_type general-purpose) with this task: run `sleep 25` with Bash, then reply DONE. Do not wait for it; reply STARTED right away."}));
+    std::thread::sleep(Duration::from_secs(8));
+    dump(&mut rpc, "background-running");
+    rpc.call("b2", json!({"type": "send_keys", "keys": ["down"]}));
+    std::thread::sleep(Duration::from_millis(800));
+    dump(&mut rpc, "background-down");
+    rpc.call("b3", json!({"type": "send_keys", "keys": ["enter"]}));
+    std::thread::sleep(Duration::from_millis(800));
+    dump(&mut rpc, "background-enter");
+    rpc.call("b4", json!({"type": "send_keys", "keys": ["esc"]}));
+    std::thread::sleep(Duration::from_millis(500));
+    rpc.call("b5", json!({"type": "send_keys", "keys": [{"text": "/tasks"}]}));
+    std::thread::sleep(Duration::from_millis(500));
+    dump(&mut rpc, "tasks-typed");
+    rpc.call("b6", json!({"type": "send_keys", "keys": ["enter"]}));
+    std::thread::sleep(Duration::from_millis(1000));
+    dump(&mut rpc, "tasks-open");
+    rpc.call("b7", json!({"type": "send_keys", "keys": ["esc"]}));
+    std::thread::sleep(Duration::from_secs(25));
+    dump(&mut rpc, "background-done");
+
+    // Plan mode: the plan approval dialog.
+    rpc.forget();
+    rpc.call("pl1", json!({"type": "send_keys", "keys": ["esc", "ctrl+u"]}));
+    for _ in 0..2 {
+        rpc.call("pl2", json!({"type": "send_keys", "keys": ["shift+tab"]}));
+        std::thread::sleep(Duration::from_millis(400));
+    }
+    dump(&mut rpc, "plan-mode");
+    rpc.call("pl3", json!({"type": "send_keys", "keys": [{"text": "Make a one-step plan to create a file named plan.txt, then present it for approval right away."}, "enter"]}));
+    let _ = rpc.until("plan approval", Duration::from_secs(90), |v| {
+        v["type"] == "state" && v["state"] == "waiting"
+    });
+    std::thread::sleep(Duration::from_millis(1000));
+    dump(&mut rpc, "plan-approval");
+    rpc.call("pl4", json!({"type": "send_keys", "keys": ["esc"]}));
+    std::thread::sleep(Duration::from_millis(800));
+    dump(&mut rpc, "end");
 }

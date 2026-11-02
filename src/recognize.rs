@@ -95,7 +95,8 @@ impl PermissionDialog {
 
 fn classify(label: &str) -> PermissionChoice {
     let l = label.trim();
-    let lower = l.to_lowercase();
+    // Claude Code writes `don’t` with a typographic apostrophe.
+    let lower = l.to_lowercase().replace('’', "'");
     // `Yes, run it`: the Workflow dialog's plain yes.
     if l == "Yes" || l == "Yes, run it" {
         PermissionChoice::Allow
@@ -129,18 +130,13 @@ fn permission_question(lines: &[String]) -> Option<(usize, usize)> {
         }
         return Some((q, i));
     }
-    let menu = (q + 1..lines.len())
-        .rev()
-        .find(|&i| parse_option(&lines[i]).is_some_and(|(n, _, _)| n == 1))?;
-    Some((q, menu))
+    Some((q, last_menu_start(lines, q)?))
 }
 
-/// A tool permission dialog (see [`permission_question`]): a strictly sequential numbered menu:
-/// option 1 first, each next option on the following row or after continuation rows indented
-/// deeper than the number, exactly one `❯`, `No…` last, a plain `Yes` present, and no further
-/// numbered row below the menu. Anything else is refused.
-pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
-    let (_, mut i) = permission_question(lines)?;
+/// A strictly sequential numbered menu starting on row `i`: option 1 first, each next option on
+/// the following row or after continuation rows indented deeper than the number, exactly one
+/// `❯`, and no further numbered row below it. `(number, full label)`; anything else is refused.
+pub fn strict_menu(lines: &[String], mut i: usize) -> Option<Vec<(u32, String)>> {
     let mut opts: Vec<(u32, String, bool, usize)> = Vec::new(); // number, label, cursor, indent
     while i < lines.len() {
         let line = &lines[i];
@@ -173,9 +169,27 @@ pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
     if lines[i..].iter().any(|l| parse_option(l).is_some()) {
         return None;
     }
-    let options: Vec<_> = opts
-        .iter()
-        .map(|(n, l, _, _)| (*n, l.clone(), classify(l)))
+    Some(opts.into_iter().map(|(n, l, _, _)| (n, l)).collect())
+}
+
+/// Row of the last option numbered 1 after row `from` (the menu of a dialog whose body may
+/// hold numbered lines itself).
+pub fn last_menu_start(lines: &[String], from: usize) -> Option<usize> {
+    (from + 1..lines.len())
+        .rev()
+        .find(|&i| parse_option(&lines[i]).is_some_and(|(n, _, _)| n == 1))
+}
+
+/// A tool permission dialog (see [`permission_question`]): a [`strict_menu`] with `No…` last and
+/// a plain `Yes` present. Anything else is refused.
+pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
+    let (_, i) = permission_question(lines)?;
+    let options: Vec<_> = strict_menu(lines, i)?
+        .into_iter()
+        .map(|(n, l)| {
+            let c = classify(&l);
+            (n, l, c)
+        })
         .collect();
     let has = |c| options.iter().any(|o| o.2 == c);
     let deny_last = options
@@ -205,7 +219,8 @@ pub fn permission_body(lines: &[String]) -> Option<String> {
         lines[top + 1..menu]
             .iter()
             .flat_map(|l| l.chars())
-            .filter(|c| !c.is_whitespace())
+            // `│` frames a multi-line command; it is not part of it.
+            .filter(|c| !c.is_whitespace() && *c != '│')
             .collect(),
     )
 }
@@ -394,6 +409,60 @@ mod tests {
     }
 
     #[test]
+    fn multi_line_command_and_typographic_apostrophe() {
+        let lines = screen("permission_multiline_bash.txt");
+        let d = permission(&lines).unwrap();
+        assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
+        assert_eq!(d.number_for(PermissionChoice::Deny), Some(4));
+        let command = "python3 -I -c \"\nfrom PIL import Image\nim = Image.open('/private/var";
+        let needle: String = command.chars().filter(|c| !c.is_whitespace()).take(40).collect();
+        assert!(permission_body(&lines).unwrap().contains(&needle));
+    }
+
+    fn lines(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn permission_mode_from_the_footer() {
+        use crate::rpc::PermissionMode;
+        let base = |footer: &str| lines(&["❯ hello", "─────", "❯", "─────", footer]);
+        assert_eq!(permission_mode(&base("  ⏸ manual mode on · ? for shortcuts")), Some(PermissionMode::Manual));
+        assert_eq!(permission_mode(&base("  ⏵⏵ accept edits on (shift+tab to cycle)")), Some(PermissionMode::AcceptEdits));
+        assert_eq!(permission_mode(&base("  ⏸ plan mode on (shift+tab to cycle)")), Some(PermissionMode::Plan));
+        assert_eq!(permission_mode(&base("  ⏵⏵ auto mode on (shift+tab to cycle)")), Some(PermissionMode::Auto));
+        assert_eq!(permission_mode(&base("  ? for shortcuts")), None);
+    }
+
+    #[test]
+    fn tasks_panel_list_and_details() {
+        let list = lines(&[
+            "──────",
+            "  Background",
+            "  2 active shells",
+            "",
+            "  ❯ ⏺ sleep 25   running",
+            "    ⏺ npm run dev   running",
+            "",
+            "  ↑/↓ to select · Enter to view · x to stop · Esc to close",
+        ]);
+        assert_eq!(
+            tasks_panel(&list),
+            Some(TasksPanel::List(vec![
+                ("⏺ sleep 25   running".into(), true),
+                ("⏺ npm run dev   running".into(), false),
+            ]))
+        );
+        let details = lines(&[
+            "   Shell details",
+            "   Status:   running",
+            "   Command:  sleep 25",
+            "   ← to go back · Esc/Enter/Space to close · x to stop",
+        ]);
+        assert!(matches!(tasks_panel(&details), Some(TasksPanel::Details(t)) if t.contains("sleep 25")));
+    }
+
+    #[test]
     fn workflow_dialog_menu_after_numbered_phases() {
         let lines = screen("permission_workflow.txt");
         let d = permission(&lines).unwrap();
@@ -499,4 +568,61 @@ mod tests {
         );
         assert_eq!(input_box(&screen("ask_single.txt")), None);
     }
+}
+
+/// The permission mode shown in the footer below the input box (`⏸ manual mode on`, `⏵⏵ accept
+/// edits on`, `⏸ plan mode on`, `⏵⏵ auto mode on`).
+pub fn permission_mode(lines: &[String]) -> Option<crate::rpc::PermissionMode> {
+    use crate::rpc::PermissionMode::*;
+    let rule = lines
+        .iter()
+        .rposition(|l| l.starts_with('─') && l.chars().all(|c| c == '─'))?;
+    lines[rule + 1..].iter().find_map(|l| {
+        let l = l.to_lowercase();
+        if l.contains("manual mode on") {
+            Some(Manual)
+        } else if l.contains("accept edits on") {
+            Some(AcceptEdits)
+        } else if l.contains("plan mode on") {
+            Some(Plan)
+        } else if l.contains("auto mode on") {
+            Some(Auto)
+        } else {
+            None
+        }
+    })
+}
+
+/// The background tasks panel (`/tasks`): a list with a `❯` cursor, or one task's details.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TasksPanel {
+    /// Rows `(text, selected)` from top to bottom.
+    List(Vec<(String, bool)>),
+    /// The text of a task's details view.
+    Details(String),
+}
+
+/// Recognizes the panel by its hint line (`… x to stop …`): `↑/↓ to select` marks the list.
+pub fn tasks_panel(lines: &[String]) -> Option<TasksPanel> {
+    let hint = lines.iter().rposition(|l| l.contains("x to stop"))?;
+    if lines[hint].contains("to select") {
+        let title = lines[..hint]
+            .iter()
+            .rposition(|l| l.trim() == "Background")?;
+        let rows = lines[title + 1..hint]
+            .iter()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .filter(|l| l.split_whitespace().nth(1).is_none_or(|w| w != "active"))
+            .map(|l| match l.strip_prefix('❯') {
+                Some(rest) => (rest.trim().to_string(), true),
+                None => (l.to_string(), false),
+            })
+            .collect();
+        return Some(TasksPanel::List(rows));
+    }
+    let title = lines[..hint]
+        .iter()
+        .rposition(|l| l.trim().ends_with("details"))?;
+    Some(TasksPanel::Details(lines[title..hint].join("\n")))
 }

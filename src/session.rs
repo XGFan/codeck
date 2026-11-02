@@ -12,10 +12,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
+use crate::analyze::{self, Analyzer};
+use crate::layout::{self, Layout, LayoutKind, Library, Meaning};
 use crate::locate::{self, Roots};
 use crate::procfile::{self, ProcessFile};
 use crate::pty::{self, HolderConn, Owner};
-use crate::recognize::{self, AskScreen, PermissionChoice};
+use crate::recognize::{self, AskScreen, PermissionChoice, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
 use crate::transcript::{self, BlockKind, PendingTool, Tailer, TxEvent};
@@ -40,6 +42,28 @@ const KEY_MIN_GAP: Duration = Duration::from_millis(50);
 const KEY_SETTLE: Duration = Duration::from_millis(80);
 /// PTY size ccrpc sets when it takes the size (ADR-0001).
 pub const DEFAULT_SIZE: (u16, u16) = (160, 48);
+/// Claude Code versions the built-in layouts were probed on.
+pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316"];
+/// At most this many analyses an hour.
+const MAX_ANALYSES_PER_HOUR: usize = 10;
+
+/// Rows of the dialog at the bottom of the screen (from the last full-width rule), for telling
+/// one unrecognized dialog from another.
+fn dialog_signature(lines: &[String]) -> String {
+    let top = lines
+        .iter()
+        .rposition(|l| {
+            let t = l.trim();
+            t.chars().count() > 20 && t.chars().all(|c| matches!(c, '─' | '▔' | '━'))
+        })
+        .map_or(0, |i| i + 1);
+    lines[top..]
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 /// Tools that never ask for permission themselves (their inner tools do).
 const NO_PERMISSION_TOOLS: &[&str] = &["AskUserQuestion", "Agent", "Task"];
 
@@ -90,6 +114,47 @@ impl State {
     }
 }
 
+/// What one turn did, reported with its `turn_end`.
+#[derive(Default)]
+struct TurnStats {
+    started: Option<Instant>,
+    duration_ms: Option<u64>,
+    input: f64,
+    output: f64,
+    cache_read: f64,
+    cache_creation: f64,
+    /// Estimated API cost; `None` once a message's model has no price.
+    cost: Option<f64>,
+    error: Option<Value>,
+    aborted: bool,
+}
+
+impl TurnStats {
+    fn start() -> TurnStats {
+        TurnStats {
+            started: Some(Instant::now()),
+            cost: Some(0.0),
+            ..Default::default()
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        let measured = self.started.map(|t| t.elapsed().as_millis() as u64);
+        json!({
+            "error": self.error,
+            "aborted": self.aborted,
+            "duration_ms": self.duration_ms.or(measured),
+            "usage": {
+                "input_tokens": self.input as u64,
+                "output_tokens": self.output as u64,
+                "cache_read_input_tokens": self.cache_read as u64,
+                "cache_creation_input_tokens": self.cache_creation as u64,
+            },
+            "api_cost": self.cost.map(|c| (c * 1e6).round() / 1e6),
+        })
+    }
+}
+
 /// Failure of a command: `(code, message)`.
 type CmdErr = (&'static str, String);
 type CmdResult = std::result::Result<Value, CmdErr>;
@@ -129,6 +194,15 @@ impl Marks {
             .iter()
             .rev()
             .find(|(s, _, t)| *s > after && t.trim() == text.trim())
+            .map(|(_, u, _)| u.as_str())
+    }
+
+    /// A prompt sent with images: its recorded text may carry the `[Image #n]` placeholders.
+    fn prompt_with_images_after(&self, after: u64, text: &str) -> Option<&str> {
+        self.prompts
+            .iter()
+            .rev()
+            .find(|(s, _, t)| *s > after && t.trim().ends_with(text.trim()))
             .map(|(_, u, _)| u.as_str())
     }
 
@@ -187,6 +261,20 @@ pub struct Engine {
     /// A turn is running (a prompt was seen or the state was busy) and has not been closed.
     turn_active: bool,
     last_text: Option<String>,
+    turn: TurnStats,
+    prices: cv_core::pricing::PriceTable,
+    library: Library,
+    analyzer: Option<Analyzer>,
+    /// The analysis in flight: dialog signature and where its result arrives.
+    analysis: Option<(String, Receiver<std::result::Result<Layout, String>>)>,
+    /// Dialog signatures already analyzed (never twice).
+    analyzed: HashSet<String>,
+    analyses: VecDeque<Instant>,
+    /// Layout of the choice announced.
+    choice_layout: Option<String>,
+    choice_seq: u64,
+    /// The Holder reports size owners (not an older Holder).
+    holder_reports_owner: bool,
     /// Request (tool_use id) or dialog announced for the current waiting.
     announced: Option<String>,
     startup_checked: Option<Instant>,
@@ -216,7 +304,9 @@ impl Engine {
             .and_then(|t| locate::tty_size(t).ok())
             .unwrap_or((80, 24));
         let conn = HolderConn::connect(&roots.holder_socket(holder_id), cols, rows)?;
-        match conn.initial_owner(Duration::from_secs(3))? {
+        let initial = conn.initial_owner(Duration::from_secs(3))?;
+        let holder_reports_owner = initial != Owner::Unknown;
+        match initial {
             Owner::Other(client) if !opts.force => {
                 conn.detach();
                 bail!("Session 正被 {client} 使用，加 --force 强制连接");
@@ -254,6 +344,16 @@ impl Engine {
             turn_end_due: None,
             turn_active: false,
             last_text: None,
+            turn: TurnStats::default(),
+            prices: cv_core::pricing::PriceTable::embedded(),
+            library: Library::load(layout::library_dir()),
+            analyzer: Analyzer::from_env(),
+            analysis: None,
+            analyzed: HashSet::new(),
+            analyses: VecDeque::new(),
+            choice_layout: None,
+            choice_seq: 0,
+            holder_reports_owner,
             announced: None,
             startup_checked: None,
             startup_last: None,
@@ -383,17 +483,49 @@ impl Engine {
                     if b.agent_id.is_none() && b.kind == BlockKind::Text {
                         self.last_text = b.text.clone();
                     }
+                    if b.agent_id.is_none()
+                        && b.kind == BlockKind::User
+                        && b.text
+                            .as_deref()
+                            .is_some_and(|t| t.starts_with("[Request interrupted by user"))
+                    {
+                        self.turn.aborted = true;
+                    }
                     let mut v = serde_json::to_value(&b).unwrap_or(Value::Null);
                     if let Value::Object(m) = &mut v {
                         m.insert("type".into(), json!("block"));
                     }
                     self.emit(v);
                 }
-                TxEvent::TurnEnd => saw_turn_end = true,
+                TxEvent::TurnEnd { duration_ms } => {
+                    saw_turn_end = true;
+                    if duration_ms.is_some() {
+                        self.turn.duration_ms = duration_ms;
+                    }
+                }
+                TxEvent::Usage {
+                    model,
+                    usage,
+                    logged_cost,
+                } => {
+                    let t = &mut self.turn;
+                    t.input += usage.input;
+                    t.output += usage.output;
+                    t.cache_read += usage.cache_read;
+                    t.cache_creation += usage.cache_write_5m + usage.cache_write_1h;
+                    let c = self.prices.cost(model.as_deref(), &usage, logged_cost);
+                    t.cost = t.cost.zip(c).map(|(a, b)| a + b);
+                }
+                TxEvent::ApiError { kind, message } => {
+                    self.turn.error = Some(json!({"kind": kind, "message": message}));
+                }
                 TxEvent::UserPrompt { uuid, text } => {
                     // A new prompt opens a new turn; close the previous one first.
                     if self.turn_end_due.is_some() {
                         self.emit_turn_end();
+                    }
+                    if !self.turn_active {
+                        self.turn = TurnStats::start();
                     }
                     self.turn_active = true;
                     self.last_text = None;
@@ -453,7 +585,11 @@ impl Engine {
     fn emit_turn_end(&mut self) {
         self.turn_end_due = None;
         self.turn_active = false;
-        self.emit(json!({"type": "turn_end", "last_text": self.last_text}));
+        let mut v = self.turn.to_json();
+        v["type"] = json!("turn_end");
+        v["last_text"] = json!(self.last_text);
+        self.emit(v);
+        self.turn = TurnStats::default();
     }
 
     fn set_exited(&mut self) {
@@ -475,6 +611,9 @@ impl Engine {
         }
         // A turn is something that ran; a dialog that opens and closes from idle is not.
         if s == State::Busy {
+            if !self.turn_active {
+                self.turn = TurnStats::start();
+            }
             self.turn_active = true;
         }
         if s == State::Idle && self.turn_active {
@@ -591,7 +730,7 @@ impl Engine {
         ) {
             return;
         }
-        if id.starts_with("dialog:") {
+        if id.starts_with("dialog:") || id.starts_with("choice:") {
             return;
         }
         if self
@@ -612,9 +751,33 @@ impl Engine {
 
     /// The pending tool the permission dialog on `s` is about: the one whose command / file shows
     /// in the dialog body; failing that, the only candidate when no candidate has anything to show.
+    /// A permission dialog on `lines`: the built-in recognizer, else a permission layout from the
+    /// library. With the dialog's body for matching the pending tool.
+    fn dialog_of(&self, lines: &[String]) -> Option<(PermissionDialog, String)> {
+        if let Some(d) = recognize::permission(lines) {
+            return Some((d, recognize::permission_body(lines)?));
+        }
+        let (l, opts) = self.library.find(lines)?;
+        if l.kind != LayoutKind::Permission {
+            return None;
+        }
+        let options = opts
+            .into_iter()
+            .map(|o| {
+                let c = match o.meaning {
+                    Meaning::Allow => PermissionChoice::Allow,
+                    Meaning::AllowAlways => PermissionChoice::AllowAlways,
+                    Meaning::Deny => PermissionChoice::Deny,
+                    Meaning::Other => PermissionChoice::Other,
+                };
+                (o.number, o.label, c)
+            })
+            .collect();
+        Some((PermissionDialog { options }, l.body(lines)?))
+    }
+
     fn permission_target(&self, s: &Screen) -> Option<PendingTool> {
-        recognize::permission(&s.lines)?;
-        let body = recognize::permission_body(&s.lines)?;
+        let (_, body) = self.dialog_of(&s.lines)?;
         let t = self.tailer.as_ref()?;
         let cands: Vec<&PendingTool> = t
             .pending()
@@ -647,6 +810,7 @@ impl Engine {
     }
 
     fn announce_requests(&mut self) {
+        self.poll_analysis();
         let State::Waiting { kind, waiting_for } = self.state.clone() else {
             return;
         };
@@ -660,12 +824,23 @@ impl Engine {
                     self.announced = Some(p.id.clone());
                     self.emit(json!({"type": "permission_request", "request_id": p.id, "tool_name": p.name,
                         "input": p.input, "agent_id": p.agent_id}));
-                } else if self.waiting_age() >= MATCH_GRACE {
+                    return;
+                }
+                let Some(s) = screen else {
+                    return;
+                };
+                // Wait for the dialog to render before taking it for something else.
+                if self.waiting_age() < Duration::from_millis(250) {
+                    return;
+                }
+                if self.announce_choice(&s) || self.analyzing(&s, &waiting_for) {
+                    return;
+                }
+                if self.waiting_age() >= MATCH_GRACE {
                     // Cannot tie the dialog to a tool: hand the screen to the caller.
                     self.announced = Some(format!("dialog:{waiting_for}"));
-                    let lines = screen.map(|s| s.lines).unwrap_or_default();
                     self.emit(
-                        json!({"type": "dialog", "waiting_for": waiting_for, "lines": lines}),
+                        json!({"type": "dialog", "waiting_for": waiting_for, "lines": s.lines}),
                     );
                 }
             }
@@ -689,10 +864,168 @@ impl Engine {
                 if self.waiting_age() < Duration::from_millis(250) {
                     return;
                 }
+                let s = self.screen().unwrap_or_default();
+                if self.announce_choice(&s) || self.analyzing(&s, &waiting_for) {
+                    return;
+                }
                 self.announced = Some(format!("dialog:{waiting_for}"));
-                let lines = self.screen().map(|s| s.lines).unwrap_or_default();
-                self.emit(json!({"type": "dialog", "waiting_for": waiting_for, "lines": lines}));
+                self.emit(json!({"type": "dialog", "waiting_for": waiting_for, "lines": s.lines}));
             }
+        }
+    }
+
+    /// A choice layout on screen: announce it. True when announced.
+    fn announce_choice(&mut self, s: &Screen) -> bool {
+        let Some((l, opts)) = self.library.find(&s.lines) else {
+            return false;
+        };
+        if l.kind != LayoutKind::Choice {
+            return false;
+        }
+        let (id, title) = (l.id.clone(), l.title.clone());
+        // A choice raised by a tool (ExitPlanMode…): the single pending tool, if any.
+        let tool = self.tailer.as_ref().and_then(|t| {
+            let p: Vec<_> = t
+                .pending()
+                .into_iter()
+                .filter(|p| !self.resolved.contains(&p.id))
+                .collect();
+            (p.len() == 1).then(|| p[0].id.clone())
+        });
+        self.choice_seq += 1;
+        let rid = format!("choice:{}", self.choice_seq);
+        self.announced = Some(rid.clone());
+        self.choice_layout = Some(id.clone());
+        let options: Vec<Value> = opts
+            .iter()
+            .map(|o| json!({"label": o.label, "meaning": o.meaning, "description": o.description}))
+            .collect();
+        self.emit(json!({"type": "choice", "request_id": rid, "title": title, "options": options,
+            "tool_use_id": tool, "layout": id}));
+        true
+    }
+
+    /// Hands an unrecognized dialog to the analyzer (once per dialog, rate-limited). True while
+    /// its analysis is in flight: the dialog is not reported as unrecognized meanwhile.
+    fn analyzing(&mut self, s: &Screen, waiting_for: &str) -> bool {
+        let sig = dialog_signature(&s.lines);
+        if let Some((pending, _)) = &self.analysis {
+            return *pending == sig;
+        }
+        let Some(analyzer) = self.analyzer.clone() else {
+            return false;
+        };
+        if sig.is_empty() || self.analyzed.contains(&sig) {
+            return false;
+        }
+        while self
+            .analyses
+            .front()
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(3600))
+        {
+            self.analyses.pop_front();
+        }
+        if self.analyses.len() >= MAX_ANALYSES_PER_HOUR {
+            return false;
+        }
+        self.analyses.push_back(Instant::now());
+        self.analyzed.insert(sig.clone());
+        let pending: Vec<(String, Value)> = self
+            .tailer
+            .as_ref()
+            .map(|t| {
+                t.pending()
+                    .into_iter()
+                    .filter(|p| !self.resolved.contains(&p.id))
+                    .map(|p| (p.name.clone(), p.input.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let lines = s.lines.clone();
+        let waiting_for = waiting_for.to_string();
+        let version = self.pf.as_ref().and_then(|p| p.version.clone());
+        let (tx, rx) = mpsc::channel();
+        let wake = self.wake.clone();
+        std::thread::spawn(move || {
+            let req = analyze::Request {
+                lines: &lines,
+                waiting_for: &waiting_for,
+                pending,
+                claude_version: version,
+            };
+            let _ = tx.send(analyzer.analyze(&req).map_err(|e| format!("{e:#}")));
+            wake.bump();
+        });
+        self.analysis = Some((sig, rx));
+        true
+    }
+
+    /// Takes the analyzer's answer: a layout that passes its structural checks on the screen it
+    /// came from goes into the library (and is used at once, ADR-0002).
+    fn poll_analysis(&mut self) {
+        let Some((_, rx)) = &self.analysis else {
+            return;
+        };
+        let res = match rx.try_recv() {
+            Ok(r) => r,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("分析器线程意外结束".into()),
+        };
+        self.analysis = None;
+        let layout = match res {
+            Ok(l) if l.match_screen(&l.screen).is_some() => l,
+            Ok(l) => {
+                self.emit(json!({"type": "analysis_failed", "error": "分析结果与屏幕对不上", "title": l.title}));
+                return;
+            }
+            Err(e) => {
+                self.emit(json!({"type": "analysis_failed", "error": e}));
+                return;
+            }
+        };
+        let (id, kind, title) = (layout.id.clone(), layout.kind, layout.title.clone());
+        match self.library.save(layout) {
+            Ok(path) => self.emit(json!({"type": "layout_learned", "layout": id, "kind": kind,
+                "title": title, "path": path.display().to_string()})),
+            Err(e) => self.emit(json!({"type": "analysis_failed", "error": format!("{e:#}")})),
+        }
+    }
+
+    /// Answers the announced choice by an option's text (exact, else a unique prefix).
+    fn answer_choice(&mut self, request_id: &str, option: &str) -> CmdResult {
+        match &self.state {
+            State::Waiting { .. } => {}
+            State::Exited => return err("exited", "Session 已结束"),
+            _ => return err("not_waiting", format!("当前状态为 {}", self.state.name())),
+        }
+        if self.announced.as_deref() != Some(request_id) || !request_id.starts_with("choice:") {
+            return err("unknown_request", format!("当前挂起的选择不是 {request_id}"));
+        }
+        let now = self.fresh_screen()?;
+        let Some((l, opts)) = self.library.find(&now.lines) else {
+            return Err(self.unrecognized("answer_choice", Some(&now)));
+        };
+        if Some(&l.id) != self.choice_layout.as_ref() {
+            return err("unknown_request", "屏幕上已经不是这个选择");
+        }
+        let exact: Vec<_> = opts.iter().filter(|o| o.label == option).collect();
+        let prefix: Vec<_> = opts.iter().filter(|o| o.label.starts_with(option)).collect();
+        let pick = match (exact.as_slice(), prefix.as_slice()) {
+            ([o], _) | ([], [o]) => o.number,
+            _ => {
+                let labels: Vec<&str> = opts.iter().map(|o| o.label.as_str()).collect();
+                return err("bad_request", format!("没有唯一对应的选项：{option}；可选 {labels:?}"));
+            }
+        };
+        self.keys(pick.to_string().as_bytes())?;
+        let rid = request_id.to_string();
+        let ok = self.wait_until(Duration::from_secs(10), |e| {
+            !matches!(e.state, State::Waiting { .. }) || e.announced.as_deref() != Some(rid.as_str())
+        });
+        if ok {
+            Ok(json!({"state": self.state.name()}))
+        } else {
+            err("timeout", "作答后 10 秒内状态没有变化")
         }
     }
 
@@ -878,11 +1211,11 @@ impl Engine {
     /// Pastes `clean` and presses Enter, checking before each step that the input box (not a
     /// dialog) has the screen, so Enter cannot answer a dialog.
     fn paste_and_submit(&mut self, clean: &str) -> std::result::Result<(), CmdErr> {
-        self.input_box_now()?;
+        let before = self.input_box_now()?;
         self.paste(clean)?;
-        // Long pastes show as a `[Pasted text …]` placeholder: wait for anything in the box.
+        // Long pastes show as a `[Pasted text …]` placeholder: wait for the box to change.
         self.wait_screen(Duration::from_secs(2), |_, s| {
-            recognize::input_box(&s.lines).filter(|t| !t.is_empty())
+            recognize::input_box(&s.lines).filter(|t| !t.is_empty() && *t != before)
         });
         self.input_box_now()?;
         self.keys(b"\r")
@@ -910,6 +1243,10 @@ impl Engine {
     }
 
     fn send_prompt(&mut self, text: &str) -> CmdResult {
+        self.send_prompt_with(text, &[])
+    }
+
+    fn send_prompt_with(&mut self, text: &str, images: &[String]) -> CmdResult {
         // Idle and no turn open (a prompt just submitted shows busy only ~1 s later). A turn that is
         // only waiting for its end marker closes within a few seconds: wait for that.
         if self.state == State::Idle && self.turn_active {
@@ -919,16 +1256,39 @@ impl Engine {
         }
         self.require(self.state == State::Idle && !self.turn_active, "not_idle")?;
         let clean = Self::clean_text(text)?;
+        for p in images {
+            if !std::path::Path::new(p).is_file() {
+                return err("bad_request", format!("图片文件不存在：{p}"));
+            }
+        }
         self.clear_input()?;
+        // Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
+        for (k, p) in images.iter().enumerate() {
+            let mark = format!("[Image #{}]", k + 1);
+            self.paste(&pty::sanitize(p))?;
+            let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
+                recognize::input_box(&s.lines).filter(|t| t.contains(&mark))
+            });
+            if shown.is_none() {
+                return err("bad_request", format!("Claude Code 没有把 {p} 当成图片"));
+            }
+        }
         let before = self.marks.seq;
         self.paste_and_submit(&clean)?;
-        let ok = self.wait_until(Duration::from_secs(30), |e| {
-            e.marks.prompt_after(before, &clean).is_some()
-        });
+        let found = |e: &Engine| -> Option<String> {
+            if images.is_empty() {
+                e.marks.prompt_after(before, &clean).map(str::to_string)
+            } else {
+                e.marks
+                    .prompt_with_images_after(before, &clean)
+                    .map(str::to_string)
+            }
+        };
+        let ok = self.wait_until(Duration::from_secs(30), |e| found(e).is_some());
         if !ok {
             return err("timeout", "30 秒内没在 transcript 里看到这条提示词");
         }
-        Ok(json!({"uuid": self.marks.prompt_after(before, &clean)}))
+        Ok(json!({"uuid": found(self)}))
     }
 
     fn steer(&mut self, text: &str) -> CmdResult {
@@ -1013,7 +1373,7 @@ impl Engine {
         let rid = request_id.to_string();
         // The dialog on screen must be the one for this request.
         let found = self.wait_screen(Duration::from_secs(3), |e, s| {
-            let d = recognize::permission(&s.lines)?;
+            let (d, _) = e.dialog_of(&s.lines)?;
             (e.permission_target(s)?.id == rid).then_some(d)
         });
         let Some((d, s)) = found else {
@@ -1248,6 +1608,174 @@ impl Engine {
         Ok(json!({}))
     }
 
+    fn cancel_follow_up(&mut self, index: Option<usize>) -> CmdResult {
+        let removed = match index {
+            Some(i) if i < self.follow_ups.len() => {
+                self.follow_ups.remove(i);
+                1
+            }
+            Some(i) => {
+                return err(
+                    "bad_request",
+                    format!("follow_up 队列只有 {} 条，没有第 {i} 条", self.follow_ups.len()),
+                );
+            }
+            None => std::mem::take(&mut self.follow_ups).len(),
+        };
+        Ok(json!({"removed": removed, "follow_ups": self.follow_ups}))
+    }
+
+    /// Takes the Session back after a takeover: without `force` only once the person's client
+    /// is gone (no size owner online).
+    fn reclaim(&mut self, force: bool) -> CmdResult {
+        if self.state == State::Exited {
+            return err("exited", "Session 已结束");
+        }
+        if !self.taken_over {
+            return err("not_taken_over", "Session 没有被接手");
+        }
+        match self.conn.owner() {
+            Owner::Me | Owner::Nobody => {}
+            Owner::Other(c) if !force => {
+                return err("taken_over", format!("Session 正被 {c} 使用，加 force 强制取回"));
+            }
+            Owner::Unknown if !force => {
+                return err(
+                    "taken_over",
+                    "Holder 不报告尺寸所有者，无法确认对方已离开，加 force 强制取回",
+                );
+            }
+            _ => {}
+        }
+        self.conn.clear_taken_by();
+        self.conn
+            .claim_size(self.size.0, self.size.1)
+            .map_err(|e| ("io", format!("{e:#}")))?;
+        self.taken_over = false;
+        self.last_size_check = Instant::now();
+        self.emit(json!({"type": "reclaimed"}));
+        Ok(json!({"size": [self.size.0, self.size.1]}))
+    }
+
+    fn mode_now(&self) -> Option<rpc::PermissionMode> {
+        self.screen().ok().and_then(|s| recognize::permission_mode(&s.lines))
+    }
+
+    /// Cycles the permission mode with shift+tab until the footer shows `mode`.
+    fn set_mode(&mut self, mode: rpc::PermissionMode) -> CmdResult {
+        self.require(matches!(self.state, State::Idle | State::Busy), "not_idle")?;
+        self.input_box_now()?;
+        let Some(start) = self.mode_now() else {
+            return Err(self.unrecognized("set_mode", None));
+        };
+        let mut cur = start;
+        for _ in 0..rpc::PermissionMode::CYCLE.len() {
+            if cur == mode {
+                return Ok(json!({"mode": mode.name()}));
+            }
+            self.keys(b"\x1b[Z")?;
+            let was = cur;
+            let next = self.wait_screen(Duration::from_secs(2), |_, s| {
+                recognize::permission_mode(&s.lines).filter(|m| *m != was)
+            });
+            let Some((m, _)) = next else {
+                return Err(self.unrecognized("set_mode", None));
+            };
+            cur = m;
+            if cur == start {
+                break;
+            }
+        }
+        if cur == mode {
+            return Ok(json!({"mode": mode.name()}));
+        }
+        err("not_offered", format!("权限模式里没有 {}", mode.name()))
+    }
+
+    /// Stops a running background task from Claude Code's `/tasks` panel.
+    fn stop_task(&mut self, id: &str) -> CmdResult {
+        let task = self
+            .tailer
+            .as_ref()
+            .and_then(|t| t.tasks().iter().find(|t| t.id == id).cloned());
+        let Some(task) = task else {
+            return err("unknown_request", format!("没有后台任务 {id}"));
+        };
+        if task.status != "running" {
+            return err("bad_request", format!("后台任务 {id} 已经结束（{}）", task.status));
+        }
+        let needle: String = task
+            .description
+            .clone()
+            .unwrap_or_default()
+            .chars()
+            .take(30)
+            .collect();
+        if needle.trim().is_empty() {
+            return err("unrecognized_screen", format!("后台任务 {id} 没有可在面板里比对的描述"));
+        }
+        self.slash("tasks")?;
+        let Some((panel, s)) = self.wait_screen(Duration::from_secs(3), |_, s| recognize::tasks_panel(&s.lines))
+        else {
+            return Err(self.unrecognized("stop_task", None));
+        };
+        match panel {
+            recognize::TasksPanel::Details(text) => {
+                if !text.contains(needle.trim()) {
+                    self.keys(b"\x1b")?;
+                    return Err(self.unrecognized("stop_task", Some(&s)));
+                }
+            }
+            recognize::TasksPanel::List(rows) => {
+                let Some(target) = rows.iter().position(|(t, _)| t.contains(needle.trim())) else {
+                    self.keys(b"\x1b")?;
+                    return Err(self.unrecognized("stop_task", Some(&s)));
+                };
+                let Some(cur) = rows.iter().position(|(_, sel)| *sel) else {
+                    self.keys(b"\x1b")?;
+                    return Err(self.unrecognized("stop_task", Some(&s)));
+                };
+                let key: &[u8] = if target > cur { b"\x1b[B" } else { b"\x1b[A" };
+                for _ in 0..target.abs_diff(cur) {
+                    self.keys(key)?;
+                }
+                let on_target = self.wait_screen(Duration::from_secs(2), |_, s| match recognize::tasks_panel(&s.lines) {
+                    Some(recognize::TasksPanel::List(rows)) => rows
+                        .iter()
+                        .find(|(_, sel)| *sel)
+                        .filter(|(t, _)| t.contains(needle.trim()))
+                        .map(|_| ()),
+                    _ => None,
+                });
+                if on_target.is_none() {
+                    self.keys(b"\x1b")?;
+                    return Err(self.unrecognized("stop_task", None));
+                }
+            }
+        }
+        self.keys(b"x")?;
+        let tid = id.to_string();
+        let stopped = self.wait_until(Duration::from_secs(10), |e| {
+            e.tailer
+                .as_ref()
+                .and_then(|t| t.tasks().iter().find(|t| t.id == tid))
+                .is_some_and(|t| t.status != "running")
+        });
+        // Close the panel if it is still open.
+        if self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines)).is_some() {
+            self.keys(b"\x1b")?;
+        }
+        let status = self
+            .tailer
+            .as_ref()
+            .and_then(|t| t.tasks().iter().find(|t| t.id == tid))
+            .map(|t| t.status.clone());
+        if !stopped {
+            return err("timeout", format!("10 秒内没看到后台任务 {id} 结束"));
+        }
+        Ok(json!({"status": status}))
+    }
+
     fn get_state(&self) -> Value {
         let mut v = self.state.to_json();
         let request = self.announced.as_ref().map(|id| {
@@ -1261,6 +1789,7 @@ impl Engine {
         v["session_id"] = json!(self.session_id);
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["follow_up_queue"] = json!(self.follow_ups.len());
+        v["follow_ups"] = json!(self.follow_ups);
         v["taken_over"] = json!(self.taken_over);
         v
     }
@@ -1280,12 +1809,23 @@ impl Engine {
                 | Command::GetMessages { .. }
                 | Command::GetScreen
                 | Command::GetToolResult { .. }
+                | Command::GetTasks
+                | Command::CancelFollowUp { .. }
+                | Command::Reclaim { .. }
         );
         if self.taken_over && !reads {
             return err("taken_over", "Session 已被人接手，只读");
         }
         match c {
-            Command::Prompt { text } => self.send_prompt(text),
+            Command::Prompt { text, images } => self.send_prompt_with(text, images),
+            Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
+            Command::Reclaim { force } => self.reclaim(*force),
+            Command::SetMode { mode } => self.set_mode(*mode),
+            Command::GetTasks => Ok(json!({
+                "tasks": self.tailer.as_ref().map(|t| t.tasks().to_vec()).unwrap_or_default()
+            })),
+            Command::StopTask { id } => self.stop_task(id),
+            Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Steer { text } => self.steer(text),
             Command::FollowUp { text } => {
                 self.require(true, "")?;
@@ -1340,6 +1880,16 @@ impl Engine {
         v["claude_version"] = json!(version);
         v["size"] = json!([self.size.0, self.size.1]);
         v["taken_over"] = json!(self.taken_over);
+        let mut warnings = Vec::new();
+        if let Some(ver) = &version
+            && !TESTED_CLAUDE_VERSIONS.contains(&ver.as_str())
+        {
+            warnings.push(format!("Claude Code {ver} 不是实测过的版本，认不出的界面会交给分析器或报 unrecognized"));
+        }
+        if !self.holder_reports_owner {
+            warnings.push("Holder 不报告尺寸所有者，只能靠 PTY 尺寸变化判断接手".to_string());
+        }
+        v["warnings"] = json!(warnings);
         self.emit(v);
     }
 

@@ -34,6 +34,8 @@ pub enum Key {
 pub enum Command {
     Prompt {
         text: String,
+        /// Image files on the Host, pasted by path before the text.
+        images: Vec<String>,
     },
     Steer {
         text: String,
@@ -72,6 +74,52 @@ pub enum Command {
     GetToolResult {
         tool_use_id: String,
     },
+    /// Drops queued follow-ups: the one at `index`, or all.
+    CancelFollowUp {
+        index: Option<usize>,
+    },
+    /// Takes the Session back after a takeover.
+    Reclaim {
+        force: bool,
+    },
+    SetMode {
+        mode: PermissionMode,
+    },
+    GetTasks,
+    StopTask {
+        id: String,
+    },
+    AnswerChoice {
+        request_id: String,
+        option: String,
+    },
+}
+
+/// Claude Code's permission modes, in shift+tab order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionMode {
+    Manual,
+    AcceptEdits,
+    Plan,
+    Auto,
+}
+
+impl PermissionMode {
+    pub const CYCLE: [PermissionMode; 4] = [
+        PermissionMode::Manual,
+        PermissionMode::AcceptEdits,
+        PermissionMode::Plan,
+        PermissionMode::Auto,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PermissionMode::Manual => "manual",
+            PermissionMode::AcceptEdits => "accept_edits",
+            PermissionMode::Plan => "plan",
+            PermissionMode::Auto => "auto",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +160,28 @@ fn opt_text(obj: &Map<String, Value>, cmd: &str, field: &str) -> Result<Option<S
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
         Some(_) => Err(format!("{cmd} 的 {field} 必须是字符串")),
+    }
+}
+
+fn opt_bool(obj: &Map<String, Value>, cmd: &str, field: &str) -> Result<bool, String> {
+    match obj.get(field) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(format!("{cmd} 的 {field} 必须是布尔值")),
+    }
+}
+
+fn opt_strings(obj: &Map<String, Value>, cmd: &str, field: &str) -> Result<Vec<String>, String> {
+    match obj.get(field) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|v| match v {
+                Value::String(s) if !s.trim().is_empty() => Ok(s.clone()),
+                _ => Err(format!("{cmd} 的 {field} 必须是非空字符串数组")),
+            })
+            .collect(),
+        Some(_) => Err(format!("{cmd} 的 {field} 必须是字符串数组")),
     }
 }
 
@@ -204,6 +274,37 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
     match kind {
         "prompt" => Ok(Command::Prompt {
             text: req_text(obj, kind, "text")?,
+            images: opt_strings(obj, kind, "images")?,
+        }),
+        "cancel_follow_up" => Ok(Command::CancelFollowUp {
+            index: match obj.get("index") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(
+                    v.as_u64()
+                        .ok_or("cancel_follow_up 的 index 必须是非负整数")? as usize,
+                ),
+            },
+        }),
+        "reclaim" => Ok(Command::Reclaim {
+            force: opt_bool(obj, kind, "force")?,
+        }),
+        "set_mode" => {
+            let m = req_text(obj, kind, "mode")?;
+            let mode = PermissionMode::CYCLE
+                .into_iter()
+                .find(|p| p.name() == m)
+                .ok_or_else(|| {
+                    format!("set_mode 的 mode 只能是 manual / accept_edits / plan / auto，收到 {m}")
+                })?;
+            Ok(Command::SetMode { mode })
+        }
+        "get_tasks" => Ok(Command::GetTasks),
+        "stop_task" => Ok(Command::StopTask {
+            id: req_text(obj, kind, "id")?,
+        }),
+        "answer_choice" => Ok(Command::AnswerChoice {
+            request_id: req_text(obj, kind, "request_id")?,
+            option: req_text(obj, kind, "option")?,
         }),
         "steer" => Ok(Command::Steer {
             text: req_text(obj, kind, "text")?,
@@ -344,6 +445,12 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::GetMessages { .. } => "get_messages",
         Command::GetScreen => "get_screen",
         Command::GetToolResult { .. } => "get_tool_result",
+        Command::CancelFollowUp { .. } => "cancel_follow_up",
+        Command::Reclaim { .. } => "reclaim",
+        Command::SetMode { .. } => "set_mode",
+        Command::GetTasks => "get_tasks",
+        Command::StopTask { .. } => "stop_task",
+        Command::AnswerChoice { .. } => "answer_choice",
     }
 }
 
@@ -424,7 +531,10 @@ mod tests {
             parse(r#"{"id":"1","type":"prompt","text":"hi"}"#),
             Request {
                 id: Some("1".into()),
-                command: Command::Prompt { text: "hi".into() },
+                command: Command::Prompt {
+                    text: "hi".into(),
+                    images: vec![],
+                },
             }
         );
         assert_eq!(

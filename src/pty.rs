@@ -286,6 +286,11 @@ impl HolderConn {
         self.inner.lock().taken_by.clone()
     }
 
+    /// Forgets who took the size (before ccrpc takes it back).
+    pub fn clear_taken_by(&self) {
+        self.inner.lock().taken_by = None;
+    }
+
     pub fn owner(&self) -> Owner {
         self.inner.lock().owner.clone()
     }
