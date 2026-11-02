@@ -8,7 +8,7 @@ ccrpc：让 Host 本机的脚本以 JSONL（stdin / stdout）驱动跑在 ToH cl
 
 - **对 Claude Code 透明**：不加 hooks、MCP、channel、启动参数，不用 `claude -p`。写只经 Holder 的 PTY，读只用 transcript、进程文件、屏幕。
 - **只读**：Claude Code 配置目录与 ToH 状态目录下的文件只用 `File::open` 读，绝不写、移动、删除。
-- 屏幕识别只认见过的布局，认不出就发 `unrecognized`，不猜、不按键。
+- 屏幕识别只认布局库里的布局（实测的内置布局，或分析器分析得出、存在本机的布局，见 [ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出或过不了结构检查就发 `unrecognized`，不猜、不按键。
 - 端到端测试必须用独立的 `TOH_STATE_DIR` 与 `CLAUDE_CONFIG_DIR`，去掉 `TOH_CONFIG`、`KITTY_*`、`WEZTERM_*`、`KAKU_UNIX_SOCKET`、`ITERM_SESSION_ID`、`CLAUDECODE`、`TOH_HOLDER_ID`；测试 ToH 配置设 `[lan] bind = "127.0.0.1"`、`mdns = false`。清理只按记下的 PID / Holder ID。绝不碰主人真实的 clay Session。
 
 ## 常用命令
