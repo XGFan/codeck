@@ -99,6 +99,7 @@ pub struct Engine {
     /// Raw `(status, waitingFor)` last read, with when it was first seen.
     raw_since: Option<((String, Option<String>), Instant)>,
     turn_end_due: Option<Instant>,
+    turn_active: bool,
     announced: Option<String>,
     startup_checked: Option<Instant>,
     startup_last: Option<Vec<String>>,
@@ -129,6 +130,7 @@ impl Engine {
             state: State::Starting,
             raw_since: None,
             turn_end_due: None,
+            turn_active: false,
             announced: None,
             startup_checked: None,
             startup_last: None,
@@ -283,8 +285,12 @@ impl Engine {
         if self.turn_end_due.is_some() && matches!(s, State::Busy | State::Waiting { .. }) {
             self.emit_turn_end();
         }
-        let was_active = matches!(self.state, State::Busy | State::Waiting { .. });
-        if s == State::Idle && was_active {
+        // A turn is something that ran (was busy); a dialog that opens and closes from idle is not.
+        if s == State::Busy {
+            self.turn_active = true;
+        }
+        if s == State::Idle && self.turn_active {
+            self.turn_active = false;
             self.turn_end_due = Some(Instant::now() + TURN_END_GRACE);
         }
         if !matches!(s, State::Waiting { .. }) {
@@ -916,6 +922,7 @@ impl Engine {
         self.last_locate = None;
         self.tick();
         self.turn_end_due = None;
+        self.turn_active = self.state == State::Busy || matches!(self.state, State::Waiting { .. });
         self.announced = None;
         self.startup_checked = None;
         self.startup_last = None;
