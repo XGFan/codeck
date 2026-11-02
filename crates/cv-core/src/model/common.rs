@@ -58,6 +58,7 @@ pub struct BranchChoice {
 #[serde(rename_all = "camelCase")]
 pub enum LiveStatus {
     Busy,
+    Waiting,
     Idle,
     Unknown,
 }
@@ -76,6 +77,8 @@ pub enum LiveSource {
 pub struct LiveState {
     pub status: LiveStatus,
     pub raw_status: Option<String>,
+    /// Only set while Waiting (`permission prompt`, `input needed`, ...).
+    pub waiting_for: Option<String>,
     pub pid: Option<u32>,
     pub source: LiveSource,
 }

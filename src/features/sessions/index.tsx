@@ -172,7 +172,7 @@ function SessionRow({
   byCreated: boolean;
   onOpen: (id: string) => void;
 }) {
-  const busy = s.live?.status === "busy";
+  const state = s.live?.status === "busy" ? "busy" : s.live?.status === "waiting" ? "waiting" : "idle";
   return (
     <div
       role="option"
@@ -189,11 +189,13 @@ function SessionRow({
         {s.live && (
           <span
             data-testid="live-dot"
-            data-state={busy ? "busy" : "idle"}
-            title={busy ? "进行中 · 工作中" : "进行中 · 等待输入"}
+            data-state={state}
+            title={state === "busy" ? "进行中 · 工作中" : state === "waiting" ? "进行中 · 等待作答" : "进行中 · 等待输入"}
             className={cn(
               "size-2 shrink-0 rounded-full",
-              busy ? "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]" : "box-border border-[1.5px] border-live",
+              state === "busy" && "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]",
+              state === "waiting" && "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
+              state === "idle" && "box-border border-[1.5px] border-live",
             )}
           />
         )}

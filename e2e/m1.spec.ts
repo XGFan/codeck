@@ -90,11 +90,20 @@ test("离开底部时出现新消息提示", async ({ page }) => {
   await expect(page.getByText("另一条新消息")).toBeVisible();
 });
 
+test("等待作答的 Session 显示琥珀色点", async ({ page }) => {
+  await page.goto("/");
+  const dot = page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" }).getByTestId("live-dot");
+  await expect(dot).toHaveAttribute("data-state", "waiting");
+  await expect(dot).toHaveAttribute("title", "进行中 · 等待作答");
+  await page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" }).click();
+  await expect(page.getByTestId("live-state")).toContainText("进行中 · 等待作答");
+});
+
 test("setLive 切换进行中标记", async ({ page }) => {
   const id = await openRich(page);
   const dot = page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).getByTestId("live-dot");
   await expect(dot).toHaveAttribute("data-state", "busy");
-  await page.evaluate((sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", pid: null, source: "recentWrite" }), id);
+  await page.evaluate((sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: null, source: "recentWrite" }), id);
   await expect(dot).toHaveAttribute("data-state", "idle");
   await expect(page.getByTestId("live-state")).toContainText("等待输入");
   await page.evaluate((sid) => window.__cvMock!.setLive(sid, null), id);

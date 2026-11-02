@@ -29,7 +29,7 @@ export function SessionHeader() {
   const t = s.tokens;
   const project = d.projectPath.split("/").filter(Boolean).pop() ?? d.projectPath;
   const liveText = live
-    ? `进行中 · ${live.status === "busy" ? "工作中" : "等待输入"}`
+    ? `进行中 · ${live.status === "busy" ? "工作中" : live.status === "waiting" ? "等待作答" : "等待输入"}`
     : `已结束 · ${formatRelative(s.lastActiveMs)}`;
 
   return (

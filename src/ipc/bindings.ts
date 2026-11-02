@@ -275,11 +275,13 @@ export type LiveSource =
 export type LiveState = {
 	status: LiveStatus,
 	rawStatus: string | null,
+	/**  Only set while Waiting (`permission prompt`, `input needed`, ...). */
+	waitingFor: string | null,
 	pid: number | null,
 	source: LiveSource,
 };
 
-export type LiveStatus = "busy" | "idle" | "unknown";
+export type LiveStatus = "busy" | "waiting" | "idle" | "unknown";
 
 export type ModelCost = {
 	model: string,

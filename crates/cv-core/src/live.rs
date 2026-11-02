@@ -3,7 +3,7 @@
 //!
 //! A process file is live when its pid exists and the process started within ±2 s of `procStart`
 //! (`ps -o lstart` format; a mismatch means the pid was reused). `status: "busy"` is
-//! Busy, any other value Idle with the raw value kept. Sessions named by no process file count as
+//! Busy, `"waiting"` Waiting (with `waitingFor`), any other value Idle with the raw value kept. Sessions named by no process file count as
 //! live (Idle, `RecentWrite`) when their main file was written in the last 5 minutes.
 
 use std::collections::{BTreeMap, HashSet};
@@ -31,6 +31,12 @@ pub struct ProcessFile {
     pub status: Option<String>,
     #[serde(default)]
     pub proc_start: Option<String>,
+    #[serde(default)]
+    pub waiting_for: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 /// Reads every `*.json` in `sessions_dir` (other files, e.g. `*.key`, are ignored).
@@ -154,14 +160,17 @@ pub fn detect(
         if !is_alive(pf) {
             continue;
         }
-        let status = if pf.status.as_deref() == Some("busy") {
-            LiveStatus::Busy
-        } else {
-            LiveStatus::Idle
+        let status = match pf.status.as_deref() {
+            Some("busy") => LiveStatus::Busy,
+            Some("waiting") => LiveStatus::Waiting,
+            _ => LiveStatus::Idle,
         };
         let state = LiveState {
             status,
             raw_status: pf.status.clone(),
+            waiting_for: (status == LiveStatus::Waiting)
+                .then(|| pf.waiting_for.clone())
+                .flatten(),
             pid: pf.pid,
             source: LiveSource::ProcessFile,
         };
@@ -183,6 +192,7 @@ pub fn detect(
                 LiveState {
                     status: LiveStatus::Idle,
                     raw_status: None,
+                    waiting_for: None,
                     pid: None,
                     source: LiveSource::RecentWrite,
                 },
@@ -195,6 +205,30 @@ pub fn detect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn own_process_file(json: &str) -> ProcessFile {
+        let mut pf: ProcessFile = serde_json::from_str(json).unwrap();
+        pf.pid = Some(std::process::id());
+        pf
+    }
+
+    #[test]
+    fn maps_waiting_and_busy_status() {
+        let waiting = own_process_file(
+            r#"{"sessionId":"s1","status":"waiting","waitingFor":"permission prompt","cwd":"/x","version":"2.1.0"}"#,
+        );
+        assert_eq!(waiting.cwd.as_deref(), Some("/x"));
+        assert_eq!(waiting.version.as_deref(), Some("2.1.0"));
+        let busy = own_process_file(
+            r#"{"sessionId":"s2","status":"busy","waitingFor":"permission prompt"}"#,
+        );
+        let out = detect(&[waiting, busy], [], 0.0);
+        assert_eq!(out["s1"].status, LiveStatus::Waiting);
+        assert_eq!(out["s1"].raw_status.as_deref(), Some("waiting"));
+        assert_eq!(out["s1"].waiting_for.as_deref(), Some("permission prompt"));
+        assert_eq!(out["s2"].status, LiveStatus::Busy);
+        assert_eq!(out["s2"].waiting_for, None);
+    }
 
     #[test]
     fn parses_ps_lstart_format() {

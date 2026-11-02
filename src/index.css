@@ -10,6 +10,7 @@
   --color-accent: #0a5fcc;
   --color-selection: #e3edfb;
   --color-live: #1e7f45;
+  --color-live-waiting: #c27c0e;
   --color-claude: #b4532a;
   --color-code: #f3f3f1;
   --color-terminal: #1f2023;
@@ -33,6 +34,7 @@
     --color-secondary: #a1a1a6;
     --color-accent: #4c8df6;
     --color-selection: #2b3e5c;
+    --color-live-waiting: #e0a030;
     --color-code: #2c2c2f;
     --color-error: #ff8a80;
     --color-error-bg: #3a2220;

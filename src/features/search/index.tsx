@@ -101,12 +101,21 @@ function ProjectItem({ p, terms, onFilter, onScope }: { p: ProjectSummary; terms
 
 function SessionItem({ s, names, terms, onSelect }: { s: SessionSummary; names: Map<string, string>; terms: string[]; onSelect: () => void }) {
   const tags = sessionProjectIds(s).map((id) => names.get(id) ?? id);
-  const busy = s.live?.status === "busy";
+  const liveStatus = s.live?.status;
   return (
     <Command.Item value={`s:${s.id}`} onSelect={onSelect} data-testid="search-session" className={ITEM}>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-1.5">
-          {s.live && <span className={cn("size-2 shrink-0 rounded-full", busy ? "bg-live" : "box-border border-[1.5px] border-live")} />}
+          {s.live && (
+            <span
+              className={cn(
+                "size-2 shrink-0 rounded-full",
+                liveStatus === "busy" && "bg-live",
+                liveStatus === "waiting" && "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
+                liveStatus !== "busy" && liveStatus !== "waiting" && "box-border border-[1.5px] border-live",
+              )}
+            />
+          )}
           <span className="min-w-0 truncate font-semibold">
             <Marked text={s.title} terms={terms} />
           </span>
