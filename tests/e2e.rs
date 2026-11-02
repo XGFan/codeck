@@ -543,12 +543,9 @@ fn controls_a_real_session() {
                 || rpc.seen.iter().any(|v| v["type"] == "block" && v["run_id"].is_string()),
             "没有 Workflow Run 里 Subagent 的 block"
         );
-        // A background run that finished after the turn wakes the main line once more.
-        if in_turn.is_none() {
-            rpc.until("turn after workflow", Duration::from_secs(120), |v| {
-                v["type"] == "turn_end"
-            });
-        }
+        let _ = in_turn;
+        // The run's completion notice may wake the main line once more: wait until it settles.
+        settle_idle(&mut rpc);
     } else {
         eprintln!("模型没有调用 Workflow 工具，跳过 Workflow 断言");
     }
@@ -752,5 +749,30 @@ fn wait_screen(rpc: &mut Rpc, id: &str, pred: impl Fn(&[String]) -> bool) -> Vec
             panic!("屏幕没出现预期内容：{lines:#?}");
         }
         std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Waits until the Session has stayed idle for 3 s (background work may start more turns).
+fn settle_idle(rpc: &mut Rpc) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut idle_since = Some(Instant::now());
+    let st = rpc.call("settle", json!({"type": "get_state"}));
+    if st["state"] != "idle" {
+        idle_since = None;
+    }
+    loop {
+        assert!(Instant::now() < deadline, "没有稳定在 idle");
+        if idle_since.is_some_and(|t| t.elapsed() > Duration::from_secs(3)) {
+            return;
+        }
+        if let Ok(v) = rpc.rx.recv_timeout(Duration::from_millis(200)) {
+            eprintln!("{:6.1} {v}", rpc.t0.elapsed().as_secs_f32());
+            if v["type"] == "branch" {
+                rpc.branches.push(v.clone());
+            }
+            if v["type"] == "state" {
+                idle_since = (v["state"] == "idle").then(Instant::now);
+            }
+        }
     }
 }

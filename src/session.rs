@@ -806,7 +806,8 @@ impl Engine {
     /// Every write goes through here or [`Self::paste`]: none once someone took the Pane over,
     /// even in the middle of a command.
     fn writable(&self) -> std::result::Result<(), CmdErr> {
-        if self.taken_over {
+        // The Holder's report counts at once, before a tick turns it into `taken_over`.
+        if self.taken_over || self.conn.taken_by().is_some() {
             return err("taken_over", "Session 已被人接手，只读");
         }
         Ok(())

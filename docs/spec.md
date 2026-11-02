@@ -71,7 +71,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
 | `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`taken_over` |
-| `get_messages {since?}` | 任意 | 当前 transcript 主文件里 Main Line 上的内容块（Main Line 止于最新的条目，其余按 cv-core 的规则）；`since` 为上次返回的 `cursor`，只返回之后写入的块。`cursor` 是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor` |
+| `get_messages {since?}` | 任意 | 当前 transcript 主文件的内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）；`since` 为上次返回的 `cursor`，只返回之后写入的块。`cursor` 是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor` |
 | `get_screen` | 任意 | — | `lines`（每行去尾部空白）、`cursor`（`[行, 列]`，0 起） |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 
@@ -90,7 +90,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键 |
 | `follow_up_failed` | `text`、`error` |
-| `branch` | `at_uuid`：Main Line 换到了从这里分出的另一个 Branch（rewind、编辑重发），这条事件之前发出、在它之后的 block 已不在 Main Line 上；为 null 时新 Branch 从头开始，此前的 block 全部作废。在新 Branch 的第一个 block 之前发。原样重发同一条提示词且没有回复（中止说明不算回复）的不发 |
+| `branch` | Main Line 换到了另一个 Branch（rewind、编辑重发）。`at_uuid` 是此前发出的 block 里最后一个仍在 Main Line 上的 `uuid`，在它之后发出的 block 都已作废；为 null 时此前发出的全部作废。在新 Branch 的第一个 block 之前发。只由人发的提示词触发：它沿父条目往上（跳过附件等不产生 block 的条目）碰到的不是最后发出的那个条目时，按 cv-core 的规则以它为 Main Line 重算；后台结果通知、teammate 消息、compact 边界、父条目还没写出的条目不算。原样重发同一条提示词且没有回复（中止说明不算回复）的不发 |
 | `workflow` | Workflow Run 的整份状态：`run_id`、`tool_use_id`、`name`、`status`、`phases`（`index`、`title`、`detail`）、`agents`（`agent_id`、`label`、`phase_index`、`state`）。`workflows/<runId>.json` 或 `journal.jsonl` 内容有变化时发，内容不变不发 |
 | `taken_over` | `client`：接手者的客户端标识（旧 Holder 为 null） |
 | `session_changed` | `session_id`、`previous` |
