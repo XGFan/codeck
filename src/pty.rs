@@ -1,27 +1,59 @@
-//! Connection to a Holder's unix socket as an ordinary attached client (toh frame protocol).
-//! Never sends Resize, so the PTY size stays with whoever owns it.
+//! Connection to a Holder's unix socket (toh frame protocol). A reader thread keeps a VT of the
+//! Pane from the Holder's Snapshots and Output, and the Holder's reports of who owns the PTY size.
+//! Attaching changes nothing; [`HolderConn::claim_size`] makes ccrpc the size owner (ADR-0001).
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use toh_proto::{AttachInfo, Decoder, Frame};
 
-/// What the reader thread forwards (Output is dropped: the screen is rebuilt from Snapshots).
-#[derive(Debug)]
-pub enum HolderEvent {
-    Snapshot(Vec<u8>),
-    Exit(i32),
-    Closed,
+use crate::screen::{Screen, Vt};
+
+/// Who owns the PTY size, as the Holder reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Owner {
+    /// No report yet (an older Holder never sends one).
+    Unknown,
+    Nobody,
+    Me,
+    /// Another attached client, by its client name.
+    Other(String),
+}
+
+struct Shared {
+    vt: Vt,
+    /// Bumped on every change of the screen (Snapshot or Output).
+    seen: u64,
+    /// Number of Snapshots received.
+    snaps: u64,
+    owner: Owner,
+    exit: Option<i32>,
+    closed: bool,
+}
+
+struct Inner {
+    m: Mutex<Shared>,
+    cv: Condvar,
+}
+
+impl Inner {
+    fn lock(&self) -> MutexGuard<'_, Shared> {
+        self.m.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn update(&self, f: impl FnOnce(&mut Shared)) {
+        f(&mut self.lock());
+        self.cv.notify_all();
+    }
 }
 
 pub struct HolderConn {
     writer: Arc<Mutex<UnixStream>>,
-    events: Receiver<HolderEvent>,
+    inner: Arc<Inner>,
 }
 
 /// Bracketed paste markers.
@@ -29,22 +61,35 @@ const PASTE_START: &[u8] = b"\x1b[200~";
 const PASTE_END: &[u8] = b"\x1b[201~";
 
 impl HolderConn {
-    pub fn connect(socket: &Path) -> Result<HolderConn> {
+    /// Attaches (asking for size-owner reports) with a VT of `cols` × `rows`, the PTY's size.
+    pub fn connect(socket: &Path, cols: u16, rows: u16) -> Result<HolderConn> {
         let stream = UnixStream::connect(socket)
             .with_context(|| format!("连不上 Holder {}", socket.display()))?;
         let mut reader = stream.try_clone()?;
         let attach = Frame::Attach(AttachInfo {
             client: "ccrpc".into(),
-            cols: 80,
-            rows: 24,
+            cols,
+            rows,
+            owner_events: true,
             ..Default::default()
         });
         (&stream).write_all(&attach.encode())?;
-        let (tx, rx) = mpsc::channel();
+        let inner = Arc::new(Inner {
+            m: Mutex::new(Shared {
+                vt: Vt::new(cols, rows),
+                seen: 0,
+                snaps: 0,
+                owner: Owner::Unknown,
+                exit: None,
+                closed: false,
+            }),
+            cv: Condvar::new(),
+        });
+        let shared = inner.clone();
         std::thread::spawn(move || {
             let mut dec = Decoder::new();
             let mut buf = vec![0u8; 64 * 1024];
-            loop {
+            'read: loop {
                 let n = match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => n,
@@ -52,28 +97,34 @@ impl HolderConn {
                 dec.push(&buf[..n]);
                 loop {
                     match dec.next_frame() {
-                        Ok(Some(Frame::Snapshot(b))) => {
-                            if tx.send(HolderEvent::Snapshot(b)).is_err() {
-                                return;
-                            }
-                        }
-                        Ok(Some(Frame::Exit { code })) => {
-                            let _ = tx.send(HolderEvent::Exit(code));
-                        }
+                        Ok(Some(Frame::Snapshot(b))) => shared.update(|s| {
+                            s.vt.reset_to(&b);
+                            s.seen += 1;
+                            s.snaps += 1;
+                        }),
+                        Ok(Some(Frame::Output(b))) => shared.update(|s| {
+                            s.vt.feed(&b);
+                            s.seen += 1;
+                        }),
+                        Ok(Some(Frame::Owner(o))) => shared.update(|s| {
+                            s.owner = match (o.you, o.client) {
+                                (true, _) => Owner::Me,
+                                (false, Some(c)) => Owner::Other(c),
+                                (false, None) => Owner::Nobody,
+                            };
+                        }),
+                        Ok(Some(Frame::Exit { code })) => shared.update(|s| s.exit = Some(code)),
                         Ok(Some(_)) => {}
                         Ok(None) => break,
-                        Err(_) => {
-                            let _ = tx.send(HolderEvent::Closed);
-                            return;
-                        }
+                        Err(_) => break 'read,
                     }
                 }
             }
-            let _ = tx.send(HolderEvent::Closed);
+            shared.update(|s| s.closed = true);
         });
         Ok(HolderConn {
             writer: Arc::new(Mutex::new(stream)),
-            events: rx,
+            inner,
         })
     }
 
@@ -99,37 +150,137 @@ impl HolderConn {
         self.input(&b)
     }
 
-    /// Requests and waits for a fresh Snapshot; returns `Err` if the Holder exits or closes.
-    pub fn snapshot(&self, timeout: Duration) -> Result<Vec<u8>> {
-        // Drop stale Snapshots (the one sent on attach, or answers to earlier requests).
-        while let Ok(ev) = self.events.try_recv() {
-            match ev {
-                HolderEvent::Snapshot(_) => {}
-                HolderEvent::Exit(c) => bail!("Session 已结束（shell 退出码 {c}）"),
-                HolderEvent::Closed => bail!("Holder 连接已关闭"),
-            }
+    fn check_open(s: &Shared) -> Result<()> {
+        if let Some(c) = s.exit {
+            bail!("Session 已结束（shell 退出码 {c}）");
         }
-        self.send(Frame::SnapshotReq)?;
-        match self.events.recv_timeout(timeout) {
-            Ok(HolderEvent::Snapshot(b)) => Ok(b),
-            Ok(HolderEvent::Exit(c)) => bail!("Session 已结束（shell 退出码 {c}）"),
-            Ok(HolderEvent::Closed) | Err(RecvTimeoutError::Disconnected) => {
-                bail!("Holder 连接已关闭")
+        if s.closed {
+            bail!("Holder 连接已关闭");
+        }
+        Ok(())
+    }
+
+    /// Current screen as kept from the stream.
+    pub fn screen(&self) -> Screen {
+        self.inner.lock().vt.screen()
+    }
+
+    /// Screen generation: changes whenever the screen may have changed.
+    pub fn generation(&self) -> u64 {
+        self.inner.lock().seen
+    }
+
+    /// Blocks until the screen generation differs from `seen`, the connection ends, or `timeout`
+    /// passes; returns whether it changed.
+    pub fn wait_change(&self, seen: u64, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut s = self.inner.lock();
+        loop {
+            if s.seen != seen {
+                return true;
             }
-            Err(RecvTimeoutError::Timeout) => bail!("等 Holder 快照超时"),
+            if s.closed || s.exit.is_some() {
+                return false;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            s = self
+                .inner
+                .cv
+                .wait_timeout(s, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 
-    /// True once the Holder has closed the connection or reported Exit (non-blocking).
-    pub fn poll_closed(&self) -> bool {
+    /// Asks for a fresh Snapshot and waits for it (the VT starts over from it).
+    pub fn resync(&self, timeout: Duration) -> Result<Screen> {
+        let before = {
+            let s = self.inner.lock();
+            Self::check_open(&s)?;
+            s.snaps
+        };
+        self.send(Frame::SnapshotReq)?;
+        let deadline = Instant::now() + timeout;
+        let mut s = self.inner.lock();
         loop {
-            match self.events.try_recv() {
-                Ok(HolderEvent::Snapshot(_)) => continue,
-                Ok(HolderEvent::Exit(_)) | Ok(HolderEvent::Closed) => return true,
-                Err(mpsc::TryRecvError::Empty) => return false,
-                Err(mpsc::TryRecvError::Disconnected) => return true,
+            Self::check_open(&s)?;
+            if s.snaps > before {
+                return Ok(s.vt.screen());
             }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                bail!("等 Holder 快照超时");
+            }
+            s = self
+                .inner
+                .cv
+                .wait_timeout(s, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
+    }
+
+    /// Waits until the attach Snapshot has arrived and, when the Holder reports size owners, its
+    /// first report (sent right after the Snapshot); returns the owner (`Unknown` for an older
+    /// Holder).
+    pub fn initial_owner(&self, timeout: Duration) -> Result<Owner> {
+        let deadline = Instant::now() + timeout;
+        let mut snap_at: Option<Instant> = None;
+        let mut s = self.inner.lock();
+        loop {
+            Self::check_open(&s)?;
+            if s.owner != Owner::Unknown {
+                return Ok(s.owner.clone());
+            }
+            let now = Instant::now();
+            if s.snaps > 0 && snap_at.is_none() {
+                snap_at = Some(now);
+            }
+            // The report follows the Snapshot in the same burst; an older Holder never sends it.
+            if snap_at.is_some_and(|t| now >= t + Duration::from_millis(500)) || now >= deadline {
+                if s.snaps == 0 {
+                    bail!("等 Holder 快照超时");
+                }
+                return Ok(Owner::Unknown);
+            }
+            s = self
+                .inner
+                .cv
+                .wait_timeout(s, Duration::from_millis(50))
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+    }
+
+    pub fn owner(&self) -> Owner {
+        self.inner.lock().owner.clone()
+    }
+
+    /// Size of the VT.
+    pub fn vt_size(&self) -> (u16, u16) {
+        self.inner.lock().vt.size()
+    }
+
+    /// Makes ccrpc the PTY size owner at `cols` × `rows`, then resyncs the screen.
+    pub fn claim_size(&self, cols: u16, rows: u16) -> Result<()> {
+        self.inner.update(|s| s.vt.resize(cols, rows));
+        self.send(Frame::Resize { cols, rows })?;
+        self.resync(Duration::from_secs(3)).map(|_| ())
+    }
+
+    /// Follows a PTY size set by someone else: resizes the VT and resyncs.
+    pub fn follow_size(&self, cols: u16, rows: u16) -> Result<()> {
+        self.inner.update(|s| s.vt.resize(cols, rows));
+        self.resync(Duration::from_secs(3)).map(|_| ())
+    }
+
+    /// True once the Holder has closed the connection or reported Exit.
+    pub fn poll_closed(&self) -> bool {
+        let s = self.inner.lock();
+        s.closed || s.exit.is_some()
     }
 
     pub fn detach(&self) {

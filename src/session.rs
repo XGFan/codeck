@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::locate::{self, Roots};
 use crate::procfile::{self, ProcessFile};
-use crate::pty::{self, HolderConn};
+use crate::pty::{self, HolderConn, Owner};
 use crate::recognize::{self, AskScreen, PermissionChoice};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
@@ -29,7 +29,12 @@ const CLASSIFY_GRACE: Duration = Duration::from_millis(1500);
 const MATCH_GRACE: Duration = Duration::from_secs(3);
 /// No Process File yet while claude runs: report the startup screen after this long.
 const STARTUP_DIALOG_AFTER: Duration = Duration::from_secs(3);
-const KEY_GAP: Duration = Duration::from_millis(80);
+/// Keys are written apart so Claude Code reads each one on its own: at least this long, and up to
+/// [`KEY_SETTLE`] while the screen has not reacted yet.
+const KEY_MIN_GAP: Duration = Duration::from_millis(50);
+const KEY_SETTLE: Duration = Duration::from_millis(80);
+/// PTY size ccrpc sets when it takes the size (ADR-0001).
+pub const DEFAULT_SIZE: (u16, u16) = (160, 48);
 /// Tools that never ask for permission themselves (their inner tools do).
 const NO_PERMISSION_TOOLS: &[&str] = &["AskUserQuestion", "Agent", "Task"];
 
@@ -156,6 +161,11 @@ pub struct Engine {
     tty: Option<String>,
     conn: HolderConn,
     out: Out,
+    /// PTY size ccrpc set.
+    size: (u16, u16),
+    /// Someone took the Pane over: ccrpc only reads from now on.
+    taken_over: bool,
+    last_size_check: Instant,
     claude_pid: Option<u32>,
     claude_seen_at: Option<Instant>,
     last_locate: Option<Instant>,
@@ -172,7 +182,6 @@ pub struct Engine {
     last_text: Option<String>,
     /// Request (tool_use id) or dialog announced for the current waiting.
     announced: Option<String>,
-    last_match_try: Option<Instant>,
     startup_checked: Option<Instant>,
     startup_last: Option<Vec<String>>,
     follow_ups: VecDeque<String>,
@@ -190,12 +199,27 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn open(roots: Roots, holder_id: &str, out: Out) -> Result<Engine> {
+    pub fn open(roots: Roots, holder_id: &str, out: Out, opts: &Opts) -> Result<Engine> {
         let meta = locate::read_holder(&roots, holder_id)?;
-        let conn = HolderConn::connect(&roots.holder_socket(holder_id))?;
         let tty = locate::process_table()?
             .get(&meta.child_pid)
             .and_then(|p| p.tty.clone());
+        let (cols, rows) = tty
+            .as_deref()
+            .and_then(|t| locate::tty_size(t).ok())
+            .unwrap_or((80, 24));
+        let conn = HolderConn::connect(&roots.holder_socket(holder_id), cols, rows)?;
+        match conn.initial_owner(Duration::from_secs(3))? {
+            Owner::Other(client) if !opts.force => {
+                conn.detach();
+                bail!("Session 正被 {client} 使用，加 --force 强制连接");
+            }
+            Owner::Unknown => eprintln!(
+                "ccrpc: Holder {holder_id} 不报告尺寸所有者，无法确认是否有人在用"
+            ),
+            _ => {}
+        }
+        conn.claim_size(opts.size.0, opts.size.1)?;
         Ok(Engine {
             roots,
             holder_id: holder_id.to_string(),
@@ -203,6 +227,9 @@ impl Engine {
             tty,
             conn,
             out,
+            size: opts.size,
+            taken_over: false,
+            last_size_check: Instant::now(),
             claude_pid: None,
             claude_seen_at: None,
             last_locate: None,
@@ -216,7 +243,6 @@ impl Engine {
             turn_active: false,
             last_text: None,
             announced: None,
-            last_match_try: None,
             startup_checked: None,
             startup_last: None,
             follow_ups: VecDeque::new(),
@@ -321,6 +347,7 @@ impl Engine {
             self.set_exited();
             return;
         }
+        self.check_takeover();
         self.locate_claude();
         if let Some(pid) = self.claude_pid {
             if !crate::procs::pid_exists(pid) {
@@ -428,7 +455,6 @@ impl Engine {
             self.resolved.insert(id);
         }
         self.announced = None;
-        self.last_match_try = None;
         self.state = s;
         let mut v = self.state.to_json();
         v["type"] = json!("state");
@@ -541,7 +567,6 @@ impl Engine {
             if let Some(done) = self.announced.take() {
                 self.resolved.insert(done);
             }
-            self.last_match_try = None;
             self.raw_since = Some((
                 self.raw_since.take().map(|r| r.0).unwrap_or_default(),
                 Instant::now(),
@@ -592,19 +617,8 @@ impl Engine {
         if self.announced.is_some() {
             return;
         }
-        // Let the UI render before looking at the screen.
-        if self.waiting_age() < Duration::from_millis(250) {
-            return;
-        }
         match kind {
             WaitKind::Permission => {
-                if self
-                    .last_match_try
-                    .is_some_and(|t| t.elapsed() < Duration::from_millis(200))
-                {
-                    return;
-                }
-                self.last_match_try = Some(Instant::now());
                 let screen = self.screen().ok();
                 if let Some(p) = screen.as_ref().and_then(|s| self.permission_target(s)) {
                     self.announced = Some(p.id.clone());
@@ -657,10 +671,54 @@ impl Engine {
     // ---- screen ------------------------------------------------------------------------------
 
     pub fn screen(&self) -> Result<Screen> {
-        let tty = self.tty.as_deref().context("找不到 Pane shell 的 tty")?;
-        let (cols, rows) = locate::tty_size(tty)?;
-        let snap = self.conn.snapshot(Duration::from_secs(3))?;
-        Ok(Screen::render(&snap, cols, rows))
+        Ok(self.conn.screen())
+    }
+
+    /// The screen from a Snapshot taken now (before a key whose meaning depends on the screen).
+    fn fresh_screen(&self) -> std::result::Result<Screen, CmdErr> {
+        self.conn
+            .resync(Duration::from_secs(3))
+            .map_err(|e| ("io", format!("{e:#}")))
+    }
+
+    /// PTY size from the Pane shell's tty.
+    fn pty_size(&self) -> Option<(u16, u16)> {
+        locate::tty_size(self.tty.as_deref()?).ok()
+    }
+
+    /// A size owner other than ccrpc means someone took the Pane over (a Holder that does not
+    /// report owners: the PTY size changed). Afterwards the VT follows the PTY size.
+    fn check_takeover(&mut self) {
+        if !self.taken_over {
+            match self.conn.owner() {
+                Owner::Other(client) => return self.take_over(Some(client)),
+                Owner::Unknown => {}
+                Owner::Me | Owner::Nobody => return,
+            }
+        }
+        if self.last_size_check.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.last_size_check = Instant::now();
+        let Some(size) = self.pty_size() else {
+            return;
+        };
+        if !self.taken_over {
+            if size != self.size {
+                self.take_over(None);
+            }
+        } else if size != self.conn.vt_size() {
+            let _ = self.conn.follow_size(size.0, size.1);
+        }
+    }
+
+    fn take_over(&mut self, client: Option<String>) {
+        self.taken_over = true;
+        self.follow_ups.clear();
+        self.emit(json!({"type": "taken_over", "client": client}));
+        if let Some((cols, rows)) = self.pty_size() {
+            let _ = self.conn.follow_size(cols, rows);
+        }
     }
 
     /// Ticks until `cond` holds or `timeout` passes.
@@ -686,6 +744,7 @@ impl Engine {
     ) -> Option<(T, Screen)> {
         let deadline = Instant::now() + timeout;
         loop {
+            let seen = self.conn.generation();
             self.tick();
             if let Ok(s) = self.screen()
                 && let Some(v) = f(self, &s)
@@ -695,15 +754,17 @@ impl Engine {
             if self.exited || Instant::now() >= deadline {
                 return None;
             }
-            std::thread::sleep(Duration::from_millis(100));
+            self.conn.wait_change(seen, TICK);
         }
     }
 
     fn keys(&self, bytes: &[u8]) -> std::result::Result<(), CmdErr> {
+        let seen = self.conn.generation();
         self.conn
             .input(bytes)
             .map_err(|e| ("io", format!("{e:#}")))?;
-        std::thread::sleep(KEY_GAP);
+        std::thread::sleep(KEY_MIN_GAP);
+        self.conn.wait_change(seen, KEY_SETTLE - KEY_MIN_GAP);
         Ok(())
     }
 
@@ -741,7 +802,9 @@ impl Engine {
                 }
             }
             self.keys(&b)?;
-            std::thread::sleep(Duration::from_millis(150));
+            self.wait_screen(Duration::from_millis(500), |_, s| {
+                recognize::input_box(&s.lines).filter(|t| t.is_empty())
+            });
         }
         err("input_not_empty", "输入框清不空")
     }
@@ -753,7 +816,10 @@ impl Engine {
         self.conn
             .paste(clean)
             .map_err(|e| ("io", format!("{e:#}")))?;
-        std::thread::sleep(Duration::from_millis(120));
+        // Long pastes show as a `[Pasted text …]` placeholder: wait for anything in the box.
+        self.wait_screen(Duration::from_secs(2), |_, s| {
+            recognize::input_box(&s.lines).filter(|t| !t.is_empty())
+        });
         self.input_box_now()?;
         self.keys(b"\r")
     }
@@ -900,8 +966,11 @@ impl Engine {
             }
             return Err(self.unrecognized("answer_permission", Some(&s)));
         };
-        // Last check right before the key: still the same request.
-        if !self.request_is(&WaitKind::Permission, request_id) {
+        // Last check right before the key: still the same request, on a Snapshot taken now.
+        let now = self.fresh_screen()?;
+        if !self.request_is(&WaitKind::Permission, request_id)
+            || self.permission_target(&now).is_none_or(|p| p.id != rid)
+        {
             return err(
                 "unknown_request",
                 format!("作答前请求已经变了，不再是 {request_id}"),
@@ -1090,11 +1159,20 @@ impl Engine {
             return err("bad_request", "斜杠命令必须是单行");
         }
         self.clear_input()?;
-        self.keys(format!("/{}", clean.trim()).as_bytes())?;
-        std::thread::sleep(Duration::from_millis(200));
+        let typed = format!("/{}", clean.trim());
+        self.keys(typed.as_bytes())?;
+        self.wait_screen(Duration::from_secs(1), |_, s| {
+            recognize::input_box(&s.lines).filter(|t| t.starts_with(&typed))
+        });
         self.input_box_now()?;
         self.keys(b"\r")?;
-        self.wait_until(Duration::from_millis(500), |_| false);
+        // Submitted once the command left the input box (or a picker replaced the box).
+        self.wait_screen(Duration::from_secs(2), |_, s| {
+            match recognize::input_box(&s.lines) {
+                Some(t) if t.starts_with(&typed) => None,
+                _ => Some(()),
+            }
+        });
         Ok(json!({}))
     }
 
@@ -1119,6 +1197,7 @@ impl Engine {
         v["session_id"] = json!(self.session_id);
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["follow_up_queue"] = json!(self.follow_ups.len());
+        v["taken_over"] = json!(self.taken_over);
         v
     }
 
@@ -1132,6 +1211,13 @@ impl Engine {
     }
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
+        let reads = matches!(
+            c,
+            Command::GetState | Command::GetMessages { .. } | Command::GetScreen
+        );
+        if self.taken_over && !reads {
+            return err("taken_over", "Session 已被人接手，只读");
+        }
         match c {
             Command::Prompt { text } => self.send_prompt(text),
             Command::Steer { text } => self.steer(text),
@@ -1177,6 +1263,7 @@ impl Engine {
         v["session_id"] = json!(self.session_id);
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["claude_version"] = json!(version);
+        v["size"] = json!([self.size.0, self.size.1]);
         self.emit(v);
     }
 
@@ -1258,6 +1345,27 @@ fn stdin_lines() -> Receiver<String> {
     rx
 }
 
+/// Options of `new` / `attach`.
+pub struct Opts {
+    /// PTY size ccrpc sets.
+    pub size: (u16, u16),
+    /// Connect even when someone else holds the PTY size.
+    pub force: bool,
+}
+
+/// `COLSxROWS`.
+fn parse_size(s: &str) -> Result<(u16, u16)> {
+    let (c, r) = s.split_once('x').context("--size 的格式是 COLSxROWS，如 160x48")?;
+    let (c, r): (u16, u16) = (
+        c.parse().context("--size 的列数不对")?,
+        r.parse().context("--size 的行数不对")?,
+    );
+    if c < 40 || r < 10 {
+        bail!("--size 至少 40x10");
+    }
+    Ok((c, r))
+}
+
 /// `attach <Holder ID | sessionId>`.
 pub fn resolve_target(roots: &Roots, target: &str) -> Result<String> {
     if locate::valid_holder_id(target) && roots.holder_socket(target).exists() {
@@ -1295,16 +1403,31 @@ pub fn resolve_target(roots: &Roots, target: &str) -> Result<String> {
 }
 
 pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
-    let [target] = args else {
-        bail!("用法：ccrpc attach <Holder ID | sessionId>");
+    let mut opts = Opts {
+        size: DEFAULT_SIZE,
+        force: false,
     };
+    let mut target = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--force" => opts.force = true,
+            "--size" => opts.size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
+            t if target.is_none() && !t.starts_with('-') => target = Some(t.to_string()),
+            _ => bail!("用法：ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>"),
+        }
+    }
+    let Some(target) = target else {
+        bail!("用法：ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>");
+    };
+    let target = &target;
     let holder = resolve_target(roots, target)?;
     let meta = locate::read_holder(roots, &holder)?;
     let table = locate::process_table()?;
     if locate::find_claude_under(&table, meta.child_pid).is_none() {
         bail!("Holder {holder} 里没有运行中的 Claude Code");
     }
-    Engine::open(roots.clone(), &holder, Out::stdout())?.run(stdin_lines())
+    Engine::open(roots.clone(), &holder, Out::stdout(), &opts)?.run(stdin_lines())
 }
 
 pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
@@ -1313,10 +1436,16 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
         None => (args, &[][..]),
     };
     let mut cwd = None;
+    // A Pane ccrpc just started is not in anyone's use, whoever shows it.
+    let mut eng = Opts {
+        size: DEFAULT_SIZE,
+        force: true,
+    };
     let mut it = opts.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--cwd" => cwd = Some(it.next().context("--cwd 需要目录")?.clone()),
+            "--size" => eng.size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
             other => bail!("new：不认识的参数 {other}；claude 的参数放在 -- 之后"),
         }
     }
@@ -1362,7 +1491,7 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     if !locate::valid_holder_id(&holder) {
         bail!("toh new 没有返回 Holder ID");
     }
-    Engine::open(roots.clone(), &holder, Out::stdout())?.run(stdin_lines())
+    Engine::open(roots.clone(), &holder, Out::stdout(), &eng)?.run(stdin_lines())
 }
 
 #[cfg(test)]

@@ -7,8 +7,8 @@ use crate::pty::{self, HolderConn};
 use crate::screen::Screen;
 
 const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir DIR] <命令>
-  ccrpc new [--cwd DIR] [-- claude 参数…]
-  ccrpc attach <Holder ID | sessionId>
+  ccrpc new [--cwd DIR] [--size COLSxROWS] [-- claude 参数…]
+  ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>
   ccrpc ls
   ccrpc debug screen <Holder ID>
   ccrpc debug keys <Holder ID> <按键|text:文字>…
@@ -64,27 +64,27 @@ fn cmd_ls(roots: &Roots) -> Result<()> {
     Ok(())
 }
 
-/// Screen of a Holder: PTY size from the tty of its shell, then a fresh Snapshot.
-pub fn holder_screen(roots: &Roots, conn: &HolderConn, holder_id: &str) -> Result<Screen> {
+/// PTY size of a Holder's Pane, from the tty of its shell.
+pub fn pane_size(roots: &Roots, holder_id: &str) -> Result<(u16, u16)> {
     let meta = locate::read_holder(roots, holder_id)?;
     let table = locate::process_table()?;
     let tty = table
         .get(&meta.child_pid)
         .and_then(|p| p.tty.clone())
         .context("找不到 Pane shell 的 tty")?;
-    let (cols, rows) = locate::tty_size(&tty)?;
-    let snap = conn.snapshot(Duration::from_secs(3))?;
-    Ok(Screen::render(&snap, cols, rows))
+    locate::tty_size(&tty)
 }
 
 fn cmd_debug(roots: &Roots, args: &[String]) -> Result<()> {
     let (Some(sub), Some(id)) = (args.first(), args.get(1)) else {
         bail!("{USAGE}");
     };
-    let conn = HolderConn::connect(&roots.holder_socket(id))?;
+    // Debug commands look and type without taking the PTY size.
+    let (cols, rows) = pane_size(roots, id)?;
+    let conn = HolderConn::connect(&roots.holder_socket(id), cols, rows)?;
     match sub.as_str() {
         "screen" => {
-            let s = holder_screen(roots, &conn, id)?;
+            let s: Screen = conn.resync(Duration::from_secs(3))?;
             for (i, l) in s.lines.iter().enumerate() {
                 println!("{i:3}|{l}");
             }
