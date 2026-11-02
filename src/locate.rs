@@ -94,10 +94,10 @@ pub fn list_holders(roots: &Roots) -> Vec<(String, HolderMeta)> {
         if !roots.holder_socket(&id).exists() {
             continue;
         }
-        if let Ok(m) = read_holder(roots, &id) {
-            if crate::procs::pid_exists(m.holder_pid) {
-                out.push((id, m));
-            }
+        if let Ok(m) = read_holder(roots, &id)
+            && crate::procs::pid_exists(m.holder_pid)
+        {
+            out.push((id, m));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -159,10 +159,10 @@ pub fn find_claude_under(table: &HashMap<u32, Proc>, root: u32) -> Option<Proc> 
         let mut kids = children.get(&pid).cloned().unwrap_or_default();
         kids.sort_unstable();
         for k in kids {
-            if let Some(p) = table.get(&k) {
-                if p.name == "claude" {
-                    return Some(p.clone());
-                }
+            if let Some(p) = table.get(&k)
+                && p.name == "claude"
+            {
+                return Some(p.clone());
             }
             queue.push_back(k);
         }

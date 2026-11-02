@@ -6,7 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use toh_proto::{AttachInfo, Decoder, Frame};
@@ -110,17 +110,13 @@ impl HolderConn {
             }
         }
         self.send(Frame::SnapshotReq)?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match self.events.recv_timeout(left) {
-                Ok(HolderEvent::Snapshot(b)) => return Ok(b),
-                Ok(HolderEvent::Exit(c)) => bail!("Session 已结束（shell 退出码 {c}）"),
-                Ok(HolderEvent::Closed) | Err(RecvTimeoutError::Disconnected) => {
-                    bail!("Holder 连接已关闭")
-                }
-                Err(RecvTimeoutError::Timeout) => bail!("等 Holder 快照超时"),
+        match self.events.recv_timeout(timeout) {
+            Ok(HolderEvent::Snapshot(b)) => Ok(b),
+            Ok(HolderEvent::Exit(c)) => bail!("Session 已结束（shell 退出码 {c}）"),
+            Ok(HolderEvent::Closed) | Err(RecvTimeoutError::Disconnected) => {
+                bail!("Holder 连接已关闭")
             }
+            Err(RecvTimeoutError::Timeout) => bail!("等 Holder 快照超时"),
         }
     }
 

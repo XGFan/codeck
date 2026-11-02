@@ -3,5 +3,8 @@ pub mod locate;
 pub mod procfile;
 pub mod procs;
 pub mod pty;
+pub mod recognize;
+pub mod rpc;
 pub mod screen;
 pub mod session;
+pub mod transcript;

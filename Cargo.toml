@@ -2,7 +2,7 @@
 name = "ccrpc"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 
 [dependencies]
 toh-proto = { git = "ssh://git@github.com/XGFan/toh.git", branch = "master" }
