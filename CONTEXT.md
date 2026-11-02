@@ -35,5 +35,5 @@ _Avoid_: chunk、delta、token
 _Avoid_: prompt（prompt 指调用方发的提示词）、dialog（dialog 指其余对话框）
 
 **屏幕（Screen）**:
-ccrpc 每次需要时向 Holder 请求一次 Snapshot，用自己的 VT 渲染出的当前终端画面文本。只用来识别界面与选项位置，不作为内容来源。
+ccrpc 用自己的 VT 从 Holder 的 Snapshot 与 Output 维护的当前终端画面文本。只用来识别界面与选项位置，不作为内容来源。
 _Avoid_: 截图、output

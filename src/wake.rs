@@ -71,11 +71,10 @@ impl FsWatch {
         for (p, _) in &self.watched {
             let _ = w.unwatch(p);
         }
-        self.watched.clear();
-        for (p, m) in want {
-            if w.watch(&p, m).is_ok() {
-                self.watched.push((p, m));
-            }
+        // Failed watches are not retried until the wanted set changes (the fallback timer covers).
+        for (p, m) in &want {
+            let _ = w.watch(p, *m);
         }
+        self.watched = want;
     }
 }

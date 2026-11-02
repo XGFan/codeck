@@ -732,10 +732,12 @@ impl Engine {
     /// report owners: the PTY size changed). Afterwards the VT follows the PTY size.
     fn check_takeover(&mut self) {
         if !self.taken_over {
-            match self.conn.owner() {
-                Owner::Other(client) => return self.take_over(Some(client)),
-                Owner::Unknown => {}
-                Owner::Me | Owner::Nobody => return,
+            // Sticky: someone who took the size and left between two looks still took over.
+            if let Some(client) = self.conn.taken_by() {
+                return self.take_over(Some(client));
+            }
+            if self.conn.owner() != Owner::Unknown {
+                return;
             }
         }
         if self.last_size_check.elapsed() < Duration::from_secs(1) {
@@ -801,7 +803,24 @@ impl Engine {
         }
     }
 
+    /// Every write goes through here or [`Self::paste`]: none once someone took the Pane over,
+    /// even in the middle of a command.
+    fn writable(&self) -> std::result::Result<(), CmdErr> {
+        if self.taken_over {
+            return err("taken_over", "Session 已被人接手，只读");
+        }
+        Ok(())
+    }
+
+    fn paste(&self, text: &str) -> std::result::Result<(), CmdErr> {
+        self.writable()?;
+        self.conn
+            .paste(text)
+            .map_err(|e| ("io", format!("{e:#}")))
+    }
+
     fn keys(&self, bytes: &[u8]) -> std::result::Result<(), CmdErr> {
+        self.writable()?;
         let seen = self.conn.generation();
         self.conn
             .input(bytes)
@@ -849,6 +868,9 @@ impl Engine {
                 recognize::input_box(&s.lines).filter(|t| t.is_empty())
             });
         }
+        if self.input_box_now()?.is_empty() {
+            return Ok(());
+        }
         err("input_not_empty", "输入框清不空")
     }
 
@@ -856,9 +878,7 @@ impl Engine {
     /// dialog) has the screen, so Enter cannot answer a dialog.
     fn paste_and_submit(&mut self, clean: &str) -> std::result::Result<(), CmdErr> {
         self.input_box_now()?;
-        self.conn
-            .paste(clean)
-            .map_err(|e| ("io", format!("{e:#}")))?;
+        self.paste(clean)?;
         // Long pastes show as a `[Pasted text …]` placeholder: wait for anything in the box.
         self.wait_screen(Duration::from_secs(2), |_, s| {
             recognize::input_box(&s.lines).filter(|t| !t.is_empty())
@@ -1248,9 +1268,8 @@ impl Engine {
         let Some(t) = &self.tailer else {
             return Ok(json!({"blocks": [], "cursor": 0}));
         };
-        let all = transcript::main_blocks(t.main_path());
-        let from = (since.unwrap_or(0) as usize).min(all.len());
-        Ok(json!({"blocks": all[from..], "cursor": all.len()}))
+        let (blocks, cursor) = transcript::main_blocks(t.main_path(), since.unwrap_or(0));
+        Ok(json!({"blocks": blocks, "cursor": cursor}))
     }
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
@@ -1319,6 +1338,7 @@ impl Engine {
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["claude_version"] = json!(version);
         v["size"] = json!([self.size.0, self.size.1]);
+        v["taken_over"] = json!(self.taken_over);
         self.emit(v);
     }
 
@@ -1326,11 +1346,16 @@ impl Engine {
     pub fn run(mut self, input: Receiver<String>) -> Result<()> {
         self.settle();
         self.ready();
+        // Workflow Runs already there are reported once after `ready`.
+        if let Some(t) = self.tailer.as_mut() {
+            t.forget_workflows();
+        }
         loop {
+            // Taken before looking at stdin: a line arriving now still wakes the wait below.
+            let seen = self.wake.seen();
             match input.try_recv() {
                 Ok(line) => self.handle_line(&line),
                 Err(TryRecvError::Empty) => {
-                    let seen = self.wake.seen();
                     self.tick();
                     self.drain_follow_ups();
                     self.wake.wait(seen, IDLE_TICK);
@@ -1424,8 +1449,8 @@ fn parse_size(s: &str) -> Result<(u16, u16)> {
         c.parse().context("--size 的列数不对")?,
         r.parse().context("--size 的行数不对")?,
     );
-    if c < 40 || r < 10 {
-        bail!("--size 至少 40x10");
+    if c < 40 || r < 10 || c > 1000 || r > 500 {
+        bail!("--size 须在 40x10 到 1000x500 之间");
     }
     Ok((c, r))
 }

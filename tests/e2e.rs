@@ -117,6 +117,8 @@ struct Rpc {
     t0: Instant,
     holder_pid: Option<u32>,
     seen: Vec<Value>,
+    /// Every `branch` event received.
+    branches: Vec<Value>,
 }
 
 /// The `toh` to run: `CCRPC_E2E_TOH`, else the sibling checkout's debug build, else PATH's.
@@ -183,6 +185,7 @@ impl Rpc {
             t0: Instant::now(),
             holder_pid: None,
             seen: Vec::new(),
+            branches: Vec::new(),
         }
     }
 
@@ -209,6 +212,9 @@ impl Rpc {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.rx.recv_timeout(left) {
                 Ok(v) => {
+                    if v["type"] == "branch" {
+                        self.branches.push(v.clone());
+                    }
                     let s = v.to_string();
                     if v["type"] == "dialog" || v["type"] == "unrecognized" {
                         for l in v["lines"].as_array().into_iter().flatten() {
@@ -525,7 +531,8 @@ fn controls_a_real_session() {
     );
     if seen.iter().any(|v| v["kind"] == "tool_use" && v["name"] == "Workflow") {
         let done = |v: &Value| v["type"] == "workflow" && v["status"] == "completed";
-        let wf = match seen.iter().find(|v| done(v)) {
+        let in_turn = seen.iter().find(|v| done(v)).cloned();
+        let wf = match &in_turn {
             Some(v) => v.clone(),
             None => rpc.until("workflow", Duration::from_secs(180), done),
         };
@@ -536,10 +543,12 @@ fn controls_a_real_session() {
                 || rpc.seen.iter().any(|v| v["type"] == "block" && v["run_id"].is_string()),
             "没有 Workflow Run 里 Subagent 的 block"
         );
-        // A background run wakes the main line once more when it finishes.
-        let _ = rpc.until("idle after workflow", Duration::from_secs(120), |v| {
-            v["type"] == "turn_end"
-        });
+        // A background run that finished after the turn wakes the main line once more.
+        if in_turn.is_none() {
+            rpc.until("turn after workflow", Duration::from_secs(120), |v| {
+                v["type"] == "turn_end"
+            });
+        }
     } else {
         eprintln!("模型没有调用 Workflow 工具，跳过 Workflow 断言");
     }
@@ -557,6 +566,43 @@ fn controls_a_real_session() {
             .iter()
             .any(|l| l.as_str().unwrap_or("").starts_with('❯'))
     );
+
+    // Nothing so far forked the conversation: no `branch` may have been reported.
+    assert!(rpc.branches.is_empty(), "误报 branch：{:?}", rpc.branches);
+
+    // Rewind: Esc Esc on an empty input opens the picker (newest message last, `❯ (current)`);
+    // pick the Workflow prompt, restore the conversation only, then ask something else there.
+    rpc.forget();
+    rpc.call("r1", json!({"type": "send_keys", "keys": ["esc", "esc"]}));
+    let picker = wait_screen(&mut rpc, "r2", |ls| ls.iter().any(|l| l.contains("Restore the code and/or conversation")));
+    assert!(picker.iter().any(|l| l.trim() == "❯ (current)"), "{picker:#?}");
+    rpc.call("r3", json!({"type": "send_keys", "keys": ["up", "enter"]}));
+    let confirm = wait_screen(&mut rpc, "r4", |ls| ls.iter().any(|l| l.contains("Restore conversation")));
+    let n = confirm
+        .iter()
+        .find_map(|l| {
+            let t = l.trim_start().trim_start_matches('❯').trim_start();
+            let (num, label) = t.split_once(". ")?;
+            (label.trim() == "Restore conversation").then(|| num.to_string())
+        })
+        .unwrap_or_else(|| panic!("找不到 Restore conversation：{confirm:#?}"));
+    rpc.call("r5", json!({"type": "send_keys", "keys": [{"text": n}]}));
+    std::thread::sleep(Duration::from_millis(800));
+    rpc.call("r6", json!({"type": "prompt", "text": "Reply with exactly REWOUND."}));
+    let b = rpc.event("branch", Duration::from_secs(30));
+    assert!(b["at_uuid"].is_string(), "{b}");
+    rpc.until("rewound", Duration::from_secs(60), |v| {
+        v["type"] == "turn_end" && v["last_text"].as_str().unwrap_or("").contains("REWOUND")
+    });
+    let msgs = rpc.call("r7", json!({"type": "get_messages"}));
+    let texts: Vec<&str> = msgs["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|b| b["text"].as_str())
+        .collect();
+    assert!(texts.iter().any(|t| t.contains("REWOUND")));
+    assert!(!texts.iter().any(|t| t.starts_with("Call the Workflow tool")), "{texts:#?}");
 
     // /clear changes the session id
     rpc.forget();
@@ -684,4 +730,27 @@ fn yields_when_a_person_takes_over() {
     forced.call("f1", json!({"type": "get_state"}));
     drop(forced);
     drop(person);
+}
+
+/// Polls `get_screen` until `pred` holds on its lines (logged on failure).
+fn wait_screen(rpc: &mut Rpc, id: &str, pred: impl Fn(&[String]) -> bool) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut n = 0;
+    loop {
+        n += 1;
+        let scr = rpc.call(&format!("{id}-{n}"), json!({"type": "get_screen"}));
+        let lines: Vec<String> = scr["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l.as_str().unwrap_or("").to_string())
+            .collect();
+        if pred(&lines) {
+            return lines;
+        }
+        if Instant::now() >= deadline {
+            panic!("屏幕没出现预期内容：{lines:#?}");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }

@@ -79,8 +79,12 @@ fn cmd_debug(roots: &Roots, args: &[String]) -> Result<()> {
     let (Some(sub), Some(id)) = (args.first(), args.get(1)) else {
         bail!("{USAGE}");
     };
-    // Debug commands look and type without taking the PTY size.
-    let (cols, rows) = pane_size(roots, id)?;
+    // Debug commands look and type without taking the PTY size; only `screen` needs the size.
+    let (cols, rows) = match pane_size(roots, id) {
+        Ok(s) => s,
+        Err(e) if sub == "screen" => return Err(e),
+        Err(_) => (80, 24),
+    };
     let conn = HolderConn::connect(&roots.holder_socket(id), cols, rows)?;
     match sub.as_str() {
         "screen" => {

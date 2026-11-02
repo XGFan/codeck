@@ -27,7 +27,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 
 ## 3. 定位
 
-Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ 它子孙进程里名为 `claude` 的进程 → `<cc>/sessions/<pid>.json`（`sessionId`、`cwd`）→ transcript `<cc>/projects/<cwd 中非字母数字换成 ->/<sessionId>.jsonl`（找不到时在 `projects/*/` 下按文件名找）。Subagent Run 的 transcript 是 `<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 关联到主线的 Agent 工具调用。屏幕尺寸取 Pane shell 的 tty（只读打开后 `TIOCGWINSZ`）。
+Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ 它子孙进程里名为 `claude` 的进程 → `<cc>/sessions/<pid>.json`（`sessionId`、`cwd`）→ transcript `<cc>/projects/<cwd 中非字母数字换成 ->/<sessionId>.jsonl`（找不到时在 `projects/*/` 下按文件名找）。Subagent Run 的 transcript 是 `<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 关联到主线的 Agent 工具调用。Pane shell 的 tty（只读打开后 `TIOCGWINSZ`）给出连接时的 PTY 尺寸，也用于被接手后跟随尺寸、在旧 Holder 上判断接手。
 
 - `attach <sessionId>`：在进程文件里找到 pid，再沿父进程链找到 `child_pid` 是其祖先的 Holder；不在 Holder 里的 Session 报错，不可控。
 - **sessionId 会变**：`/clear` 后约 1.3s 进程文件的 `sessionId` 换新，ccrpc 切到新 transcript 并发 `session_changed`。
@@ -53,7 +53,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 命令：`{"id":"7","type":"prompt","text":"…"}`，`id` 可选，字符串或数字。
 - 响应：`{"type":"response","id":"7","command":"prompt","success":true,"data":{…}}`；失败为 `"success":false,"error":{"code":"…","message":"…"}`。
 - 事件：`{"type":"<事件名>",…}`，没有 `id`。
-- 连接后先发 `ready`：`protocol`（1）、`holder_id`、`session_id`、`cwd`、`claude_version`、`state`（及 `waiting`）、`size`（`[列, 行]`）。
+- 连接后先发 `ready`：`protocol`（1）、`holder_id`、`session_id`、`cwd`、`claude_version`、`state`（及 `waiting`）、`size`（`[列, 行]`）、`taken_over`。连接前就有的 Workflow Run 在 `ready` 之后各发一次当前状态。
 - **被接手**：连着时尺寸所有者变成另一个 Client（旧 Holder 则是 PTY 尺寸变了），发 `taken_over`，清空 `follow_up` 队列；此后只有 `get_state`、`get_messages`、`get_screen`、`get_tool_result` 可用，其余命令返回 `taken_over`。人离开后不会自动恢复，调用方重新 `attach`。
 - **命令按到达顺序逐条执行**；需要等待的命令（如 `prompt` 等 transcript 确认）执行期间事件照常发出，但下一条命令要等它返回。
 
@@ -69,9 +69,9 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `answer_question {request_id, answers}` | waiting.question | `answers` 与题目一一对应：`{"options":[label…]}` 或 `{"other":"文本"}`；逐题等到屏幕显示该题再作答：单选按数字，多选按需切换勾选后 `→`（只有一题时移到 `Submit` 行回车），Other 按 `Type something` 的数字、输入文字、回车；多题最后在 Review 标签按 `Submit answers` | `state` |
 | `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行） | `{}` |
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
-| `send_keys {keys}` | 除 exited | 依次写入，每个间隔 80ms。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
+| `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
 | `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`taken_over` |
-| `get_messages {since?}` | 任意 | 当前 transcript 主文件里 Main Line 上的内容块（cv-core 的规则），`since` 为上次返回的 `cursor`；收到 `branch` 后 cursor 失效，不带 `since` 重取 | `blocks`、`cursor` |
+| `get_messages {since?}` | 任意 | 当前 transcript 主文件里 Main Line 上的内容块（Main Line 止于最新的条目，其余按 cv-core 的规则）；`since` 为上次返回的 `cursor`，只返回之后写入的块。`cursor` 是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor` |
 | `get_screen` | 任意 | — | `lines`（每行去尾部空白）、`cursor`（`[行, 列]`，0 起） |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 
@@ -90,7 +90,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键 |
 | `follow_up_failed` | `text`、`error` |
-| `branch` | `at_uuid`：Main Line 换到了从这里分出的另一个 Branch（rewind、编辑重发），此前发出、在它之后的 block 已不在 Main Line 上。原样重发且没有回复的不发 |
+| `branch` | `at_uuid`：Main Line 换到了从这里分出的另一个 Branch（rewind、编辑重发），这条事件之前发出、在它之后的 block 已不在 Main Line 上；为 null 时新 Branch 从头开始，此前的 block 全部作废。在新 Branch 的第一个 block 之前发。原样重发同一条提示词且没有回复（中止说明不算回复）的不发 |
 | `workflow` | Workflow Run 的整份状态：`run_id`、`tool_use_id`、`name`、`status`、`phases`（`index`、`title`、`detail`）、`agents`（`agent_id`、`label`、`phase_index`、`state`）。`workflows/<runId>.json` 或 `journal.jsonl` 内容有变化时发，内容不变不发 |
 | `taken_over` | `client`：接手者的客户端标识（旧 Holder 为 null） |
 | `session_changed` | `session_id`、`previous` |

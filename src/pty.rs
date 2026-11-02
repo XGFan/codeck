@@ -32,6 +32,10 @@ struct Shared {
     /// Number of Snapshots received.
     snaps: u64,
     owner: Owner,
+    /// The first other client seen owning the size after ccrpc held it (kept even if it left).
+    taken_by: Option<String>,
+    /// The Holder reported ccrpc as the size owner at least once.
+    claimed: bool,
     exit: Option<i32>,
     closed: bool,
 }
@@ -86,6 +90,8 @@ impl HolderConn {
                 seen: 0,
                 snaps: 0,
                 owner: Owner::Unknown,
+                taken_by: None,
+                claimed: false,
                 exit: None,
                 closed: false,
             }),
@@ -119,6 +125,14 @@ impl HolderConn {
                                 (false, Some(c)) => Owner::Other(c),
                                 (false, None) => Owner::Nobody,
                             };
+                            // Only once ccrpc has held the size: before that the owner is whoever
+                            // used the Pane last (checked by `initial_owner`).
+                            if let (Owner::Other(c), true, None) = (&s.owner, s.claimed, &s.taken_by) {
+                                s.taken_by = Some(c.clone());
+                            }
+                            if s.owner == Owner::Me {
+                                s.claimed = true;
+                            }
                         }),
                         Ok(Some(Frame::Exit { code })) => shared.update(|s| s.exit = Some(code)),
                         Ok(Some(_)) => {}
@@ -265,6 +279,11 @@ impl HolderConn {
     /// Bumps `wake` on every frame from now on.
     pub fn set_wake(&self, wake: Arc<Wake>) {
         *self.inner.wake.lock().unwrap_or_else(|e| e.into_inner()) = Some(wake);
+    }
+
+    /// Who took the size from ccrpc, if anyone did since ccrpc held it.
+    pub fn taken_by(&self) -> Option<String> {
+        self.inner.lock().taken_by.clone()
     }
 
     pub fn owner(&self) -> Owner {

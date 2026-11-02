@@ -116,9 +116,10 @@ pub enum TxEvent {
         uuid: String,
         text: String,
     },
-    /// The Main Line moved to another Branch: blocks emitted after `at_uuid` are off it.
+    /// The Main Line moved to another Branch: blocks emitted before this event that come after
+    /// `at_uuid` are off it (`None`: the new Branch starts a new root, all earlier blocks are off).
     Branch {
-        at_uuid: String,
+        at_uuid: Option<String>,
     },
     /// A Workflow Run's state changed (the whole state, protocol shape).
     Workflow(Value),
@@ -147,6 +148,15 @@ struct SubFile {
     checked_at: Option<Instant>,
 }
 
+/// What a main-file entry that produced blocks was, for the resend rule of Branches.
+#[derive(Debug, Clone, PartialEq)]
+enum Emitted {
+    Prompt(String),
+    /// `[Request interrupted by user…]`.
+    Interruption,
+    Other,
+}
+
 /// What was last seen of a Workflow Run's files.
 #[derive(Debug, Default)]
 struct WorkflowSeen {
@@ -173,8 +183,8 @@ pub struct Tailer {
     persisted: HashMap<String, PathBuf>,
     /// uuid of the last main-file entry read.
     last_uuid: Option<String>,
-    /// Main-file entries that produced blocks, in order, with the prompt text for prompts.
-    emitted: Vec<(String, Option<String>)>,
+    /// Main-file entries that produced blocks, in order.
+    emitted: Vec<(String, Emitted)>,
     emitted_set: HashSet<String>,
 }
 
@@ -202,6 +212,12 @@ impl Tailer {
             emitted: Vec::new(),
             emitted_set: HashSet::new(),
         }
+    }
+
+    /// Reports every Workflow Run again on the next look (its current state).
+    pub fn forget_workflows(&mut self) {
+        self.workflows.clear();
+        self.last_discover = None;
     }
 
     /// `<sessionId>/` next to the main file: subagents, workflows, tool-results.
@@ -255,19 +271,17 @@ impl Tailer {
         if let Ok(chunk) = read_lines(&self.main, self.offset) {
             self.offset = chunk.consumed_to;
             self.capped |= chunk.capped;
-            let mut fork: Option<(String, String)> = None;
-            for l in chunk.lines {
-                let before = out.len();
-                if let Some(f) = self.fork_candidate(&l) {
-                    fork = Some(f);
+            for (k, l) in chunk.lines.iter().enumerate() {
+                // A Branch is reported before the blocks of its first entry.
+                if self.is_fork(l) {
+                    let next_prompt = chunk.lines[k..].iter().find_map(prompt_text);
+                    if let Some(at) = self.branch_moved(l, next_prompt.as_deref()) {
+                        out.push(TxEvent::Branch { at_uuid: at });
+                    }
                 }
-                self.on_entry(&l, None, None, None, &mut out);
-                self.note_emitted(&l, &out[before..]);
-            }
-            if let Some((at, text)) = fork
-                && self.branch_moved(&text)
-            {
-                out.push(TxEvent::Branch { at_uuid: at });
+                let before = out.len();
+                self.on_entry(l, None, None, None, &mut out);
+                self.note_emitted(l, &out[before..]);
             }
         }
         let discover = self
@@ -322,68 +336,76 @@ impl Tailer {
         out
     }
 
-    /// A main-file user prompt whose parent is not the entry before it may start a new Branch:
-    /// `(parent uuid, prompt text)`.
-    fn fork_candidate(&self, line: &Line) -> Option<(String, String)> {
+    /// A main-file entry that does not continue from the entry before it may start a new Branch.
+    /// Assistant entries and tool results never start one (parallel tool calls branch the uuid
+    /// chain within one turn).
+    fn is_fork(&self, line: &Line) -> bool {
         let e = &line.entry;
-        if e.entry_type() != "user" || e.is_meta == Some(true) {
-            return None;
+        if e.uuid.is_none() || self.last_uuid.is_none() || self.emitted.is_empty() {
+            return false;
         }
-        let Some(RawContent::Text(text)) = e.message.as_ref().and_then(|m| m.content.as_ref())
-        else {
-            return None;
-        };
-        let parent = e.parent_uuid.as_ref()?;
-        (self.last_uuid.is_some() && self.last_uuid.as_ref() != Some(parent))
-            .then(|| (parent.clone(), text.clone()))
+        if e.entry_type() == "assistant" || e.is_tool_result() {
+            return false;
+        }
+        e.parent_uuid != self.last_uuid
     }
 
     /// Records the main-file entry behind blocks just produced (for Branch checks).
     fn note_emitted(&mut self, line: &Line, new: &[TxEvent]) {
         let e = &line.entry;
-        if let Some(u) = &e.uuid {
-            self.last_uuid = Some(u.clone());
-        }
         let Some(uuid) = e.uuid.clone() else {
             return;
         };
-        let mut prompt = None;
+        self.last_uuid = Some(uuid.clone());
+        let mut kind = Emitted::Other;
         let mut any = false;
         for ev in new {
             match ev {
-                TxEvent::Block(b) if b.agent_id.is_none() => any = true,
-                TxEvent::UserPrompt { text, .. } => prompt = Some(text.clone()),
+                TxEvent::Block(b) if b.agent_id.is_none() => {
+                    any = true;
+                    if b.kind == BlockKind::User
+                        && b.text
+                            .as_deref()
+                            .is_some_and(|t| t.starts_with("[Request interrupted by user"))
+                    {
+                        kind = Emitted::Interruption;
+                    }
+                }
+                TxEvent::UserPrompt { text, .. } => kind = Emitted::Prompt(text.clone()),
                 _ => {}
             }
         }
         if any && self.emitted_set.insert(uuid.clone()) {
-            self.emitted.push((uuid, prompt));
+            self.emitted.push((uuid, kind));
         }
     }
 
-    /// Recomputes the Main Line (cv-core rules); true when blocks already emitted fell off it.
-    /// A Branch that only resent the same prompt with no reply does not count.
-    fn branch_moved(&mut self, new_prompt: &str) -> bool {
-        let Some(abandoned) = off_main_uuids(&self.main) else {
-            return false;
-        };
-        let off: Vec<(String, Option<String>)> = self
+    /// With `fork` as the newest entry, the blocks already emitted that fell off the Main Line:
+    /// `Some(at_uuid)` to report (they are dropped from the record either way). A Branch that only
+    /// resent the same prompt (`next_prompt`, the new Branch's first prompt) with no reply, an
+    /// interruption note aside, is not reported.
+    fn branch_moved(&mut self, fork: &Line, next_prompt: Option<&str>) -> Option<Option<String>> {
+        let abandoned = off_main_uuids(&self.main, fork.entry.uuid.as_deref())?;
+        let off: Vec<Emitted> = self
             .emitted
             .iter()
             .filter(|(u, _)| abandoned.contains(u))
-            .cloned()
+            .map(|(_, k)| k.clone())
             .collect();
         if off.is_empty() {
-            return false;
-        }
-        for (u, _) in &off {
-            self.emitted_set.remove(u);
+            return None;
         }
         self.emitted.retain(|(u, _)| !abandoned.contains(u));
-        let resend = off
-            .iter()
-            .all(|(_, p)| p.as_deref().is_some_and(|t| t.trim() == new_prompt.trim()));
-        !resend
+        self.emitted_set.retain(|u| !abandoned.contains(u));
+        let resend = next_prompt.is_some_and(|p| {
+            off.iter().any(|k| matches!(k, Emitted::Prompt(_)))
+                && off.iter().all(|k| match k {
+                    Emitted::Prompt(t) => t.trim() == p.trim(),
+                    Emitted::Interruption => true,
+                    Emitted::Other => false,
+                })
+        });
+        (!resend).then(|| fork.entry.parent_uuid.clone())
     }
 
     fn poll_workflows(&mut self, out: &mut Vec<TxEvent>) {
@@ -729,40 +751,66 @@ impl Tailer {
     }
 }
 
-/// Blocks of the main file on the Main Line, from the beginning (for `get_messages`).
-pub fn main_blocks(main: &Path) -> Vec<Block> {
+/// Blocks of the main file on the Main Line written at or after byte `since`, and the byte offset
+/// to pass next time (for `get_messages`: offsets stay valid when the Main Line changes).
+pub fn main_blocks(main: &Path, since: u64) -> (Vec<Block>, u64) {
     let mut t = Tailer::new(main);
     let mut v = VecDeque::new();
-    if let Ok(chunk) = read_lines(main, 0) {
+    let mut cursor = 0;
+    let off = off_main_uuids(main, None).unwrap_or_default();
+    loop {
+        let Ok(chunk) = read_lines(main, t.offset) else {
+            break;
+        };
         t.offset = chunk.consumed_to;
-        let mut out = Vec::new();
-        for l in chunk.lines {
-            t.on_entry(&l, None, None, None, &mut out);
-        }
-        let off = off_main_uuids(main).unwrap_or_default();
-        for ev in out {
-            if let TxEvent::Block(b) = ev
-                && !off.contains(&b.uuid)
-            {
-                v.push_back(*b);
+        cursor = chunk.consumed_to;
+        for l in &chunk.lines {
+            let mut out = Vec::new();
+            t.on_entry(l, None, None, None, &mut out);
+            if l.offset < since {
+                continue;
+            }
+            for ev in out {
+                if let TxEvent::Block(b) = ev
+                    && !off.contains(&b.uuid)
+                {
+                    v.push_back(*b);
+                }
             }
         }
+        if !chunk.capped {
+            break;
+        }
     }
-    v.into()
+    (v.into(), cursor)
 }
 
-/// uuids of the entries of `main` on an abandoned Branch: in the Main Line's tree (cv-core's
-/// rules) but not on the Main Line. Entries cut off by a dangling parent are another tree, not a
-/// Branch, and are not included. `None` if unreadable.
-pub fn off_main_uuids(main: &Path) -> Option<HashSet<String>> {
+/// uuids of the entries of `main` on an abandoned Branch, with the Main Line ending at `leaf`
+/// (default: the last entry of the file — Claude Code's own leaf marker is written late).
+/// Entries in the Main Line's tree or under a real root (no parent) but not on the Main Line are
+/// abandoned; entries cut off by a dangling parent are a fragment, not a Branch, and are kept.
+/// The Main Line itself follows cv-core's rules (merged fragments, absorbed tool results, compact
+/// boundaries). `None` if unreadable.
+pub fn off_main_uuids(main: &Path, leaf: Option<&str>) -> Option<HashSet<String>> {
     let chunk = cv_core::parse::read_entries(main, 0).ok()?;
+    let real_root: HashSet<String> = chunk
+        .records
+        .iter()
+        .filter(|r| r.entry.parent_uuid.is_none() && r.entry.logical_parent_uuid.is_none())
+        .filter_map(|r| r.entry.uuid.clone())
+        .collect();
     let files = [LoadedFile {
         path: main.to_path_buf(),
         role: FileRole::Main,
         agent_id: None,
         records: chunk.records,
     }];
-    let s = skeleton::build(&files);
+    let mut s = skeleton::build(&files);
+    let leaf = match leaf {
+        Some(u) => *s.by_uuid.get(u)?,
+        None => (0..s.nodes.len()).max_by_key(|&i| s.nodes[i].order)?,
+    };
+    s.main_path = tree::root_path(&s, leaf);
     let on_main = tree::main_set(&s);
     // Root of every node, memoized (parents are cycle-free).
     let mut root: Vec<Option<usize>> = vec![None; s.nodes.len()];
@@ -790,10 +838,28 @@ pub fn off_main_uuids(main: &Path) -> Option<HashSet<String>> {
     let main_root = root_of(*s.main_path.first()?);
     Some(
         (0..s.nodes.len())
-            .filter(|&i| root_of(i) == main_root && !on_main.contains(&s.nodes[i].uuid))
+            .filter(|&i| {
+                let r = root_of(i);
+                (r == main_root || real_root.contains(&s.nodes[r].uuid))
+                    && !on_main.contains(&s.nodes[i].uuid)
+            })
             .map(|i| s.nodes[i].uuid.clone())
             .collect(),
     )
+}
+
+/// The prompt text of a main-file user prompt entry.
+fn prompt_text(l: &Line) -> Option<String> {
+    let e = &l.entry;
+    if e.entry_type() != "user" || e.is_meta == Some(true) {
+        return None;
+    }
+    match e.message.as_ref()?.content.as_ref()? {
+        RawContent::Text(t) if !is_command_record(t) && !t.starts_with("[Request interrupted") => {
+            Some(t.clone())
+        }
+        _ => None,
+    }
 }
 
 /// The file a `<persisted-output>` preview points to, only when it is in this Session's
@@ -812,10 +878,18 @@ fn persisted_path(text: &str, session_dir: &Path) -> Option<PathBuf> {
     ok.then_some(p)
 }
 
-/// A text file read with the block cap (read-only).
+/// A regular text file read with the block cap (read-only; no symlinks, nothing that blocks).
 fn read_capped(path: &Path) -> Option<String> {
     use std::io::Read;
-    let f = std::fs::File::open(path).ok()?;
+    use std::os::unix::fs::OpenOptionsExt;
+    if !std::fs::symlink_metadata(path).ok()?.file_type().is_file() {
+        return None;
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
     let mut buf = Vec::new();
     f.take(MAX_BLOCK_TEXT as u64 + 4).read_to_end(&mut buf).ok()?;
     Some(cap(String::from_utf8_lossy(&buf).into_owned()))
@@ -834,6 +908,8 @@ fn read_meta_tool_use_id(dir: &Path, stem: &str) -> Option<String> {
 struct Line {
     entry: RawEntry,
     operation: Option<String>,
+    /// Byte offset of the line in its file.
+    offset: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -886,7 +962,10 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
         }
     };
     let mut lines = Vec::new();
+    let mut at = from;
     for raw in buf[..end].split(|&b| b == b'\n') {
+        let offset = at;
+        at += raw.len() as u64 + 1;
         let raw = raw.trim_ascii();
         if raw.is_empty() {
             continue;
@@ -901,7 +980,11 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
         } else {
             None
         };
-        lines.push(Line { entry, operation });
+        lines.push(Line {
+            entry,
+            operation,
+            offset,
+        });
     }
     Ok(Chunk {
         lines,
@@ -1105,9 +1188,12 @@ mod tests {
 
     #[test]
     fn main_blocks_reads_whole_file() {
-        let bs = main_blocks(&fixture("steer_ask_permission.jsonl"));
+        let path = fixture("steer_ask_permission.jsonl");
+        let (bs, cursor) = main_blocks(&path, 0);
+        // (The fixture is trimmed: its chain is cut in places, so only counts are checked.)
         assert!(bs.len() > 20);
-        assert_eq!(bs[0].kind, BlockKind::User);
+        assert_eq!(cursor, std::fs::metadata(&path).unwrap().len());
+        assert!(main_blocks(&path, cursor).0.is_empty());
     }
 
     /// Writes `lines` (one JSON object each) to `path`.
@@ -1129,51 +1215,105 @@ mod tests {
                 "content": [{"type": "text", "text": text}]}})
     }
 
-    #[test]
-    fn rewind_reports_a_branch_and_get_messages_keeps_the_main_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("s.jsonl");
-        let mut lines = vec![
+    fn last_prompt(leaf: &str) -> Value {
+        json!({"type": "last-prompt", "leafUuid": leaf})
+    }
+
+    fn attachment(uuid: &str, parent: &str) -> Value {
+        json!({"type": "attachment", "uuid": uuid, "parentUuid": parent,
+            "attachment": {"type": "todo_reminder"}})
+    }
+
+    fn interruption(uuid: &str, parent: &str) -> Value {
+        json!({"type": "user", "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "user", "content": "[Request interrupted by user]"}})
+    }
+
+    /// Tails `lines`, then `more` appended; returns the events of the second poll.
+    fn tail_then(main: &Path, lines: &[Value], more: &[Value]) -> (Tailer, Vec<TxEvent>) {
+        write_lines(main, lines);
+        let mut t = Tailer::new(main);
+        assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Branch { .. })));
+        let all: Vec<Value> = lines.iter().chain(more).cloned().collect();
+        write_lines(main, &all);
+        let evs = t.poll();
+        (t, evs)
+    }
+
+    fn kinds(evs: &[TxEvent]) -> Vec<String> {
+        evs.iter()
+            .filter_map(|e| match e {
+                TxEvent::Branch { at_uuid } => Some(format!("branch:{}", at_uuid.as_deref().unwrap_or("-"))),
+                TxEvent::Block(b) => Some(format!("block:{}", b.uuid)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn history() -> Vec<Value> {
+        vec![
             prompt("u1", None, "first", 1),
             reply("a1", "u1", "one", 2),
+            last_prompt("a1"),
             prompt("u2", Some("a1"), "second", 3),
             reply("a2", "u2", "two", 4),
-        ];
-        write_lines(&main, &lines);
-        let mut t = Tailer::new(&main);
-        assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Branch { .. })));
-        // Rewind to after "one" and ask something else.
-        lines.push(prompt("u3", Some("a1"), "other", 5));
-        lines.push(reply("a3", "u3", "three", 6));
-        write_lines(&main, &lines);
-        let evs = t.poll();
-        assert!(
-            evs.iter()
-                .any(|e| matches!(e, TxEvent::Branch { at_uuid } if at_uuid == "a1")),
-            "{evs:?}"
+            last_prompt("a2"),
+        ]
+    }
+
+    #[test]
+    fn rewind_reports_the_branch_before_its_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        // Rewind to after "one" and ask something else; the leaf marker comes later.
+        let (_, evs) = tail_then(
+            &main,
+            &history(),
+            &[prompt("u3", Some("a1"), "other", 5), reply("a3", "u3", "three", 6)],
         );
-        let texts: Vec<_> = main_blocks(&main)
-            .into_iter()
-            .filter_map(|b| b.text)
-            .collect();
+        assert_eq!(kinds(&evs), ["branch:a1", "block:u3", "block:a3"]);
+        let texts: Vec<_> = main_blocks(&main, 0).0.into_iter().filter_map(|b| b.text).collect();
         assert_eq!(texts, ["first", "one", "other", "three"]);
     }
 
     #[test]
-    fn resending_the_same_prompt_is_not_a_branch() {
+    fn a_branch_starting_with_an_attachment_is_seen() {
         let dir = tempfile::tempdir().unwrap();
         let main = dir.path().join("s.jsonl");
-        let mut lines = vec![
+        let (_, evs) = tail_then(
+            &main,
+            &history(),
+            &[attachment("x3", "a1"), prompt("u3", Some("x3"), "other", 5)],
+        );
+        assert_eq!(kinds(&evs)[0], "branch:a1");
+    }
+
+    #[test]
+    fn rewinding_to_the_start_is_a_branch_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let (_, evs) = tail_then(&main, &history(), &[prompt("u3", None, "fresh", 5)]);
+        assert_eq!(kinds(&evs)[0], "branch:-");
+        let texts: Vec<_> = main_blocks(&main, 0).0.into_iter().filter_map(|b| b.text).collect();
+        assert_eq!(texts, ["fresh"]);
+    }
+
+    #[test]
+    fn resending_the_same_prompt_is_not_a_branch_and_cursors_still_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let first = vec![
             prompt("u1", None, "first", 1),
             reply("a1", "u1", "one", 2),
             prompt("u2", Some("a1"), "again", 3),
+            interruption("i2", "u2"),
         ];
-        write_lines(&main, &lines);
-        let mut t = Tailer::new(&main);
-        t.poll();
-        lines.push(prompt("u3", Some("a1"), "again", 4));
-        write_lines(&main, &lines);
-        assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Branch { .. })));
+        write_lines(&main, &first);
+        let (_, cursor) = main_blocks(&main, 0);
+        let (_, evs) = tail_then(&main, &first, &[prompt("u3", Some("a1"), "again", 4)]);
+        assert!(!evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })), "{evs:?}");
+        let after: Vec<_> = main_blocks(&main, cursor).0.into_iter().map(|b| b.uuid).collect();
+        assert_eq!(after, ["u3"]);
     }
 
     fn tool_result_entry(tool_use_id: &str, content: &str, extra: Value) -> Value {

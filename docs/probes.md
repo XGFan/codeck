@@ -21,6 +21,7 @@
 - 忙时输入：先写 `{"type":"queue-operation","operation":"enqueue","content":…}`；当前工具结束时写 `operation: "remove", reason: "absorbed_mid_turn"`，内容作为 `attachment.type = "queued_command"` 插在该 `tool_result` 之后送给模型。→ **steer 成立**，语义与 Pi 相同（在两次工具调用之间送达）。
 - Subagent Run：`<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 指向主线的 `Agent` tool_use；`requestShape: "background"` 时主线的 Agent tool_result 立即返回（DeepSeek 下模型默认就这样派 Subagent：主线一轮先结束，Subagent 完成后主线再起一轮汇报）。
 - Workflow Run：状态在 `<sessionId>/workflows/<runId>.json`（运行中整份重写），或只有 `subagents/workflows/<runId>/journal.jsonl`；其中的 Subagent Run 是 `subagents/workflows/<runId>/agent-<id>.jsonl`。主线 `Workflow` 的 tool_result 条目 `toolUseResult.runId` 指向它。
+- rewind：输入框为空时按两次 `Esc` 打开选择器（标题 `Rewind`，提示词从旧到新排列，最后一行是 `❯ (current)`，底部 `Enter to continue · Esc to cancel`）；`↑` 选上一条、回车后出现确认菜单，其中 `Restore conversation` 只回退对话。回退后新提示词的 `parentUuid` 指向所选提示词之前的条目，`last-prompt` 的 `leafUuid` 在新提示词之后才更新。
 - 输出太大的工具结果（约 30KB 起）存进 `<sessionId>/tool-results/<id>.txt`，tool_result 只留 `<persisted-output>` 包着的说明与约 2KB 预览，模型看到的也只有这些。
 
 ## 写入
