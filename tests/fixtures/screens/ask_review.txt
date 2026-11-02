@@ -1,0 +1,13 @@
+←  ☒ Indent  ☒ Linters  ✔ Submit  →
+
+Review your answers
+
+ ● Indent style?
+   → Tabs
+ ● Which linters?
+   → eslint, biome
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

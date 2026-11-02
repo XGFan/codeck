@@ -1,0 +1,16 @@
+←  ☒ Indent  ☒ Linters  ✔ Submit  →
+
+Which linters?
+
+❯ 1. [✔] eslint
+         Use ESLint for linting.
+  2. [ ] prettier
+         Use Prettier for formatting.
+  3. [✔] biome
+         Use Biome for linting and formatting.
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
