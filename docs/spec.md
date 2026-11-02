@@ -19,7 +19,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 ```
 
 - RPC 循环：stdin 每行一条命令，stdout 每行一条响应或事件；stderr 只写错误。stdin 关闭即断开（发 Detach），Session 不受影响。
-- 目录：ToH 状态目录按 `--toh-state-dir` > `TOH_STATE_DIR` > `~/.local/state/toh`；Claude Code 配置目录按 `--claude-config-dir` > `CLAUDE_CONFIG_DIR` > `~/.claude`（两个选项写在子命令之前）。配置目录不是缺省值时，`new` 以 `env CLAUDE_CONFIG_DIR=… claude` 启动（`toh new` 只把少数变量带进 Pane）。`toh` 需在 PATH 里。
+- 目录：ToH 状态目录按 `--toh-state-dir` > `TOH_STATE_DIR` > `~/.local/state/toh`；Claude Code 配置目录按 `--claude-config-dir` > `CLAUDE_CONFIG_DIR` > `~/.claude`（两个选项写在子命令之前）。配置目录不是缺省值时，`new` 以 `env CLAUDE_CONFIG_DIR=… claude` 启动（`toh new` 只把少数变量带进 Pane）。`toh` 需在 PATH 里。claude 运行 20 秒仍没有进程文件时，在 stderr 提示可能是配置目录不对。
 
 ## 3. 定位
 
@@ -27,7 +27,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 - `attach <sessionId>`：在进程文件里找到 pid，再沿父进程链找到 `child_pid` 是其祖先的 Holder；不在 Holder 里的 Session 报错，不可控。
 - **sessionId 会变**：`/clear` 后约 1.3s 进程文件的 `sessionId` 换新，ccrpc 切到新 transcript 并发 `session_changed`。
-- 连接时（`ready` 之前）以及每次切换 Session 时，先把已有 transcript 当作历史读完：不发 `block`，但记下挂起的工具调用和已出现的提示词（用于确认命令）。
+- 连接时（`ready` 之前）以及切换 Session 时，第一次查找就已存在的 transcript 当作历史读到文件末尾：不发 `block`，但记下挂起的工具调用和已出现的提示词（用于确认命令）。之后才出现的 transcript（新 Session 的第一条提示词、`/clear` 之后）按实时读。
 
 ## 4. 状态
 
@@ -39,7 +39,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `exited` | claude 进程消失或 Holder 断开 |
 
 - 每 50ms 读一次进程文件与 transcript。
-- **一轮**从 transcript 出现用户提示词、或状态变为 `busy` 开始。**`turn_end`**：状态为 `idle` 时读到 `system`/`turn_duration`（idle 比本轮最后内容早约 100ms；后台 Subagent 会让主线在 busy 期间先写一条 `turn_duration`，那条不算）；进入 idle 后 2s 仍没读到也发。下一轮在此之前就开始时，先补发上一轮的 `turn_end`。从 idle 打开又关掉的对话框不算一轮。
+- **一轮**从 transcript 出现用户提示词、或状态变为 `busy` 开始。**`turn_end`**：状态为 `idle` 时读到 `system`/`turn_duration`（idle 比本轮最后内容早约 100ms；后台 Subagent 会让主线在 busy 期间先写一条 `turn_duration`，那条不算）；进入 idle 后 2s 仍没读到也发。下一轮在此之前就开始时，先补发上一轮的 `turn_end`。从 idle 打开又关掉的对话框不算一轮；一轮开了却既没 busy 也没结束标记（立即报错、在 busy 出现前中止）时，空闲 5 秒后结束。中止说明 `[Request interrupted by user…]` 与 `!` 命令的记录不算提示词。
 
 ## 5. 协议
 
@@ -55,8 +55,8 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 | 命令 | 可用状态 | 做法 | 成功时 `data` |
 |---|---|---|---|
-| `prompt {text}` | idle | 先清空输入框（中止后被放回的提示词），bracketed paste 写正文，再发 `\r`（写入与回车前都确认屏幕上是输入框而不是对话框）；等 transcript 出现这条用户消息（≤30s）。以 `/` 或 `!` 开头的正文会被 Claude Code 当作斜杠命令或 shell 命令 | `uuid` |
-| `steer {text}` | busy | 同样写入；忙时输入会排队，在当前工具调用结束后送达（transcript `queue-operation`/`enqueue`，随后作为 `queued_command` 附件交给模型）。等 enqueue（≤10s） | `delivered_as`：`queued`；若这时本轮恰好结束、被当作新提示词，则为 `prompt` |
+| `prompt {text}` | idle 且上一轮已结束（上一轮只差结束标记时最多等 6s） | 先清空输入框（中止后被放回的提示词），bracketed paste 写正文，再发 `\r`（写入与回车前都确认屏幕上是输入框而不是对话框）；等 transcript 出现这条用户消息（≤30s）。以 `/` 或 `!` 开头的正文会被 Claude Code 当作斜杠命令或 shell 命令 | `uuid` |
+| `steer {text}` | busy | 先清空输入框再同样写入；忙时输入会排队，在当前工具调用结束后送达（transcript `queue-operation`/`enqueue`，随后作为 `queued_command` 附件交给模型）。等 enqueue（≤10s） | `delivered_as`：`queued`；若这时本轮恰好结束、被当作新提示词，则为 `prompt` |
 | `follow_up {text}` | 除 exited | 进 ccrpc 队列；在两条命令之间、`idle` 且上一轮已结束时按 `prompt` 依次发出（不会在别的命令等待期间发出）；失败发 `follow_up_failed` 事件 | `queued`（队列长度） |
 | `abort` | busy / waiting | 发 `Esc`；等状态离开 busy / waiting（≤10s） | `state` |
 | `answer_permission {request_id, decision, message?}` | waiting.permission | 识别审批框，按 `decision`（`allow` / `allow_always` / `deny`）对应选项的数字键；`message` 只能配 `deny`，拒绝后回到 idle 再作为 `prompt` 发出 | `state`；有 `message` 时另有 `message_uuid` |
@@ -89,7 +89,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 不发 slash 命令的本地记录（`<command-name>` 等）与 `isMeta` 条目。
 - `question` 在进程文件为 `input needed` 且 transcript 里有未完成的 AskUserQuestion 时发。
 - `permission_request` 按**屏幕上的审批框**认定对应的工具调用：在未完成的 tool_use（主线或 Subagent Run，排除 AskUserQuestion、Agent、Task）里，找命令（Bash）、文件名（Edit / Write / Read 等）、URL 或 pattern 出现在审批框正文里的那个；都没有可比对的内容时，只有唯一候选才认。3 秒内认不出就改发 `dialog`（交给 `send_keys`）。
-- 状态变化、或已发出的请求对应的工具有了结果（连续两次审批可能合并成一段 waiting），都会重新认定并再发事件。
+- 状态变化、或已发出的请求对应的工具有了结果（连续两次审批可能合并成一段 waiting），都会重新认定并再发事件。已结束的请求不再参与匹配；仍有两个以上工具都能对上审批框时不认定（改发 `dialog`）。
 - `answer_permission` 作答前重新确认屏幕上的审批框仍对应该 `request_id`，按键前再核对一次。
 
 ## 6. 写入
