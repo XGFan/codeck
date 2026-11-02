@@ -196,7 +196,6 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 [[package]]
 name = "cv-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/XGFan/claude-code-viewer.git?branch=main#6797f3d38a7c94f88259fc419160df9dd79690be"
 dependencies = [
  "aho-corasick",
  "chrono",
@@ -887,7 +886,6 @@ dependencies = [
 [[package]]
 name = "toh-proto"
 version = "0.1.0"
-source = "git+ssh://git@github.com/XGFan/toh.git?branch=master#4b3b8f2ec1b0b4d7c52ef00725224e6725b8bb5c"
 dependencies = [
  "serde",
  "serde_json",
