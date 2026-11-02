@@ -72,7 +72,17 @@ fn setup(key: &str) -> Env {
         "language = \"zh-Hans\"\n[backends]\nenabled = [\"clay\"]\n[lan]\nbind = \"127.0.0.1\"\nmdns = false\n[backends.clay]\nenv = {{ {} }}\n",
         env_toml.join(", ")
     );
-    std::fs::write(toh_dir.join("config.toml"), config).unwrap();
+    // The config holds the model key: owner-only.
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(toh_dir.join("config.toml"))
+            .unwrap();
+        f.write_all(config.as_bytes()).unwrap();
+    }
     let claude_json = json!({
         "hasCompletedOnboarding": true,
         "projects": { work_dir.display().to_string(): { "hasTrustDialogAccepted": true } },
@@ -229,12 +239,6 @@ fn holder_pid(toh_dir: &Path, holder: &str) -> Option<u32> {
     v["holder_pid"].as_u64().map(|p| p as u32)
 }
 
-fn wait_state(rpc: &mut Rpc, state: &str) {
-    rpc.until(&format!("state {state}"), Duration::from_secs(60), |v| {
-        v["type"] == "state" && v["state"] == state
-    });
-}
-
 #[test]
 #[ignore = "real Claude Code; needs CCRPC_E2E_API_KEY, toh and claude"]
 fn controls_a_real_session() {
@@ -249,27 +253,38 @@ fn controls_a_real_session() {
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.holder_pid = holder_pid(&env.toh_dir, &holder);
     assert!(rpc.holder_pid.is_some());
-    // Startup: Claude Code may offer to make auto mode the default (a `dialog`); keep manual mode
-    // through the generic dialog path (send_keys), then wait for idle.
-    let first = rpc.until("idle or dialog", Duration::from_secs(60), |v| {
-        (v["type"] == "state" && v["state"] == "idle") || v["type"] == "dialog"
-    });
-    if first["type"] == "dialog" {
-        let lines: Vec<&str> = first["lines"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(Value::as_str)
-            .collect();
-        assert!(
-            lines.iter().any(|l| l.contains("No, keep manual mode")),
-            "未预期的对话框：{lines:#?}"
-        );
-        rpc.call(
-            "d1",
-            json!({"type": "send_keys", "keys": ["down", "enter"]}),
-        );
-        wait_state(&mut rpc, "idle");
+    // Startup: Claude Code may offer to make auto mode the default (a `dialog`, possibly right
+    // after a first `idle`); keep manual mode through the generic dialog path (send_keys). The
+    // Session is ready once it has been idle for 3 s with no dialog.
+    let mut idle_since: Option<Instant> = None;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        assert!(Instant::now() < deadline, "启动后没有稳定在 idle");
+        if idle_since.is_some_and(|t| t.elapsed() > Duration::from_secs(3)) {
+            break;
+        }
+        let Ok(v) = rpc.rx.recv_timeout(Duration::from_millis(200)) else {
+            continue;
+        };
+        eprintln!("{:6.1} {v}", rpc.t0.elapsed().as_secs_f32());
+        if v["type"] == "state" {
+            idle_since = (v["state"] == "idle").then(Instant::now);
+        } else if v["type"] == "dialog" {
+            let lines: Vec<&str> = v["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            assert!(
+                lines.iter().any(|l| l.contains("No, keep manual mode")),
+                "未预期的对话框：{lines:#?}"
+            );
+            rpc.call(
+                "d1",
+                json!({"type": "send_keys", "keys": ["down", "enter"]}),
+            );
+        }
     }
 
     // prompt → reply → turn_end

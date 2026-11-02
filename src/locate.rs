@@ -31,6 +31,10 @@ impl Roots {
         }
     }
 
+    pub fn default_claude_config() -> PathBuf {
+        PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".claude")
+    }
+
     pub fn holders_dir(&self) -> PathBuf {
         self.toh_state.join("holders")
     }
@@ -214,6 +218,14 @@ pub fn tty_size(tty: &str) -> Result<(u16, u16)> {
 /// Transcript path of `session_id`: `<projects>/<encoded cwd>/<id>.jsonl`, falling back to a
 /// search over every project directory.
 pub fn transcript_path(roots: &Roots, cwd: &str, session_id: &str) -> Option<PathBuf> {
+    // The id comes from a Process File: accept only uuid-like ids so it cannot name another path.
+    if session_id.is_empty()
+        || !session_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return None;
+    }
     let file = format!("{session_id}.jsonl");
     let encoded: String = cwd
         .chars()

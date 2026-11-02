@@ -6,7 +6,7 @@ use crate::locate::{self, Roots};
 use crate::pty::{self, HolderConn};
 use crate::screen::Screen;
 
-const USAGE: &str = "用法：
+const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir DIR] <命令>
   ccrpc new [--cwd DIR] [-- claude 参数…]
   ccrpc attach <Holder ID | sessionId>
   ccrpc ls
@@ -15,7 +15,22 @@ const USAGE: &str = "用法：
   ccrpc debug paste <Holder ID> <文字>";
 
 pub fn run(args: Vec<String>) -> Result<()> {
-    let roots = Roots::from_env();
+    let mut roots = Roots::from_env();
+    // Global options before the subcommand override the environment.
+    let mut args = args;
+    while let Some(a) = args.first().cloned() {
+        let slot = match a.as_str() {
+            "--toh-state-dir" => &mut roots.toh_state,
+            "--claude-config-dir" => &mut roots.claude_config,
+            _ => break,
+        };
+        let v = args
+            .get(1)
+            .with_context(|| format!("{a} 需要目录"))?
+            .clone();
+        *slot = std::path::PathBuf::from(v);
+        args.drain(..2);
+    }
     match args.first().map(String::as_str) {
         Some("ls") => cmd_ls(&roots),
         Some("debug") => cmd_debug(&roots, &args[1..]),

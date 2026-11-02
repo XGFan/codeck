@@ -72,22 +72,6 @@ fn checkbox(label: &str) -> (Option<bool>, String) {
     }
 }
 
-/// Wrapped label: the option row plus following lines indented deeper than the number, up to the
-/// next option. Used for permission options whose label wraps (long paths).
-fn full_label(lines: &[String], opt: &MenuOption, next_row: Option<usize>) -> String {
-    let mut s = opt.label.clone();
-    let end = next_row.unwrap_or(lines.len());
-    for l in &lines[opt.row + 1..end.min(lines.len())] {
-        let t = l.trim();
-        if t.is_empty() || t.starts_with("Esc to") || t.starts_with('─') {
-            break;
-        }
-        s.push(' ');
-        s.push_str(t);
-    }
-    s
-}
-
 /// What a permission option means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionChoice {
@@ -128,34 +112,87 @@ fn classify(label: &str) -> PermissionChoice {
     }
 }
 
-/// A tool permission dialog: a `Do you want …?` question followed by a numbered menu with a plain
-/// `Yes` and a `No` option.
+/// A tool permission dialog: the last `Do you want …?` line, immediately followed (blank lines
+/// aside) by a strictly sequential numbered menu: option 1 first, each next option on the following
+/// row or after continuation rows indented deeper than the number, exactly one `❯`, `No…` last, a
+/// plain `Yes` present, and no further numbered row below the menu. Anything else is refused.
 pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
     let q = lines
         .iter()
         .rposition(|l| l.trim_start().starts_with("Do you want"))?;
-    let opts: Vec<MenuOption> = menu(&lines[q..])
-        .into_iter()
-        .map(|mut o| {
-            o.row += q;
-            o
-        })
-        .collect();
-    if opts.is_empty() {
+    let mut i = q + 1;
+    while i < lines.len() && lines[i].trim().is_empty() {
+        i += 1;
+    }
+    let mut opts: Vec<(u32, String, bool, usize)> = Vec::new(); // number, label, cursor, indent
+    while i < lines.len() {
+        let line = &lines[i];
+        if line.trim().is_empty() {
+            break;
+        }
+        match parse_option(line) {
+            Some((n, cursor, label)) if n as usize == opts.len() + 1 => {
+                let indent = number_column(line);
+                opts.push((n, label, cursor, indent));
+            }
+            Some(_) => return None,
+            None => {
+                let (_, _, _, indent) = opts.last()?;
+                let lead = line.len() - line.trim_start().len();
+                if lead <= *indent {
+                    return None;
+                }
+                let last = opts.last_mut()?;
+                last.1.push(' ');
+                last.1.push_str(line.trim());
+            }
+        }
+        i += 1;
+    }
+    if opts.len() < 2 || opts.iter().filter(|o| o.2).count() != 1 {
+        return None;
+    }
+    // Below the menu only the footer may follow; another numbered row means we misread.
+    if lines[i..].iter().any(|l| parse_option(l).is_some()) {
         return None;
     }
     let options: Vec<_> = opts
         .iter()
-        .enumerate()
-        .map(|(i, o)| {
-            let label = full_label(lines, o, opts.get(i + 1).map(|n| n.row));
-            let c = classify(&label);
-            (o.number, label, c)
-        })
+        .map(|(n, l, _, _)| (*n, l.clone(), classify(l)))
         .collect();
     let has = |c| options.iter().any(|o| o.2 == c);
-    (has(PermissionChoice::Allow) && has(PermissionChoice::Deny))
-        .then_some(PermissionDialog { options })
+    let deny_last = options
+        .last()
+        .is_some_and(|o| o.2 == PermissionChoice::Deny);
+    (has(PermissionChoice::Allow) && deny_last).then_some(PermissionDialog { options })
+}
+
+/// Byte column where an option's number starts (after any `❯` marker).
+fn number_column(line: &str) -> usize {
+    let t = line.trim_start();
+    let lead = line.len() - t.len();
+    match t.strip_prefix('❯') {
+        Some(rest) => lead + '❯'.len_utf8() + (rest.len() - rest.trim_start().len()),
+        None => lead,
+    }
+}
+
+/// The permission dialog's body (between the rule above it and the `Do you want` line) with all
+/// whitespace removed, for matching the requested tool's command or file against what is shown.
+pub fn permission_body(lines: &[String]) -> Option<String> {
+    let q = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with("Do you want"))?;
+    let top = lines[..q]
+        .iter()
+        .rposition(|l| l.starts_with('─') && l.chars().all(|c| c == '─'))?;
+    Some(
+        lines[top + 1..q]
+            .iter()
+            .flat_map(|l| l.chars())
+            .filter(|c| !c.is_whitespace())
+            .collect(),
+    )
 }
 
 /// The AskUserQuestion UI.
@@ -212,11 +249,15 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
         .rposition(|l| l.contains('☐') || l.contains('☒') || l.contains("✔ Submit"))?;
     let tabbed = lines[header].trim_start().starts_with('←');
     let title_row = (header + 1..footer).find(|&i| !lines[i].trim().is_empty())?;
-    let title = lines[title_row].trim().to_string();
-    let all: Vec<MenuOption> = menu(&lines[title_row..footer])
+    // A long question wraps: the title is every line up to the first blank one.
+    let title_end = (title_row..footer)
+        .find(|&i| lines[i].trim().is_empty())
+        .unwrap_or(footer);
+    let title = collapse_ws(&lines[title_row..title_end].join(" "));
+    let all: Vec<MenuOption> = menu(&lines[title_end..footer])
         .into_iter()
         .map(|mut o| {
-            o.row += title_row;
+            o.row += title_end;
             o
         })
         .collect();
@@ -256,6 +297,11 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
         cursor_row,
         editing,
     }))
+}
+
+/// Whitespace runs folded to one space, trimmed (screen text wraps and pads).
+pub fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The prompt input box: the text after `❯` between the two horizontal rules at the bottom.
@@ -330,6 +376,30 @@ mod tests {
         let d = permission(&lines).unwrap();
         assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
         assert_eq!(d.number_for(PermissionChoice::Deny), Some(3));
+    }
+
+    #[test]
+    fn permission_menu_must_be_strict() {
+        let base = screen("permission_bash.txt");
+        // a stray numbered row after the menu (e.g. tool text) makes it ambiguous
+        let mut extra = base.clone();
+        extra.push("  5. Yes".into());
+        assert!(permission(&extra).is_none());
+        // a gap in numbering
+        let gap: Vec<String> = base
+            .iter()
+            .map(|l| l.replace("3. Yes, and switch", "7. Yes, and switch"))
+            .collect();
+        assert!(permission(&gap).is_none());
+        // no cursor
+        let nocur: Vec<String> = base
+            .iter()
+            .map(|l| l.replace("❯ 1. Yes", "  1. Yes"))
+            .collect();
+        assert!(permission(&nocur).is_none());
+        // body for matching
+        let body = permission_body(&base).unwrap();
+        assert!(body.contains("touchcreated_by_probe.txt"), "{body}");
     }
 
     #[test]

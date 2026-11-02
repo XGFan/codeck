@@ -8,6 +8,9 @@ use cv_core::raw::{RawBlock, RawContent, RawEntry, decode_str};
 use serde::Serialize;
 use serde_json::Value;
 
+/// Cap on one read of a transcript file.
+const MAX_READ: u64 = 8 * 1024 * 1024;
+
 /// Cap on text carried by one block event (tool outputs can be huge).
 pub const MAX_BLOCK_TEXT: usize = 100 * 1024;
 
@@ -117,8 +120,7 @@ pub struct Tailer {
     pending: HashMap<String, PendingTool>,
     seq: u64,
     last_text: Option<String>,
-    /// Set only during the silent catch-up read in `new(_, true)`.
-    from_end: bool,
+    last_discover: Option<std::time::Instant>,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -127,23 +129,17 @@ pub fn subagents_dir(main: &Path) -> PathBuf {
 }
 
 impl Tailer {
-    /// Starts at the end of the existing files (`from_end`) or at the beginning.
-    pub fn new(main: &Path, from_end: bool) -> Tailer {
-        let mut t = Tailer {
+    /// Starts at the beginning; the caller decides what to do with the first poll (history).
+    pub fn new(main: &Path) -> Tailer {
+        Tailer {
             main: main.to_path_buf(),
             offset: 0,
             subs: HashMap::new(),
             pending: HashMap::new(),
             seq: 0,
             last_text: None,
-            from_end,
-        };
-        if from_end {
-            // Catch up silently so pending tools and the last text are known.
-            let _ = t.poll();
+            last_discover: None,
         }
-        t.from_end = false;
-        t
     }
 
     pub fn main_path(&self) -> &Path {
@@ -167,18 +163,18 @@ impl Tailer {
         self.pending().into_iter().find(|p| p.name == name)
     }
 
-    /// Oldest pending tool other than AskUserQuestion.
-    pub fn pending_for_permission(&self) -> Option<&PendingTool> {
-        self.pending()
-            .into_iter()
-            .find(|p| p.name != "AskUserQuestion")
+    /// The pending tool with this id.
+    pub fn pending_by_id(&self, id: &str) -> Option<&PendingTool> {
+        self.pending.get(id)
     }
 
     pub fn poll(&mut self) -> Vec<TxEvent> {
         let mut out = Vec::new();
-        // A file that shrank was replaced: start it over.
+        // A file that shrank was replaced: start it over with fresh state.
         if std::fs::metadata(&self.main).map(|m| m.len()).unwrap_or(0) < self.offset {
             self.offset = 0;
+            self.pending.clear();
+            self.last_text = None;
         }
         if let Ok(chunk) = read_lines(&self.main, self.offset) {
             self.offset = chunk.consumed_to;
@@ -203,13 +199,17 @@ impl Tailer {
                 }
             }
         }
-        if self.from_end {
-            out.clear();
-        }
         out
     }
 
     fn discover_subs(&mut self) {
+        if self
+            .last_discover
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500))
+        {
+            return;
+        }
+        self.last_discover = Some(std::time::Instant::now());
         let dir = subagents_dir(&self.main);
         let Ok(rd) = std::fs::read_dir(&dir) else {
             return;
@@ -417,7 +417,7 @@ impl Tailer {
 
 /// Every Block of the main file from the beginning (for `get_messages`).
 pub fn main_blocks(main: &Path) -> Vec<Block> {
-    let mut t = Tailer::new(main, false);
+    let mut t = Tailer::new(main);
     let mut v = VecDeque::new();
     if let Ok(chunk) = read_lines(main, 0) {
         t.offset = chunk.consumed_to;
@@ -473,10 +473,19 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
         });
     }
     f.seek(SeekFrom::Start(from))?;
-    let mut buf = Vec::with_capacity((len - from) as usize);
-    f.read_to_end(&mut buf)?;
+    let want = (len - from).min(MAX_READ);
+    let mut buf = Vec::with_capacity(want as usize);
+    f.take(want).read_to_end(&mut buf)?;
     let end = match buf.iter().rposition(|&b| b == b'\n') {
         Some(i) => i + 1,
+        // A single line longer than the read cap: skip what was read (the rest of the line then
+        // fails to parse and is skipped too) instead of re-reading it forever.
+        None if want == MAX_READ => {
+            return Ok(Chunk {
+                lines: Vec::new(),
+                consumed_to: from + want,
+            });
+        }
         None => {
             return Ok(Chunk {
                 lines: Vec::new(),
@@ -570,7 +579,7 @@ mod tests {
 
     #[test]
     fn reads_prompts_blocks_turn_ends_and_steer() {
-        let mut t = Tailer::new(&fixture("steer_ask_permission.jsonl"), false);
+        let mut t = Tailer::new(&fixture("steer_ask_permission.jsonl"));
         let evs = t.poll();
         let prompts: Vec<_> = evs
             .iter()
@@ -622,7 +631,7 @@ mod tests {
 
     #[test]
     fn subagent_blocks_are_tagged_and_command_records_skipped() {
-        let mut t = Tailer::new(&fixture("subagent_deny.jsonl"), false);
+        let mut t = Tailer::new(&fixture("subagent_deny.jsonl"));
         let evs = t.poll();
         let bs = blocks(&evs);
         assert!(
@@ -665,7 +674,8 @@ mod tests {
         head.push('\n');
         head.push_str(&lines[cut + 1][..10]);
         std::fs::write(&main, &head).unwrap();
-        let mut t = Tailer::new(&main, true);
+        let mut t = Tailer::new(&main);
+        assert!(!t.poll().is_empty(), "first poll returns the history");
         assert_eq!(
             t.pending_named("AskUserQuestion").map(|p| p.name.as_str()),
             Some("AskUserQuestion")
