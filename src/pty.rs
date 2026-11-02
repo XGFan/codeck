@@ -12,6 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use toh_proto::{AttachInfo, Decoder, Frame};
 
 use crate::screen::{Screen, Vt};
+use crate::wake::Wake;
 
 /// Who owns the PTY size, as the Holder reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +39,8 @@ struct Shared {
 struct Inner {
     m: Mutex<Shared>,
     cv: Condvar,
+    /// Also woken on every frame (the engine loop).
+    wake: Mutex<Option<Arc<Wake>>>,
 }
 
 impl Inner {
@@ -48,6 +51,9 @@ impl Inner {
     fn update(&self, f: impl FnOnce(&mut Shared)) {
         f(&mut self.lock());
         self.cv.notify_all();
+        if let Some(w) = self.wake.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            w.bump();
+        }
     }
 }
 
@@ -84,6 +90,7 @@ impl HolderConn {
                 closed: false,
             }),
             cv: Condvar::new(),
+            wake: Mutex::new(None),
         });
         let shared = inner.clone();
         std::thread::spawn(move || {
@@ -253,6 +260,11 @@ impl HolderConn {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
+    }
+
+    /// Bumps `wake` on every frame from now on.
+    pub fn set_wake(&self, wake: Arc<Wake>) {
+        *self.inner.wake.lock().unwrap_or_else(|e| e.into_inner()) = Some(wake);
     }
 
     pub fn owner(&self) -> Owner {

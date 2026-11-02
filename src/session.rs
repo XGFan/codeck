@@ -4,6 +4,7 @@
 //! level loop, never from inside a waiting command).
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -18,9 +19,13 @@ use crate::recognize::{self, AskScreen, PermissionChoice};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
 use crate::transcript::{self, BlockKind, PendingTool, Tailer, TxEvent};
+use crate::wake::{FsWatch, Wake};
 
 pub const PROTOCOL: u32 = 1;
+/// Longest wait between two looks while a command waits.
 const TICK: Duration = Duration::from_millis(50);
+/// Longest wait between two looks when idle (file, Holder and stdin events wake earlier).
+const IDLE_TICK: Duration = Duration::from_millis(250);
 /// After entering idle, how long to wait for the `turn_duration` marker before `turn_end`.
 const TURN_END_GRACE: Duration = Duration::from_secs(2);
 /// `input needed` without a pending AskUserQuestion becomes `dialog` after this long.
@@ -161,6 +166,8 @@ pub struct Engine {
     tty: Option<String>,
     conn: HolderConn,
     out: Out,
+    wake: Arc<Wake>,
+    fs: FsWatch,
     /// PTY size ccrpc set.
     size: (u16, u16),
     /// Someone took the Pane over: ccrpc only reads from now on.
@@ -220,6 +227,9 @@ impl Engine {
             _ => {}
         }
         conn.claim_size(opts.size.0, opts.size.1)?;
+        let wake = Wake::new();
+        conn.set_wake(wake.clone());
+        let fs = FsWatch::new(wake.clone());
         Ok(Engine {
             roots,
             holder_id: holder_id.to_string(),
@@ -227,6 +237,8 @@ impl Engine {
             tty,
             conn,
             out,
+            wake,
+            fs,
             size: opts.size,
             taken_over: false,
             last_size_check: Instant::now(),
@@ -359,6 +371,7 @@ impl Engine {
                 self.pf = Some(pf);
             }
         }
+        self.update_watches();
         let evs = self.tailer.as_mut().map(|t| t.poll()).unwrap_or_default();
         if !evs.is_empty() {
             self.last_activity = Instant::now();
@@ -416,6 +429,25 @@ impl Engine {
         }
         self.refresh_announcement();
         self.announce_requests();
+    }
+
+    /// File changes that matter wake the loop: Process Files, and the transcript with its
+    /// Subagent / Workflow / tool-results files.
+    fn update_watches(&mut self) {
+        use notify::RecursiveMode::{NonRecursive, Recursive};
+        let sessions = self.roots.sessions_dir();
+        let main = self.tailer.as_ref().map(|t| t.main_path().to_path_buf());
+        let mut paths = vec![(sessions.as_path(), NonRecursive)];
+        let (dir, sdir);
+        if let Some(m) = &main {
+            dir = m.parent().map(|p| p.to_path_buf());
+            sdir = m.with_extension("");
+            if let Some(d) = &dir {
+                paths.push((d.as_path(), NonRecursive));
+            }
+            paths.push((sdir.as_path(), Recursive));
+        }
+        self.fs.set(&paths);
     }
 
     fn emit_turn_end(&mut self) {
@@ -651,6 +683,12 @@ impl Engine {
                     "questions": p.input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": p.agent_id}));
             }
             WaitKind::Dialog => {
+                // The Process File says waiting before the dialog is drawn: let it render first
+                // (a permission prompt is only taken once recognized, a question comes from the
+                // transcript).
+                if self.waiting_age() < Duration::from_millis(250) {
+                    return;
+                }
                 self.announced = Some(format!("dialog:{waiting_for}"));
                 let lines = self.screen().map(|s| s.lines).unwrap_or_default();
                 self.emit(json!({"type": "dialog", "waiting_for": waiting_for, "lines": lines}));
@@ -729,6 +767,7 @@ impl Engine {
     fn wait_until(&mut self, timeout: Duration, mut cond: impl FnMut(&Engine) -> bool) -> bool {
         let deadline = Instant::now() + timeout;
         loop {
+            let seen = self.wake.seen();
             self.tick();
             if cond(self) {
                 return true;
@@ -736,7 +775,7 @@ impl Engine {
             if self.exited || Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(TICK);
+            self.wake.wait(seen, TICK);
         }
     }
 
@@ -1291,9 +1330,10 @@ impl Engine {
             match input.try_recv() {
                 Ok(line) => self.handle_line(&line),
                 Err(TryRecvError::Empty) => {
+                    let seen = self.wake.seen();
                     self.tick();
                     self.drain_follow_ups();
-                    std::thread::sleep(TICK);
+                    self.wake.wait(seen, IDLE_TICK);
                 }
                 Err(TryRecvError::Disconnected) => break,
             }
@@ -1346,7 +1386,7 @@ impl Engine {
     }
 }
 
-fn stdin_lines() -> Receiver<String> {
+fn stdin_lines(wake: Arc<Wake>) -> Receiver<String> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -1356,9 +1396,17 @@ fn stdin_lines() -> Receiver<String> {
             if tx.send(line).is_err() {
                 break;
             }
+            wake.bump();
         }
+        // stdin closed: wake the loop so it sees the disconnect.
+        wake.bump();
     });
     rx
+}
+
+fn run_engine(e: Engine) -> Result<()> {
+    let lines = stdin_lines(e.wake.clone());
+    e.run(lines)
 }
 
 /// Options of `new` / `attach`.
@@ -1444,7 +1492,7 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     if locate::find_claude_under(&table, meta.child_pid).is_none() {
         bail!("Holder {holder} 里没有运行中的 Claude Code");
     }
-    Engine::open(roots.clone(), &holder, Out::stdout(), &opts)?.run(stdin_lines())
+    run_engine(Engine::open(roots.clone(), &holder, Out::stdout(), &opts)?)
 }
 
 pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
@@ -1508,7 +1556,7 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     if !locate::valid_holder_id(&holder) {
         bail!("toh new 没有返回 Holder ID");
     }
-    Engine::open(roots.clone(), &holder, Out::stdout(), &eng)?.run(stdin_lines())
+    run_engine(Engine::open(roots.clone(), &holder, Out::stdout(), &eng)?)
 }
 
 #[cfg(test)]

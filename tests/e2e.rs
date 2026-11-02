@@ -2,7 +2,9 @@
 //!
 //! `CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1`
 //! Optional: `CCRPC_E2E_BASE_URL` (default DeepSeek's Anthropic endpoint), `CCRPC_E2E_MODEL`
-//! (default `deepseek-flash`). Spends model credits. Needs `toh` and `claude` on PATH.
+//! (default `deepseek-flash`), `CCRPC_E2E_TOH` (the `toh` binary; default the sibling checkout's
+//! `../toh/target/debug/toh` when built, else `toh` on PATH — its Holders run that build).
+//! Spends model credits. Needs `claude` on PATH.
 //!
 //! Isolation: a fresh `TOH_STATE_DIR` under /tmp (unix socket paths must stay short) with clay
 //! enabled, loopback-only and mDNS off; a fresh `CLAUDE_CONFIG_DIR` pre-seeded to skip onboarding
@@ -117,15 +119,46 @@ struct Rpc {
     seen: Vec<Value>,
 }
 
+/// The `toh` to run: `CCRPC_E2E_TOH`, else the sibling checkout's debug build, else PATH's.
+fn toh_bin() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("CCRPC_E2E_TOH") {
+        return Some(PathBuf::from(p));
+    }
+    let sibling = Path::new(env!("CARGO_MANIFEST_DIR")).join("../toh/target/debug/toh");
+    sibling.is_file().then(|| sibling.canonicalize().unwrap())
+}
+
+fn ccrpc_cmd(env: &Env) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ccrpc"));
+    cmd.env("TOH_STATE_DIR", &env.toh_dir)
+        .env("CLAUDE_CONFIG_DIR", &env.cc_dir);
+    for k in HOST_TERMINAL_VARS {
+        cmd.env_remove(k);
+    }
+    if let Some(toh) = toh_bin() {
+        let dir = toh.parent().unwrap().to_path_buf();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut dirs = vec![dir];
+        dirs.extend(std::env::split_paths(&path));
+        cmd.env("PATH", std::env::join_paths(dirs).unwrap());
+    }
+    cmd
+}
+
 impl Rpc {
     fn start(env: &Env) -> Rpc {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_ccrpc"));
+        let mut cmd = ccrpc_cmd(env);
         cmd.args(["new", "--cwd"]).arg(&env.work);
-        cmd.env("TOH_STATE_DIR", &env.toh_dir)
-            .env("CLAUDE_CONFIG_DIR", &env.cc_dir);
-        for k in HOST_TERMINAL_VARS {
-            cmd.env_remove(k);
-        }
+        Rpc::spawn(cmd)
+    }
+
+    fn attach(env: &Env, args: &[&str]) -> Rpc {
+        let mut cmd = ccrpc_cmd(env);
+        cmd.arg("attach").args(args);
+        Rpc::spawn(cmd)
+    }
+
+    fn spawn(mut cmd: Command) -> Rpc {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -239,15 +272,8 @@ fn holder_pid(toh_dir: &Path, holder: &str) -> Option<u32> {
     v["holder_pid"].as_u64().map(|p| p as u32)
 }
 
-#[test]
-#[ignore = "real Claude Code; needs CCRPC_E2E_API_KEY, toh and claude"]
-fn controls_a_real_session() {
-    let Ok(key) = std::env::var("CCRPC_E2E_API_KEY") else {
-        eprintln!("跳过：没有 CCRPC_E2E_API_KEY");
-        return;
-    };
-    let env = setup(&key);
-    let mut rpc = Rpc::start(&env);
+/// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
+fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
     assert_eq!(ready["protocol"], 1);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
@@ -286,6 +312,51 @@ fn controls_a_real_session() {
             );
         }
     }
+    ready
+}
+
+/// Runs a turn to its end, allowing every permission request on the way; returns all lines seen.
+fn run_turn_allowing(rpc: &mut Rpc, id: &str, text: &str) -> Vec<Value> {
+    rpc.forget();
+    rpc.call(id, json!({"type": "prompt", "text": text}));
+    let mut seen = Vec::new();
+    let mut n = 0;
+    loop {
+        let v = rpc.until("turn", Duration::from_secs(180), |v| {
+            v["type"] == "turn_end" || v["type"] == "permission_request" || v["type"] == "block"
+                || v["type"] == "workflow"
+        });
+        if v["type"] == "permission_request" {
+            n += 1;
+            rpc.call(
+                &format!("{id}-ok{n}"),
+                json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}),
+            );
+        }
+        let end = v["type"] == "turn_end";
+        seen.push(v);
+        if end {
+            return seen;
+        }
+    }
+}
+
+#[test]
+#[ignore = "real Claude Code; needs CCRPC_E2E_API_KEY, toh and claude"]
+fn controls_a_real_session() {
+    let Ok(key) = std::env::var("CCRPC_E2E_API_KEY") else {
+        eprintln!("跳过：没有 CCRPC_E2E_API_KEY");
+        return;
+    };
+    let env = setup(&key);
+    if let Some(t) = toh_bin() {
+        eprintln!("toh: {}", t.display());
+    }
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    assert_eq!(ready["size"], json!([160, 48]));
+    let scr = rpc.call("g0", json!({"type": "get_screen"}));
+    assert_eq!(scr["lines"].as_array().unwrap().len(), 48);
 
     // prompt → reply → turn_end
     let d = rpc.call(
@@ -419,6 +490,60 @@ fn controls_a_real_session() {
                 .contains("AFTER-ABORT")
     });
 
+    // Subagent Run: its blocks carry agent_id and the Agent call's id
+    let seen = run_turn_allowing(
+        &mut rpc,
+        "sa1",
+        "Use the Agent tool exactly once (subagent_type general-purpose) with this task: run the shell command `echo SUBAGENT-OK` with Bash and report its output. Then reply with exactly the subagent's report.",
+    );
+    let agent_call = seen
+        .iter()
+        .find(|v| v["kind"] == "tool_use" && (v["name"] == "Agent" || v["name"] == "Task"))
+        .expect("没有 Agent 调用");
+    assert!(
+        seen.iter().any(|v| v["type"] == "block"
+            && v["agent_id"].is_string()
+            && v["parent_tool_use_id"] == agent_call["id"]),
+        "没有 Subagent Run 的 block"
+    );
+    // A background Subagent Run ends its turn at once; its result then wakes the main line for
+    // another turn. Wait until the report is in.
+    if !seen.iter().any(|v| {
+        v["type"] == "turn_end" && v["last_text"].as_str().unwrap_or("").contains("SUBAGENT-OK")
+    }) {
+        rpc.until("subagent report", Duration::from_secs(120), |v| {
+            v["type"] == "turn_end"
+                && v["last_text"].as_str().unwrap_or("").contains("SUBAGENT-OK")
+        });
+    }
+
+    // Workflow Run (when the model has the Workflow tool): workflow snapshots and run_id blocks
+    let seen = run_turn_allowing(
+        &mut rpc,
+        "wf1",
+        "Call the Workflow tool exactly once with this script and nothing else, then reply DONE:\nexport const meta = { name: 'e2e-echo', description: 'echo', phases: [{ title: 'Echo' }] }\nconst r = await agent('Reply with exactly WF-OK', { label: 'echo', phase: 'Echo' })\nreturn r",
+    );
+    if seen.iter().any(|v| v["kind"] == "tool_use" && v["name"] == "Workflow") {
+        let done = |v: &Value| v["type"] == "workflow" && v["status"] == "completed";
+        let wf = match seen.iter().find(|v| done(v)) {
+            Some(v) => v.clone(),
+            None => rpc.until("workflow", Duration::from_secs(180), done),
+        };
+        assert_eq!(wf["name"], "e2e-echo");
+        assert!(wf["tool_use_id"].is_string(), "{wf}");
+        assert!(
+            seen.iter().any(|v| v["type"] == "block" && v["run_id"].is_string())
+                || rpc.seen.iter().any(|v| v["type"] == "block" && v["run_id"].is_string()),
+            "没有 Workflow Run 里 Subagent 的 block"
+        );
+        // A background run wakes the main line once more when it finishes.
+        let _ = rpc.until("idle after workflow", Duration::from_secs(120), |v| {
+            v["type"] == "turn_end"
+        });
+    } else {
+        eprintln!("模型没有调用 Workflow 工具，跳过 Workflow 断言");
+    }
+
     // get_state / get_messages / get_screen
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["state"], "idle");
@@ -501,4 +626,62 @@ fn wait_permission_or_tool(rpc: &mut Rpc) -> Option<Value> {
         }
     }
     None
+}
+
+/// A raw ToH client standing in for a person: attaches and takes the PTY size.
+fn person_takes_over(env: &Env, holder: &str) -> std::os::unix::net::UnixStream {
+    use toh_proto::{AttachInfo, Frame};
+    let sock = env.toh_dir.join("holders").join(format!("{holder}.sock"));
+    let mut s = std::os::unix::net::UnixStream::connect(sock).unwrap();
+    let attach = Frame::Attach(AttachInfo {
+        client: "e2e-person".into(),
+        cols: 100,
+        rows: 30,
+        ..Default::default()
+    });
+    s.write_all(&attach.encode()).unwrap();
+    s.write_all(&Frame::Resize { cols: 100, rows: 30 }.encode()).unwrap();
+    s
+}
+
+#[test]
+#[ignore = "real Claude Code; needs CCRPC_E2E_API_KEY, toh and claude"]
+fn yields_when_a_person_takes_over() {
+    let Ok(key) = std::env::var("CCRPC_E2E_API_KEY") else {
+        eprintln!("跳过：没有 CCRPC_E2E_API_KEY");
+        return;
+    };
+    let env = setup(&key);
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+
+    // Someone opens the Pane in ToH: ccrpc reports it and stops writing.
+    let person = person_takes_over(&env, &holder);
+    let t = rpc.event("taken_over", Duration::from_secs(10));
+    assert_eq!(t["client"], "e2e-person");
+    rpc.send(json!({"id": "t1", "type": "prompt", "text": "hello"}));
+    let r = rpc.until("t1", Duration::from_secs(5), |v| v["id"] == "t1");
+    assert_eq!(r["error"]["code"], "taken_over");
+    let st = rpc.call("t2", json!({"type": "get_state"}));
+    assert_eq!(st["taken_over"], true);
+    // The VT follows the person's size.
+    let scr = rpc.call("t3", json!({"type": "get_screen"}));
+    assert_eq!(scr["lines"].as_array().unwrap().len(), 30);
+
+    // Another ccrpc refuses the Session while the person holds it, unless forced.
+    let out = ccrpc_cmd(&env)
+        .args(["attach", &holder])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("正被 e2e-person 使用"), "{err}");
+    let mut forced = Rpc::attach(&env, &["--force", &holder]);
+    let ready = forced.event("ready", Duration::from_secs(20));
+    assert_eq!(ready["holder_id"], holder.as_str());
+    forced.call("f1", json!({"type": "get_state"}));
+    drop(forced);
+    drop(person);
 }

@@ -96,7 +96,8 @@ impl PermissionDialog {
 fn classify(label: &str) -> PermissionChoice {
     let l = label.trim();
     let lower = l.to_lowercase();
-    if l == "Yes" {
+    // `Yes, run it`: the Workflow dialog's plain yes.
+    if l == "Yes" || l == "Yes, run it" {
         PermissionChoice::Allow
     } else if lower.starts_with("yes,")
         && !lower.contains("auto mode")
@@ -112,18 +113,34 @@ fn classify(label: &str) -> PermissionChoice {
     }
 }
 
-/// A tool permission dialog: the last `Do you want …?` line, immediately followed (blank lines
-/// aside) by a strictly sequential numbered menu: option 1 first, each next option on the following
-/// row or after continuation rows indented deeper than the number, exactly one `❯`, `No…` last, a
-/// plain `Yes` present, and no further numbered row below the menu. Anything else is refused.
-pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
-    let q = lines
-        .iter()
-        .rposition(|l| l.trim_start().starts_with("Do you want"))?;
-    let mut i = q + 1;
-    while i < lines.len() && lines[i].trim().is_empty() {
-        i += 1;
+/// The question line of a permission dialog and the row its menu starts on. A tool dialog asks
+/// `Do you want …?` right above the menu (blank lines aside); the Workflow dialog asks `Run a
+/// dynamic workflow?` above the script's description, which may hold numbered phases itself, so
+/// its menu is the last numbered block starting at 1.
+fn permission_question(lines: &[String]) -> Option<(usize, usize)> {
+    let q = lines.iter().rposition(|l| {
+        let t = l.trim_start();
+        t.starts_with("Do you want") || t.trim_end() == "Run a dynamic workflow?"
+    })?;
+    if lines[q].trim_start().starts_with("Do you want") {
+        let mut i = q + 1;
+        while i < lines.len() && lines[i].trim().is_empty() {
+            i += 1;
+        }
+        return Some((q, i));
     }
+    let menu = (q + 1..lines.len())
+        .rev()
+        .find(|&i| parse_option(&lines[i]).is_some_and(|(n, _, _)| n == 1))?;
+    Some((q, menu))
+}
+
+/// A tool permission dialog (see [`permission_question`]): a strictly sequential numbered menu:
+/// option 1 first, each next option on the following row or after continuation rows indented
+/// deeper than the number, exactly one `❯`, `No…` last, a plain `Yes` present, and no further
+/// numbered row below the menu. Anything else is refused.
+pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
+    let (_, mut i) = permission_question(lines)?;
     let mut opts: Vec<(u32, String, bool, usize)> = Vec::new(); // number, label, cursor, indent
     while i < lines.len() {
         let line = &lines[i];
@@ -177,17 +194,15 @@ fn number_column(line: &str) -> usize {
     }
 }
 
-/// The permission dialog's body (between the rule above it and the `Do you want` line) with all
-/// whitespace removed, for matching the requested tool's command or file against what is shown.
+/// The permission dialog's body (from the rule above it to the menu) with all whitespace removed,
+/// for matching the requested tool's command or file against what is shown.
 pub fn permission_body(lines: &[String]) -> Option<String> {
-    let q = lines
-        .iter()
-        .rposition(|l| l.trim_start().starts_with("Do you want"))?;
+    let (q, menu) = permission_question(lines)?;
     let top = lines[..q]
         .iter()
         .rposition(|l| l.starts_with('─') && l.chars().all(|c| c == '─'))?;
     Some(
-        lines[top + 1..q]
+        lines[top + 1..menu]
             .iter()
             .flat_map(|l| l.chars())
             .filter(|c| !c.is_whitespace())
@@ -376,6 +391,16 @@ mod tests {
         let d = permission(&lines).unwrap();
         assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
         assert_eq!(d.number_for(PermissionChoice::Deny), Some(3));
+    }
+
+    #[test]
+    fn workflow_dialog_menu_after_numbered_phases() {
+        let lines = screen("permission_workflow.txt");
+        let d = permission(&lines).unwrap();
+        assert_eq!(d.number_for(PermissionChoice::Allow), Some(1));
+        assert_eq!(d.number_for(PermissionChoice::Deny), Some(3));
+        assert_eq!(d.number_for(PermissionChoice::AllowAlways), None);
+        assert!(permission_body(&lines).unwrap().contains("echo"));
     }
 
     #[test]

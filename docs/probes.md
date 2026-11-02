@@ -19,7 +19,9 @@
 - 调用方的提示词是 `user` 条目，`message.content` 为字符串，与写入的正文逐字相同（4511 字符、含中文和换行的 bracketed paste 一次写入，记录完全一致）。
 - 混在主线里的非对话条目：`attachment`、`api-request*`、`mode`、`permission-mode`、`atis-latch`、`file-history-snapshot`、`last-prompt`、`cost-state`、`tools-used`、`system`（`local_command`、`turn_duration`）、`queue-operation`。
 - 忙时输入：先写 `{"type":"queue-operation","operation":"enqueue","content":…}`；当前工具结束时写 `operation: "remove", reason: "absorbed_mid_turn"`，内容作为 `attachment.type = "queued_command"` 插在该 `tool_result` 之后送给模型。→ **steer 成立**，语义与 Pi 相同（在两次工具调用之间送达）。
-- Subagent Run：`<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 指向主线的 `Agent` tool_use；`requestShape: "background"` 时主线的 Agent tool_result 立即返回。
+- Subagent Run：`<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 指向主线的 `Agent` tool_use；`requestShape: "background"` 时主线的 Agent tool_result 立即返回（DeepSeek 下模型默认就这样派 Subagent：主线一轮先结束，Subagent 完成后主线再起一轮汇报）。
+- Workflow Run：状态在 `<sessionId>/workflows/<runId>.json`（运行中整份重写），或只有 `subagents/workflows/<runId>/journal.jsonl`；其中的 Subagent Run 是 `subagents/workflows/<runId>/agent-<id>.jsonl`。主线 `Workflow` 的 tool_result 条目 `toolUseResult.runId` 指向它。
+- 输出太大的工具结果（约 30KB 起）存进 `<sessionId>/tool-results/<id>.txt`，tool_result 只留 `<persisted-output>` 包着的说明与约 2KB 预览，模型看到的也只有这些。
 
 ## 写入
 
@@ -47,6 +49,7 @@
 - 按选项编号的数字键立即生效，不需要回车。
 - 编号随工具与场景变化（例如是否有“切到 auto 模式”一项），**必须按文字识别**：`Yes` → allow；以 `Yes, and always allow` / `Yes, and don't ask again` 开头 → allow_always；`No`（可能带后缀）→ deny。
 - 选 No：本轮中断，屏幕显示 `Interrupted · What should Claude do instead?`，状态回 `idle`。
+- Workflow 工具的审批框（160×48 实测，`tests/fixtures/screens/permission_workflow.txt`）：标题 `Run a dynamic workflow?`，下面是脚本名与各阶段说明（阶段本身带 `1.` 这样的编号），最后才是菜单 `❯ 1. Yes, run it` / `2. View raw script` / `3. No`，进程文件同样是 `waitingFor: "permission prompt"`。
 
 ## AskUserQuestion（2.1.316）
 
