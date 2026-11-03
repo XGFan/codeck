@@ -121,7 +121,8 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 不发 slash 命令的本地记录（`<command-name>` 等）与 `isMeta` 条目。
 - `question` 在进程文件为 `input needed` 且插件报来了 AskUserQuestion 时发。
 - `permission_request` 来自插件的 PermissionRequest（它没有 `tool_use_id`，按紧挨在前的 PreToolUse 的工具名、输入与 agent 配对）。
-- 状态变化、或已发出的请求结束（插件报来它的 PostToolUse / PostToolUseFailure / PermissionDenied，连续两次审批可能合并成一段 waiting），都会重新认定并再发事件；回到 `idle` 时所有请求都结束。
+- 状态变化、或已发出的请求结束（插件报来它的 PostToolUse / PostToolUseFailure / PermissionDenied，连续两次审批可能合并成一段 waiting），都会重新认定并再发事件；状态离开 `waiting` 不算结束（进程文件可能抖动），回到 `idle` 时主线的请求都结束（后台 Subagent 的请求留到它的结果）。经插件作答后 1.5 秒内不重新认定（进程文件与屏幕还停在正在关闭的对话框上）。
+- 连接前就已在等的审批（插件没报过）：在 transcript 未完成的工具调用里按同样的规则认定屏幕上的审批框，按键作答。
 - 按键作答的请求（后台 Subagent）按**屏幕上的审批框**认定：在这类请求里找命令（Bash）、文件名（Edit / Write / Read 等）、URL 或 pattern 出现在审批框正文里的那个；都没有可比对的内容时，只有唯一候选才认；1 秒内认不出就交给分析器或改发 `dialog`。作答前重新确认屏幕上的审批框仍对应该 `request_id`，按键前另取一次 Snapshot 再核对一次。
 
 ### 5.3 插件代答
@@ -139,7 +140,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 ## 7. 屏幕识别
 
 - 布局库（[ADR-0002](./adr/0002-ai-learned-layouts-take-effect-at-once.md)）：内置布局在仓库 `layouts/*.json`，编译时嵌入（`CCRPC_BUILTIN_LAYOUTS=0` 关闭，测试用）；学到的布局在 `CCRPC_LAYOUT_DIR`，缺省 `$XDG_DATA_HOME/ccrpc/layouts`（`~/.local/share/ccrpc/layouts`），每个布局一个文件，含当时的屏幕与 Claude Code 版本。布局 = 问题行（原文）+ 编号选项（编号、文字的稳定开头、含义）。用前做结构检查：屏幕上有该问题行，其后是 strict 编号菜单（编号不超过 9），编号与布局一致、每项文字以布局的文字开头；含义另有不依赖模型的字面检查：`No…` 只能是拒绝，`Yes…` 不能是拒绝（含 `auto mode` / `bypass` 的在审批类里只能是 `other`，在选择里不能是 allow_always），审批类恰好一个拒绝且在最后，其余文字的选项在审批类里只能是 `other`；`Do you want…` / `Run a dynamic workflow?` 不能是 choice；审批类还要对得上一个挂起的工具调用。审批等待中只有挂起的工具是 ExitPlanMode 时才发 choice。学到的布局加载时重算 id、在它自己的屏幕上复核。
-- 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具（插件报来的请求，没有则为 transcript 里未完成的工具调用）的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。内置识别器认得的屏幕不送分析；审批等待满 3 秒（给 transcript 写出工具调用的时间）才分析；同一对话框只分析一次，每小时最多 10 次，同时只有一个分析；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
+- 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具（插件报来的请求，没有则为 transcript 里未完成的工具调用）的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。内置识别器认得的屏幕不送分析；审批等待中认不出满 1 秒才分析；同一对话框只分析一次，每小时最多 10 次，同时只有一个分析；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
 
 - 屏幕 = 常驻的 `alacritty_terminal` VT：每收到 Holder 的 Snapshot 从头重建，之后的 Output 增量喂入；VT 尺寸跟 PTY 一致（被接手后按 tty 的 `TIOCGWINSZ` 跟随，变了就重新要一次 Snapshot）。
 - 审批框：`Do you want …?` 之后的编号菜单；Workflow 的审批框问 `Run a dynamic workflow?`，菜单在脚本说明之后（说明里可能有编号的阶段，取其后最后一个从 1 开始的编号块），选项为 `Yes, run it` / `View raw script` / `No`。按文字判断含义：`Yes`（Workflow 为 `Yes, run it`）→ allow；`Yes, …` 且含 `always allow` / `don't ask again` / `allow all`、不含 `auto mode` → allow_always；`No` 开头 → deny。必须同时有 allow 与 deny，否则不认。编号随场景变化，绝不按固定编号。

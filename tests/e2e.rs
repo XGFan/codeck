@@ -474,11 +474,17 @@ fn controls_a_real_session() {
     rpc.call("p2", json!({"type": "prompt", "text": "Run exactly this shell command and nothing else: touch created.txt"}));
     let pr = rpc.event("permission_request", Duration::from_secs(60));
     assert_eq!(pr["tool_name"], "Bash");
-    rpc.call(
+    // Answered after a while: the closing dialog is not reported as another one.
+    std::thread::sleep(Duration::from_millis(1500));
+    let d = rpc.call(
         "p3",
         json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}),
     );
-    rpc.event("turn_end", Duration::from_secs(60));
+    assert_ne!(d["state"], "waiting", "{d}");
+    let v = rpc.until("turn_end", Duration::from_secs(60), |v| {
+        v["type"] == "turn_end" || v["type"] == "dialog"
+    });
+    assert_eq!(v["type"], "turn_end", "作答后误报 dialog：{v}");
     assert!(env.work.join("created.txt").exists());
 
     // permission: deny with a message

@@ -51,6 +51,8 @@ GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block`
 - 第一次查找 transcript 时偶发的文件系统错误会让已有 transcript 之后按实时读，重放历史 block
 - 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理（插件报来前一个的 PostToolUse 后重新认定），没有端到端用例
 - 同时有几个后台 Subagent 在等审批、且工具输入里都没有可在审批框里比对的内容时，认不出屏幕上是哪个，改发 `dialog`
+- 后台 Subagent 的请求留到插件报来它的结果才结束：Subagent 被停掉、没有结果时它一直挂着，会妨碍认定连接前就在等的审批框
+- 未实测：插话在 Stop 之后才送达、自成一轮时是否再触发 UserPromptSubmit（不触发则这一轮没有 `turn_end`）；经插件的 `allow_always` 与 TUI 第 2 项的效果是否一致
 - 插件装在用户级：每次工具调用都会起一次 `ccrpc hook` 进程（不在 clay Pane 里立即退出），换了 ccrpc 可执行文件的位置要重新 `ccrpc plugin install`
 - Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block
 - 原样重发的判定只认纯文字提示词：带图片的提示词重发也会报 `branch`；带图片的提示词也不参与 Branch 的分叉判定

@@ -100,23 +100,47 @@ pub fn checkin_problem(c: Option<&CheckIn>, process_session: Option<&str>) -> Op
     None
 }
 
-fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    let dir = path.parent().context("路径没有上级目录")?;
+/// `dir` is a real directory of this user that nobody else can touch (0700): only then are files
+/// in it trusted (the hook socket decides approvals).
+pub fn dir_is_private(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(md) = std::fs::symlink_metadata(dir) else {
+        return false;
+    };
+    // SAFETY: geteuid has no preconditions.
+    let me = unsafe { libc::geteuid() };
+    md.is_dir() && md.uid() == me && md.mode() & 0o077 == 0
+}
+
+/// Creates `dir` (0700) if missing and checks it is private.
+fn private_dir(dir: &Path) -> Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(dir)?;
+        .create(dir)
+        .with_context(|| format!("建不了 {}", dir.display()))?;
+    if !dir_is_private(dir) {
+        bail!("{} 不是只属于当前用户的目录（须为 0700）", dir.display());
+    }
+    Ok(())
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = path.parent().context("路径没有上级目录")?;
+    private_dir(dir)?;
     let tmp = dir.join(format!(
         ".{}.{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("f"),
         std::process::id()
     ));
+    let _ = std::fs::remove_file(&tmp);
     {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
             .mode(0o600)
             .open(&tmp)?;
         f.write_all(bytes)?;
@@ -173,6 +197,10 @@ pub fn run_hook() {
 /// Sends the event to the listening ccrpc; for a PermissionRequest waits for its reply and
 /// returns the hook output to print (none when ccrpc passes or goes away).
 fn forward(sock: &Path, event: &str, input: Value) -> Option<String> {
+    // Only a socket in this user's private directory speaks for ccrpc.
+    if !dir_is_private(sock.parent()?) {
+        return None;
+    }
     let mut s = UnixStream::connect(sock).ok()?;
     let line = serde_json::to_string(&json!({"v": HOOK_PROTOCOL, "input": input})).ok()?;
     s.write_all(line.as_bytes()).ok()?;
@@ -184,7 +212,40 @@ fn forward(sock: &Path, event: &str, input: Value) -> Option<String> {
     BufReader::new(s).read_line(&mut reply).ok()?;
     let v: Value = serde_json::from_str(reply.trim()).ok()?;
     let out = v.get("output").filter(|o| !o.is_null())?;
-    serde_json::to_string(out).ok()
+    serde_json::to_string(&checked_decision(out)?).ok()
+}
+
+/// The PermissionRequest output rebuilt from only the fields ccrpc ever sends: allow (with an
+/// updated input, permission updates other than mode switches) or deny (message, interrupt).
+/// Anything else is no decision.
+fn checked_decision(out: &Value) -> Option<Value> {
+    let d = out.get("hookSpecificOutput")?.get("decision")?;
+    match d.get("behavior")?.as_str()? {
+        "allow" => {
+            let perms = d.get("updatedPermissions").map(|p| {
+                Value::Array(
+                    p.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|r| r["type"].as_str().is_some_and(|t| t != "setMode"))
+                        .cloned()
+                        .collect(),
+                )
+            });
+            let input = d.get("updatedInput").filter(|i| i.is_object()).cloned();
+            Some(allow_output(perms, input))
+        }
+        "deny" => {
+            let msg = d.get("message").and_then(Value::as_str);
+            let interrupt = d.get("interrupt").and_then(Value::as_bool).unwrap_or(false);
+            let mut o = deny_output(msg);
+            if msg.is_some() && interrupt {
+                o["hookSpecificOutput"]["decision"]["interrupt"] = json!(true);
+            }
+            Some(o)
+        }
+        _ => None,
+    }
 }
 
 // ---- ccrpc's side ----------------------------------------------------------------------------
@@ -196,6 +257,39 @@ pub struct HookMsg {
     pub input: Value,
     /// A PermissionRequest's connection: the hook waits on it for the reply.
     pub reply: Option<UnixStream>,
+}
+
+/// The waiting hook on the other end of `s` is gone (killed by Claude Code: answered in the
+/// dialog, Escape, its timeout).
+pub fn peer_gone(s: &UnixStream) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut b = [0u8; 1];
+    // SAFETY: a one-byte non-blocking peek into a local buffer on an fd `s` owns.
+    let n = unsafe {
+        libc::recv(s.as_raw_fd(), b.as_mut_ptr().cast(), 1, libc::MSG_PEEK | libc::MSG_DONTWAIT)
+    };
+    // 0: EOF. -1 with EAGAIN: still connected, nothing to read (the hook never writes again).
+    n == 0 || (n < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN))
+}
+
+/// Drops check-ins of claude processes that are gone.
+pub fn prune_checkins(state: &Path) {
+    let Ok(rd) = std::fs::read_dir(state.join("sessions")) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        let pid = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok());
+        if let Some(pid) = pid
+            && p.extension().is_some_and(|x| x == "json")
+            && !crate::procs::pid_exists(pid)
+        {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
 }
 
 /// The reply a waiting PermissionRequest hook prints (`None`: no decision, the person answers).
@@ -245,45 +339,58 @@ pub fn always_allow_rules(suggestions: &Value) -> Option<Value> {
 pub struct HookServer {
     path: PathBuf,
     rx: Receiver<HookMsg>,
+    /// `<pid>.lock`, flocked while this ccrpc owns the socket.
+    _lock: std::fs::File,
 }
 
 impl HookServer {
     /// Binds `<state>/s/<claude pid>.sock`; fails when another ccrpc already listens there.
     pub fn bind(state: &Path, claude_pid: u32, wake: Arc<Wake>) -> Result<HookServer> {
-        use std::os::unix::fs::DirBuilderExt;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
         let path = socket_path(state, claude_pid);
         let dir = path.parent().context("socket 路径没有上级目录")?;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .with_context(|| format!("建不了 {}", dir.display()))?;
-        if path.exists() {
-            if UnixStream::connect(&path).is_ok() {
-                bail!("已有 ccrpc 连着这个 Session（{}）", path.display());
-            }
-            let _ = std::fs::remove_file(&path);
+        private_dir(dir)?;
+        // The lock, not the socket, says who owns the Session: two ccrpc starting at once cannot
+        // both take a stale socket for theirs.
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
+            .open(path.with_extension("lock"))
+            .context("打不开 hook socket 的锁文件")?;
+        // SAFETY: flock on an fd this function owns.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            bail!("已有 ccrpc 连着这个 Session（{}）", path.display());
         }
+        let _ = std::fs::remove_file(&path);
+        prune_checkins(state);
         let listener =
             UnixListener::bind(&path).with_context(|| format!("监听不了 {}", path.display()))?;
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             for conn in listener.incoming() {
                 let Ok(mut s) = conn else { continue };
-                let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
-                let Some(input) = read_msg(&mut s) else { continue };
-                let event = input["hook_event_name"].as_str().unwrap_or_default().to_string();
-                let reply = (event == "PermissionRequest").then(|| {
-                    let _ = s.set_read_timeout(None);
-                    s
+                let (tx, wake) = (tx.clone(), wake.clone());
+                // Each connection on its own: a slow one cannot hold up the others.
+                std::thread::spawn(move || {
+                    let _ = s.set_read_timeout(Some(Duration::from_millis(500)));
+                    let Some(input) = read_msg(&mut s) else { return };
+                    let event = input["hook_event_name"].as_str().unwrap_or_default().to_string();
+                    let reply = (event == "PermissionRequest").then(|| {
+                        let _ = s.set_read_timeout(None);
+                        s
+                    });
+                    if tx.send(HookMsg { event, input, reply }).is_ok() {
+                        wake.bump();
+                    }
                 });
-                if tx.send(HookMsg { event, input, reply }).is_err() {
-                    break;
-                }
-                wake.bump();
             }
         });
-        Ok(HookServer { path, rx })
+        Ok(HookServer { path, rx, _lock: lock })
     }
 
     pub fn try_recv(&self) -> Option<HookMsg> {
@@ -297,21 +404,22 @@ impl Drop for HookServer {
     }
 }
 
-/// The hook input of one message (`{"v": …, "input": …}` on one line); byte by byte so nothing
-/// after the line is consumed.
+/// The hook input of one message (`{"v": …, "input": …}` on one line; the hook sends nothing
+/// after it), within a few seconds.
 fn read_msg(s: &mut UnixStream) -> Option<Value> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut r = BufReader::new(Read::take(&mut *s, 8 << 20));
     let mut buf = Vec::new();
-    let mut b = [0u8; 1];
     loop {
-        match s.read(&mut b) {
-            Ok(1) if b[0] == b'\n' => break,
-            Ok(1) => {
-                buf.push(b[0]);
-                if buf.len() > 8 << 20 {
-                    return None;
-                }
-            }
-            _ => return None,
+        if std::time::Instant::now() > deadline {
+            return None;
+        }
+        match r.read_until(b'\n', &mut buf) {
+            Ok(0) => return None,
+            Ok(_) if buf.ends_with(b"\n") => break,
+            Ok(_) => return None,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(_) => return None,
         }
     }
     let v: Value = serde_json::from_slice(&buf).ok()?;
@@ -372,6 +480,41 @@ mod tests {
         assert!(checkin_problem(Some(&old), Some("s1")).is_some());
     }
 
+    #[test]
+    fn only_decisions_ccrpc_sends_are_printed() {
+        let allow = allow_output(Some(json!([{"type": "addDirectories", "directories": ["/w"]},
+            {"type": "setMode", "mode": "bypassPermissions"}])), Some(json!({"answers": {}})));
+        let d = checked_decision(&allow).unwrap();
+        assert_eq!(
+            d["hookSpecificOutput"]["decision"]["updatedPermissions"],
+            json!([{"type": "addDirectories", "directories": ["/w"]}]),
+            "mode switches never get through"
+        );
+        assert_eq!(d["hookSpecificOutput"]["decision"]["updatedInput"], json!({"answers": {}}));
+        assert_eq!(checked_decision(&deny_output(None)).unwrap(), deny_output(None));
+        assert_eq!(checked_decision(&deny_output(Some("no"))).unwrap(), deny_output(Some("no")));
+        let extra = json!({"hookSpecificOutput": {"decision": {"behavior": "allow", "extra": 1}},
+            "systemMessage": "x"});
+        assert_eq!(checked_decision(&extra).unwrap(), allow_output(None, None));
+        assert!(checked_decision(&json!({"hookSpecificOutput": {"decision": {"behavior": "ask"}}})).is_none());
+        assert!(checked_decision(&json!({"continue": false})).is_none());
+    }
+
+    #[test]
+    fn hook_trusts_only_a_private_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("s");
+        private_dir(&s).unwrap();
+        assert!(dir_is_private(&s));
+        std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!dir_is_private(&s));
+        assert!(private_dir(&s).is_err());
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(d.path(), &link).unwrap();
+        assert!(!dir_is_private(&link), "a symlink is not the directory");
+    }
+
     /// A hook event reaches the server; a PermissionRequest gets the server's reply, and its
     /// connection closing without a reply means no decision.
     #[test]
@@ -393,12 +536,31 @@ mod tests {
                 forward(&sock, "PermissionRequest", json!({"hook_event_name": "PermissionRequest"}))
             });
             let m = recv(server);
+            assert!(!peer_gone(m.reply.as_ref().unwrap()), "the hook still waits");
             match out {
                 Some(o) => send_reply(m.reply.unwrap(), Some(o)).unwrap(),
                 None => drop(m.reply),
             }
             h.join().unwrap()
         };
+        // A hook that went away while waiting.
+        let h = {
+            let sock = sock.clone();
+            std::thread::spawn(move || {
+                let mut c = UnixStream::connect(&sock).unwrap();
+                c.write_all(b"{\"v\":1,\"input\":{\"hook_event_name\":\"PermissionRequest\"}}\n").unwrap();
+            })
+        };
+        let m = recv(&server);
+        h.join().unwrap();
+        let r = m.reply.unwrap();
+        for _ in 0..100 {
+            if peer_gone(&r) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(peer_gone(&r));
         let printed = ask(&server, Some(allow_output(None, None))).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&printed).unwrap(), allow_output(None, None));
         assert_eq!(ask(&server, None), None, "EOF releases the hook with no output");

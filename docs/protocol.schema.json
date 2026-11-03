@@ -555,7 +555,7 @@
           },
           "message": {
             "type": "string",
-            "description": "拒绝后作为 prompt 发出的说明，只能配 deny。"
+            "description": "只能配 deny。经插件作答时作为反馈交给模型、本轮继续；按屏幕作答时（后台 Subagent 等）在拒绝、回到 idle 后作为 prompt 发出。"
           }
         },
         "required": [

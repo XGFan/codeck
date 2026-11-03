@@ -215,30 +215,18 @@ pub fn tty_size(tty: &str) -> Result<(u16, u16)> {
     Ok((ws.ws_col, ws.ws_row))
 }
 
-/// Transcript path of `session_id`: `<projects>/<encoded cwd>/<id>.jsonl`, falling back to a
-/// search over every project directory.
-pub fn transcript_path(roots: &Roots, cwd: &str, session_id: &str) -> Option<PathBuf> {
-    // The id comes from a Process File: accept only uuid-like ids so it cannot name another path.
-    if session_id.is_empty()
-        || !session_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    {
-        return None;
-    }
-    let file = format!("{session_id}.jsonl");
-    let encoded: String = cwd
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    let direct = roots.projects_dir().join(&encoded).join(&file);
-    if direct.exists() {
-        return Some(direct);
-    }
-    let rd = std::fs::read_dir(roots.projects_dir()).ok()?;
-    rd.flatten()
-        .map(|e| e.path().join(&file))
-        .find(|p| p.exists())
+/// A transcript path reported by the plugin is one of Claude Code's: a `.jsonl` file under the
+/// projects directory (nothing else is ever read as a transcript).
+pub fn is_transcript_path(roots: &Roots, path: &Path) -> bool {
+    let projects = roots.projects_dir();
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let parent_ok = path.parent().is_some_and(|d| {
+        let (d, pr) = (canon(d), canon(&projects));
+        d.starts_with(&pr) && d != pr
+    });
+    parent_ok
+        && path.extension().is_some_and(|x| x == "jsonl")
+        && !path.components().any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 #[cfg(test)]
@@ -289,5 +277,18 @@ mod tests {
         assert!(valid_holder_id("0c3181cda759"));
         assert!(!valid_holder_id("../x"));
         assert!(!valid_holder_id(""));
+    }
+
+    #[test]
+    fn transcripts_only_under_projects() {
+        let roots = Roots {
+            toh_state: PathBuf::from("/t"),
+            claude_config: PathBuf::from("/c"),
+        };
+        assert!(is_transcript_path(&roots, Path::new("/c/projects/-w/s.jsonl")));
+        assert!(!is_transcript_path(&roots, Path::new("/c/projects/s.jsonl")), "inside a project dir");
+        assert!(!is_transcript_path(&roots, Path::new("/c/projects/-w/s.json")));
+        assert!(!is_transcript_path(&roots, Path::new("/etc/x.jsonl")));
+        assert!(!is_transcript_path(&roots, Path::new("/c/projects/-w/../../x.jsonl")));
     }
 }

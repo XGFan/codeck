@@ -41,6 +41,9 @@ const CLASSIFY_GRACE: Duration = Duration::from_millis(500);
 /// A permission prompt whose dialog matches no request is reported as `dialog` (or analyzed)
 /// after this long.
 const MATCH_GRACE: Duration = Duration::from_secs(1);
+/// After an answer went back through a hook, the Process File and the screen still show the
+/// closing dialog for a moment: nothing is announced or reclassified meanwhile.
+const ANSWER_SETTLE: Duration = Duration::from_millis(1500);
 /// claude's Process File is there but its plugin never checked in: not controllable.
 const CHECKIN_GRACE: Duration = Duration::from_secs(5);
 /// A dialog ignores keys for a moment after it appears (against accidental answers): keys that
@@ -351,6 +354,8 @@ pub struct Engine {
     stop_pending: Option<(Instant, Option<String>, Value)>,
     /// When the Process File appeared without a check-in.
     no_checkin_since: Option<Instant>,
+    /// An answer just went back through a hook: no announcing until then.
+    answered_until: Option<Instant>,
     /// The engine cannot go on (no plugin, another ccrpc): `run` returns this error.
     fatal: Option<String>,
     holder_id: String,
@@ -401,8 +406,6 @@ pub struct Engine {
     marks: Marks,
     /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
     resolved: HashSet<String>,
-    /// Last time the transcript produced anything.
-    last_activity: Instant,
     procfile_warned: bool,
     exited: bool,
     /// Events are suppressed (initial settle).
@@ -447,6 +450,7 @@ impl Engine {
             idle_at: None,
             stop_pending: None,
             no_checkin_since: None,
+            answered_until: None,
             fatal: None,
             holder_id: holder_id.to_string(),
             shell_pid: meta.child_pid,
@@ -486,7 +490,6 @@ impl Engine {
             follow_ups: VecDeque::new(),
             marks: Marks::default(),
             resolved: HashSet::new(),
-            last_activity: Instant::now(),
             procfile_warned: false,
             exited: false,
             quiet: false,
@@ -542,11 +545,23 @@ impl Engine {
             }
             return;
         };
+        // A check-in left by an earlier claude with the same pid: wait for this one's.
+        if self.pf.as_ref().and_then(|p| p.session_id.as_deref()).is_some_and(|s| s != c.session_id) {
+            let since = *self.no_checkin_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= CHECKIN_GRACE && self.fatal.is_none() {
+                self.fatal = hook::checkin_problem(Some(&c), self.pf.as_ref().and_then(|p| p.session_id.as_deref()));
+            }
+            return;
+        }
         if let Some(problem) = hook::checkin_problem(Some(&c), None) {
             self.fatal = Some(problem);
             return;
         }
         let path = PathBuf::from(&c.transcript_path);
+        if !locate::is_transcript_path(&self.roots, &path) {
+            self.fatal = Some(format!("ccrpc 插件报到的 transcript 不在 Claude Code 的 projects 目录里：{}", path.display()));
+            return;
+        }
         let history = path.exists();
         self.switch_to(c.session_id, &path, history);
     }
@@ -609,9 +624,6 @@ impl Engine {
         self.follow_checkin();
         self.update_watches();
         let evs = self.tailer.as_mut().map(|t| t.poll()).unwrap_or_default();
-        if !evs.is_empty() {
-            self.last_activity = Instant::now();
-        }
         for ev in evs {
             match ev {
                 TxEvent::Block(b) => {
@@ -673,6 +685,16 @@ impl Engine {
         while let Some(m) = self.hooks.as_ref().and_then(HookServer::try_recv) {
             self.on_hook(m);
         }
+        // A held hook Claude Code killed (answered in the dialog, timed out): the request, if
+        // still on screen, is answered with keys from now on.
+        for r in &mut self.requests {
+            if r.reply.as_ref().is_some_and(hook::peer_gone) {
+                r.reply = None;
+            }
+        }
+        if self.answered_until.is_some_and(|t| Instant::now() >= t) {
+            self.answered_until = None;
+        }
         self.update_state();
         if let Some((at, _, _)) = &self.stop_pending
             && (self.turn.marker_seen || at.elapsed() >= STOP_CATCH_UP)
@@ -701,8 +723,10 @@ impl Engine {
             "SessionStart" => {
                 if let (Some(sid), Some(path)) = (s("session_id"), s("transcript_path")) {
                     let path = PathBuf::from(path);
-                    let history = path.exists();
-                    self.switch_to(sid, &path, history);
+                    if locate::is_transcript_path(&self.roots, &path) {
+                        let history = path.exists();
+                        self.switch_to(sid, &path, history);
+                    }
                 }
             }
             "UserPromptSubmit" => {
@@ -738,6 +762,10 @@ impl Engine {
                 self.turn = TurnStats::start(Some(pid), trigger);
                 self.turn_active = true;
                 self.last_text = None;
+                // Idle until now is not this turn's: count afresh.
+                if self.idle_at.is_some() {
+                    self.idle_at = Some(Instant::now());
+                }
             }
             "Stop" | "StopFailure" => {
                 let pid = s("prompt_id");
@@ -824,6 +852,9 @@ impl Engine {
     /// The request is over: its hook (if still waiting) is released with no decision.
     fn resolve(&mut self, id: &str) {
         self.requests.retain(|r| r.id != id);
+        if self.resolved.len() > 4096 {
+            self.resolved.clear();
+        }
         self.resolved.insert(id.to_string());
         if self.announced.as_deref() == Some(id) {
             self.announced = None;
@@ -893,6 +924,8 @@ impl Engine {
         if self.state == s {
             return;
         }
+        // Leaving the waiting does not end a request (the Process File may flicker): the plugin's
+        // PostToolUse / PermissionDenied or going idle does.
         if matches!(
             self.state,
             State::Waiting {
@@ -900,14 +933,21 @@ impl Engine {
                 ..
             }
         ) && let Some(id) = self.announced.take()
+            && self.open_request(&id).is_none()
         {
-            self.resolve(&id);
+            self.resolved.insert(id);
         }
         self.announced = None;
-        // Nothing waits for an answer once the Session is idle (an Escape kills waiting hooks).
+        // Nothing of the main line waits for an answer once the Session is idle (an Escape kills
+        // waiting hooks). A background Subagent's request may show its dialog only now.
         if s == State::Idle {
             self.idle_at = Some(Instant::now());
-            let ids: Vec<String> = self.requests.iter().map(|r| r.id.clone()).collect();
+            let ids: Vec<String> = self
+                .requests
+                .iter()
+                .filter(|r| r.agent_id.is_none() || r.reply.is_some())
+                .map(|r| r.id.clone())
+                .collect();
             for id in ids {
                 self.resolve(&id);
             }
@@ -956,7 +996,7 @@ impl Engine {
                         let has_ask = self.requests.iter().any(|r| r.tool_name == "AskUserQuestion");
                         if has_ask {
                             WaitKind::Question
-                        } else if since.elapsed() < CLASSIFY_GRACE {
+                        } else if since.elapsed() < CLASSIFY_GRACE || self.answered_until.is_some() {
                             return; // the plugin's PermissionRequest may still be on its way
                         } else {
                             WaitKind::Dialog
@@ -1109,6 +1149,42 @@ impl Engine {
         (blind.len() == 1 && cands.len() == 1).then(|| blind[0].id.clone())
     }
 
+    /// A permission dialog the plugin never reported (it was up before ccrpc connected): taken
+    /// from the transcript's pending tool whose command / file shows in it, answered with keys.
+    fn adopt_pending(&mut self, s: &Screen) {
+        if self.requests.iter().any(|r| r.is_approval()) {
+            return;
+        }
+        let Some((_, body)) = self.dialog_of(&s.lines) else {
+            return;
+        };
+        let Some(t) = &self.tailer else { return };
+        let cands: Vec<_> = t
+            .pending()
+            .into_iter()
+            .filter(|p| !NO_PERMISSION_TOOLS.contains(&p.name.as_str()))
+            .filter(|p| !CHOICE_TOOLS.contains(&p.name.as_str()))
+            .filter(|p| !self.resolved.contains(&p.id))
+            .collect();
+        let matched: Vec<_> = cands
+            .iter()
+            .filter(|p| dialog_needle(&p.name, &p.input).is_some_and(|n| body.contains(&n)))
+            .collect();
+        let pick = match (matched.as_slice(), cands.as_slice()) {
+            ([p], _) => *p,
+            ([], [p]) if dialog_needle(&p.name, &p.input).is_none() => p,
+            _ => return,
+        };
+        self.requests.push(HookRequest {
+            id: pick.id.clone(),
+            tool_name: pick.name.clone(),
+            input: pick.input.clone(),
+            agent_id: pick.agent_id.clone(),
+            suggestions: Value::Null,
+            reply: None,
+        });
+    }
+
     fn permission_event(r: &HookRequest) -> Value {
         json!({"type": "permission_request", "request_id": r.id, "tool_name": r.tool_name,
             "input": r.input, "agent_id": r.agent_id})
@@ -1126,7 +1202,7 @@ impl Engine {
         let State::Waiting { kind, waiting_for } = self.state.clone() else {
             return;
         };
-        if self.announced.is_some() {
+        if self.announced.is_some() || self.answered_until.is_some() {
             return;
         }
         match kind {
@@ -1139,6 +1215,9 @@ impl Engine {
                     return;
                 }
                 let screen = self.screen().ok();
+                if let Some(s) = &screen {
+                    self.adopt_pending(s);
+                }
                 if let Some(id) = screen.as_ref().and_then(|s| self.screen_request(s))
                     && let Some(r) = self.open_request(&id)
                 {
@@ -1651,13 +1730,18 @@ impl Engine {
         if !ok {
             return err("timeout", "30 秒内没在 transcript 里看到这条提示词");
         }
-        // The plugin saw it submitted before it reached the transcript.
-        let prompt_id = self
-            .hook_prompts
-            .iter()
-            .rev()
-            .find(|(seq, _, t)| *seq > hook_before && t.trim().ends_with(clean.trim()))
-            .map(|(_, p, _)| p.clone());
+        // The plugin saw it submitted, normally before it reached the transcript.
+        let hook_prompt = |e: &Engine| {
+            e.hook_prompts
+                .iter()
+                .rev()
+                .find(|(seq, _, t)| *seq > hook_before && t.trim().ends_with(clean.trim()))
+                .map(|(_, p, _)| p.clone())
+        };
+        if hook_prompt(self).is_none() {
+            self.wait_until(Duration::from_secs(1), |e| hook_prompt(e).is_some());
+        }
+        let prompt_id = hook_prompt(self);
         Ok(json!({"uuid": found(self), "prompt_id": prompt_id}))
     }
 
@@ -1740,6 +1824,10 @@ impl Engine {
         let Some(idx) = self.requests.iter().position(|r| r.id == request_id) else {
             return err("unknown_request", format!("当前挂起的请求不是 {request_id}"));
         };
+        // A hook that went away while waiting: answer on the screen instead.
+        if self.requests[idx].reply.as_ref().is_some_and(hook::peer_gone) {
+            self.requests[idx].reply = None;
+        }
         if self.requests[idx].reply.is_some() {
             self.writable()?;
             let r = &self.requests[idx];
@@ -1752,11 +1840,22 @@ impl Engine {
                 Decision::Deny => hook::deny_output(message),
             };
             let stream = self.requests[idx].reply.take().expect("held");
-            self.resolve(request_id);
-            hook::send_reply(stream, Some(output)).map_err(|e| ("io", format!("回复 hook 失败：{e}")))?;
-            return self.wait_leave_request(request_id);
+            if hook::send_reply(stream, Some(output)).is_ok() {
+                self.answered(request_id);
+                return self.wait_leave_request(request_id);
+            }
+            // The hook was gone after all: the dialog is still there for keys.
         }
         self.answer_permission_on_screen(request_id, decision, message)
+    }
+
+    /// The request was answered through its hook: it is over, and the closing dialog is not
+    /// taken for a new one.
+    fn answered(&mut self, id: &str) {
+        self.resolve(id);
+        // `announced` stays on the request until the state moves on.
+        self.announced = Some(id.to_string());
+        self.answered_until = Some(Instant::now() + ANSWER_SETTLE);
     }
 
     /// Answers a request whose hook is not waiting (a background Subagent's) with the dialog's
@@ -1828,7 +1927,7 @@ impl Engine {
         let Some(idx) = self.requests.iter().position(|r| r.id == request_id) else {
             return err("unknown_request", format!("当前挂起的请求不是 {request_id}"));
         };
-        if self.requests[idx].reply.is_none() {
+        if self.requests[idx].reply.as_ref().is_none_or(hook::peer_gone) {
             return err("unsupported", "这次提问没有在 ccrpc 插件里等待作答，只能在屏幕上回答");
         }
         let input = self.requests[idx].input.clone();
@@ -1842,9 +1941,9 @@ impl Engine {
         let mut updated = input;
         updated["answers"] = Value::Object(picked);
         let stream = self.requests[idx].reply.take().expect("held");
-        self.resolve(request_id);
         hook::send_reply(stream, Some(hook::allow_output(None, Some(updated))))
             .map_err(|e| ("io", format!("回复 hook 失败：{e}")))?;
+        self.answered(request_id);
         self.wait_leave_request(request_id)
     }
 
