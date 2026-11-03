@@ -1557,10 +1557,12 @@ impl Engine {
     /// its layout comes from; `None` when the screen shows no dialog that fits `r`.
     fn dialog_options(&self, r: &HookRequest, lines: &[String]) -> Option<(Value, String)> {
         let (d, body, source) = self.dialog_of(lines)?;
-        if let Some(n) = dialog_needle(&r.tool_name, &r.input)
-            && !body.contains(&n)
-        {
-            return None;
+        match dialog_needle(&r.tool_name, &r.input) {
+            Some(n) if !body.contains(&n) => return None,
+            Some(_) => {}
+            // Nothing to match the dialog against: only when no other approval could be on screen.
+            None if self.requests.iter().filter(|x| x.is_approval()).count() > 1 => return None,
+            None => {}
         }
         let options: Vec<Value> = d
             .options
@@ -2184,6 +2186,22 @@ impl Engine {
         self.send_prompt_with(text, &[])
     }
 
+    /// Image paths made absolute (Claude Code resolves a relative one against its own cwd); each
+    /// must be an existing file with no control characters.
+    fn image_paths(images: &[String]) -> std::result::Result<Vec<String>, CmdErr> {
+        let mut paths = Vec::new();
+        for p in images {
+            if p.chars().any(char::is_control) {
+                return Err(("bad_request", format!("图片路径里有控制字符：{p:?}")));
+            }
+            match std::path::absolute(p) {
+                Ok(abs) if abs.is_file() => paths.push(abs.display().to_string()),
+                _ => return Err(("bad_request", format!("图片文件不存在：{p}"))),
+            }
+        }
+        Ok(paths)
+    }
+
     fn send_prompt_with(&mut self, text: &str, images: &[String]) -> CmdResult {
         // Idle and no turn open. A turn that went idle without its Stop (interrupted) closes within
         // a few seconds: wait for that.
@@ -2194,17 +2212,7 @@ impl Engine {
         }
         self.require(self.state == State::Idle && !self.turn_active, "not_idle")?;
         let clean = Self::clean_text(text)?;
-        let mut paths = Vec::new();
-        for p in images {
-            if p.chars().any(char::is_control) {
-                return err("bad_request", format!("图片路径里有控制字符：{p:?}"));
-            }
-            // Absolute: Claude Code resolves a relative path against its own cwd.
-            match std::path::absolute(p) {
-                Ok(abs) if abs.is_file() => paths.push(abs.display().to_string()),
-                _ => return err("bad_request", format!("图片文件不存在：{p}")),
-            }
-        }
+        let paths = Self::image_paths(images)?;
         let images = &paths;
         self.clear_input()?;
         // Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
@@ -2809,7 +2817,9 @@ impl Engine {
             Command::FollowUp { text, images } => {
                 self.require(true, "")?;
                 Self::clean_text(text)?;
-                self.follow_ups.push_back((text.clone(), images.clone()));
+                // Checked now, not only when sent after the turn.
+                let images = Self::image_paths(images)?;
+                self.follow_ups.push_back((text.clone(), images));
                 Ok(json!({"queued": self.follow_ups.len()}))
             }
             Command::Abort => self.abort(),
