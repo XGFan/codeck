@@ -1,4 +1,4 @@
-//! Screen recognizers for the interactive UIs ccrpc answers (layouts of Claude Code 2.1.316, see
+//! Screen recognizers for the interactive UIs ccrpc answers (layouts of Claude Code 2.1.316 / 2.1.317, see
 //! docs/probes.md). Each one returns `None` when the screen does not match what it knows; callers
 //! then report `unrecognized` instead of pressing keys.
 

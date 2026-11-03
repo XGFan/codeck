@@ -1,13 +1,13 @@
 # ccrpc
 
-让 Host 本机的脚本像 Pi RPC 那样驱动交互式 Claude Code：Claude Code 跑在 ToH 的 clay Pane 里，ccrpc 只经 Holder 写 PTY、只读 transcript / 进程文件 / 屏幕，Claude Code 对此无感知。
+让 Host 本机的脚本像 Pi RPC 那样驱动交互式 Claude Code：Claude Code 跑在 ToH 的 clay Pane 里，装着 ccrpc 插件；ccrpc 经 Holder 写 PTY，读 transcript / 进程文件 / 屏幕与插件报来的事件，不改变 Claude Code 的表现。
 
 Session、Live Session、Subagent Run、Main Line 沿用 [Claude Viewer 的定义](https://github.com/XGFan/claude-code-viewer/blob/main/CONTEXT.md)；Host、Holder、Pane、clay、Client 沿用 [ToH 的定义](https://github.com/XGFan/toh/blob/main/CONTEXT.md)。下面只列本项目新增的词。
 
 ## Language
 
 **受控 Session（Controlled Session）**:
-有 ccrpc 进程连着的 Session。它一定在本机某个 clay Pane 的 Holder 里运行；ccrpc 退出后它仍在运行，只是不再受控。
+有 ccrpc 进程连着的 Session。它一定在本机某个 clay Pane 的 Holder 里运行、加载了 ccrpc 插件；ccrpc 退出后它仍在运行，只是不再受控。
 _Avoid_: managed session、worker（worker 是 paaa 的词）
 
 **接手（Takeover）**:

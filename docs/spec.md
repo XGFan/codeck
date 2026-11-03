@@ -165,4 +165,4 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 ## 9. 已知限制
 
-- 屏幕布局按 2.1.316 识别；Claude Code 改了文字或布局时识别器会拒绝（`unrecognized`），需要更新 recognize.rs 与 fixture。
+- 屏幕布局按 2.1.316 / 2.1.317 识别；Claude Code 改了文字或布局时识别器会拒绝（`unrecognized`），需要更新 recognize.rs 与 fixture。

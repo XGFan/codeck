@@ -13,3 +13,4 @@ ccrpc 不与人共用 Session：人在用的 Session 它不连，人接手了它
 - 尺寸所有者通知是 Holder 的新帧，由 Client 在 Attach 里声明订阅才发：toh-proto 的解码器遇到未知帧会报错，不订阅的 Mac、iOS、web 不受影响。
 - 机器上已经在跑的旧 Holder 不报尺寸所有者：ccrpc 放行并在 stderr 提示，只靠尺寸变化判断接手。
 - 人在 ToH 上把受控 Session 的 Pane 切到前台，会看到按 ccrpc 尺寸排版的画面，直到他的 Client 抢回尺寸后 Claude Code 重绘。
+- 例外是共显（`--co-display`，GUI 过渡期用）：ccrpc 不发 Resize、不判接手，屏幕跟随 PTY 尺寸，人与调用方都能输入。

@@ -20,7 +20,9 @@
 | M2 | 审批与 AskUserQuestion 作答 | 完成 |
 | M3 | `steer` / `follow_up` / `abort` / 斜杠命令 / `send_keys` / `dialog` | 完成 |
 | M4 | Subagent Run 事件 | 完成 |
+| M5 | ccrpc 插件（[ADR-0003](./adr/0003-require-ccrpc-plugin.md)）：审批与提问经 PermissionRequest 代答，轮次、Session、后台任务以 hook 为准，协议 2 | 完成 |
+| M6 | GUI MVP 需要的能力：`ls --json`、`session_info`、`--co-display`、目录信任框、`exit`、`--log`、`progress`、`get_messages` 分页与 Subagent 历史 | 完成 |
 
 ## 验证
 
-每次改动：`cargo test`、`cargo clippy --all-targets -- -D warnings`。改到 `session.rs`、`recognize.rs`、`pty.rs`、`transcript.rs`，或升级 Claude Code 后，再跑一次端到端（见 [README](../README.md#测试)）。Claude Code 升级导致识别失败时：用 `ccrpc debug screen` 拍下新布局存进 `tests/fixtures/screens/`，改识别器，更新 probes.md 里的版本与布局。
+每次改动：`cargo test`、`cargo clippy --all-targets -- -D warnings`。改到 `session.rs`、`recognize.rs`、`pty.rs`、`transcript.rs`、`hook.rs`、`history.rs`，或升级 Claude Code 后，再跑一次端到端（见 [README](../README.md#测试)；`mock_` 开头的用例用本地 mock 模型，时序确定、不耗额度）。Claude Code 升级后先重跑 probes.md 的 hooks 一节（插件依赖的 hook 行为）。Claude Code 升级导致识别失败时：用 `ccrpc debug screen` 拍下新布局存进 `tests/fixtures/screens/`，改识别器，更新 probes.md 里的版本与布局。

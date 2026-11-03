@@ -67,7 +67,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
 
 ```
-< {"type":"ready","protocol":2,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.316","state":"idle","size":[160,48]}
+< {"type":"ready","protocol":2,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.317","state":"idle","size":[160,48]}
 > {"id":"1","type":"prompt","text":"给 src/util.rs 补一个单元测试"}
 < {"type":"state","state":"busy"}
 < {"type":"block","kind":"user","uuid":"2a1f…","index":0,"text":"给 src/util.rs 补一个单元测试"}
@@ -152,7 +152,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 - 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录与 ToH 状态目录下的文件只读（插件由 `claude plugin` 命令安装）。
 - 只服务本机 clay 里的 Session，调用方也只在 Host 本机；不与人共用 Session（[ADR-0001](docs/adr/0001-own-pty-size-and-yield-on-takeover.md)）。
 - 命令按到达顺序逐条执行；排队只有 `follow_up`。
-- 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
+- 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316 / 2.1.317，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
 
 ## 测试
 

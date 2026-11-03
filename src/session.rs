@@ -61,7 +61,7 @@ const KEY_SETTLE: Duration = Duration::from_millis(80);
 /// PTY size ccrpc sets when it takes the size (ADR-0001).
 pub const DEFAULT_SIZE: (u16, u16) = (160, 48);
 /// Claude Code versions the built-in layouts were probed on.
-pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316"];
+pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316", "2.1.317"];
 /// At most this many analyses an hour.
 const MAX_ANALYSES_PER_HOUR: usize = 10;
 
