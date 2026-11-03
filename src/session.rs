@@ -42,6 +42,9 @@ const CLASSIFY_GRACE: Duration = Duration::from_millis(500);
 /// A permission prompt whose dialog matches no request is reported as `dialog` (or analyzed)
 /// after this long.
 const MATCH_GRACE: Duration = Duration::from_secs(1);
+/// How long a main-line permission request waits for its dialog's options to be read off the
+/// screen before it is announced without them.
+const OPTIONS_GRACE: Duration = Duration::from_secs(1);
 /// After an answer went back through a hook, the Process File and the screen still show the
 /// closing dialog for a moment: nothing is announced or reclassified meanwhile.
 const ANSWER_SETTLE: Duration = Duration::from_millis(1500);
@@ -559,6 +562,10 @@ impl Engine {
                 s.chars().take(400).collect()
             };
             crate::clog!("out {short}");
+            // Events carrying a screen: the whole of it, for looking into what was not recognized.
+            if let Some(lines) = v["lines"].as_array() {
+                crate::log::screen(lines.iter().filter_map(Value::as_str));
+            }
         }
         self.out.send(&v);
     }
@@ -1400,7 +1407,9 @@ impl Engine {
                     "options": [
                         {"label": recognize::TRUST_YES, "meaning": "allow", "description": null},
                         {"label": recognize::TRUST_NO, "meaning": "deny", "description": null}],
-                    "tool_use_id": null, "layout": TRUST_LAYOUT});
+                    "tool_use_id": null, "layout": TRUST_LAYOUT, "layout_source": "builtin"});
+                crate::clog!("recognize choice layout={TRUST_LAYOUT} source=builtin");
+                crate::log::screen(lines.iter().map(String::as_str));
                 self.announced = Some(rid);
                 self.choice_layout = Some(TRUST_LAYOUT.to_string());
                 self.choice_event = Some(ev.clone());
@@ -1522,9 +1531,10 @@ impl Engine {
     /// in the dialog body; failing that, the only candidate when no candidate has anything to show.
     /// A permission dialog on `lines`: the built-in recognizer, else a permission layout from the
     /// library. With the dialog's body for matching the pending tool.
-    fn dialog_of(&self, lines: &[String]) -> Option<(PermissionDialog, String)> {
+    /// Also says where the dialog's layout comes from: `builtin` or `learned`.
+    fn dialog_of(&self, lines: &[String]) -> Option<(PermissionDialog, String, String)> {
         if let Some(d) = recognize::permission(lines) {
-            return Some((d, recognize::permission_body(lines)?));
+            return Some((d, recognize::permission_body(lines)?, "builtin".into()));
         }
         let (l, opts) = self.library.find_kind(lines, LayoutKind::Permission)?;
         let options = opts
@@ -1539,14 +1549,39 @@ impl Engine {
                 (o.number, o.label, c)
             })
             .collect();
-        Some((PermissionDialog { options }, l.body(lines)?))
+        Some((PermissionDialog { options }, l.body(lines)?, l.source.clone()))
+    }
+
+    /// The options of `r`'s dialog on `lines` (`[{label, meaning}]`, labels as shown) and where
+    /// its layout comes from; `None` when the screen shows no dialog that fits `r`.
+    fn dialog_options(&self, r: &HookRequest, lines: &[String]) -> Option<(Value, String)> {
+        let (d, body, source) = self.dialog_of(lines)?;
+        if let Some(n) = dialog_needle(&r.tool_name, &r.input)
+            && !body.contains(&n)
+        {
+            return None;
+        }
+        let options: Vec<Value> = d
+            .options
+            .iter()
+            .map(|(_, label, c)| {
+                let meaning = match c {
+                    PermissionChoice::Allow => "allow",
+                    PermissionChoice::AllowAlways => "allow_always",
+                    PermissionChoice::Deny => "deny",
+                    PermissionChoice::Other => "other",
+                };
+                json!({"label": label, "meaning": meaning})
+            })
+            .collect();
+        Some((Value::Array(options), source))
     }
 
     /// The request the permission dialog on `s` is about, among those answered on the screen
     /// (a background Subagent's): the one whose command / file shows in the dialog body; failing
     /// that, the only candidate when no candidate has anything to show.
     fn screen_request(&self, s: &Screen) -> Option<String> {
-        let (_, body) = self.dialog_of(&s.lines)?;
+        let (_, body, _) = self.dialog_of(&s.lines)?;
         let cands: Vec<&HookRequest> = self
             .requests
             .iter()
@@ -1577,7 +1612,7 @@ impl Engine {
         {
             return;
         }
-        let Some((_, body)) = self.dialog_of(&s.lines) else {
+        let Some((_, body, _)) = self.dialog_of(&s.lines) else {
             return;
         };
         let Some(t) = &self.tailer else { return };
@@ -1610,9 +1645,14 @@ impl Engine {
         });
     }
 
-    fn permission_event(r: &HookRequest) -> Value {
+    /// `options` / `layout_source`: the dialog on screen, when it was recognized (else null).
+    fn permission_event(r: &HookRequest, options: Option<(Value, String)>) -> Value {
+        let (options, source) = match options {
+            Some((o, s)) => (o, Value::String(s)),
+            None => (Value::Null, Value::Null),
+        };
         json!({"type": "permission_request", "request_id": r.id, "tool_name": r.tool_name,
-            "input": r.input, "agent_id": r.agent_id})
+            "input": r.input, "agent_id": r.agent_id, "options": options, "layout_source": source})
     }
 
     fn waiting_age(&self) -> Duration {
@@ -1633,20 +1673,36 @@ impl Engine {
         match kind {
             WaitKind::Permission => {
                 // A main-line request waits in its hook: answered through it, whatever the screen.
+                // Its dialog is drawn meanwhile: announced once the options on it are read (for
+                // "always allow"), or without them after OPTIONS_GRACE.
+                let screen = self.screen().ok();
                 if let Some(r) = self.requests.iter().find(|r| r.is_approval() && r.reply.is_some()) {
-                    let ev = Self::permission_event(r);
+                    let opts = screen.as_ref().and_then(|s| self.dialog_options(r, &s.lines));
+                    if opts.is_none() && r.at.elapsed() < OPTIONS_GRACE {
+                        return;
+                    }
+                    crate::clog!(
+                        "recognize permission {} options={}",
+                        r.id,
+                        opts.as_ref().map_or("none".into(), |(_, src)| src.clone())
+                    );
+                    if let Some(s) = &screen {
+                        crate::log::screen(s.lines.iter().map(String::as_str));
+                    }
+                    let ev = Self::permission_event(r, opts);
                     self.announced = Some(r.id.clone());
                     self.emit(ev);
                     return;
                 }
-                let screen = self.screen().ok();
                 if let Some(s) = &screen {
                     self.adopt_pending(s);
                 }
                 if let Some(id) = screen.as_ref().and_then(|s| self.screen_request(s))
                     && let Some(r) = self.open_request(&id)
                 {
-                    let ev = Self::permission_event(r);
+                    let opts = screen.as_ref().and_then(|s| self.dialog_options(r, &s.lines));
+                    crate::clog!("recognize permission {} on screen", r.id);
+                    let ev = Self::permission_event(r, opts);
                     self.announced = Some(id);
                     self.emit(ev);
                     return;
@@ -1716,7 +1772,9 @@ impl Engine {
                 return false;
             }
         }
-        let (id, title) = (l.id.clone(), l.title.clone());
+        let (id, title, source) = (l.id.clone(), l.title.clone(), l.source.clone());
+        crate::clog!("recognize choice layout={id} source={source}");
+        crate::log::screen(s.lines.iter().map(String::as_str));
         // A choice raised by a tool (ExitPlanMode…): the single pending tool, if any.
         let tool = match self.requests.as_slice() {
             [r] => Some(r.id.clone()),
@@ -1732,7 +1790,7 @@ impl Engine {
             .map(|o| json!({"label": o.label, "meaning": o.meaning, "description": o.description}))
             .collect();
         let ev = json!({"type": "choice", "request_id": rid, "title": title, "options": options,
-            "tool_use_id": tool, "layout": id});
+            "tool_use_id": tool, "layout": id, "layout_source": source});
         self.choice_event = Some(ev.clone());
         self.emit(ev);
         true
@@ -2324,7 +2382,7 @@ impl Engine {
         let rid = request_id.to_string();
         // The dialog on screen must be the one for this request.
         let found = self.wait_screen(Duration::from_secs(3), |e, s| {
-            let (d, _) = e.dialog_of(&s.lines)?;
+            let (d, _, _) = e.dialog_of(&s.lines)?;
             (e.screen_request(s)? == rid).then_some(d)
         });
         let Some((d, s)) = found else {
@@ -2798,6 +2856,14 @@ impl Engine {
 
     fn ready(&self) {
         let version = self.pf.as_ref().and_then(|p| p.version.clone());
+        crate::clog!(
+            "ccrpc {} holder={} session={} claude={} co_display={}",
+            env!("CARGO_PKG_VERSION"),
+            self.holder_id,
+            self.session_id.as_deref().unwrap_or("-"),
+            version.as_deref().unwrap_or("-"),
+            self.co_display
+        );
         let mut v = self.state.to_json();
         v["type"] = json!("ready");
         v["protocol"] = json!(PROTOCOL);

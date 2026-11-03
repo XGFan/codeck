@@ -19,12 +19,8 @@
 
 GUI 是另起的 Tauri 应用 cc-gui（`~/Developer/Joy/cc-gui`，设计见它的 docs/spec.md），内容只来自 ccrpc（`get_messages` + `block` + `branch`），每个运行中的 clay Claude Code 各连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
 
-已做：`ls --json`（带标题）、`get_state` 的 `mode` / `model` / `context_tokens` 与 `session_info` 推送、`--co-display`、目录信任框作为 choice、`exit {close_pane, stop_tasks}`、`--log`、`progress` 事件、`get_messages` 的分页 / 增量缓存 / 后台线程 / `subagents`。
+已做：`ls --json`（带标题）、`get_state` 的 `mode` / `model` / `context_tokens` 与 `session_info` 推送、`--co-display`、目录信任框作为 choice、`exit {close_pane, stop_tasks}`、`--log`、`progress` 事件、`get_messages` 的分页 / 增量缓存 / 后台线程 / `subagents`、`permission_request` 的 `options`、`choice` / `permission_request` 的 `layout_source`、`--log` 补足（版本、识别决策、整屏）、mock 端到端录 wire（`CCRPC_E2E_WIRE_DIR`）。
 
-- `--log` 补足供排查：命令的响应（成败、错误码）、屏幕识别的决策（用了哪个布局、为什么拒绝）、waiting 与 `unrecognized` 时的整屏、开头写 ccrpc 与 Claude Code 版本（GUI 常开 `--log`，与它自己的 wire / gui 日志放同一目录）
-- `permission_request` 带 `options`（`[{label, meaning}]`，同 `choice`，`label` 为审批框全文，GUI 据此显示“总是允许”及它会加的规则）：收到 PermissionRequest 后最多等 1 秒认出屏幕上的审批框再发，认不出照发、`options: null`
-- `choice` 与 `permission_request` 带 `layout_source`（`builtin` / `learned`），GUI 给分析器学来的标“AI 识别”
-- 端到端的 mock 用例可把 ccrpc 的 stdin / stdout 原样录进目录（如 `CCRPC_E2E_WIRE_DIR`），供 cc-gui 当回放 fixture（mock 模型的内容，不需要脱敏）
 - rewind：`rewind {uuid, restore}` 经选择器作答（先实测提示词多时选择器的滚动与截断、恢复代码的确认菜单变体）
 - 认不出的界面：v0 先经分析器归类，归不了的 GUI 只显示屏幕原文、在 TUI 里处理（不在 GUI 里按键）
 - 斜杠命令、模型的候选列表

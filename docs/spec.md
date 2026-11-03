@@ -32,7 +32,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - 有人在用：`attach` 时尺寸所有者是另一个在线的 Client，就报错退出（`Session 正被 <client> 使用，加 --force 强制连接`）；`--force` 跳过。`new` 自己启动的 Pane 不检查。Holder 不报告尺寸所有者（旧版本）时放行，并在 stderr 提示。
 - `debug` 子命令只看、只写，不改 PTY 尺寸。
 - `--co-display`（共显）：不发 Resize、不判接手，VT 跟随 PTY 尺寸（谁设的都行），人在 Client 上的按键不算接手，`attach` 时有人在用也照连；写入照常（输入框照旧先清空）。`ready` 与 `get_state` 带 `co_display`。
-- `--log FILE`：追加写日志（0600）：发出的事件（block 只记 kind 与 uuid）、状态判定、收到的命令、插件的 hook 事件、写入的按键与粘贴（粘贴只记长度与前 60 字，即提示词的开头也会进日志）。
+- `--log FILE`：追加写日志（0600）：开头一行 ccrpc 与 Claude Code 的版本、Holder、sessionId；发出的事件与响应（block 只记 kind 与 uuid，带屏幕的事件另记整屏）、状态判定、识别决策（审批框用了哪种布局、choice 的布局及其来源，并记当时的整屏）、收到的命令、插件的 hook 事件、写入的按键与粘贴（粘贴只记长度与前 60 字，即提示词的开头也会进日志）。
 - `ls --json` 的 `title`：transcript 里最后一条 `custom-title`，没有则最后一条 `ai-title`（transcript 取报到里的，没有报到时按 cwd 推算 `<projects>/<cwd 编码>/<sessionId>.jsonl`）。
 - 插件：`new` 在插件未启用（用户 settings 的 `enabledPlugins` 里没有 `ccrpc@ccrpc`）且 claude 参数里没有 `--plugin-dir` 时报错；claude 的进程文件出现 5 秒仍没有报到也报错退出。`attach` 要求该 claude 已报到（见 3 节），否则报错并提示重启 claude。
 - `ccrpc plugin install`：在 `$XDG_DATA_HOME/ccrpc/plugin`（缺省 `~/.local/share/ccrpc/plugin`）生成本地 marketplace `ccrpc` 与插件 `ccrpc`（hooks 调用当前 ccrpc 可执行文件的绝对路径），再经 `claude plugin marketplace add|update`、`claude plugin install|update` 装成用户级插件。换了 ccrpc 的位置要重新 install。
@@ -108,7 +108,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `state` | `state`；`waiting` 时另有 `waiting: {kind, waiting_for}` |
 | `block` | `kind`（`user` / `text` / `thinking` / `tool_use` / `tool_result`）、`uuid`、`index`（消息内序号）；`text`；`tool_use` 的 `id`、`name`、`input`；`tool_result` 的 `tool_use_id`、`content`（文本，超过 100KB 截断）、`is_error`，输出太大被存进 `tool-results/` 时 `content` 是 transcript 里的预览（模型看到的也只有它），另有 `persisted: {path, size}`；忙时插话送达的用户内容 `queued: true`；来自 Subagent Run 时另有 `agent_id`、`parent_tool_use_id`，属于 Workflow Run 时另有 `run_id`（`parent_tool_use_id` 为 Workflow 调用的 id） |
 | `turn_end` | `prompt_id`：插件给的提示词 id（连接时已在进行的一轮为 null）；`trigger`：`prompt` / `task_notification`；`last_text`：Stop 的 `last_assistant_message`（StopFailure、中止为 null）；`error`：API 报错 `{kind, message}`（StopFailure 的 `error`，如 `rate_limit`、`server_error`、`unknown`），没有为 null；`aborted`：本轮被中止；`background_tasks`：Stop 时仍在运行的后台任务（Claude Code 原样：`id`、`type`、`status`、`description` 等），没有为 `[]`；`duration_ms`：`turn_duration` 的用时，没有则为 ccrpc 量的；`usage`：`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`（本轮期间读到的主线与 Subagent Run 的 assistant 消息，每个 message id 计一次；连接时已在进行的一轮只算连接之后的部分）；`api_cost`：按 cv-core 价格表估算的美元，有模型没有价格时为 null |
-| `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id`（后台 Subagent 的请求） |
+| `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id`（后台 Subagent 的请求）、`options`（屏幕上审批框的选项 `[{label, meaning}]`，`label` 为全文，`meaning` 为 `allow` / `allow_always` / `deny` / `other`；认不出为 null）、`layout_source`（`builtin` / `learned`，`options` 为 null 时为 null）。主线的请求收到插件的 PermissionRequest 后最多等 1 秒认出审批框再发，认不出照发（allow / deny 仍经插件） |
 | `question` | `request_id`、`questions`（AskUserQuestion 输入原样）、`agent_id` |
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键 |
@@ -117,7 +117,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `workflow` | Workflow Run 的整份状态：`run_id`、`tool_use_id`、`name`、`status`、`phases`（`index`、`title`、`detail`）、`agents`（`agent_id`、`label`、`phase_index`、`state`）。`workflows/<runId>.json` 或 `journal.jsonl` 内容有变化时发，内容不变不发 |
 | `taken_over` | `client`：接手者的客户端标识（旧 Holder 为 null） |
 | `reclaimed` | — |
-| `choice` | `request_id`（`choice:<n>`）、`title`、`options`（`label` 屏幕上的全文、`meaning` `allow` / `allow_always` / `deny` / `other`、`description`）、`tool_use_id`（引起它的工具，如 ExitPlanMode；没有为 null）、`layout` |
+| `choice` | `request_id`（`choice:<n>`）、`title`、`options`（`label` 屏幕上的全文、`meaning` `allow` / `allow_always` / `deny` / `other`、`description`）、`tool_use_id`（引起它的工具，如 ExitPlanMode；没有为 null）、`layout`、`layout_source`（`builtin` 内置 / `learned` 分析器学来的） |
 | `layout_learned` | 分析器学到新布局并已存进布局库：`layout`、`kind`、`title`、`path` |
 | `analysis_failed` | 分析器没给出可用的布局：`error`；结果与屏幕对不上时另有 `title` |
 | `session_info` | `mode`、`model`、`context_tokens`（同 `get_state`）：其中任一项变了时发 |
@@ -158,7 +158,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 ## 8. 测试
 
 - 单测：`tests/fixtures/` 的屏幕文本与 transcript（M0 录制、脱敏）回放：transcript 尾随、屏幕识别、协议解析。
-- 端到端（`tests/e2e.rs`，`#[ignore]`；`mock_model_turns` 用测试内置的本地 mock 模型，其余用真实模型）：ccrpc 插件为本次构建生成、经 `claude --plugin-dir` 加载（不安装），独立 `CCRPC_STATE_DIR`（`/tmp` 下）；独立 `TOH_STATE_DIR`（`/tmp` 下的短路径，unix socket 路径有约 104 字节上限；clay 启用、`[lan] bind = "127.0.0.1"`、`mdns = false`，模型相关变量经 `[backends.clay] env` 传给 Pane），去掉 `TOH_CONFIG` 与宿主终端变量；独立 `CLAUDE_CONFIG_DIR`（预置跳过 onboarding 与目录信任、`permissions.defaultMode = "default"`）；模型缺省 DeepSeek `deepseek-flash`（`https://api.deepseek.com/anthropic`），key 读 `CCRPC_E2E_API_KEY`。清理只杀记下的 Holder pid。
+- 端到端（`tests/e2e.rs`，`#[ignore]`；`mock_` 开头的用例用测试内置的本地 mock 模型（`MOCK-TOOL` 调 Bash、`MOCK-ASK` 调 AskUserQuestion 等），其余用真实模型；设 `CCRPC_E2E_WIRE_DIR` 时把每个 ccrpc 的收发原样录成 `<用例>-<n>.jsonl`（`{t, dir: send|recv, msg}`，与 cc-gui 的 wire.jsonl 同格式）供 GUI 回放）：ccrpc 插件为本次构建生成、经 `claude --plugin-dir` 加载（不安装），独立 `CCRPC_STATE_DIR`（`/tmp` 下）；独立 `TOH_STATE_DIR`（`/tmp` 下的短路径，unix socket 路径有约 104 字节上限；clay 启用、`[lan] bind = "127.0.0.1"`、`mdns = false`，模型相关变量经 `[backends.clay] env` 传给 Pane），去掉 `TOH_CONFIG` 与宿主终端变量；独立 `CLAUDE_CONFIG_DIR`（预置跳过 onboarding 与目录信任、`permissions.defaultMode = "default"`）；模型缺省 DeepSeek `deepseek-flash`（`https://api.deepseek.com/anthropic`），key 读 `CCRPC_E2E_API_KEY`。清理只杀记下的 Holder pid。
 
 - 权限模式：输入框下的模式行，`manual mode on` / `accept edits on` / `plan mode on` / `auto mode on`，shift+tab 依次循环。
 - 后台任务面板（`/tasks`）：标题 `Background`，下面的行带 `❯` 光标，提示行 `↑/↓ to select · Enter to view · x to stop · Esc to close`；只有一项时直接是详情（`… details`，提示行同样有 `x to stop`）。

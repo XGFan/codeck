@@ -35,6 +35,18 @@ pub fn line(args: std::fmt::Arguments) {
     }
 }
 
+/// The screen, one log line per row (trailing blank rows dropped).
+pub fn screen<'a>(lines: impl Iterator<Item = &'a str>) {
+    if !enabled() {
+        return;
+    }
+    let rows: Vec<&str> = lines.collect();
+    let end = rows.iter().rposition(|l| !l.trim().is_empty()).map_or(0, |i| i + 1);
+    for r in &rows[..end] {
+        line(format_args!("  | {r}"));
+    }
+}
+
 /// `clog!("…", …)`: one log line when `--log` is on.
 #[macro_export]
 macro_rules! clog {

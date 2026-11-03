@@ -52,7 +52,7 @@ ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxR
 ccrpc ls [--json]
 ```
 
-`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`--log FILE` 把状态判定、hook 事件与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
+`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`--log FILE` 把版本、状态判定、识别决策与当时的整屏、hook 事件、响应与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
 
 检查依赖与配置（toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器），每行 `ok` / `warn` / `fail`：
 
@@ -125,7 +125,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `state` | 状态变化，`waiting` 时带子类与 `waitingFor` |
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
 | `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
-| `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id`，后台 Subagent 的带 `agent_id` |
+| `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id`，后台 Subagent 的带 `agent_id`；`options` 为审批框上的选项（含“总是允许”的全文），`layout_source` 说明是内置识别还是分析器学来的 |
 | `question` | 挂起的 AskUserQuestion |
 | `dialog` | 其余对话框与启动界面 |
 | `unrecognized` | 屏幕认不出，此时不按任何键 |
@@ -133,7 +133,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
 | `taken_over` / `reclaimed` | 有人在 ToH 上接手了这个 Session，之后只读 / 已取回 |
-| `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框），用 `answer_choice` 作答 |
+| `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
 | `session_info` | 权限模式、模型、上下文大小变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
@@ -168,7 +168,7 @@ cargo test
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-`mock_model_turns`、`mock_model_session` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`。
+`mock_model_turns`、`mock_model_session`、`mock_model_tools` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（cc-gui 的回放 fixture 由此而来）。
 
 可选变量：`CCRPC_E2E_TUI=fullscreen`（用全屏 TUI 跑）、`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用同级目录 `../toh/target/debug/toh`，没有则用 PATH 里的）。
 

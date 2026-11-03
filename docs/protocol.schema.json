@@ -2103,6 +2103,24 @@
               "null"
             ],
             "description": "后台 Subagent 的请求时为它的 agent id（这类请求按屏幕作答）。"
+          },
+          "options": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/$defs/permission_option"
+            },
+            "description": "屏幕上审批框的选项；主线请求最多等 1 秒认出审批框，认不出为 null（allow / deny 仍可经插件作答）。"
+          },
+          "layout_source": {
+            "enum": [
+              "builtin",
+              "learned",
+              null
+            ],
+            "description": "options 所用布局的来源；options 为 null 时为 null。"
           }
         },
         "required": [
@@ -2110,7 +2128,9 @@
           "request_id",
           "tool_name",
           "input",
-          "agent_id"
+          "agent_id",
+          "options",
+          "layout_source"
         ]
       },
       "question": {
@@ -2388,6 +2408,13 @@
           "layout": {
             "type": "string",
             "description": "识别用的布局名。"
+          },
+          "layout_source": {
+            "enum": [
+              "builtin",
+              "learned"
+            ],
+            "description": "布局来源：builtin 为内置，learned 为分析器学来的。"
           }
         },
         "required": [
@@ -2396,7 +2423,8 @@
           "title",
           "options",
           "tool_use_id",
-          "layout"
+          "layout",
+          "layout_source"
         ]
       },
       "layout_learned": {
@@ -2636,6 +2664,28 @@
         {
           "$ref": "#/$defs/events/progress"
         }
+      ]
+    },
+    "permission_option": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "审批框上该选项的全文（“总是允许”会写明它加的规则）。"
+        },
+        "meaning": {
+          "enum": [
+            "allow",
+            "allow_always",
+            "deny",
+            "other"
+          ],
+          "description": "选项的含义。"
+        }
+      },
+      "required": [
+        "label",
+        "meaning"
       ]
     }
   }

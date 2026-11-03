@@ -16,6 +16,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -158,6 +159,8 @@ fn toml_str(s: &str) -> String {
 }
 
 struct Rpc {
+    /// `CCRPC_E2E_WIRE_DIR`: every line sent and received, as cc-gui's `wire.jsonl`.
+    wire: Option<Arc<Mutex<std::fs::File>>>,
     child: Child,
     stdin: Option<ChildStdin>,
     rx: Receiver<Value>,
@@ -236,12 +239,15 @@ impl Rpc {
             .stderr(Stdio::inherit());
         let mut child = cmd.spawn().unwrap();
         let stdout = child.stdout.take().unwrap();
+        let wire = wire_file();
+        let wire_out = wire.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
                 let v: Value = serde_json::from_str(&line)
                     .unwrap_or_else(|e| panic!("非 JSON 输出 {line:?}: {e}"));
+                wire_write(&wire_out, "recv", &v);
                 if tx.send(v).is_err() {
                     break;
                 }
@@ -249,6 +255,7 @@ impl Rpc {
         });
         let stdin = child.stdin.take();
         Rpc {
+            wire,
             child,
             stdin,
             rx,
@@ -261,6 +268,7 @@ impl Rpc {
 
     fn send(&mut self, c: Value) {
         eprintln!("{:6.1} >>> {c}", self.t0.elapsed().as_secs_f32());
+        wire_write(&self.wire, "send", &c);
         let w = self.stdin.as_mut().unwrap();
         writeln!(w, "{c}").unwrap();
         w.flush().unwrap();
@@ -329,6 +337,28 @@ impl Rpc {
         self.seen.clear();
         while self.rx.try_recv().is_ok() {}
     }
+}
+
+/// A new wire file in `CCRPC_E2E_WIRE_DIR`, named after the test (and a sequence number).
+fn wire_file() -> Option<Arc<Mutex<std::fs::File>>> {
+    let dir = PathBuf::from(std::env::var_os("CCRPC_E2E_WIRE_DIR")?);
+    std::fs::create_dir_all(&dir).unwrap();
+    let test = std::thread::current().name().unwrap_or("e2e").replace("::", "-");
+    let path = (0..)
+        .map(|n| dir.join(format!("{test}-{n}.jsonl")))
+        .find(|p| !p.exists())
+        .unwrap();
+    Some(Arc::new(Mutex::new(std::fs::File::create(path).unwrap())))
+}
+
+/// One wire line: `{"t": <unix ms>, "dir": "send" | "recv", "msg": …}`.
+fn wire_write(wire: &Option<Arc<Mutex<std::fs::File>>>, dir: &str, msg: &Value) {
+    let Some(w) = wire else { return };
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let _ = writeln!(w.lock().unwrap(), "{}", json!({"t": t, "dir": dir, "msg": msg}));
 }
 
 impl Drop for Rpc {
@@ -1256,8 +1286,9 @@ fn learns_an_unknown_dialog() {
     }
 }
 
-/// A scripted Anthropic Messages endpoint on loopback: every reply is text. A prompt containing
-/// `MOCK-SLOW` is answered over ~8 s, `MOCK-FAIL` with HTTP 400; anything else with `ok`.
+/// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
+/// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
+/// `MOCK-ASK` with an AskUserQuestion call; anything else (tool results too) with text `ok`.
 fn mock_model() -> String {
     use std::net::TcpListener;
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1303,6 +1334,31 @@ fn mock_model() -> String {
                 if text.contains("MOCK-FAIL") {
                     return reply(&mut s, "400 Bad Request", json!({"type": "error", "error": {"type": "invalid_request_error", "message": "mock failure"}}));
                 }
+                let has_tool = |n: &str| req["tools"].as_array().is_some_and(|t| t.iter().any(|t| t["name"] == n));
+                static TOOL_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                // Claude Code merges and reorders consecutive messages, so which prompt a request
+                // answers is not read off the last message: a tool is called while there are more
+                // prompts asking for it than calls to it so far (a tool result gets text).
+                let msgs = req["messages"].as_array().cloned().unwrap_or_default();
+                let blocks = |role: &str| -> Vec<Value> {
+                    msgs.iter().filter(|m| m["role"] == role).flat_map(|m| match &m["content"] {
+                        Value::Array(a) => a.clone(),
+                        Value::String(t) => vec![json!({"type": "text", "text": t})],
+                        _ => vec![],
+                    }).collect()
+                };
+                let (user, assistant) = (blocks("user"), blocks("assistant"));
+                let asked = |w: &str| user.iter().filter(|b| b["text"].as_str().is_some_and(|t| t.contains(w))).count();
+                let called = |n: &str| assistant.iter().filter(|b| b["type"] == "tool_use" && b["name"] == n).count();
+                let tool = if asked("MOCK-TOOL") > called("Bash") && has_tool("Bash") {
+                    Some(("Bash", json!({"command": "touch mock-tool.txt", "description": "Create mock-tool.txt"})))
+                } else if asked("MOCK-ASK") > called("AskUserQuestion") && has_tool("AskUserQuestion") {
+                    Some(("AskUserQuestion", json!({"questions": [{"question": "Which color?", "header": "Color",
+                        "options": [{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}],
+                        "multiSelect": false}]})))
+                } else {
+                    None
+                };
                 let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW") {
                     (vec!["slow "; 16], 500)
                 } else if text.contains("MOCK-STEERED") {
@@ -1314,10 +1370,18 @@ fn mock_model() -> String {
                 let usage = json!({"input_tokens": 10, "output_tokens": 3});
                 let msg = json!({"id": "msg_mock", "type": "message", "role": "assistant", "model": model,
                     "content": [], "stop_reason": null, "stop_sequence": null, "usage": usage});
+                let tool = tool.map(|(name, input)| {
+                    let n = TOOL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    (format!("toolu_mock{n:04}"), name, input)
+                });
+                let stop = if tool.is_some() { "tool_use" } else { "end_turn" };
                 if req["stream"] != true {
                     let mut m = msg.clone();
-                    m["content"] = json!([{"type": "text", "text": words.concat()}]);
-                    m["stop_reason"] = json!("end_turn");
+                    m["content"] = match &tool {
+                        Some((id, name, input)) => json!([{"type": "tool_use", "id": id, "name": name, "input": input}]),
+                        None => json!([{"type": "text", "text": words.concat()}]),
+                    };
+                    m["stop_reason"] = json!(stop);
                     return reply(&mut s, "200 OK", m);
                 }
                 let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n");
@@ -1326,13 +1390,18 @@ fn mock_model() -> String {
                     let _ = s.flush();
                 };
                 ev("message_start", json!({"type": "message_start", "message": msg}));
-                ev("content_block_start", json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}));
-                for w in words {
-                    std::thread::sleep(Duration::from_millis(gap));
-                    ev("content_block_delta", json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": w}}));
+                if let Some((id, name, input)) = &tool {
+                    ev("content_block_start", json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}}));
+                    ev("content_block_delta", json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": input.to_string()}}));
+                } else {
+                    ev("content_block_start", json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}));
+                    for w in words {
+                        std::thread::sleep(Duration::from_millis(gap));
+                        ev("content_block_delta", json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": w}}));
+                    }
                 }
                 ev("content_block_stop", json!({"type": "content_block_stop", "index": 0}));
-                ev("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, "usage": {"output_tokens": 3}}));
+                ev("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": null}, "usage": {"output_tokens": 3}}));
                 ev("message_stop", json!({"type": "message_stop"}));
             });
         }
@@ -1431,4 +1500,52 @@ fn mock_model_session() {
     rpc.holder_pid = None;
     let text = std::fs::read_to_string(&log).unwrap();
     assert!(text.contains("hook UserPromptSubmit") && text.contains("keys "), "日志里没有 hook 与按键");
+    assert!(text.contains(" holder=") && text.contains(" claude="), "日志开头没有版本行");
+    assert!(text.contains("recognize choice") && text.contains("  | "), "日志里没有识别决策与整屏");
+}
+
+/// Tool calls on the scripted model (no credits): a Bash approval carries the dialog's options
+/// (read off the screen) and where its layout comes from; AskUserQuestion is answered through the
+/// plugin; a denial with a message keeps the turn going.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_tools() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.call("t1", json!({"type": "prompt", "text": "MOCK-TOOL please"}));
+    let pr = rpc.event("permission_request", Duration::from_secs(30));
+    assert_eq!(pr["tool_name"], "Bash", "{pr}");
+    assert_eq!(pr["layout_source"], "builtin", "{pr}");
+    let opts = pr["options"].as_array().unwrap_or_else(|| panic!("permission_request 没带 options：{pr}"));
+    let meanings: Vec<&str> = opts.iter().filter_map(|o| o["meaning"].as_str()).collect();
+    assert_eq!(meanings.first(), Some(&"allow"), "{pr}");
+    assert_eq!(meanings.last(), Some(&"deny"), "{pr}");
+    assert!(meanings.contains(&"allow_always"), "{pr}");
+    assert!(opts.iter().all(|o| o["label"].as_str().is_some_and(|l| !l.is_empty())), "{pr}");
+    rpc.call("t2", json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["aborted"], false, "{t}");
+    assert!(env.work.join("mock-tool.txt").exists(), "允许之后 touch 没有执行");
+
+    rpc.forget();
+    rpc.call("t3", json!({"type": "prompt", "text": "MOCK-TOOL again"}));
+    let pr = rpc.event("permission_request", Duration::from_secs(30));
+    rpc.call("t4", json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "deny", "message": "not now"}));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["aborted"], false, "带 message 的拒绝不应中断本轮：{t}");
+
+    rpc.forget();
+    rpc.call("q1", json!({"type": "prompt", "text": "MOCK-ASK which"}));
+    let q = rpc.event("question", Duration::from_secs(30));
+    assert_eq!(q["questions"][0]["question"], "Which color?", "{q}");
+    rpc.call("q2", json!({"type": "answer_question", "request_id": q["request_id"], "answers": [{"options": ["Blue"]}]}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    let m = rpc.call("m1", json!({"type": "get_messages"}));
+    let answered = m["blocks"].as_array().unwrap().iter().any(|b| {
+        b["kind"] == "tool_result" && b["content"].as_str().is_some_and(|c| c.contains("Blue"))
+    });
+    assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
 }
