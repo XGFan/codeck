@@ -138,6 +138,8 @@ function upsertRequest(s: ConnState, r: Request): ConnState {
 
 /** Folds the first (or an older) `get_messages` page in. */
 export function applyPage(s: ConnState, page: MessagesPage, older: boolean): ConnState {
+  // An older page that lands after the stream was reset (a branch) belongs to what was dropped.
+  if (older && !s.loaded) return s;
   const fresh = page.blocks.filter((b) => !s.seen.has(blockKey(b)));
   const seen = new Set(s.seen);
   for (const b of fresh) seen.add(blockKey(b));

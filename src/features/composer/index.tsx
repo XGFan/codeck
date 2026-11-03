@@ -76,8 +76,10 @@ export function Composer({ c }: { c: ConnState }) {
     if (msg.type === "follow_up") void refreshQueue();
     // Keep what was typed while it was being sent.
     setText((t) => (t.trim() === body ? "" : t));
+    // Only the images that went with it: one pasted meanwhile stays.
+    const gone = new Set(images.map((i) => i.path));
     images.forEach((i) => URL.revokeObjectURL(i.url));
-    setImages([]);
+    setImages((x) => x.filter((i) => !gone.has(i.path)));
   };
 
   const setQueue = (f: string[]) =>
