@@ -152,8 +152,14 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 
 // ---- the hook side ---------------------------------------------------------------------------
 
-/// `ccrpc hook`: one hook event on stdin. Always exits 0; prints only a decision ccrpc sent.
-pub fn run_hook() {
+/// `ccrpc hook [--protocol N]`: one hook event on stdin. Always exits 0; prints only a decision
+/// ccrpc sent. `N` is the plugin's protocol, from its hooks.json (a plugin generated before
+/// `--protocol` existed is 1): the check-in reports the plugin installed, not this binary.
+pub fn run_hook(args: &[String]) {
+    let protocol = match args {
+        [flag, n, ..] if flag == "--protocol" => n.parse().unwrap_or(0),
+        _ => 1,
+    };
     // Outside a clay Pane there is nothing for ccrpc to do.
     let Some(holder_id) = std::env::var("TOH_HOLDER_ID").ok().filter(|v| !v.is_empty()) else {
         return;
@@ -171,7 +177,7 @@ pub fn run_hook() {
     let event = input["hook_event_name"].as_str().unwrap_or_default().to_string();
     if event == "SessionStart" {
         let c = CheckIn {
-            hook_protocol: HOOK_PROTOCOL,
+            hook_protocol: protocol,
             plugin_version: env!("CARGO_PKG_VERSION").into(),
             claude_pid,
             holder_id,

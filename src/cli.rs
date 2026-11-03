@@ -38,7 +38,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
     }
     match args.first().map(String::as_str) {
         Some("hook") => {
-            crate::hook::run_hook();
+            crate::hook::run_hook(&args[1..]);
             Ok(())
         }
         Some("plugin") => crate::plugin::cmd(&roots, &args[1..]),

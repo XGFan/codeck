@@ -56,7 +56,7 @@ fn shell_quote(s: &str) -> String {
 
 /// The command every hook runs.
 pub fn hook_command(exe: &Path) -> String {
-    format!("{} hook", shell_quote(&exe.display().to_string()))
+    format!("{} hook --protocol {HOOK_PROTOCOL}", shell_quote(&exe.display().to_string()))
 }
 
 /// `hooks/hooks.json` for `exe`.
@@ -231,7 +231,10 @@ mod tests {
     fn hooks_run_this_ccrpc_and_only_permission_requests_wait_long() {
         let v = hooks_json(Path::new("/opt/it's here/ccrpc"));
         let stop = &v["hooks"]["Stop"][0];
-        assert_eq!(stop["hooks"][0]["command"], r"'/opt/it'\''s here/ccrpc' hook");
+        assert_eq!(
+            stop["hooks"][0]["command"],
+            format!(r"'/opt/it'\''s here/ccrpc' hook --protocol {HOOK_PROTOCOL}")
+        );
         assert!(stop.get("matcher").is_none());
         assert!(stop["hooks"][0].get("timeout").is_none());
         let pr = &v["hooks"]["PermissionRequest"][0];

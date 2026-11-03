@@ -40,7 +40,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ 它子孙进程里名为 `claude` 的进程 → `<cc>/sessions/<pid>.json`（`status`、`cwd`）与插件的报到 `<ccrpc 状态目录>/sessions/<pid>.json`（`session_id`、`transcript_path`）。Subagent Run 的 transcript 是 `<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 关联到主线的 Agent 工具调用。Pane shell 的 tty（只读打开后 `TIOCGWINSZ`）给出连接时的 PTY 尺寸，也用于被接手后跟随尺寸、在旧 Holder 上判断接手。
 
 - `attach <sessionId>`：在进程文件里找到 pid，再沿父进程链找到 `child_pid` 是其祖先的 Holder；不在 Holder 里的 Session 报错，不可控。
-- **插件的 hook**：SessionStart、UserPromptSubmit、PreToolUse、PermissionRequest（超时 86400s）、PostToolUse、PostToolUseFailure、PermissionDenied、Stop、StopFailure、SubagentStart、SubagentStop。SubagentStart / SubagentStop 让 ccrpc 立即去找新的 Subagent Run 文件。插件协议版本（报到里的 `hook_protocol`，当前 2）与 ccrpc 不一致时不能 attach，要重新 `ccrpc plugin install` 并重启 claude。
+- **插件的 hook**：SessionStart、UserPromptSubmit、PreToolUse、PermissionRequest（超时 86400s）、PostToolUse、PostToolUseFailure、PermissionDenied、Stop、StopFailure、SubagentStart、SubagentStop。SubagentStart / SubagentStop 让 ccrpc 立即去找新的 Subagent Run 文件。插件协议版本（写在 hooks.json 的命令里：`<ccrpc> hook --protocol 2`，报到里的 `hook_protocol` 取自它，当前 2）与 ccrpc 不一致时不能 attach，要重新 `ccrpc plugin install` 并重启 claude。
 - **报到**：插件的 SessionStart hook（`startup`、`resume`、`clear`、`compact`、`fork`）把 claude pid、`session_id`、`transcript_path`、hook 协议版本写进报到（ccrpc 自己的目录，0600）。`attach` 要求报到存在、hook 协议一致、`session_id` 与进程文件一致；只经 `/reload-plugins` 加载的插件不会报到。
 - **hook 通道**：ccrpc 找到 claude 后监听 `<ccrpc 状态目录>/s/<claude pid>.sock`（先监听再读报到）；hook 按父进程（claude）pid 连接，连不上就无输出退出。
 - **sessionId 会变**：`/clear`、`/resume` 等触发 SessionStart，ccrpc 按它给的 `session_id` 与 `transcript_path` 切到新 transcript 并发 `session_changed`。
@@ -57,7 +57,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 - 由事件驱动：stdin 的新行、Holder 的帧（屏幕输出、尺寸所有者）、进程文件与 transcript 目录的文件变化都会立即触发一次检查；没有事件时每 250ms 兜底检查一次，命令等待期间每 50ms 一次。
 - Subagent Run 的文件长度没变就不读；60 秒没有变化的改为每 5 秒查一次长度。
-- **一轮**（见术语表）以插件为准：从 UserPromptSubmit 开始，到同一 `prompt_id` 的 Stop（完成）或 StopFailure（API 报错）结束；收到后等 transcript 写出本轮的 `turn_duration`（最多 2s）再发 `turn_end`，用量与用时才完整。中止（Esc、不带 message 的拒绝）不触发 Stop：一轮开着而状态回到 `idle` 1.5s 仍没有 Stop，按中止结束（`aborted: true`）。忙时插话的 UserPromptSubmit 带当前一轮的 `prompt_id`，不另开一轮；插话没在本轮里送达（本轮结束前没有工具调用可以夹带）时，它在 Stop 之后作为新的一轮运行、没有自己的 UserPromptSubmit：ccrpc 在上一轮结束时就开这一轮，由下一个 Stop 结束（`prompt_id` 取自 Stop）；后台任务的结果通知是另一条提示词（`<task-notification>`），自成一轮（`trigger: "task_notification"`）；`!` 命令只有 Stop、没有 UserPromptSubmit，不算一轮。连接时已在进行的一轮由它的下一个 Stop 结束（`prompt_id` 为 null）。
+- **一轮**（见术语表）以插件为准：从 UserPromptSubmit 开始，到同一 `prompt_id` 的 Stop（完成）或 StopFailure（API 报错）结束；收到后等 transcript 写出本轮的 `turn_duration`（最多 2s）再发 `turn_end`，用量与用时才完整。中止（Esc、不带 message 的拒绝）不触发 Stop：一轮开着而状态回到 `idle` 1.5s 仍没有 Stop，按中止结束（`aborted: true`）。忙时插话的 UserPromptSubmit 带当前一轮的 `prompt_id`，不另开一轮；插话没在本轮里送达（本轮结束前没有工具调用可以夹带）时，它在 Stop 之后作为新的一轮运行、没有自己的 UserPromptSubmit：ccrpc 在上一轮结束时就开这一轮，由下一个 Stop 结束（`prompt_id` 取自 Stop）；这一轮若什么也没发生就回到 idle（插话其实已在上一轮送达），或者先来了别的 UserPromptSubmit，就不发 `turn_end`、直接丢掉；后台任务的结果通知是另一条提示词（`<task-notification>`），自成一轮（`trigger: "task_notification"`）；`!` 命令只有 Stop、没有 UserPromptSubmit，不算一轮。连接时已在进行的一轮由它的下一个 Stop 结束（`prompt_id` 为 null）。
 
 ## 5. 协议
 

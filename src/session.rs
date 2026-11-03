@@ -150,6 +150,9 @@ struct TurnStats {
     trigger: &'static str,
     /// The transcript wrote the turn's `turn_duration` marker.
     marker_seen: bool,
+    /// Opened for a steer expected to run after the previous Stop: dropped without `turn_end` if
+    /// nothing comes of it.
+    provisional: bool,
 }
 
 impl TurnStats {
@@ -725,8 +728,14 @@ impl Engine {
             && self.state == State::Idle
             && self.idle_at.is_some_and(|t| t.elapsed() >= ABORT_GRACE)
         {
-            self.turn.aborted = true;
-            self.emit_turn_end(None, Value::Null);
+            if self.turn.provisional {
+                // The steer had been delivered within the previous turn after all.
+                self.turn_active = false;
+                self.turn = TurnStats::default();
+            } else {
+                self.turn.aborted = true;
+                self.emit_turn_end(None, Value::Null);
+            }
         }
         self.refresh_announcement();
         self.announce_requests();
@@ -760,6 +769,11 @@ impl Engine {
                 }
                 let notice = text.trim_start().starts_with("<task-notification>");
                 self.finish_stopped_turn();
+                // A steer's own turn has no UserPromptSubmit: one now is a new prompt.
+                if self.turn_active && self.turn.provisional {
+                    self.turn_active = false;
+                    self.turn = TurnStats::default();
+                }
                 if self.turn_active {
                     match &self.turn.prompt_id {
                         // Input while busy is delivered within the same turn (steer), or after
@@ -834,6 +848,7 @@ impl Engine {
                 // its prompt id here.
                 if self.turn_active && self.turn.prompt_id.is_none() && i["agent_id"].is_null() {
                     self.turn.prompt_id = s("prompt_id");
+                    self.turn.provisional = false;
                 }
                 if let Some(id) = s("tool_use_id") {
                     self.pre_tools.push_back(PreTool {
@@ -967,6 +982,7 @@ impl Engine {
             if !self.pending_steers.is_empty() {
                 self.pending_steers.clear();
                 self.turn = TurnStats::start(None, "prompt");
+                self.turn.provisional = true;
                 self.turn_active = true;
                 self.last_text = None;
                 if self.idle_at.is_some() {
@@ -995,6 +1011,9 @@ impl Engine {
             .or_else(|| text(&resp["description"]))
             .or_else(|| text(&resp["summary"]))
             .or_else(|| text(&resp["workflowName"]));
+        if self.hook_tasks.len() >= 256 {
+            self.hook_tasks.remove(0);
+        }
         self.hook_tasks.push(BgTask {
             id,
             kind,
