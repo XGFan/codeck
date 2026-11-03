@@ -10,6 +10,7 @@ const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir D
   ccrpc new [--cwd DIR] [--size COLSxROWS] [-- claude 参数…]
   ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>
   ccrpc ls
+  ccrpc plugin install | uninstall | generate <目录>
   ccrpc doctor
   ccrpc layouts list
   ccrpc layouts export <仓库目录>
@@ -36,6 +37,11 @@ pub fn run(args: Vec<String>) -> Result<()> {
         args.drain(..2);
     }
     match args.first().map(String::as_str) {
+        Some("hook") => {
+            crate::hook::run_hook();
+            Ok(())
+        }
+        Some("plugin") => crate::plugin::cmd(&roots, &args[1..]),
         Some("ls") => cmd_ls(&roots),
         Some("doctor") => cmd_doctor(&roots),
         Some("layouts") => cmd_layouts(&args[1..]),
@@ -66,7 +72,11 @@ fn cmd_ls(roots: &Roots) -> Result<()> {
             ),
             None => (String::new(), "starting".into()),
         };
-        println!("{id}\t{sid}\t{status}\t{}", m.cwd);
+        let plugin = match crate::hook::read_checkin(&crate::hook::state_dir(), claude.pid) {
+            Some(c) if crate::hook::checkin_problem(Some(&c), pf.as_ref().and_then(|p| p.session_id.as_deref())).is_none() => "plugin",
+            _ => "-",
+        };
+        println!("{id}\t{sid}\t{status}\t{}\t{plugin}", m.cwd);
     }
     Ok(())
 }
@@ -173,6 +183,9 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
         .and_then(|v| v["tui"].as_str().map(str::to_string))
         .unwrap_or_else(|| "default".into());
     line("ok", "TUI", tui);
+    for (level, detail) in crate::plugin::doctor(roots) {
+        line(level, "ccrpc 插件", detail);
+    }
     // Holders
     let holders = locate::list_holders(roots);
     let table = locate::process_table()?;
