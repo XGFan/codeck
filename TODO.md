@@ -54,7 +54,6 @@ GUI 是另起的 Tauri 应用 cc-gui（`~/Developer/Joy/cc-gui`，设计见它�
 - 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理（插件报来前一个的 PostToolUse 后重新认定），没有端到端用例
 - 同时有几个后台 Subagent 在等审批、且工具输入里都没有可在审批框里比对的内容时，认不出屏幕上是哪个，改发 `dialog`
 - 后台 Subagent 的请求留到插件报来它的结果才结束：Subagent 被停掉、没有结果时它一直挂着，会妨碍认定连接前就在等的审批框
-- 插话在 Stop 之后自成一轮时，两轮的用量在同一次读 transcript 里到达，可能都算进前一轮
 - Workflow Run 偶尔只读到 `journal.jsonl`：`workflow` 事件的 `name` 为 null、`phases` 为空直到结束（端到端偶发，`workflows/<runId>.json` 没被读到）
 - 插件装在用户级：每次工具调用都会起一次 `ccrpc hook` 进程（不在 clay Pane 里立即退出），换了 ccrpc 可执行文件的位置要重新 `ccrpc plugin install`
 - Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block

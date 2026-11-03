@@ -438,6 +438,9 @@ pub struct Engine {
     startup_last: Option<Vec<String>>,
     /// Queued follow-ups: text and image paths.
     follow_ups: VecDeque<(String, Vec<String>)>,
+    /// The next turn's Stop, come while this one's still waits for the transcript (claude fires
+    /// both Stops before writing either turn): handled once this turn has ended.
+    deferred_stop: Option<HookMsg>,
     marks: Marks,
     /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
     resolved: HashSet<String>,
@@ -543,6 +546,7 @@ impl Engine {
             startup_checked: None,
             startup_last: None,
             follow_ups: VecDeque::new(),
+            deferred_stop: None,
             marks: Marks::default(),
             resolved: HashSet::new(),
             procfile_warned: false,
@@ -680,6 +684,80 @@ impl Engine {
     }
 
     /// One observation step: process, Process File, transcript, state transitions, events.
+    /// One transcript event: blocks out, turn bookkeeping.
+    fn on_tx(&mut self, ev: TxEvent) {
+        match ev {
+            TxEvent::Block(b) => {
+                if b.agent_id.is_none() && b.kind == BlockKind::Text {
+                    self.last_text = b.text.clone();
+                }
+                if b.agent_id.is_none()
+                    && b.kind == BlockKind::User
+                    && b.text
+                        .as_deref()
+                        .is_some_and(|t| t.starts_with("[Request interrupted by user"))
+                {
+                    self.turn.aborted = true;
+                }
+                // A steer delivered within the turn.
+                if b.agent_id.is_none() && b.kind == BlockKind::User && b.queued {
+                    let t = b.text.as_deref().unwrap_or_default().trim().to_string();
+                    self.pending_steers.retain(|s| s.trim() != t);
+                }
+                let mut v = serde_json::to_value(&b).unwrap_or(Value::Null);
+                if let Value::Object(m) = &mut v {
+                    m.insert("type".into(), json!("block"));
+                }
+                self.emit(v);
+            }
+            // Turns are delimited by the plugin's UserPromptSubmit / Stop; the marker says the
+            // transcript has the turn's last message.
+            TxEvent::TurnEnd { duration_ms } => {
+                // The first marker is the turn's (a steer's own turn may follow in the same read).
+                if self.turn_active && !self.turn.marker_seen {
+                    self.turn.marker_seen = true;
+                    if duration_ms.is_some() {
+                        self.turn.duration_ms = duration_ms;
+                    }
+                    // Its Stop came: it ends here, before the blocks of a turn read in the same go.
+                    if self.stop_pending.is_some() {
+                        self.finish_stopped_turn();
+                    }
+                }
+            }
+            TxEvent::Usage {
+                main,
+                model,
+                usage,
+                logged_cost,
+            } => {
+                if main {
+                    self.note_main_usage(model.as_deref(), &usage);
+                }
+                if self.turn_active {
+                    let t = &mut self.turn;
+                    t.input += usage.input;
+                    t.output += usage.output;
+                    t.cache_read += usage.cache_read;
+                    t.cache_creation += usage.cache_write_5m + usage.cache_write_1h;
+                    let c = self.prices.cost(model.as_deref(), &usage, logged_cost);
+                    t.cost = t.cost.zip(c).map(|(a, b)| a + b);
+                }
+            }
+            TxEvent::ApiError { kind, message } => {
+                if self.turn_active && self.turn.error.is_none() {
+                    self.turn.error = Some(json!({"kind": kind, "message": message}));
+                }
+            }
+            TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
+            TxEvent::Enqueued { content } => self.marks.enqueue(content),
+            TxEvent::Branch { at_uuid } => {
+                self.emit(json!({"type": "branch", "at_uuid": at_uuid}));
+            }
+            TxEvent::Workflow(v) => self.emit(v),
+        }
+    }
+
     pub fn tick(&mut self) {
         if self.exited {
             return;
@@ -703,72 +781,7 @@ impl Engine {
         self.update_watches();
         let evs = self.tailer.as_mut().map(|t| t.poll()).unwrap_or_default();
         for ev in evs {
-            match ev {
-                TxEvent::Block(b) => {
-                    if b.agent_id.is_none() && b.kind == BlockKind::Text {
-                        self.last_text = b.text.clone();
-                    }
-                    if b.agent_id.is_none()
-                        && b.kind == BlockKind::User
-                        && b.text
-                            .as_deref()
-                            .is_some_and(|t| t.starts_with("[Request interrupted by user"))
-                    {
-                        self.turn.aborted = true;
-                    }
-                    // A steer delivered within the turn.
-                    if b.agent_id.is_none() && b.kind == BlockKind::User && b.queued {
-                        let t = b.text.as_deref().unwrap_or_default().trim().to_string();
-                        self.pending_steers.retain(|s| s.trim() != t);
-                    }
-                    let mut v = serde_json::to_value(&b).unwrap_or(Value::Null);
-                    if let Value::Object(m) = &mut v {
-                        m.insert("type".into(), json!("block"));
-                    }
-                    self.emit(v);
-                }
-                // Turns are delimited by the plugin's UserPromptSubmit / Stop; the marker says the
-                // transcript has the turn's last message.
-                TxEvent::TurnEnd { duration_ms } => {
-                    // The first marker is the turn's (a steer's own turn may follow in the same read).
-                    if self.turn_active && !self.turn.marker_seen {
-                        self.turn.marker_seen = true;
-                        if duration_ms.is_some() {
-                            self.turn.duration_ms = duration_ms;
-                        }
-                    }
-                }
-                TxEvent::Usage {
-                    main,
-                    model,
-                    usage,
-                    logged_cost,
-                } => {
-                    if main {
-                        self.note_main_usage(model.as_deref(), &usage);
-                    }
-                    if self.turn_active {
-                        let t = &mut self.turn;
-                        t.input += usage.input;
-                        t.output += usage.output;
-                        t.cache_read += usage.cache_read;
-                        t.cache_creation += usage.cache_write_5m + usage.cache_write_1h;
-                        let c = self.prices.cost(model.as_deref(), &usage, logged_cost);
-                        t.cost = t.cost.zip(c).map(|(a, b)| a + b);
-                    }
-                }
-                TxEvent::ApiError { kind, message } => {
-                    if self.turn_active && self.turn.error.is_none() {
-                        self.turn.error = Some(json!({"kind": kind, "message": message}));
-                    }
-                }
-                TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
-                TxEvent::Enqueued { content } => self.marks.enqueue(content),
-                TxEvent::Branch { at_uuid } => {
-                    self.emit(json!({"type": "branch", "at_uuid": at_uuid}));
-                }
-                TxEvent::Workflow(v) => self.emit(v),
-            }
+            self.on_tx(ev);
         }
         while let Some(m) = self.hooks.as_ref().and_then(HookServer::try_recv) {
             self.on_hook(m);
@@ -977,15 +990,23 @@ impl Engine {
             }
             "Stop" | "StopFailure" => {
                 let pid = s("prompt_id");
-                // Another turn's Stop while the previous one still waits for the transcript: the
-                // previous one is over (a steer may have opened this one).
+                // Another turn's Stop (a steer's turn) while this one still waits for the transcript:
+                // claude fires both before writing either turn, so this one ends at its marker (or
+                // after STOP_CATCH_UP) with all its blocks, and the other Stop is handled then.
                 if self
                     .stop_pending
                     .is_some()
                     && pid.is_some()
                     && self.turn.prompt_id != pid
                 {
-                    self.finish_stopped_turn();
+                    // A third one: the oldest waits no longer.
+                    if let Some(prev) = self.deferred_stop.take() {
+                        self.end_stopped_turn();
+                        self.on_hook(prev);
+                    }
+                    crate::clog!("defer Stop prompt={}", pid.as_deref().unwrap_or("-"));
+                    self.deferred_stop = Some(m);
+                    return;
                 }
                 let ours = self.turn_active
                     && self.stop_pending.is_none()
@@ -1140,8 +1161,15 @@ impl Engine {
         self.fs.set(&paths);
     }
 
-    /// `turn_end` of the turn whose Stop came, if any.
+    /// `turn_end` of the turn whose Stop came, if any; then the next turn's Stop if it was deferred.
     fn finish_stopped_turn(&mut self) {
+        self.end_stopped_turn();
+        if let Some(m) = self.deferred_stop.take() {
+            self.on_hook(m);
+        }
+    }
+
+    fn end_stopped_turn(&mut self) {
         if let Some((_, last, bg)) = self.stop_pending.take() {
             self.emit_turn_end(last, bg);
             // Input queued in it but not delivered within it runs next, with no

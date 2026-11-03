@@ -1427,9 +1427,16 @@ fn mock_model_turns() {
     assert_eq!(st["delivered_as"], "queued", "{st}");
     let t1 = rpc.event("turn_end", Duration::from_secs(60));
     assert_eq!(t1["prompt_id"], first, "{t1}");
+    // Each turn's blocks come before its turn_end (the steer's Stop arrives right after this one's).
+    let text_before = |rpc: &Rpc, w: &str| {
+        rpc.seen.iter().any(|v| v["type"] == "block" && v["kind"] == "text" && v["text"].as_str().is_some_and(|t| t.contains(w)))
+    };
+    assert!(text_before(&rpc, "slow"), "第一轮的文字在它的 turn_end 之后才到");
+    assert!(!text_before(&rpc, "STEER-TURN"), "插话那一轮的文字跑到了第一轮的 turn_end 之前");
     assert!(t1["last_text"].as_str().unwrap_or("").contains("slow"), "{t1}");
     let t2 = rpc.event("turn_end", Duration::from_secs(60));
     assert!(t2["prompt_id"].is_string() && t2["prompt_id"] != first, "{t2}");
+    assert!(text_before(&rpc, "STEER-TURN"), "插话那一轮的文字在它的 turn_end 之后才到");
     assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
     assert_eq!(t2["aborted"], false, "{t2}");
 

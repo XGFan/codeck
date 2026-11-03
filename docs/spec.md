@@ -60,7 +60,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 - 由事件驱动：stdin 的新行、Holder 的帧（屏幕输出、尺寸所有者）、进程文件与 transcript 目录的文件变化都会立即触发一次检查；没有事件时每 250ms 兜底检查一次，命令等待期间每 50ms 一次。
 - Subagent Run 的文件长度没变就不读；60 秒没有变化的改为每 5 秒查一次长度。
-- **一轮**（见术语表）以插件为准：从 UserPromptSubmit 开始，到同一 `prompt_id` 的 Stop（完成）或 StopFailure（API 报错）结束；收到后等 transcript 写出本轮的 `turn_duration`（最多 2s）再发 `turn_end`，用量与用时才完整。中止（Esc、不带 message 的拒绝）不触发 Stop：一轮开着而状态回到 `idle` 1.5s 仍没有 Stop，按中止结束（`aborted: true`）。忙时插话的 UserPromptSubmit 带当前一轮的 `prompt_id`，不另开一轮；插话没在本轮里送达（本轮结束前没有工具调用可以夹带）时，它在 Stop 之后作为新的一轮运行、没有自己的 UserPromptSubmit：ccrpc 在上一轮结束时就开这一轮，由下一个 Stop 结束（`prompt_id` 取自 Stop）；这一轮若什么也没发生就回到 idle（插话其实已在上一轮送达），或者先来了别的 UserPromptSubmit，就不发 `turn_end`、直接丢掉；后台任务的结果通知是另一条提示词（`<task-notification>`），自成一轮（`trigger: "task_notification"`）；`!` 命令只有 Stop、没有 UserPromptSubmit，不算一轮。连接时已在进行的一轮由它的下一个 Stop 结束（`prompt_id` 为 null）。
+- **一轮**（见术语表）以插件为准：从 UserPromptSubmit 开始，到同一 `prompt_id` 的 Stop（完成）或 StopFailure（API 报错）结束；收到后等 transcript 写出本轮的 `turn_duration`（最多 2s）再发 `turn_end`，用量与用时才完整。中止（Esc、不带 message 的拒绝）不触发 Stop：一轮开着而状态回到 `idle` 1.5s 仍没有 Stop，按中止结束（`aborted: true`）。忙时插话的 UserPromptSubmit 带当前一轮的 `prompt_id`，不另开一轮；插话没在本轮里送达（本轮结束前没有工具调用可以夹带）时，它在 Stop 之后作为新的一轮运行、没有自己的 UserPromptSubmit：ccrpc 在上一轮结束时就开这一轮，由下一个 Stop 结束（`prompt_id` 取自 Stop）；两个 Stop 几乎同时到、都早于 transcript 写出这两轮，所以后一个 Stop 先搁着，前一轮读到它的 `turn_duration`（或等满 2s）才结束，块与用量各归各轮；这一轮若什么也没发生就回到 idle（插话其实已在上一轮送达），或者先来了别的 UserPromptSubmit，就不发 `turn_end`、直接丢掉；后台任务的结果通知是另一条提示词（`<task-notification>`），自成一轮（`trigger: "task_notification"`）；`!` 命令只有 Stop、没有 UserPromptSubmit，不算一轮。连接时已在进行的一轮由它的下一个 Stop 结束（`prompt_id` 为 null）。
 
 ## 5. 协议
 
