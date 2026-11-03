@@ -26,6 +26,10 @@ _Avoid_: client（Client 是 ToH 的 Mac / iOS / web）、host（Host 是 ToH �
 受控 Session 当前所处的阶段：`starting` / `idle` / `busy` / `waiting` / `exited`。前四种取自进程文件的 `status`，`waiting` 另带子类（`permission` / `question` / `dialog`）与原始 `waitingFor`。
 _Avoid_: 状态码、status（指本项目的状态时）
 
+**轮（Turn）**:
+Claude Code 处理一条提示词的过程：从提示词提交到 Claude Code 停下（完成、API 报错或被中止）。后台任务的结果通知是 Claude Code 自己提交的另一条提示词，属于另一轮。
+_Avoid_: 回合、round、任务（任务指后台任务）
+
 **进程文件（Process File）**:
 Claude Code 为每个运行中的进程写的 `<配置目录>/sessions/<pid>.json`，含 `sessionId`、`status`、`waitingFor`。ccrpc 判断状态的主要依据。
 _Avoid_: pid 文件、session 文件
@@ -45,6 +49,10 @@ _Avoid_: dialog（dialog 指认不出含义、只能按键处理的界面）、r
 **布局（Layout）**:
 ccrpc 认得的一种界面：怎么认出它、它是请求还是选择、每个选项的含义与按键。来自实测，或由 AI 分析认不出的屏幕得出并存下，之后同样的界面直接按它识别。
 _Avoid_: 模板、规则、pattern
+
+**ccrpc 插件（ccrpc Plugin）**:
+装进 Claude Code 的插件，只含 hooks：把 Session 里发生的事报告给 ccrpc，并在 Claude Code 要问人（审批、AskUserQuestion）时由 ccrpc 代为作答。没有 ccrpc 连着时什么也不做。
+_Avoid_: extension、扩展、hook 包
 
 **屏幕（Screen）**:
 ccrpc 用自己的 VT 从 Holder 的 Snapshot 与 Output 维护的当前终端画面文本。只用来识别界面与选项位置，不作为内容来源。
