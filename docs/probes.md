@@ -78,3 +78,50 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - 只有一题时没有 `←`/`→` 和 Submit 标签（只有 ` ☐ Header`），选中即提交。
 - Other：按 `Type something.` 的编号进入输入状态（提示行出现 `ctrl+g to edit in Vim`），写入文字后回车。多选题里是 `[ ] Type something`。
 - 结果记录为 tool_result：`Your questions have been answered: "Q1"="A1", "Q2"="a, b". …`，多选答案以 `, ` 连接。
+
+## hooks 与插件（2.1.317）
+
+环境：Claude Code 2.1.317，tmux 160×48（不经 ToH），独立 `CLAUDE_CONFIG_DIR`，manual 模式。模型换成本机按脚本回复的 Messages 接口 mock（工具调用可确定复现）；hook 是只记日志、按控制文件阻塞并回复的命令 hook；进程文件每 50ms 采样。
+
+### PermissionRequest
+
+- 触发：主线与 Subagent 里要审批的工具调用、ExitPlanMode、AskUserQuestion（PreToolUse 没给决定时）。先 PreToolUse（带 `tool_use_id`），约 30ms 后 PermissionRequest。
+- 输入：`tool_name`、`tool_input`、`permission_suggestions`（如 `{"type":"addDirectories",…}`、`{"type":"setMode","mode":"acceptEdits"}`，`destination: "session"`）、`prompt_id`、`permission_mode`；**没有 `tool_use_id`**；Subagent 里另有 `agent_id`、`agent_type`。ExitPlanMode 的 `tool_input` 是 `{}`。
+- 主线：hook 运行的同时审批框照常显示，进程文件照常 `waiting`（`permission prompt`；AskUserQuestion 为 `input needed`）。hook 回 `allow` / `deny` 后对话框立即收起，屏幕显示 `Allowed by PermissionRequest hook` / `Denied by PermissionRequest hook`。`deny` 的 `message` 作为 `is_error` 的 tool_result 交给模型，本轮继续（在审批框里选 No 则中断本轮）。
+- 人先在审批框里作答：选 Yes 时 hook 进程不被收掉，继续阻塞到它自己退出（1 次实测）；选 No 或按 Esc 时 hook 收到 SIGTERM。
+- 后台 Subagent：hook 阻塞期间**不显示**审批框，进程文件保持 `busy`；hook 退出且没给决定后审批框才出现在主屏（提示行多出 `ctrl+x ctrl+k twice to stop background agents`），进程文件变 `waiting`。hook 回 `allow` 生效。
+- ExitPlanMode：hook 回 `allow`（带不带 `updatedPermissions`）都被忽略，计划审批框照旧等人作答；回 `deny` 生效。PreToolUse 回 `allow` 也照样弹出计划审批框。→ 计划审批的“同意”只能在屏幕上作答。mock 下的计划审批框是 `Exit plan mode?` / `1. Yes, and switch to default (ask each time) for this session` / `2. No`。
+- Notification `permission_prompt` 在审批框出现约 6s 后才触发。
+
+### AskUserQuestion
+
+- PreToolUse 阻塞期间不显示提问界面，进程文件是 `busy`，spinner 行显示 `running PreToolUse hook`。
+- PreToolUse 回 `permissionDecision: "allow"` 与 `updatedInput`（原样的 `questions` 加 `answers`）即作答，界面不出现。
+- PreToolUse 不给决定时接着触发 PermissionRequest，这时提问界面与 hook 同时出现；PermissionRequest 回 `behavior: "allow"` 与同样的 `updatedInput` 也能作答，屏幕显示 `User answered Claude's questions:` 与 `Allowed by PermissionRequest hook`。
+- `answers` 以题目文字为键。单选写 label；多选写 `"eslint, clippy"` 或 `["eslint","ruff"]`（数组在结果里以 `, ` 连接）；Other 直接写自由文本。
+- tool_result：答案都是选项时为 `Your questions have been answered: "Q"="A". You can now continue with these answers in mind.`（与在界面里作答相同）；有选项之外的答案时为 `The user answered: "Q"="A", …. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`
+
+### 中止与轮次结束
+
+- 正常结束：Stop 带 `last_assistant_message`（本轮最后一段 assistant 文字）、`stop_hook_active`。
+- Esc 中止流式回复：Stop 与 StopFailure 都不触发。审批框期间按 Esc 同样不触发 Stop。
+- API 报错（mock 返回 400）：只触发 StopFailure，`error: "unknown"`，`last_assistant_message` 为 `API Error: 400 probe error`；不触发 Stop。
+- 后台 Subagent：SubagentStart（`agent_id`、`agent_type`）→ 主线一轮先结束、触发 Stop（屏幕显示 `Waiting for 1 background agent to finish`）→ SubagentStop（带 `agent_id`、`last_assistant_message`）→ 结果通知回到主线时**也触发 UserPromptSubmit** → 再一次 Stop。
+
+### transcript 与上下文
+
+- 零输出的 hook 不在 transcript 里留条目，例外是 Stop：每次都写一条 `system` / `stop_hook_summary`（含 hook 命令）。hook 给出决定时写 `attachment` / `hook_permission_decision`（`decision`、`toolUseID`、`hookEvent`）；有 stdout 时写 `attachment` / `hook_success`（含 stdout 全文，如 AskUserQuestion 的答案 JSON）。
+- 发给模型的请求里没有 hook 运行的痕迹（逐个检查全部 37 个请求）；hook 的决定只以工具结果出现（`deny` 的 `message`、AskUserQuestion 的答案）。
+- 只含 hooks 的插件：`claude plugin details` 报 `Hooks (4) … (harness-only — no model context cost)`、`Always-on: ~0 tok`；装上前后请求的 system 与 tools 逐字相同。
+
+### 生效时机
+
+- 运行中用 `claude plugin install` 装的插件不生效；在 Session 里执行 `/reload-plugins` 后生效（`Reloaded: 1 plugin · … · 4 hooks …`），但这条命令连同输出会作为本地命令记录进入之后的上下文。
+- 运行中直接改 `settings.json` 的 `hooks`，下一条提示词就生效，不用 reload。
+- `claude --plugin-dir <插件目录>` 只给这个进程加载插件，其 hooks 生效；`--session-id <uuid>` 指定的 id 同时出现在 hook 输入与进程文件里。
+
+### 其他
+
+- hook 进程的父进程就是 claude 进程（进程文件名里的 pid）。
+- hook 输入都带 `session_id`、`transcript_path`、`cwd`；除 SessionStart 外还有 `prompt_id`、`permission_mode`（`default` / `plan` / `acceptEdits`）。
+- `/clear`：回车后约 40ms SessionEnd（`reason: "clear"`），随即 SessionStart（`source: "clear"`，带新的 `session_id` 与 `transcript_path`）；进程文件的 `sessionId` 在回车后约 90ms 已换新，与上面 2.1.316 记的约 1.3s 不同。
