@@ -1,8 +1,10 @@
 pub mod analyze;
 pub mod cli;
+pub mod history;
 pub mod hook;
 pub mod layout;
 pub mod locate;
+pub mod log;
 pub mod procfile;
 pub mod procs;
 pub mod plugin;

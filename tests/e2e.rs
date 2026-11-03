@@ -210,9 +210,15 @@ fn ccrpc_cmd(env: &Env) -> Command {
 
 impl Rpc {
     fn start(env: &Env) -> Rpc {
+        Rpc::start_in(env, &env.work, &[])
+    }
+
+    /// `new` in `cwd` with ccrpc options `opts`.
+    fn start_in(env: &Env, cwd: &Path, opts: &[&str]) -> Rpc {
         let mut cmd = ccrpc_cmd(env);
         cmd.args(["new", "--cwd"])
-            .arg(&env.work)
+            .arg(cwd)
+            .args(opts)
             .args(["--", "--plugin-dir"])
             .arg(&env.plugin_dir);
         Rpc::spawn(cmd)
@@ -664,6 +670,16 @@ fn controls_a_real_session() {
     }
     assert!(!sub_requests.is_empty(), "Subagent 的 touch 没有经 permission_request（带 agent_id）作答");
     assert!(env.work.join("subagent.txt").exists());
+    // The history has the Subagent Run's blocks under the Agent call.
+    let msgs = rpc.call(
+        "sa2",
+        json!({"type": "get_messages", "subagents": true, "limit": 30}),
+    );
+    assert!(
+        msgs["subagent_blocks"].as_array().unwrap().iter().any(|b| b["agent_id"].is_string()
+            && b["parent_tool_use_id"] == agent_call["id"]),
+        "get_messages 没有 Subagent Run 的块：{}", msgs["subagent_blocks"]
+    );
 
     // Workflow Run (when the model has the Workflow tool): workflow snapshots and run_id blocks
     let seen = run_turn_allowing(
@@ -958,7 +974,36 @@ fn yields_when_a_person_takes_over() {
     let ready = forced.event("ready", Duration::from_secs(20));
     assert_eq!(ready["holder_id"], holder.as_str());
     forced.call("f1", json!({"type": "get_state"}));
+
+    // Co-display: shown alongside the person, no size of its own, no takeover, still writes.
+    let holder_pid = forced.holder_pid.take();
     drop(forced);
+    let mut co = Rpc::attach(&env, &["--co-display", &holder]);
+    co.holder_pid = holder_pid;
+    let ready = co.event("ready", Duration::from_secs(20));
+    assert_eq!(ready["co_display"], true);
+    assert_eq!(ready["taken_over"], false);
+    assert_eq!(ready["size"], json!([160, 48]), "the PTY as the last one left it");
+    // The person resizes: the co-displayed VT follows, and it is no takeover.
+    let mut person = person;
+    person
+        .write_all(&toh_proto::Frame::Resize { cols: 90, rows: 28 }.encode())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let scr = co.call("c0", json!({"type": "get_screen"}));
+        if scr["lines"].as_array().unwrap().len() == 28 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "共显的屏幕没有跟随 PTY 尺寸：{}", scr["lines"].as_array().unwrap().len());
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    co.call("c1", json!({"type": "send_keys", "keys": [{"text": "x"}]}));
+    std::thread::sleep(Duration::from_millis(500));
+    let st = co.call("c2", json!({"type": "get_state"}));
+    assert_eq!(st["taken_over"], false, "a person's keys are not a takeover here");
+    co.call("c3", json!({"type": "send_keys", "keys": ["backspace"]}));
+    drop(co);
     drop(person);
 }
 
@@ -1325,4 +1370,65 @@ fn mock_model_turns() {
     assert!(t3["error"].is_object(), "{t3}");
     assert!(t3["error"]["message"].as_str().unwrap_or("").contains("400"), "{t3}");
     assert_eq!(t3["aborted"], false);
+}
+
+/// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on
+/// the scripted model (no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_session() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    // Outside the trusted work folder (a trusted folder's subfolders are trusted too).
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let fresh = fresh_dir.path().canonicalize().unwrap();
+    let log = env.state_dir.join("ccrpc.log");
+    let mut rpc = Rpc::start_in(&env, &fresh, &["--log", log.to_str().unwrap()]);
+    let ready = rpc.event("ready", Duration::from_secs(20));
+    rpc.holder_pid = holder_pid(&env.toh_dir, ready["holder_id"].as_str().unwrap());
+
+    // The folder trust dialog is a choice.
+    let c = rpc.until("trust", Duration::from_secs(30), |v| v["type"] == "choice");
+    assert_eq!(c["layout"], "trust_folder", "{c}");
+    let d = rpc.call("t1", json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, I trust this folder"}));
+    assert!(d["state"].is_string(), "{d}");
+    wait_state(&mut rpc, "idle", 30);
+
+    // A few turns: the status line, then progress while one runs slowly.
+    for i in 0..3 {
+        rpc.call(&format!("p{i}"), json!({"type": "prompt", "text": format!("hello {i}")}));
+        rpc.event("turn_end", Duration::from_secs(30));
+    }
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["mode"], "manual", "{st}");
+    assert_eq!(st["model"], "claude-sonnet-4-5", "{st}");
+    assert!(st["context_tokens"].as_u64().unwrap_or(0) > 0, "{st}");
+    rpc.forget();
+    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    let p = rpc.event("progress", Duration::from_secs(15));
+    assert!(p["verb"].is_string() && p["text"].as_str().unwrap().contains('…'), "{p}");
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    // Paging back from the newest.
+    let all = rpc.call("m0", json!({"type": "get_messages"}));
+    let n = all["blocks"].as_array().unwrap().len();
+    assert!(n >= 8, "{all}");
+    let last = rpc.call("m1", json!({"type": "get_messages", "limit": 3}));
+    assert_eq!(last["blocks"].as_array().unwrap().len(), 3);
+    assert_eq!(last["more"], true);
+    assert_eq!(last["blocks"], json!(all["blocks"].as_array().unwrap()[n - 3..]));
+    let older = rpc.call("m2", json!({"type": "get_messages", "before": last["first"], "limit": 100}));
+    assert_eq!(older["blocks"].as_array().unwrap().len(), n - 3);
+    assert_eq!(older["more"], false);
+
+    // Exit, with the Pane.
+    let holder_pid = rpc.holder_pid.unwrap();
+    rpc.call("x1", json!({"type": "exit", "close_pane": true}));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while ccrpc::procs::pid_exists(holder_pid) {
+        assert!(Instant::now() < deadline, "Pane 没有随 exit 结束");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    rpc.holder_pid = None;
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(text.contains("hook UserPromptSubmit") && text.contains("keys "), "日志里没有 hook 与按键");
 }

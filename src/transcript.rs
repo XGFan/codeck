@@ -111,6 +111,8 @@ pub enum TxEvent {
     },
     /// One assistant message's token counts (once per message id; main line or Subagent Run).
     Usage {
+        /// From the main file (not a Subagent Run).
+        main: bool,
         model: Option<String>,
         usage: cv_core::pricing::Usage,
         /// Cost Claude Code logged itself, if any.
@@ -222,8 +224,9 @@ pub struct Tailer {
     usage_seen: HashSet<String>,
     /// Background tasks, in start order.
     tasks: Vec<BgTask>,
-    /// Byte offset of every main-file entry, kept when `main_only`.
+    /// Byte offset of every main-file entry, kept when `main_only` or `keep_offsets`.
     offsets: HashMap<String, u64>,
+    keep_offsets: bool,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -251,6 +254,7 @@ impl Tailer {
             parents: HashMap::new(),
             main_only: false,
             offsets: HashMap::new(),
+            keep_offsets: false,
             usage_seen: HashSet::new(),
             tasks: Vec::new(),
         }
@@ -266,6 +270,21 @@ impl Tailer {
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id && t.status == "running") {
             t.status = "stopped".into();
         }
+    }
+
+    /// Keeps the byte offset of every main-file entry (for paging the history).
+    pub fn keep_offsets(&mut self) {
+        self.keep_offsets = true;
+    }
+
+    /// Byte offset of the main-file entry `uuid` (with `keep_offsets`).
+    pub fn offset_of(&self, uuid: &str) -> Option<u64> {
+        self.offsets.get(uuid).copied()
+    }
+
+    /// How far the main file has been read.
+    pub fn read_to(&self) -> u64 {
+        self.offset
     }
 
     /// Looks for new Subagent Run / Workflow files on the next poll (a Subagent just started or
@@ -332,7 +351,7 @@ impl Tailer {
             self.offset = chunk.consumed_to;
             self.capped |= chunk.capped;
             for l in &chunk.lines {
-                if self.main_only
+                if (self.main_only || self.keep_offsets)
                     && let Some(u) = &l.entry.uuid
                 {
                     self.offsets.entry(u.clone()).or_insert(l.offset);
@@ -761,6 +780,7 @@ impl Tailer {
                             .unwrap_or(0.0)
                             .min(cc);
                         out.push(TxEvent::Usage {
+                            main: agent.is_none(),
                             model: msg.model.clone(),
                             usage: cv_core::pricing::Usage {
                                 input: n(u.input_tokens),
@@ -1223,6 +1243,27 @@ fn background_launch(text: &str) -> Option<(&'static str, String)> {
     None
 }
 
+/// The Session's title: the last `custom-title` (set by the person), else the last `ai-title`.
+/// Only lines that can hold one are parsed.
+pub fn session_title(main: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(main).ok()?;
+    let (mut custom, mut ai) = (None, None);
+    for line in std::io::BufReader::new(f).split(b'\n').map_while(|l| l.ok()) {
+        if !line.windows(7).any(|w| w == b"-title\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(&line) else { continue };
+        let pick = |k: &str| v[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+        match v["type"].as_str() {
+            Some("custom-title") => custom = pick("customTitle").or(custom),
+            Some("ai-title") => ai = pick("aiTitle").or(ai),
+            _ => {}
+        }
+    }
+    custom.or(ai)
+}
+
 /// A `<task-notification>` that ended a task: `(task id, status)`.
 pub fn task_notification(text: &str) -> Option<(String, String)> {
     let tag = |name: &str| {
@@ -1545,6 +1586,22 @@ mod tests {
     fn system(uuid: &str, parent: Option<&str>, subtype: &str, logical: Option<&str>) -> Value {
         json!({"type": "system", "subtype": subtype, "uuid": uuid, "parentUuid": parent,
             "logicalParentUuid": logical, "content": ""})
+    }
+
+    #[test]
+    fn title_prefers_the_custom_one() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.jsonl");
+        let lines = [
+            json!({"type": "ai-title", "aiTitle": "first guess"}),
+            json!({"type": "user", "uuid": "u", "message": {"role": "user", "content": "mentions -title\" in text"}}),
+            json!({"type": "ai-title", "aiTitle": "better guess"}),
+        ];
+        let body: String = lines.iter().map(|l| l.to_string() + "\n").collect();
+        std::fs::write(&p, &body).unwrap();
+        assert_eq!(session_title(&p).as_deref(), Some("better guess"));
+        std::fs::write(&p, body + &json!({"type": "custom-title", "customTitle": "Mine"}).to_string()).unwrap();
+        assert_eq!(session_title(&p).as_deref(), Some("Mine"));
     }
 
     #[test]

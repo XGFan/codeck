@@ -19,13 +19,12 @@
 
 GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block` + `branch`），每个运行中的 clay Claude Code 各连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
 
-- 共显（过渡期，GUI 成熟后去掉）：`new` / `attach` 加 `--co-display`，不发 Resize、不判接手，屏幕跟随 PTY 尺寸（复用被接手后的跟随逻辑）；输入框照旧先清空
-- `get_state` 加 `mode`（模式行为准，认不出用 transcript 的 `permission-mode`）、`model`（主线最后一条 assistant 的 model）、`context_tokens`（它的 input + cache_read + cache_creation）；三项变化时推送一条新事件
-- `exit` 命令：idle 时输入 `/exit`，等 claude 进程消失；否则 `not_idle`
-- `ccrpc ls --json`
-- 日志：`--log FILE` 记下状态判定、屏幕识别、按键，排查 `unrecognized` 与超时用
-- 实测：`claude --resume <id>` 是否换 sessionId；`ccrpc new` 的 Pane 在 claude 退出后是否随之结束
-- 之后：进度事件（屏幕 spinner 行，去掉共显前做）、`get_messages` 带上 Subagent Run 的历史
+已做：`ls --json`（带标题）、`get_state` 的 `mode` / `model` / `context_tokens` 与 `session_info` 推送、`--co-display`、目录信任框作为 choice、`exit {close_pane, stop_tasks}`、`--log`、`progress` 事件、`get_messages` 的分页 / 增量缓存 / 后台线程 / `subagents`。
+
+- rewind：`rewind {uuid, restore}` 经选择器作答（先实测提示词多时选择器的滚动与截断、恢复代码的确认菜单变体）
+- 认不出的界面：屏幕变化推送（或继续靠共显在 TUI 里处理）
+- 斜杠命令、模型的候选列表
+- 去掉共显前：GUI 覆盖所有对话框
 
 ## 形态
 
@@ -57,7 +56,7 @@ GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block`
 - 插件装在用户级：每次工具调用都会起一次 `ccrpc hook` 进程（不在 clay Pane 里立即退出），换了 ccrpc 可执行文件的位置要重新 `ccrpc plugin install`
 - Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block
 - 原样重发的判定只认纯文字提示词：带图片的提示词重发也会报 `branch`；带图片的提示词也不参与 Branch 的分叉判定
-- `get_messages` 每次从头重放主文件，很长的 Session 会慢
+- `get_messages` 的第一次要读完整个主文件（连接时就在后台开始），几十 MB 的 transcript 要等几秒
 - 普通对话框等待（非审批）里连续出现两个菜单时，第二个 choice 会被吞掉（与 `dialog:` 公告的既有行为相同）
 - 分析进行中（最长 60 秒）整个等待都不报告，换成别的认不出的屏幕也要等它结束才降级为 `dialog`
 - 审批类工具若以审批之外的 waitingFor 出现、又被学成标题不像审批的 choice，会盖住工具（未见过）

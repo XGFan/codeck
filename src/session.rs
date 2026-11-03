@@ -14,6 +14,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::analyze::{self, Analyzer};
+use crate::history::{self, HistoryWorker};
 use crate::hook::{self, HookMsg, HookServer};
 use crate::layout::{self, Layout, LayoutKind, Library, Meaning};
 use crate::locate::{self, Roots};
@@ -46,6 +47,8 @@ const MATCH_GRACE: Duration = Duration::from_secs(1);
 const ANSWER_SETTLE: Duration = Duration::from_millis(1500);
 /// claude's Process File is there but its plugin never checked in: not controllable.
 const CHECKIN_GRACE: Duration = Duration::from_secs(5);
+/// The folder trust dialog's layout id (built into the recognizer, not the library).
+const TRUST_LAYOUT: &str = "trust_folder";
 /// A dialog ignores keys for a moment after it appears (against accidental answers): keys that
 /// answer one wait until it has been up this long.
 const DIALOG_SETTLE: Duration = Duration::from_millis(500);
@@ -365,6 +368,22 @@ pub struct Engine {
     no_checkin_since: Option<Instant>,
     /// An answer just went back through a hook: no announcing until then.
     answered_until: Option<Instant>,
+    /// Shown in the caller's UI and a ToH Client at once: no Resize, no takeover.
+    co_display: bool,
+    /// `get_messages` pages (its own thread).
+    history: HistoryWorker,
+    /// Main line's last model and context size; the permission mode the plugin last saw.
+    model: Option<String>,
+    context_tokens: Option<u64>,
+    hook_mode: Option<String>,
+    /// The mode line last seen (a dialog may cover it).
+    screen_mode: Option<String>,
+    /// `session_info` last sent.
+    info_sent: Option<Value>,
+    /// Screen generation last looked at for the mode line and the spinner.
+    looked_gen: u64,
+    /// `progress` last sent: (text, when).
+    progress_sent: Option<(String, Instant)>,
     /// The engine cannot go on (no plugin, another ccrpc): `run` returns this error.
     fatal: Option<String>,
     holder_id: String,
@@ -435,6 +454,8 @@ impl Engine {
         let initial = conn.initial_owner(Duration::from_secs(3))?;
         let holder_reports_owner = initial != Owner::Unknown;
         match initial {
+            // Shown alongside a person: nobody's use excludes ccrpc.
+            _ if opts.co_display => {}
             Owner::Other(client) if !opts.force => {
                 conn.detach();
                 bail!("Session 正被 {client} 使用，加 --force 强制连接");
@@ -444,7 +465,13 @@ impl Engine {
             ),
             _ => {}
         }
-        conn.claim_size(opts.size.0, opts.size.1)?;
+        // Co-display leaves the size to the people's Clients.
+        let size = if opts.co_display {
+            (cols, rows)
+        } else {
+            conn.claim_size(opts.size.0, opts.size.1)?;
+            opts.size
+        };
         let wake = Wake::new();
         conn.set_wake(wake.clone());
         let fs = FsWatch::new(wake.clone());
@@ -462,6 +489,15 @@ impl Engine {
             stop_pending: None,
             no_checkin_since: None,
             answered_until: None,
+            co_display: opts.co_display,
+            history: HistoryWorker::start(wake.clone()),
+            model: None,
+            context_tokens: None,
+            hook_mode: None,
+            screen_mode: None,
+            info_sent: None,
+            looked_gen: u64::MAX,
+            progress_sent: None,
             fatal: None,
             holder_id: holder_id.to_string(),
             shell_pid: meta.child_pid,
@@ -470,7 +506,7 @@ impl Engine {
             out,
             wake,
             fs,
-            size: opts.size,
+            size,
             taken_over: false,
             last_size_check: Instant::now(),
             claude_pid: None,
@@ -508,9 +544,19 @@ impl Engine {
     }
 
     fn emit(&self, v: Value) {
-        if !self.quiet {
-            self.out.send(&v);
+        if self.quiet {
+            return;
         }
+        if crate::log::enabled() {
+            let s = v.to_string();
+            let short = if v["type"] == "block" {
+                format!("block {} {}", v["kind"], v["uuid"])
+            } else {
+                s.chars().take(400).collect()
+            };
+            crate::clog!("out {short}");
+        }
+        self.out.send(&v);
     }
 
     // ---- observation -------------------------------------------------------------------------
@@ -605,6 +651,9 @@ impl Engine {
                         TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
                             self.last_text = b.text.clone();
                         }
+                        TxEvent::Usage { main: true, model, usage, .. } => {
+                            self.note_main_usage(model.as_deref(), &usage);
+                        }
                         _ => {}
                     }
                 }
@@ -613,6 +662,8 @@ impl Engine {
                 }
             }
         }
+        // `get_messages` reads the history on its own thread: start now.
+        self.history.warm(path);
         self.tailer = Some(t);
     }
 
@@ -676,10 +727,14 @@ impl Engine {
                     }
                 }
                 TxEvent::Usage {
+                    main,
                     model,
                     usage,
                     logged_cost,
                 } => {
+                    if main {
+                        self.note_main_usage(model.as_deref(), &usage);
+                    }
                     if self.turn_active {
                         let t = &mut self.turn;
                         t.input += usage.input;
@@ -739,12 +794,99 @@ impl Engine {
         }
         self.refresh_announcement();
         self.announce_requests();
+        self.look_at_screen();
+    }
+
+    fn note_main_usage(&mut self, model: Option<&str>, u: &cv_core::pricing::Usage) {
+        if let Some(m) = model.filter(|m| !m.is_empty() && *m != "<synthetic>") {
+            self.model = Some(m.to_string());
+        }
+        let ctx = u.input + u.cache_read + u.cache_write_5m + u.cache_write_1h;
+        if ctx > 0.0 {
+            self.context_tokens = Some(ctx as u64);
+        }
+    }
+
+    /// The permission mode: the mode line under the input box, else what the plugin last saw.
+    fn mode(&self) -> Option<String> {
+        if let Some(m) = &self.screen_mode {
+            return Some(m.clone());
+        }
+        self.hook_mode.as_deref().map(|m| {
+            match m {
+                "default" => "manual",
+                "acceptEdits" => "accept_edits",
+                "bypassPermissions" => "bypass",
+                "dontAsk" => "dont_ask",
+                other => other,
+            }
+            .to_string()
+        })
+    }
+
+    fn session_info(&self) -> Value {
+        json!({"mode": self.mode(), "model": self.model, "context_tokens": self.context_tokens})
+    }
+
+    /// On a new screen: `session_info` when mode / model / context changed, `progress` while
+    /// busy (the spinner line; at most once a second unless its verb changed).
+    fn look_at_screen(&mut self) {
+        let gen_now = self.conn.generation();
+        if gen_now != self.looked_gen
+            && let Some(m) = self.mode_now()
+        {
+            self.screen_mode = Some(m.name().to_string());
+        }
+        let info = self.session_info();
+        if self.info_sent.as_ref() != Some(&info) && (info["mode"].is_string() || info["model"].is_string()) {
+            let mut v = info.clone();
+            v["type"] = json!("session_info");
+            self.emit(v);
+            self.info_sent = Some(info);
+        }
+        if gen_now == self.looked_gen {
+            return;
+        }
+        self.looked_gen = gen_now;
+        if self.state != State::Busy {
+            self.progress_sent = None;
+            return;
+        }
+        let Some(sp) = self.screen().ok().and_then(|s| recognize::spinner(&s.lines)) else {
+            return;
+        };
+        let send = match &self.progress_sent {
+            None => true,
+            Some((text, at)) => {
+                *text != sp.text
+                    && (at.elapsed() >= Duration::from_secs(1)
+                        || text.split('…').next() != Some(sp.verb.as_str()))
+            }
+        };
+        if send {
+            self.progress_sent = Some((sp.text.clone(), Instant::now()));
+            self.emit(json!({"type": "progress", "text": sp.text, "verb": sp.verb,
+                "elapsed_s": sp.elapsed_s, "tokens": sp.tokens}));
+        }
     }
 
     // ---- hook events -------------------------------------------------------------------------
 
     fn on_hook(&mut self, m: HookMsg) {
         let i = &m.input;
+        crate::clog!(
+            "hook {} prompt={} tool={} tool_use={} agent={}",
+            m.event,
+            i["prompt_id"].as_str().unwrap_or("-"),
+            i["tool_name"].as_str().unwrap_or("-"),
+            i["tool_use_id"].as_str().unwrap_or("-"),
+            i["agent_id"].as_str().unwrap_or("-")
+        );
+        if let Some(mode) = i["permission_mode"].as_str()
+            && i["agent_id"].is_null()
+        {
+            self.hook_mode = Some(mode.to_string());
+        }
         let s = |k: &str| i[k].as_str().map(str::to_string);
         match m.event.as_str() {
             "SessionStart" => {
@@ -1156,6 +1298,7 @@ impl Engine {
         } else {
             self.idle_at = None;
         }
+        crate::clog!("state {:?} (raw {:?})", s, self.raw_since.as_ref().map(|r| &r.0));
         self.state = s;
         let mut v = self.state.to_json();
         v["type"] = json!("state");
@@ -1231,10 +1374,68 @@ impl Engine {
         }
         self.startup_checked = Some(Instant::now());
         let lines = self.screen().map(|s| s.lines).unwrap_or_default();
+        // The folder trust dialog is answered as a choice.
+        if recognize::trust_folder(&lines).is_some() {
+            if self.choice_layout.as_deref() != Some(TRUST_LAYOUT) {
+                self.choice_seq += 1;
+                let rid = format!("choice:{}", self.choice_seq);
+                let ev = json!({"type": "choice", "request_id": rid, "title": recognize::TRUST_TITLE,
+                    "options": [
+                        {"label": recognize::TRUST_YES, "meaning": "allow", "description": null},
+                        {"label": recognize::TRUST_NO, "meaning": "deny", "description": null}],
+                    "tool_use_id": null, "layout": TRUST_LAYOUT});
+                self.announced = Some(rid);
+                self.choice_layout = Some(TRUST_LAYOUT.to_string());
+                self.choice_event = Some(ev.clone());
+                self.startup_last = Some(lines);
+                self.emit(ev);
+            }
+            return;
+        }
+        if self.choice_layout.as_deref() == Some(TRUST_LAYOUT) {
+            self.choice_layout = None;
+            self.choice_event = None;
+            self.announced = None;
+        }
         if self.startup_last.as_ref() != Some(&lines) {
             self.startup_last = Some(lines.clone());
             self.emit(json!({"type": "dialog", "waiting_for": "startup", "lines": lines}));
         }
+    }
+
+    /// Answers the folder trust dialog: the cursor onto the option, then Enter.
+    fn answer_trust(&mut self, option: &str) -> CmdResult {
+        let want_yes = if recognize::TRUST_YES.starts_with(option) && !option.is_empty() {
+            true
+        } else if recognize::TRUST_NO.starts_with(option) && !option.is_empty() {
+            false
+        } else {
+            return err("bad_request", format!("没有对应的选项：{option}；可选 [{:?}, {:?}]", recognize::TRUST_YES, recognize::TRUST_NO));
+        };
+        for _ in 0..3 {
+            let now = self.fresh_screen()?;
+            let Some(on_yes) = recognize::trust_folder(&now.lines) else {
+                return Err(self.unrecognized("answer_choice", Some(&now)));
+            };
+            if on_yes == want_yes {
+                self.keys(b"\r")?;
+                let gone = self.wait_screen(Duration::from_secs(10), |_, s| {
+                    recognize::trust_folder(&s.lines).is_none().then_some(())
+                });
+                if gone.is_none() {
+                    return err("timeout", "回车后 10 秒内信任框没有关闭");
+                }
+                self.choice_layout = None;
+                self.choice_event = None;
+                self.announced = None;
+                return Ok(json!({"state": self.state.name()}));
+            }
+            self.keys(if want_yes { b"\x1b[B" } else { b"\x1b[A" })?;
+            self.wait_screen(Duration::from_millis(500), |_, s| {
+                (recognize::trust_folder(&s.lines) == Some(want_yes)).then_some(())
+            });
+        }
+        Err(self.unrecognized("answer_choice", None))
     }
 
     /// An announced request whose tool got its result is over even if the Process File still says
@@ -1629,6 +1830,11 @@ impl Engine {
 
     /// Answers the announced choice by an option's text (exact, else a unique prefix).
     fn answer_choice(&mut self, request_id: &str, option: &str) -> CmdResult {
+        if self.choice_layout.as_deref() == Some(TRUST_LAYOUT)
+            && self.announced.as_deref() == Some(request_id)
+        {
+            return self.answer_trust(option);
+        }
         match &self.state {
             State::Waiting { .. } => {}
             State::Exited => return err("exited", "Session 已结束"),
@@ -1701,6 +1907,19 @@ impl Engine {
     /// A size owner other than ccrpc means someone took the Pane over (a Holder that does not
     /// report owners: the PTY size changed). Afterwards the VT follows the PTY size.
     fn check_takeover(&mut self) {
+        // Co-display: the VT just follows the PTY size whoever set it.
+        if self.co_display {
+            if self.last_size_check.elapsed() >= Duration::from_secs(1) {
+                self.last_size_check = Instant::now();
+                if let Some(size) = self.pty_size()
+                    && size != self.conn.vt_size()
+                {
+                    let _ = self.conn.follow_size(size.0, size.1);
+                    self.size = size;
+                }
+            }
+            return;
+        }
         if !self.taken_over {
             // Sticky: someone who took the size and left between two looks still took over.
             if let Some(client) = self.conn.taken_by() {
@@ -1778,7 +1997,7 @@ impl Engine {
     /// even in the middle of a command.
     fn writable(&self) -> std::result::Result<(), CmdErr> {
         // The Holder's report counts at once, before a tick turns it into `taken_over`.
-        if self.taken_over || self.conn.taken_by().is_some() {
+        if self.taken_over || (!self.co_display && self.conn.taken_by().is_some()) {
             return err("taken_over", "Session 已被人接手，只读");
         }
         Ok(())
@@ -1786,6 +2005,7 @@ impl Engine {
 
     fn paste(&self, text: &str) -> std::result::Result<(), CmdErr> {
         self.writable()?;
+        crate::clog!("paste {} chars: {:?}", text.chars().count(), text.chars().take(60).collect::<String>());
         self.conn
             .paste(text)
             .map_err(|e| ("io", format!("{e:#}")))
@@ -1793,6 +2013,7 @@ impl Engine {
 
     fn keys(&self, bytes: &[u8]) -> std::result::Result<(), CmdErr> {
         self.writable()?;
+        crate::clog!("keys {:?}", String::from_utf8_lossy(bytes));
         let seen = self.conn.generation();
         self.conn
             .input(bytes)
@@ -1822,6 +2043,8 @@ impl Engine {
 
     /// Empties the prompt input box (`ctrl+u` + backspace per line), checking the screen.
     fn clear_input(&mut self) -> std::result::Result<(), CmdErr> {
+        // Just after startup the Process File says idle before the TUI is drawn.
+        self.wait_screen(Duration::from_secs(2), |_, s| recognize::input_box(&s.lines).map(|_| ()));
         for _ in 0..3 {
             let text = self.input_box_now()?;
             if text.is_empty() {
@@ -2408,15 +2631,63 @@ impl Engine {
         v["follow_up_queue"] = json!(self.follow_ups.len());
         v["follow_ups"] = json!(self.follow_ups);
         v["taken_over"] = json!(self.taken_over);
+        let info = self.session_info();
+        for k in ["mode", "model", "context_tokens"] {
+            v[k] = info[k].clone();
+        }
+        v["co_display"] = json!(self.co_display);
         v
     }
 
-    fn get_messages(&self, since: Option<u64>) -> CmdResult {
+    /// A page of the history, from the history thread (events keep flowing while it reads).
+    fn get_messages(&mut self, q: history::Query) -> CmdResult {
         let Some(t) = &self.tailer else {
-            return Ok(json!({"blocks": [], "cursor": 0}));
+            return Ok(json!({"blocks": [], "cursor": 0, "first": null, "more": false}));
         };
-        let (blocks, cursor) = transcript::main_blocks(t.main_path(), since.unwrap_or(0));
-        Ok(json!({"blocks": blocks, "cursor": cursor}))
+        let rx = self.history.page(t.main_path(), q);
+        let mut got = None;
+        self.wait_until(Duration::from_secs(120), |_| {
+            if got.is_none() {
+                got = rx.try_recv().ok();
+            }
+            got.is_some()
+        });
+        got.ok_or_else(|| ("timeout", "120 秒内没读完 transcript".to_string()))
+    }
+
+    /// `/exit`, then wait for claude to be gone; `close_pane` also ends the Pane's shell.
+    fn exit(&mut self, close_pane: bool, stop_tasks: bool) -> CmdResult {
+        if self.state != State::Exited {
+            self.require(self.state == State::Idle, "not_idle")?;
+            let Some(pid) = self.claude_pid else {
+                return err("not_idle", "还没找到 claude 进程");
+            };
+            self.slash("exit")?;
+            // Background tasks still running make Claude Code ask first.
+            let asked = self.wait_screen(Duration::from_secs(10), |_, s| {
+                let text = s.lines.join("\n");
+                if !crate::procs::pid_exists(pid) {
+                    return Some(false);
+                }
+                text.contains("Exit and stop tasks").then_some(true)
+            });
+            if asked.as_ref().is_some_and(|(a, _)| *a) {
+                if !stop_tasks {
+                    self.keys(b"\x1b")?;
+                    return err("not_idle", "还有后台任务在运行：加 stop_tasks 退出并停掉它们");
+                }
+                self.keys(b"\r")?;
+            }
+            if !self.wait_until(Duration::from_secs(15), |_| !crate::procs::pid_exists(pid)) {
+                return err("timeout", "15 秒内 claude 没有退出");
+            }
+            self.set_exited();
+        }
+        if close_pane {
+            // The Pane is a login shell that ran claude; ending it ends the Pane.
+            self.keys(b"exit\r")?;
+        }
+        Ok(json!({}))
     }
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
@@ -2467,7 +2738,18 @@ impl Engine {
             Command::Clear => self.slash("clear"),
             Command::SendKeys { keys } => self.send_keys(keys),
             Command::GetState => Ok(self.get_state()),
-            Command::GetMessages { since } => self.get_messages(*since),
+            Command::GetMessages {
+                since,
+                before,
+                limit,
+                subagents,
+            } => self.get_messages(history::Query {
+                since: since.unwrap_or(0),
+                before: *before,
+                limit: *limit,
+                subagents: *subagents,
+            }),
+            Command::Exit { close_pane, stop_tasks } => self.exit(*close_pane, *stop_tasks),
             Command::GetScreen => {
                 let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
                 Ok(json!({"lines": s.lines, "cursor": [s.cursor.0, s.cursor.1]}))
@@ -2495,6 +2777,7 @@ impl Engine {
         v["claude_version"] = json!(version);
         v["size"] = json!([self.size.0, self.size.1]);
         v["taken_over"] = json!(self.taken_over);
+        v["co_display"] = json!(self.co_display);
         let mut warnings = Vec::new();
         if let Some(ver) = &version
             && !TESTED_CLAUDE_VERSIONS.contains(&ver.as_str())
@@ -2565,6 +2848,7 @@ impl Engine {
         match rpc::parse_line(line) {
             Ok(Request { id, command }) => {
                 let name = rpc::command_name(&command);
+                crate::clog!("command {name} id={}", id.as_deref().unwrap_or("-"));
                 let v = match self.execute(&command) {
                     Ok(data) => rpc::response_ok(id.as_deref(), name, data),
                     Err((code, msg)) => rpc::response_err(id.as_deref(), name, code, &msg),
@@ -2617,6 +2901,8 @@ pub struct Opts {
     pub size: (u16, u16),
     /// Connect even when someone else holds the PTY size.
     pub force: bool,
+    /// Shown alongside a person's Client: no Resize, no takeover (`--co-display`).
+    pub co_display: bool,
 }
 
 /// `COLSxROWS`.
@@ -2673,19 +2959,22 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     let mut opts = Opts {
         size: DEFAULT_SIZE,
         force: false,
+        co_display: false,
     };
     let mut target = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--force" => opts.force = true,
+            "--co-display" => opts.co_display = true,
+            "--log" => crate::log::open(Path::new(it.next().context("--log 需要文件")?))?,
             "--size" => opts.size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
             t if target.is_none() && !t.starts_with('-') => target = Some(t.to_string()),
-            _ => bail!("用法：ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>"),
+            _ => bail!("用法：ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>"),
         }
     }
     let Some(target) = target else {
-        bail!("用法：ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>");
+        bail!("用法：ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>");
     };
     let target = &target;
     let holder = resolve_target(roots, target)?;
@@ -2717,11 +3006,14 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     let mut eng = Opts {
         size: DEFAULT_SIZE,
         force: true,
+        co_display: false,
     };
     let mut it = opts.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--cwd" => cwd = Some(it.next().context("--cwd 需要目录")?.clone()),
+            "--co-display" => eng.co_display = true,
+            "--log" => crate::log::open(Path::new(it.next().context("--log 需要文件")?))?,
             "--size" => eng.size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
             other => bail!("new：不认识的参数 {other}；claude 的参数放在 -- 之后"),
         }

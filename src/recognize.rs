@@ -357,6 +357,90 @@ pub fn input_box(lines: &[String]) -> Option<String> {
     Some(s.trim_end().to_string())
 }
 
+/// The folder trust dialog shown before a Session starts in a folder not trusted yet: an
+/// unnumbered menu (`❯` marks the selected row) confirmed with Enter. `Some(true)` when the cursor
+/// is on "Yes, I trust this folder".
+pub fn trust_folder(lines: &[String]) -> Option<bool> {
+    let text = collapse_ws(&lines.join(" "));
+    if !text.contains("Is this a project you created or one you trust?") || !text.contains("Enter to confirm") {
+        return None;
+    }
+    let row = |label: &str| {
+        lines.iter().find_map(|l| {
+            let t = l.trim();
+            let (sel, rest) = match t.strip_prefix('❯') {
+                Some(r) => (true, r.trim_start()),
+                None => (false, t),
+            };
+            (rest == label).then_some(sel)
+        })
+    };
+    let (yes, no) = (row(TRUST_YES)?, row(TRUST_NO)?);
+    (yes != no).then_some(yes)
+}
+
+pub const TRUST_YES: &str = "Yes, I trust this folder";
+pub const TRUST_NO: &str = "No, exit";
+pub const TRUST_TITLE: &str = "Is this a project you created or one you trust?";
+
+/// The spinner line above the input box while Claude Code works, such as
+/// `✻ Deliberating… (7s · ↓ 10 tokens)` or `✶ Brewing… (running PreToolUse hook · 2s · ↓ 46 tokens)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spinner {
+    /// The line without its glyph.
+    pub text: String,
+    /// The word before `…` (`Deliberating`).
+    pub verb: String,
+    pub elapsed_s: Option<u64>,
+    pub tokens: Option<u64>,
+}
+
+pub fn spinner(lines: &[String]) -> Option<Spinner> {
+    const GLYPHS: &[char] = &['✻', '✶', '✳', '✢', '·', '✽', '*'];
+    lines.iter().rev().find_map(|l| {
+        let t = l.trim_start();
+        let mut cs = t.chars();
+        let g = cs.next()?;
+        if !GLYPHS.contains(&g) || cs.next() != Some(' ') {
+            return None;
+        }
+        let text = t[g.len_utf8() + 1..].trim().to_string();
+        let (verb, rest) = text.split_once('…')?;
+        if verb.is_empty() || verb.contains(' ') {
+            return None;
+        }
+        let inner = rest.trim().strip_prefix('(').and_then(|r| r.strip_suffix(')')).unwrap_or("");
+        let mut elapsed_s = None;
+        let mut tokens = None;
+        for part in inner.split('·').map(str::trim) {
+            if let Some(n) = part.strip_suffix(" tokens") {
+                tokens = n.trim_start_matches(['↓', '↑']).trim().replace(',', "").parse().ok();
+            } else if let Some(secs) = duration_secs(part) {
+                elapsed_s = Some(secs);
+            }
+        }
+        Some(Spinner { text: text.clone(), verb: verb.to_string(), elapsed_s, tokens })
+    })
+}
+
+/// `7s`, `1m 3s`, `2h 5m` as seconds.
+fn duration_secs(s: &str) -> Option<u64> {
+    let mut total = 0;
+    let mut any = false;
+    for p in s.split_whitespace() {
+        let (n, unit) = p.split_at(p.find(|c: char| !c.is_ascii_digit())?);
+        let n: u64 = n.parse().ok()?;
+        total += n * match unit {
+            "s" => 1,
+            "m" => 60,
+            "h" => 3600,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +660,33 @@ mod tests {
         );
         assert_eq!(input_box(&screen("ask_single.txt")), None);
     }
+    #[test]
+    fn trust_folder_dialog() {
+        let lines = screen("trust_folder.txt");
+        assert_eq!(trust_folder(&lines), Some(false), "the cursor starts on No");
+        let moved: Vec<String> = lines
+            .iter()
+            .map(|l| match l.trim() {
+                "❯ No, exit" => "   No, exit".to_string(),
+                "Yes, I trust this folder" => " ❯ Yes, I trust this folder".to_string(),
+                _ => l.clone(),
+            })
+            .collect();
+        assert_eq!(trust_folder(&moved), Some(true));
+        assert_eq!(trust_folder(&screen("idle_prompt.txt")), None);
+    }
+
+    #[test]
+    fn spinner_line() {
+        let s = spinner(&screen("busy_spinner.txt")).unwrap();
+        assert_eq!((s.verb.as_str(), s.elapsed_s, s.tokens), ("Deliberating", Some(4), Some(6)));
+        let l = |t: &str| vec![t.to_string()];
+        let s = spinner(&l("✶ Brewing… (running PreToolUse hook · 1m 2s · ↓ 1,046 tokens)")).unwrap();
+        assert_eq!((s.elapsed_s, s.tokens), (Some(62), Some(1046)));
+        assert_eq!(spinner(&l("✻ Waiting for 1 background agent to finish")), None, "no …");
+        assert_eq!(spinner(&l("✻ Baked for 0s · done 10:35 PM")), None);
+        assert_eq!(spinner(&screen("idle_prompt.txt")), None);
+    }
 }
 
 /// The permission mode shown in the footer below the input box (`⏸ manual mode on`, `⏵⏵ accept
@@ -690,4 +801,5 @@ mod task_row_tests {
         let ended = rows(&["⏺ sleep 300   running", "Completed (1)", "✔ sleep 300   done"]);
         assert!(task_row(&ended, "sleep 300").is_err());
     }
+
 }

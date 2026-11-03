@@ -432,6 +432,9 @@
         },
         {
           "$ref": "#/$defs/commands/answer_choice"
+        },
+        {
+          "$ref": "#/$defs/commands/exit"
         }
       ]
     },
@@ -725,7 +728,7 @@
       },
       "get_messages": {
         "title": "get_messages",
-        "description": "读取当前 transcript 主文件的内容块，任意状态可用。",
+        "description": "读取当前 transcript 的内容块（Main Line），任意状态可用；可分页、可带 Subagent Run 的块。",
         "type": "object",
         "properties": {
           "type": {
@@ -738,6 +741,20 @@
             "type": "integer",
             "minimum": 0,
             "description": "上次返回的 cursor，只返回之后写入的块。"
+          },
+          "before": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "只返回这个游标之前写入的块（上一页返回的 first），用于往前翻页。"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "至多返回这么多块：范围内最新的那些。"
+          },
+          "subagents": {
+            "type": "boolean",
+            "description": "另返回本页 Agent / Workflow 调用下的 Subagent Run 内容块（subagent_blocks）。"
           }
         },
         "required": [
@@ -921,6 +938,31 @@
           "type",
           "request_id",
           "option"
+        ],
+        "additionalProperties": false
+      },
+      "exit": {
+        "title": "exit",
+        "description": "idle 时输入 /exit，等 claude 进程退出；close_pane 时再结束 Pane 的 shell。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "exit"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "close_pane": {
+            "type": "boolean",
+            "description": "claude 退出后再结束 Pane（Pane 是运行 claude 的登录 shell）。"
+          },
+          "stop_tasks": {
+            "type": "boolean",
+            "description": "还有后台任务时确认“退出并停掉它们”；否则返回 not_idle。"
+          }
+        },
+        "required": [
+          "type"
         ],
         "additionalProperties": false
       }
@@ -1162,6 +1204,31 @@
           "taken_over": {
             "type": "boolean",
             "description": "是否已被接手。"
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "主线最后一条 assistant 消息的模型。"
+          },
+          "context_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+          },
+          "co_display": {
+            "type": "boolean",
+            "description": "是否共显（--co-display）。"
           }
         },
         "required": [
@@ -1191,11 +1258,31 @@
             "type": "integer",
             "minimum": 0,
             "description": "不透明游标，下次作为 since。"
+          },
+          "first": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "本页第一个块的游标（作为 before 取更早的一页）；没有块时为 null。"
+          },
+          "more": {
+            "type": "boolean",
+            "description": "范围内还有更早的块（被 limit 截掉）。"
+          },
+          "subagent_blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/block"
+            },
+            "description": "subagents 时：本页 Agent / Workflow 调用下的 Subagent Run 内容块（带 agent_id、parent_tool_use_id）。"
           }
         },
         "required": [
           "blocks",
-          "cursor"
+          "cursor",
+          "first",
+          "more"
         ]
       },
       "get_screen": {
@@ -1366,6 +1453,12 @@
         "required": [
           "state"
         ]
+      },
+      "exit": {
+        "title": "exit",
+        "description": "claude 已退出（close_pane 时 Pane 也已收到 exit）。",
+        "type": "object",
+        "properties": {}
       }
     },
     "response_success": {
@@ -1745,6 +1838,10 @@
               "type": "string"
             },
             "description": "版本未实测、Holder 不报尺寸所有者时各一句。"
+          },
+          "co_display": {
+            "type": "boolean",
+            "description": "是否共显（--co-display）：不发 Resize、不判接手。"
           }
         },
         "required": [
@@ -2377,6 +2474,82 @@
         "required": [
           "type"
         ]
+      },
+      "session_info": {
+        "title": "session_info",
+        "description": "权限模式、模型或上下文大小变了。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "session_info"
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "主线最后一条 assistant 消息的模型。"
+          },
+          "context_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+          }
+        },
+        "required": [
+          "type",
+          "mode",
+          "model",
+          "context_tokens"
+        ]
+      },
+      "progress": {
+        "title": "progress",
+        "description": "busy 时屏幕上的进度行（spinner），至多每秒一次，动词变了立即发。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "progress"
+          },
+          "text": {
+            "type": "string",
+            "description": "去掉符号的整行，如 Deliberating… (7s · ↓ 10 tokens)。"
+          },
+          "verb": {
+            "type": "string",
+            "description": "… 之前的词。"
+          },
+          "elapsed_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "已用秒数。"
+          },
+          "tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "已生成的 token 数。"
+          }
+        },
+        "required": [
+          "type",
+          "text",
+          "verb",
+          "elapsed_s",
+          "tokens"
+        ]
       }
     },
     "event": {
@@ -2435,6 +2608,12 @@
         },
         {
           "$ref": "#/$defs/events/session_exit"
+        },
+        {
+          "$ref": "#/$defs/events/session_info"
+        },
+        {
+          "$ref": "#/$defs/events/progress"
         }
       ]
     }

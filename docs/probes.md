@@ -143,3 +143,11 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - **Stop 的 `background_tasks`**：每项 `id`、`type`（`subagent` / `shell` / `workflow`）、`status`、`description`，shell 另有 `command`，Subagent 另有 `agent_type`，Workflow 另有 `name`。
 - **“总是允许”与 hook**：`python3 -c 'print(42)'` 的审批框第 2 项是 `Yes, and don’t ask again for: python3 *`，选它写入项目的 `.claude/settings.local.json`：`Bash(python3 *)`；而 `permission_suggestions` 是 `addRules` 精确命令（`destination: "localSettings"`），经 hook 回填写入的是 `Bash(python3 -c 'print\(42\)')`。两者不同。→ `allow_always` 按审批框自己的选项作答，再放掉扣着的 hook。
 - **Stop 之后才送达的插话**：主线只在流式输出文字（没有工具调用）时插话，入队时触发 UserPromptSubmit（旧的 `prompt_id`），本轮 Stop 之后它作为新的一轮运行：**没有自己的 UserPromptSubmit**，只有一个带新 `prompt_id` 的 Stop（两个 Stop 几乎同时）。transcript 里这一轮的 `turn_duration` 从插话提交时算起。
+
+### 补测（GUI MVP 前）
+
+- **`claude --resume <id>`**：不换 sessionId——进程文件与 SessionStart（`source: "resume"`）都是原来的 id，transcript 仍是同一个文件。
+- **Pane 的生命周期**：`toh new -- 命令` 把命令敲进 Pane 的登录 shell 里运行，命令退出后 Pane 留在 shell 提示符（Holder 仍在）。要结束 Pane，再在 shell 里 `exit`。
+- **目录信任框**（在没信任过、也不在已信任目录之下的目录里启动；已信任目录的子目录不弹）：`Accessing workspace:` / 路径 / `Quick safety check: Is this a project you created or one you trust? …` / `❯ No, exit` / `Yes, I trust this folder` / `Enter to confirm · Esc to cancel`。菜单不带编号，光标初始在 No，方向键移动、回车确认（`tests/fixtures/screens/trust_folder.txt`）。期间没有进程文件、不触发 SessionStart；信任后才有 SessionStart（`startup`）与进程文件。
+- **进度行**：输入框上方 `<符号> <动词>… (<用时> · ↓ <n> tokens)`，符号轮换 `✻ ✶ ✳ ✢ · ✽`，动词每轮随机（`Deliberating`、`Scampering`…）；刚开始时没有括号（`Considering…`），hook 运行时括号里先有 `running <事件> hook`（`Warping… (running Stop hook · 0s)`）；没有 `…` 的是别的状态行（`Waiting for 1 background agent to finish`、`Baked for 0s · done …`）。
+- **启动后的时序**：进程文件出现（idle）时 TUI 可能还没画出输入框，要等屏幕上出现输入框再写入。

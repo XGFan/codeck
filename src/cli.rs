@@ -7,9 +7,9 @@ use crate::pty::{self, HolderConn};
 use crate::screen::Screen;
 
 const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir DIR] <命令>
-  ccrpc new [--cwd DIR] [--size COLSxROWS] [-- claude 参数…]
-  ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>
-  ccrpc ls
+  ccrpc new [--cwd DIR] [--size COLSxROWS] [--co-display] [--log FILE] [-- claude 参数…]
+  ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>
+  ccrpc ls [--json]
   ccrpc plugin install | uninstall | generate <目录>
   ccrpc doctor
   ccrpc layouts list
@@ -42,7 +42,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
             Ok(())
         }
         Some("plugin") => crate::plugin::cmd(&roots, &args[1..]),
-        Some("ls") => cmd_ls(&roots),
+        Some("ls") => cmd_ls(&roots, &args[1..]),
         Some("doctor") => cmd_doctor(&roots),
         Some("layouts") => cmd_layouts(&args[1..]),
         Some("debug") if args.get(1).map(String::as_str) == Some("replay") => cmd_replay(&args[2..]),
@@ -57,9 +57,16 @@ pub fn run(args: Vec<String>) -> Result<()> {
     }
 }
 
-fn cmd_ls(roots: &Roots) -> Result<()> {
+fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
+    let json_out = match args {
+        [] => false,
+        [a] if a == "--json" => true,
+        _ => bail!("用法：ccrpc ls [--json]"),
+    };
     let holders = locate::list_holders(roots);
     let table = locate::process_table()?;
+    let state = crate::hook::state_dir();
+    let mut rows = Vec::new();
     for (id, m) in &holders {
         let Some(claude) = locate::find_claude_under(&table, m.child_pid) else {
             continue;
@@ -72,11 +79,39 @@ fn cmd_ls(roots: &Roots) -> Result<()> {
             ),
             None => (String::new(), "starting".into()),
         };
-        let plugin = match crate::hook::read_checkin(&crate::hook::state_dir(), claude.pid) {
-            Some(c) if crate::hook::checkin_problem(Some(&c), pf.as_ref().and_then(|p| p.session_id.as_deref())).is_none() => "plugin",
-            _ => "-",
-        };
-        println!("{id}\t{sid}\t{status}\t{}\t{plugin}", m.cwd);
+        let checkin = crate::hook::read_checkin(&state, claude.pid);
+        let plugin = checkin.as_ref().is_some_and(|c| {
+            crate::hook::checkin_problem(Some(c), pf.as_ref().and_then(|p| p.session_id.as_deref())).is_none()
+        });
+        let cwd = pf.as_ref().and_then(|p| p.cwd.clone()).unwrap_or_else(|| m.cwd.clone());
+        if !json_out {
+            println!("{id}\t{sid}\t{status}\t{}\t{}", m.cwd, if plugin { "plugin" } else { "-" });
+            continue;
+        }
+        // The plugin's check-in, else where Claude Code puts it (`<projects>/<cwd encoded>/<id>.jsonl`).
+        let guessed = (!sid.is_empty() && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).then(|| {
+            let enc: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+            roots.projects_dir().join(enc).join(format!("{sid}.jsonl"))
+        });
+        let transcript = checkin
+            .as_ref()
+            .filter(|_| plugin)
+            .map(|c| std::path::PathBuf::from(&c.transcript_path))
+            .or(guessed)
+            .filter(|p| locate::is_transcript_path(roots, p));
+        rows.push(serde_json::json!({
+            "holder_id": id,
+            "session_id": (!sid.is_empty()).then_some(&sid),
+            "status": status,
+            "cwd": cwd,
+            "plugin": plugin,
+            "claude_pid": claude.pid,
+            "version": pf.as_ref().and_then(|p| p.version.clone()),
+            "title": transcript.as_deref().and_then(crate::transcript::session_title),
+        }));
+    }
+    if json_out {
+        println!("{}", serde_json::Value::Array(rows));
     }
     Ok(())
 }

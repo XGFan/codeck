@@ -69,6 +69,17 @@ pub enum Command {
     GetState,
     GetMessages {
         since: Option<u64>,
+        /// Only blocks before this cursor (paging back from the newest).
+        before: Option<u64>,
+        /// At most this many blocks: the newest ones in range.
+        limit: Option<usize>,
+        /// Also the Subagent Runs' blocks.
+        subagents: bool,
+    },
+    /// Ends claude (`/exit`); `close_pane` also ends the Pane's shell.
+    Exit {
+        close_pane: bool,
+        stop_tasks: bool,
     },
     GetScreen,
     GetToolResult {
@@ -380,16 +391,27 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         }
         "get_state" => Ok(Command::GetState),
         "get_messages" => {
-            let since = match obj.get("since") {
-                None | Some(Value::Null) => None,
-                Some(Value::Number(n)) => match n.as_u64() {
-                    Some(n) => Some(n),
-                    None => return Err("get_messages 的 since 必须是非负整数".into()),
-                },
-                Some(_) => return Err("get_messages 的 since 必须是非负整数".into()),
+            let num = |field: &str| -> Result<Option<u64>, String> {
+                match obj.get(field) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(Value::Number(n)) => n
+                        .as_u64()
+                        .map(Some)
+                        .ok_or_else(|| format!("get_messages 的 {field} 必须是非负整数")),
+                    Some(_) => Err(format!("get_messages 的 {field} 必须是非负整数")),
+                }
             };
-            Ok(Command::GetMessages { since })
+            Ok(Command::GetMessages {
+                since: num("since")?,
+                before: num("before")?,
+                limit: num("limit")?.map(|n| n as usize),
+                subagents: opt_bool(obj, kind, "subagents")?,
+            })
         }
+        "exit" => Ok(Command::Exit {
+            close_pane: opt_bool(obj, kind, "close_pane")?,
+            stop_tasks: opt_bool(obj, kind, "stop_tasks")?,
+        }),
         "get_screen" => Ok(Command::GetScreen),
         "get_tool_result" => Ok(Command::GetToolResult {
             tool_use_id: req_text(obj, kind, "tool_use_id")?,
@@ -454,6 +476,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::GetTasks => "get_tasks",
         Command::StopTask { .. } => "stop_task",
         Command::AnswerChoice { .. } => "answer_choice",
+        Command::Exit { .. } => "exit",
     }
 }
 
@@ -669,14 +692,14 @@ mod tests {
             parse(r#"{"type":"get_messages","since":7}"#),
             Request {
                 id: None,
-                command: Command::GetMessages { since: Some(7) },
+                command: Command::GetMessages { since: Some(7), before: None, limit: None, subagents: false },
             }
         );
         assert_eq!(
             parse(r#"{"type":"get_messages"}"#),
             Request {
                 id: None,
-                command: Command::GetMessages { since: None },
+                command: Command::GetMessages { since: None, before: None, limit: None, subagents: false },
             }
         );
         assert_eq!(
@@ -844,6 +867,7 @@ mod tests {
             "get_tasks",
             "stop_task",
             "answer_choice",
+            "exit",
         ] {
             assert!(declared.contains(&name), "protocol.schema.json 缺少命令 {name}");
         }

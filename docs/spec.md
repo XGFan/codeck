@@ -15,9 +15,9 @@
 ## 2. 命令行
 
 ```
-ccrpc new [--cwd DIR] [--size COLSxROWS] [-- claude 参数…]   # 经 toh new 在 clay 里启动 claude，然后进入 RPC 循环
-ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>   # 接入已在运行的 Session，进入 RPC 循环
-ccrpc ls                                    # 本机 clay 里运行中的 Claude Code：Holder ID、sessionId、status、cwd、plugin（已报到）或 -（制表符分隔）
+ccrpc new [--cwd DIR] [--size COLSxROWS] [--co-display] [--log FILE] [-- claude 参数…]   # 经 toh new 在 clay 里启动 claude，然后进入 RPC 循环
+ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>   # 接入已在运行的 Session，进入 RPC 循环
+ccrpc ls [--json]                           # 本机 clay 里运行中的 Claude Code：Holder ID、sessionId、status、cwd、plugin（已报到）或 -（制表符分隔）；--json 为数组：holder_id、session_id、status、cwd、plugin、claude_pid、version、title
 ccrpc doctor                                # 检查 toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器（每行 ok / warn / fail）
 ccrpc plugin install | uninstall            # 生成并安装 / 卸载 ccrpc 插件（用户级，已在运行的 claude 要重启才加载）
 ccrpc plugin generate <目录>                 # 只生成插件（marketplace 在 <目录>，插件在 <目录>/ccrpc，供 claude --plugin-dir）
@@ -31,6 +31,9 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - PTY 尺寸：连上后 ccrpc 把 PTY 设为 `--size`（缺省 160×48）。尺寸归最后操作者，ToH 的 Client 只在把 Pane 切到前台或按键时才抢尺寸，所以尺寸所有者就是“谁在用”。
 - 有人在用：`attach` 时尺寸所有者是另一个在线的 Client，就报错退出（`Session 正被 <client> 使用，加 --force 强制连接`）；`--force` 跳过。`new` 自己启动的 Pane 不检查。Holder 不报告尺寸所有者（旧版本）时放行，并在 stderr 提示。
 - `debug` 子命令只看、只写，不改 PTY 尺寸。
+- `--co-display`（共显）：不发 Resize、不判接手，VT 跟随 PTY 尺寸（谁设的都行），人在 Client 上的按键不算接手，`attach` 时有人在用也照连；写入照常（输入框照旧先清空）。`ready` 与 `get_state` 带 `co_display`。
+- `--log FILE`：追加写日志（0600）：发出的事件（block 只记 kind 与 uuid）、状态判定、收到的命令、插件的 hook 事件、写入的按键与粘贴（粘贴只记长度与前 60 字）。
+- `ls --json` 的 `title`：transcript 里最后一条 `custom-title`，没有则最后一条 `ai-title`（transcript 取报到里的，没有报到时按 cwd 推算 `<projects>/<cwd 编码>/<sessionId>.jsonl`）。
 - 插件：`new` 在插件未启用（用户 settings 的 `enabledPlugins` 里没有 `ccrpc@ccrpc`）且 claude 参数里没有 `--plugin-dir` 时报错；claude 的进程文件出现 5 秒仍没有报到也报错退出。`attach` 要求该 claude 已报到（见 3 节），否则报错并提示重启 claude。
 - `ccrpc plugin install`：在 `$XDG_DATA_HOME/ccrpc/plugin`（缺省 `~/.local/share/ccrpc/plugin`）生成本地 marketplace `ccrpc` 与插件 `ccrpc`（hooks 调用当前 ccrpc 可执行文件的绝对路径），再经 `claude plugin marketplace add|update`、`claude plugin install|update` 装成用户级插件。换了 ccrpc 的位置要重新 install。
 - 目录：ToH 状态目录按 `--toh-state-dir` > `TOH_STATE_DIR` > `~/.local/state/toh`；Claude Code 配置目录按 `--claude-config-dir` > `CLAUDE_CONFIG_DIR` > `~/.claude`（两个选项写在子命令之前）。配置目录不是缺省值时，`new` 以 `env CLAUDE_CONFIG_DIR=… claude` 启动（`toh new` 只把少数变量带进 Pane）。`toh` 需在 PATH 里。claude 运行 20 秒仍没有进程文件时，在 stderr 提示可能是配置目录不对。
@@ -50,7 +53,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 | 状态 | 来源 |
 |---|---|
-| `starting` | 还没有进程文件：claude 未启动，或停在 onboarding / 目录信任等启动界面（这些界面期间没有进程文件） |
+| `starting` | 还没有进程文件：claude 未启动，或停在 onboarding / 目录信任等启动界面（这些界面期间没有进程文件）。目录信任框作为 `choice` 发出（`layout: "trust_folder"`，选项 `Yes, I trust this folder` / `No, exit`），其余启动界面发 `dialog` |
 | `idle` / `busy` | 进程文件 `status` |
 | `waiting` | `status = waiting`。子类：`waitingFor = "permission prompt"` → `permission`；`"input needed"` 且插件报来了 AskUserQuestion 的 PermissionRequest → `question`（500ms 内没有则判为 `dialog`）；其余 → `dialog` |
 | `exited` | claude 进程消失或 Holder 断开 |
@@ -83,15 +86,16 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行） | `{}` |
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
-| `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`、`agent_id`；挂起的 choice 为它的 `choice` 事件）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over` |
-| `get_messages {since?}` | 任意 | 当前 transcript 主文件的内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）；`since` 为上次返回的 `cursor`，只返回之后写入的块。`cursor` 是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor` |
+| `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`、`agent_id`；挂起的 choice 为它的 `choice` 事件）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over`、`co_display`、`mode`（输入框下模式行最后一次看到的，没看到过取插件报来的 `permission_mode`）、`model`（主线最后一条 assistant 的模型）、`context_tokens`（它的 input + cache_read + cache_creation） |
+| `get_messages {since?, before?, limit?, subagents?}` | 任意 | 当前 transcript 的 Main Line 内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）。由单独的线程维护：第一次（连接或切换 Session 时就开始）读完整个文件，之后只读新追加的部分，读的期间事件照常发出。`since`：只要这个游标之后写入的块（上次的 `cursor`）；`before`：只要这个游标之前的（上一页的 `first`）；`limit`：范围内最新的这么多块；`subagents`：另给本页 Agent / Workflow 调用下的 Subagent Run 内容块。游标是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor`、`first`（本页第一个块的游标，没有块为 null）、`more`（范围内还有更早的块）；`subagents` 时另有 `subagent_blocks` |
 | `get_screen` | 任意 | — | `lines`（每行去尾部空白）、`cursor`（`[行, 列]`，0 起） |
 | `cancel_follow_up {index?}` | 任意 | 撤销 follow_up 队列里第 `index` 条（0 起），不带则全部撤销 | `removed`、`follow_ups`（剩下的） |
 | `reclaim {force?}` | 被接手后 | 接手的 Client 已断开（没有在线的尺寸所有者）时重新发 Resize、恢复写入并发 `reclaimed`；对方还在、或 Holder 不报尺寸所有者时返回 `taken_over`，`force` 跳过 | `size` |
 | `set_mode {mode}` | idle / busy | `manual` / `accept_edits` / `plan` / `auto`：按 shift+tab，每次等输入框下的模式行变化，直到显示目标模式；转一圈没有则 `not_offered` | `mode` |
 | `get_tasks` | 任意 | 后台任务：后台 Subagent、后台 shell、Workflow Run。以插件为准：PostToolUse 的工具结果开始它（`backgroundTaskId` / `agentId` / `taskId`），结果通知（UserPromptSubmit 的 `<task-notification>`）的 `status` 结束它，SubagentStop 先记为 `completed`，Stop 的 `background_tasks` 补上没见到开始的；连接前就有的从 transcript 读 | `tasks`：`id`、`kind`（`agent` / `shell` / `workflow`）、`tool_use_id`、`description`、`command`（后台 shell）、`status`（`running`、Claude Code 给的结束状态，或 ccrpc 停掉后的 `stopped`） |
+| `exit {close_pane?, stop_tasks?}` | idle | 输入 `/exit`，等 claude 进程消失（≤15s），发 `session_exit`；还有后台任务时 Claude Code 先问，`stop_tasks` 时确认“退出并停掉”，否则按 Esc 返回 `not_idle`；`close_pane` 时再在 Pane 的 shell 里输入 `exit`，Pane 随之结束（Session 已 exited 时只做这一步） | `{}` |
 | `stop_task {task_id}` | idle | 输入 `/tasks` 打开后台面板，按命令（后台 shell）或描述（Subagent、Workflow）找到以它开头的唯一一个运行中的行（没有、多于一个、或有同样的已结束行时都不按键，报 `unrecognized_screen`），一行一行移过去、确认光标在它上面后按 `x`；以面板为准确认它不再运行（≤5s），关面板；再等插件报来结果通知（≤2s，主线忙时要等当前工具结束），之前记为 `stopped` | `status`（通常 `killed`） |
-| `answer_choice {request_id, option}` | waiting（有挂起的 choice） | 另取一次 Snapshot 确认屏幕上仍是该布局，`option` 按选项文字（完全一致，否则唯一前缀）找到编号按下 | `state` |
+| `answer_choice {request_id, option}` | waiting（有挂起的 choice）；目录信任框时为 starting | 等对话框出现满 500ms，另取一次 Snapshot 确认屏幕上仍是该布局，`option` 按选项文字（完全一致，否则唯一前缀）找到编号按下；目录信任框按方向键把光标移到该项、回车，等它关闭 | `state` |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 
 错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果）、`taken_over`（Session 已被人接手）、`not_taken_over`（`reclaim` 时没被接手）、`not_offered`（没有“总是允许”）、`unsupported`（提问不在插件里等）、`unrecognized_screen`、`input_not_empty`、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
@@ -116,6 +120,8 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `choice` | `request_id`（`choice:<n>`）、`title`、`options`（`label` 屏幕上的全文、`meaning` `allow` / `allow_always` / `deny` / `other`、`description`）、`tool_use_id`（引起它的工具，如 ExitPlanMode；没有为 null）、`layout` |
 | `layout_learned` | 分析器学到新布局并已存进布局库：`layout`、`kind`、`title`、`path` |
 | `analysis_failed` | 分析器没给出可用的布局：`error`；结果与屏幕对不上时另有 `title` |
+| `session_info` | `mode`、`model`、`context_tokens`（同 `get_state`）：其中任一项变了时发 |
+| `progress` | busy 时屏幕上的进度行：`text`（去掉符号的整行）、`verb`、`elapsed_s`、`tokens`（没有为 null）；文字变了时发，至多每秒一次（动词变了立即发） |
 | `session_changed` | `session_id`、`previous` |
 | `session_exit` | — |
 
@@ -136,6 +142,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 正文一次 bracketed paste（`ESC[200~ … ESC[201~`）写入，换行不会提交；等输入框里出现内容（≤2s，长正文显示为 `[Pasted text …]`）后再单独发 `\r`。4.5k 字符（含中文、换行）一次写入逐字正确。
 - 按键之间至少隔 50ms，屏幕还没反应时最多等到 80ms。斜杠命令输入后等输入框出现该命令（≤1s）再回车，回车后等它离开输入框（≤2s）。
 - 写入前去掉控制字符（保留 `\n`、`\t`，`\r` 换成 `\n`），防止注入转义序列。
+- 写入前等屏幕上出现输入框（≤2s；刚启动时进程文件先说 idle、TUI 还没画好）。
 - 清空输入框：按输入框行数重复“`ctrl+u` + 退格”，等屏幕上输入框变空（≤500ms，最多 3 次）；不用 `ctrl+c`（连按两次会退出 Claude Code）。
 
 ## 7. 屏幕识别

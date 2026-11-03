@@ -46,11 +46,13 @@ ccrpc attach <Holder ID | sessionId>
 
 ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxROWS` 可改）；有人正在 ToH 上用这个 Pane（持有 PTY 尺寸）时 `attach` 报错，`--force` 强制连接；连着时有人接手，ccrpc 发 `taken_over` 并转为只读，调用方重新 `attach` 才能再写入。
 
-列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔）：
+列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔；`--json` 输出数组，另带 claude pid、版本与会话标题）：
 
 ```sh
-ccrpc ls
+ccrpc ls [--json]
 ```
+
+`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`--log FILE` 把状态判定、hook 事件与按键记进文件，排查用。
 
 检查依赖与配置（toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器），每行 `ok` / `warn` / `fail`：
 
@@ -105,7 +107,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `set_model {model}` / `compact {instructions?}` / `clear` | 分别等于对应的 slash 命令 |
 | `send_keys {keys}` | 依次写命名按键、`{"text":…}` 或 `{"bytes":…}` |
 | `get_state` | 立即返回状态、挂起的请求、队列长度 |
-| `get_messages {since?}` | 立即返回 Main Line 上的内容块与 `cursor` |
+| `get_messages {since?, before?, limit?, subagents?}` | 返回 Main Line 上的内容块与游标，可从最新往回分页、可带 Subagent Run 的块（后台线程增量读取） |
 | `get_screen` | 立即返回屏幕文本与光标 |
 | `get_tool_result {tool_use_id}` | 立即返回工具结果全文（落盘过的读文件） |
 | `answer_choice {request_id, option}` | 按选项文字作答 `choice` |
@@ -113,6 +115,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
 | `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Workflow Run |
 | `reclaim {force?}` | 接手的人离开后取回控制 |
+| `exit {close_pane?, stop_tasks?}` | 退出 claude；`close_pane` 时连 Pane 一起结束 |
 
 事件（没有 `id`）：
 
@@ -130,8 +133,10 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
 | `taken_over` / `reclaimed` | 有人在 ToH 上接手了这个 Session，之后只读 / 已取回 |
-| `choice` | 等待在一个非审批、非提问的编号菜单（如计划审批），用 `answer_choice` 作答 |
+| `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框），用 `answer_choice` 作答 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
+| `session_info` | 权限模式、模型、上下文大小变了 |
+| `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |
 
 响应两种：
@@ -163,7 +168,7 @@ cargo test
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-`mock_model_turns` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮与 API 报错结束一轮。
+`mock_model_turns`、`mock_model_session` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`。
 
 可选变量：`CCRPC_E2E_TUI=fullscreen`（用全屏 TUI 跑）、`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用同级目录 `../toh/target/debug/toh`，没有则用 PATH 里的）。
 
