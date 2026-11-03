@@ -131,7 +131,8 @@ function Main() {
           </button>
         </div>
       ))}
-      <div className="min-h-0 flex-1">
+      {/* A flex column: the transcript (flex-1, scrolling) gets exactly the height left over. */}
+      <div className="flex min-h-0 flex-1 flex-col">
         <Transcript conn={c.conn} />
       </div>
       <Requests c={c} />

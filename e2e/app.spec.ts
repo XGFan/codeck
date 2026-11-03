@@ -156,3 +156,21 @@ test("a pasted image goes with the prompt", async ({ page }) => {
   expect(p?.images).toEqual(["/tmp/cc-gui-mock-1.png"]);
   await expect(page.getByTestId("images")).toHaveCount(0);
 });
+
+test("a long stream scrolls inside its area, following the newest turn", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 420 });
+  await open(page, "界面用例");
+  await send(page, "改一下 README");
+  await send(page, "做完再跑一下测试");
+  await send(page, "顺便把标题也改了", "Meta");
+  await page.getByTestId("permission-card").getByTestId("allow").click();
+  await expect(page.getByTestId("turn-end")).toHaveCount(1);
+  const t = page.getByTestId("transcript");
+  const box = await t.boundingBox();
+  const composer = await page.getByTestId("composer").boundingBox();
+  // It stays above the input box and scrolls rather than growing past it.
+  expect(box!.y + box!.height).toBeLessThanOrEqual(composer!.y + 1);
+  const m = await t.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight, top: el.scrollTop }));
+  expect(m.sh).toBeGreaterThan(m.ch);
+  await expect.poll(() => t.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(40);
+});
