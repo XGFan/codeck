@@ -14,6 +14,10 @@ _Avoid_: managed session、worker（worker 是 paaa 的词）
 人在 ToH Client 上操作 Session 所在的 Pane：把它切到前台，或在其中按键。正被人接手的 Session 不能成为受控 Session；受控 Session 被接手后，ccrpc 对它只读，直到调用方取回（接手的人已离开时）或重新连接。
 _Avoid_: 抢占、冲突、人机协同
 
+**共显（Co-display）**:
+受控 Session 同时显示在调用方的界面与 ToH Client 的 Pane 里，两边都能输入。共显的受控 Session 里，人在 Client 上的操作不算接手。
+_Avoid_: 共享、镜像、旁观
+
 **调用方（Caller）**:
 经 stdin / stdout 与 ccrpc 交换 JSONL 的程序。
 _Avoid_: client（Client 是 ToH 的 Mac / iOS / web）、host（Host 是 ToH 的机器）

@@ -14,12 +14,23 @@
 - 被 ccrpc 停掉的后台任务先记为 `stopped`，Claude Code 的结束通知要等主线下一轮才写进 transcript
 - 全屏 TUI 下拍到的输入框、审批框、提问框、后台面板与默认 TUI 一致；计划审批只在默认 TUI 下实测
 
+## GUI MVP 要的改动（只在本机用，不发布）
+
+GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block` + `branch`），每个运行中的 clay Claude Code 各连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
+
+- 共显（过渡期，GUI 成熟后去掉）：`new` / `attach` 加 `--co-display`，不发 Resize、不判接手，屏幕跟随 PTY 尺寸（复用被接手后的跟随逻辑）；输入框照旧先清空
+- `get_state` 加 `mode`（模式行为准，认不出用 transcript 的 `permission-mode`）、`model`（主线最后一条 assistant 的 model）、`context_tokens`（它的 input + cache_read + cache_creation）；三项变化时推送一条新事件
+- `exit` 命令：idle 时输入 `/exit`，等 claude 进程消失；否则 `not_idle`
+- `ccrpc ls --json`
+- 日志：`--log FILE` 记下状态判定、屏幕识别、按键，排查 `unrecognized` 与超时用
+- 实测：`claude --resume <id>` 是否换 sessionId；`ccrpc new` 的 Pane 在 claude 退出后是否随之结束
+- 之后：进度事件（屏幕 spinner 行，去掉共显前做）、`get_messages` 带上 Subagent Run 的历史
+
 ## 形态
 
 - 常驻进程 + unix socket（一条连接管多个 Session，沿用同一套 JSONL 消息）
 - 同一 Session 连多个 ccrpc
 - 调用方 SDK（Rust、TypeScript / Python）与示例
-- 日志：`--log FILE` 记下状态判定、屏幕识别、按键，排查 `unrecognized` 与超时用
 - 分发：版本号、CHANGELOG、release 二进制
 
 ## 使用方（协议之上的子项目，各自单独设计）
