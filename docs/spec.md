@@ -46,7 +46,7 @@ cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机�
 | waiting | 不发送，焦点到请求卡片 | |
 | 任意 | | Esc `abort`（busy / waiting） |
 
-- 粘贴图片：存到 `~/Library/Caches/cc-gui/images/`，路径作为 `images` 传给 `prompt` / `steer` / `follow_up`。
+- 粘贴图片：存到 `~/Library/Caches/cc-gui/images/`，路径作为 `images` 传给 `prompt` / `follow_up`（`steer` 不带图片：带着图片按 ⌘Enter 会提示改用 Enter）。
 - `/` 开头照常走 `prompt`（v0 没有补全）。
 - 共显时写入会清空 TUI 输入框里没发的内容（ccrpc 已知限制，接受）。
 
@@ -69,7 +69,7 @@ cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机�
 
 ```
 ~/Library/Logs/cc-gui/<日期>/<holder_id>-<启动时间>/
-  wire.jsonl   与 ccrpc 之间每一行原样（命令、响应、事件，block 全文）+ GUI 收到的时间戳；过大时轮转
+  wire.jsonl   与 ccrpc 之间每一行原样（命令、响应、事件，block 全文）：{t: unix 毫秒, dir: send|recv, msg}；超过 50MB 轮转为 wire.1.jsonl
   ccrpc.log    ccrpc --log
   gui.log      用户操作（按钮 → 命令 id）、渲染异常、ccrpc 退出码与 stderr
 ```
@@ -80,7 +80,7 @@ cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机�
 
 - E2E：Playwright 跑 Vite 页面，mock Tauri IPC，mock 后端按 wire.jsonl 回放（收到命令回录下的响应，事件按录下的顺序推）。覆盖：首屏与翻页；prompt → block → turn_end；审批（三个选项、带 message 的拒绝）、question、choice（含 AI 识别标签）；busy 时 follow_up / steer 与撤销；`branch`、`session_changed`；ccrpc 退出横幅与重连。
 - fixture 来自 ccrpc 的 mock 端到端录下的 wire（脚本在 `../ccrpc` 跑 `cargo test --test e2e mock_ -- --ignored` 并拷入）；日常遇到的问题也截取 wire.jsonl 片段（脱敏）补进来。
-- Rust 后端只测 wire 日志的写入与轮转。不做接真实 ccrpc 的自动化测试。
+- Rust 后端单测 wire 日志的写入、轮转与过期清理；`src-tauri/tests/sandbox.rs`（`--ignored`）在 `scripts/sandbox` 的沙盒里（独立的 ToH / claude / ccrpc 目录、本地 mock 模型）经真实 ccrpc 与 claude 跑一轮审批、`get_messages` 与退出，检查三份日志。
 
 ## 9. 顺序
 

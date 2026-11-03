@@ -1,0 +1,3 @@
+{"t": 1793700000510, "dir": "meta", "ls": {"title": "另一个项目", "cwd": "/work/other", "status": "waiting"}}
+{"t": 1793700000520, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mwait00000001", "session_id": "s-w", "cwd": "/work/other", "claude_version": "2.1.317", "state": "waiting", "waiting": {"kind": "permission", "waiting_for": "permission prompt"}, "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": "claude-opus-5-5", "context_tokens": 100, "warnings": []}}
+{"t": 1793700000530, "dir": "recv", "msg": {"type": "permission_request", "request_id": "toolu_w1", "tool_name": "Bash", "input": {"command": "rm -rf build"}, "agent_id": null, "options": null, "layout_source": null}}

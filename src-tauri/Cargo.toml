@@ -1,0 +1,37 @@
+[package]
+name = "cc-gui"
+description = "cc-gui: a desktop GUI for Claude Code driven through ccrpc."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+publish = false
+
+[lib]
+name = "cc_gui_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "cc-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.1", features = [] }
+tauri-plugin-clipboard-manager = "2.5.0"
+tauri-plugin-dialog = "2.8.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+parking_lot = "0.12.5"
+libc = "0.2.190"
+base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+tempfile = "3.27"
+
+# MACOSX_DEPLOYMENT_TARGET >= 14 (set by `tauri build` from minimumSystemVersion): build scripts
+# linked stripped fail to load in rustc ("mis-aligned LINKEDIT string pool"). Keep them unstripped.
+[profile.release.build-override]
+strip = "none"
