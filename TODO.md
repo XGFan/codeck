@@ -8,11 +8,11 @@
 
 ## 兼容升级与协议补全（已落地，后续）
 
-- ccrpc 插件：StopFailure（API 报错结束一轮）、PostToolUseFailure / PermissionDenied 结束请求、hook 已超时后回落按键、`allow_always` 经插件回填，都没有端到端用例；Claude Code 升级后先重跑 probes.md 的 hooks 一节（hook 输入字段、阻塞时界面是否照常显示）
+- ccrpc 插件：PostToolUseFailure / PermissionDenied 结束请求、hook 已超时后回落按键，都没有端到端用例；Claude Code 升级后先重跑 probes.md 的 hooks 一节（hook 输入字段、阻塞时界面是否照常显示）
 - 学到的布局只在本机：常见界面学到后用 `ccrpc layouts export .` 导出成内置布局，提交前检查其中的整屏文字
 - 分析器只处理“等待作答的对话框”；输入框、模式行、后台任务面板仍是代码里的识别，Claude Code 改了这些界面要改 recognize.rs
 - `stop_task` 停 Subagent 只按面板上的描述匹配，没有端到端用例（目前只测了后台 shell）
-- 被 ccrpc 停掉的后台任务先记为 `stopped`，Claude Code 的结束通知要等主线下一轮才写进 transcript
+- 被 ccrpc 停掉的后台任务在主线忙时先记为 `stopped`，Claude Code 的结束通知要等当前工具结束才送达
 - 全屏 TUI 下拍到的输入框、审批框、提问框、后台面板与默认 TUI 一致；计划审批只在默认 TUI 下实测
 
 ## GUI MVP 要的改动（只在本机用，不发布）
@@ -52,7 +52,7 @@ GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block`
 - 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理（插件报来前一个的 PostToolUse 后重新认定），没有端到端用例
 - 同时有几个后台 Subagent 在等审批、且工具输入里都没有可在审批框里比对的内容时，认不出屏幕上是哪个，改发 `dialog`
 - 后台 Subagent 的请求留到插件报来它的结果才结束：Subagent 被停掉、没有结果时它一直挂着，会妨碍认定连接前就在等的审批框
-- 未实测：插话在 Stop 之后才送达、自成一轮时是否再触发 UserPromptSubmit（不触发则这一轮没有 `turn_end`）；经插件的 `allow_always` 与 TUI 第 2 项的效果是否一致
+- 插话在 Stop 之后自成一轮时，两轮的用量在同一次读 transcript 里到达，可能都算进前一轮
 - Workflow Run 偶尔只读到 `journal.jsonl`：`workflow` 事件的 `name` 为 null、`phases` 为空直到结束（端到端偶发，`workflows/<runId>.json` 没被读到）
 - 插件装在用户级：每次工具调用都会起一次 `ccrpc hook` 进程（不在 clay Pane 里立即退出），换了 ccrpc 可执行文件的位置要重新 `ccrpc plugin install`
 - Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block

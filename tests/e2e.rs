@@ -56,6 +56,14 @@ struct Env {
 }
 
 fn setup(key: &str) -> Env {
+    let base = std::env::var("CCRPC_E2E_BASE_URL")
+        .unwrap_or_else(|_| "https://api.deepseek.com/anthropic".into());
+    let model = std::env::var("CCRPC_E2E_MODEL").unwrap_or_else(|_| "deepseek-flash".into());
+    setup_with(key, &base, &model)
+}
+
+fn setup_with(key: &str, base: &str, model: &str) -> Env {
+    let (base, model) = (base.to_string(), model.to_string());
     let toh = tempfile::Builder::new()
         .prefix("ccrpc-e2e-")
         .tempdir_in("/tmp")
@@ -73,9 +81,6 @@ fn setup(key: &str) -> Env {
     let toh_dir = toh.path().canonicalize().unwrap();
     let cc_dir = cc.path().canonicalize().unwrap();
     let work_dir = work.path().canonicalize().unwrap();
-    let base = std::env::var("CCRPC_E2E_BASE_URL")
-        .unwrap_or_else(|_| "https://api.deepseek.com/anthropic".into());
-    let model = std::env::var("CCRPC_E2E_MODEL").unwrap_or_else(|_| "deepseek-flash".into());
     let env_vars = [
         ("CLAUDE_CONFIG_DIR", cc_dir.display().to_string()),
         ("CCRPC_STATE_DIR", state_dir.display().to_string()),
@@ -486,6 +491,26 @@ fn controls_a_real_session() {
     });
     assert_eq!(v["type"], "turn_end", "作答后误报 dialog：{v}");
     assert!(env.work.join("created.txt").exists());
+
+    // permission: always allow, as the dialog's own option does (a prefix rule in the project's
+    // local settings); the same command then runs without asking.
+    rpc.forget();
+    let cmd_text = "Run exactly this shell command and nothing else: python3 -c 'print(7)'";
+    rpc.call("aa1", json!({"type": "prompt", "text": cmd_text}));
+    let pr = rpc.event("permission_request", Duration::from_secs(60));
+    rpc.call(
+        "aa2",
+        json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow_always"}),
+    );
+    rpc.event("turn_end", Duration::from_secs(60));
+    let local = std::fs::read_to_string(env.work.join(".claude/settings.local.json")).unwrap_or_default();
+    assert!(local.contains("Bash(python3"), "{local}");
+    rpc.forget();
+    rpc.call("aa3", json!({"type": "prompt", "text": cmd_text}));
+    let v = rpc.until("no second approval", Duration::from_secs(60), |v| {
+        v["type"] == "turn_end" || v["type"] == "permission_request"
+    });
+    assert_eq!(v["type"], "turn_end", "总是允许之后又要审批：{v}");
 
     // permission: deny with a message
     rpc.forget();
@@ -1184,4 +1209,120 @@ fn learns_an_unknown_dialog() {
             std::fs::copy(e.path(), Path::new(&out).join(e.file_name())).unwrap();
         }
     }
+}
+
+/// A scripted Anthropic Messages endpoint on loopback: every reply is text. A prompt containing
+/// `MOCK-SLOW` is answered over ~8 s, `MOCK-FAIL` with HTTP 400; anything else with `ok`.
+fn mock_model() -> String {
+    use std::net::TcpListener;
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for conn in l.incoming() {
+            let Ok(mut s) = conn else { continue };
+            std::thread::spawn(move || {
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let (mut line, mut len) = (String::new(), 0usize);
+                r.read_line(&mut line).unwrap_or(0);
+                let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
+                loop {
+                    let mut h = String::new();
+                    if r.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; len];
+                use std::io::Read;
+                let _ = r.read_exact(&mut body);
+                let req: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                let reply = |s: &mut std::net::TcpStream, code: &str, v: Value| {
+                    let b = v.to_string();
+                    let _ = write!(s, "HTTP/1.1 {code}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{b}", b.len());
+                };
+                if path.contains("count_tokens") {
+                    return reply(&mut s, "200 OK", json!({"input_tokens": 10}));
+                }
+                if !path.starts_with("/v1/messages") {
+                    return reply(&mut s, "404 Not Found", json!({"type": "error", "error": {"type": "not_found_error", "message": "no"}}));
+                }
+                // The newest user text (after any tool results).
+                let last = req["messages"].as_array().and_then(|m| m.iter().rev().find(|m| m["role"] == "user")).cloned();
+                let text = match last.as_ref().map(|m| &m["content"]) {
+                    Some(Value::String(t)) => t.clone(),
+                    Some(Value::Array(a)) => a.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                    _ => String::new(),
+                };
+                if text.contains("MOCK-FAIL") {
+                    return reply(&mut s, "400 Bad Request", json!({"type": "error", "error": {"type": "invalid_request_error", "message": "mock failure"}}));
+                }
+                let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW") {
+                    (vec!["slow "; 16], 500)
+                } else if text.contains("MOCK-STEERED") {
+                    (vec!["STEER-TURN"], 0)
+                } else {
+                    (vec!["ok"], 0)
+                };
+                let model = req["model"].as_str().unwrap_or("mock").to_string();
+                let usage = json!({"input_tokens": 10, "output_tokens": 3});
+                let msg = json!({"id": "msg_mock", "type": "message", "role": "assistant", "model": model,
+                    "content": [], "stop_reason": null, "stop_sequence": null, "usage": usage});
+                if req["stream"] != true {
+                    let mut m = msg.clone();
+                    m["content"] = json!([{"type": "text", "text": words.concat()}]);
+                    m["stop_reason"] = json!("end_turn");
+                    return reply(&mut s, "200 OK", m);
+                }
+                let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n");
+                let mut ev = |name: &str, v: Value| {
+                    let _ = write!(s, "event: {name}\ndata: {v}\n\n");
+                    let _ = s.flush();
+                };
+                ev("message_start", json!({"type": "message_start", "message": msg}));
+                ev("content_block_start", json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}));
+                for w in words {
+                    std::thread::sleep(Duration::from_millis(gap));
+                    ev("content_block_delta", json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": w}}));
+                }
+                ev("content_block_stop", json!({"type": "content_block_stop", "index": 0}));
+                ev("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, "usage": {"output_tokens": 3}}));
+                ev("message_stop", json!({"type": "message_stop"}));
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// Turns the plugin delimits, on a scripted model (no credits): a steer that arrives after the
+/// last tool runs as a turn of its own (no UserPromptSubmit of its own), and an API error ends a
+/// turn through StopFailure.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_turns() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    let d = rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    let first = d["prompt_id"].clone();
+    std::thread::sleep(Duration::from_secs(2));
+    let st = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
+    assert_eq!(st["delivered_as"], "queued", "{st}");
+    let t1 = rpc.event("turn_end", Duration::from_secs(60));
+    assert_eq!(t1["prompt_id"], first, "{t1}");
+    assert!(t1["last_text"].as_str().unwrap_or("").contains("slow"), "{t1}");
+    let t2 = rpc.event("turn_end", Duration::from_secs(60));
+    assert!(t2["prompt_id"].is_string() && t2["prompt_id"] != first, "{t2}");
+    assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
+    assert_eq!(t2["aborted"], false, "{t2}");
+
+    rpc.forget();
+    rpc.call("f1", json!({"type": "prompt", "text": "MOCK-FAIL"}));
+    let t3 = rpc.event("turn_end", Duration::from_secs(60));
+    assert!(t3["error"].is_object(), "{t3}");
+    assert!(t3["error"]["message"].as_str().unwrap_or("").contains("400"), "{t3}");
+    assert_eq!(t3["aborted"], false);
 }

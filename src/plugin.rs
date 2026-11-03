@@ -29,6 +29,8 @@ const EVENTS: &[(&str, Option<&str>)] = &[
     ("PermissionDenied", Some("*")),
     ("Stop", None),
     ("StopFailure", None),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
 ];
 
 /// `$XDG_DATA_HOME/ccrpc/plugin`, else `~/.local/share/ccrpc/plugin`: the marketplace root.

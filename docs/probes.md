@@ -135,3 +135,11 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - **deny 加 `interrupt: true`**：与在审批框选 No 相同——显示 `Interrupted · What should Claude do instead?`，回 idle，不触发 Stop。
 - **Workflow**：`Run a dynamic workflow?` 审批同样触发 PermissionRequest（`tool_input` 只有 `script`，没有 `permission_suggestions`），审批框与 hook 同时出现；hook 回 `allow` 生效。
 - **审批框刚出现时丢掉按键**：后台 Subagent 的审批框（标题 `Bash command · from the general-purpose agent`，提示行多 `ctrl+x ctrl+k twice to stop background agents`）一出现就按 `1` 不生效，审批框原样还在；隔 200ms 以上再按就生效（主线仍在流式输出也一样）。→ 按键作答前等审批框出现满 500ms，按后 2 秒内没离开且仍是同一请求就再按一次。
+
+### 补测（全部迁移前）
+
+- **后台任务的启动**：PostToolUse 的 `tool_response` 里，后台 shell 有 `backgroundTaskId`（`tool_input` 有 `command`、`description`）；后台 Subagent 有 `isAsync: true`、`status: "async_launched"`、`agentId`、`description`；Workflow 有 `taskId`、`taskType: "local_workflow"`、`workflowName`、`runId`、`summary`。SubagentStart（`agent_id`、`agent_type`）前台、后台 Subagent 都触发。
+- **后台任务的结束**：结果通知是一条 UserPromptSubmit，`prompt` 为 `<task-notification>`（`<task-id>`、`<status>`、`<summary>`）。主线空闲时立即送达、自成一轮；主线忙时等当前工具结束被吸收，`prompt_id` 为当前一轮的（同插话）。状态：自然结束 `completed`（`Background command "…" completed (exit code 0)`、`Agent "…" finished`），在 `/tasks` 面板按 `x` 停掉 `killed`（`Agent "…" was stopped by user`，停掉后立即送达）。SubagentStop 只在 Subagent 自己结束时触发（带 `agent_transcript_path`、`last_assistant_message`），被停掉时不触发。
+- **Stop 的 `background_tasks`**：每项 `id`、`type`（`subagent` / `shell` / `workflow`）、`status`、`description`，shell 另有 `command`，Subagent 另有 `agent_type`，Workflow 另有 `name`。
+- **“总是允许”与 hook**：`python3 -c 'print(42)'` 的审批框第 2 项是 `Yes, and don’t ask again for: python3 *`，选它写入项目的 `.claude/settings.local.json`：`Bash(python3 *)`；而 `permission_suggestions` 是 `addRules` 精确命令（`destination: "localSettings"`），经 hook 回填写入的是 `Bash(python3 -c 'print\(42\)')`。两者不同。→ `allow_always` 按审批框自己的选项作答，再放掉扣着的 hook。
+- **Stop 之后才送达的插话**：主线只在流式输出文字（没有工具调用）时插话，入队时触发 UserPromptSubmit（旧的 `prompt_id`），本轮 Stop 之后它作为新的一轮运行：**没有自己的 UserPromptSubmit**，只有一个带新 `prompt_id` 的 Stop（两个 Stop 几乎同时）。transcript 里这一轮的 `turn_duration` 从插话提交时算起。

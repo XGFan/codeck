@@ -268,6 +268,12 @@ impl Tailer {
         }
     }
 
+    /// Looks for new Subagent Run / Workflow files on the next poll (a Subagent just started or
+    /// stopped).
+    pub fn rediscover(&mut self) {
+        self.last_discover = None;
+    }
+
     /// Reports every Workflow Run again on the next look (its current state).
     pub fn forget_workflows(&mut self) {
         self.workflows.clear();
@@ -1218,7 +1224,7 @@ fn background_launch(text: &str) -> Option<(&'static str, String)> {
 }
 
 /// A `<task-notification>` that ended a task: `(task id, status)`.
-fn task_notification(text: &str) -> Option<(String, String)> {
+pub fn task_notification(text: &str) -> Option<(String, String)> {
     let tag = |name: &str| {
         let open = format!("<{name}>");
         let start = text.find(&open)? + open.len();

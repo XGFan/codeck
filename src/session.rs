@@ -22,7 +22,7 @@ use crate::pty::{self, HolderConn, Owner};
 use crate::recognize::{self, PermissionChoice, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
-use crate::transcript::{self, BlockKind, Tailer, TxEvent};
+use crate::transcript::{self, BgTask, BlockKind, Tailer, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
 pub const PROTOCOL: u32 = 2;
@@ -321,7 +321,6 @@ struct HookRequest {
     tool_name: String,
     input: Value,
     agent_id: Option<String>,
-    suggestions: Value,
     /// When the plugin reported it.
     at: Instant,
     /// The waiting hook: the answer goes back through it. `None`: answered on the screen (a
@@ -349,6 +348,11 @@ pub struct Engine {
     requests: Vec<HookRequest>,
     hook_prompts: VecDeque<HookPrompt>,
     hook_seq: u64,
+    /// Background tasks the plugin reported (started, ended) since ccrpc connected.
+    hook_tasks: Vec<BgTask>,
+    /// Input queued during the turn (steers) not yet delivered within it: delivered after its
+    /// Stop as a turn of its own, which has no UserPromptSubmit.
+    pending_steers: Vec<String>,
     /// When the Session went idle (for a turn that never got its Stop).
     idle_at: Option<Instant>,
     /// The turn's Stop came: `(when, last text, background tasks)`; `turn_end` once the transcript
@@ -449,6 +453,8 @@ impl Engine {
             requests: Vec::new(),
             hook_prompts: VecDeque::new(),
             hook_seq: 0,
+            hook_tasks: Vec::new(),
+            pending_steers: Vec::new(),
             idle_at: None,
             stop_pending: None,
             no_checkin_since: None,
@@ -644,6 +650,11 @@ impl Engine {
                     {
                         self.turn.aborted = true;
                     }
+                    // A steer delivered within the turn.
+                    if b.agent_id.is_none() && b.kind == BlockKind::User && b.queued {
+                        let t = b.text.as_deref().unwrap_or_default().trim().to_string();
+                        self.pending_steers.retain(|s| s.trim() != t);
+                    }
                     let mut v = serde_json::to_value(&b).unwrap_or(Value::Null);
                     if let Value::Object(m) = &mut v {
                         m.insert("type".into(), json!("block"));
@@ -653,7 +664,8 @@ impl Engine {
                 // Turns are delimited by the plugin's UserPromptSubmit / Stop; the marker says the
                 // transcript has the turn's last message.
                 TxEvent::TurnEnd { duration_ms } => {
-                    if self.turn_active {
+                    // The first marker is the turn's (a steer's own turn may follow in the same read).
+                    if self.turn_active && !self.turn.marker_seen {
                         self.turn.marker_seen = true;
                         if duration_ms.is_some() {
                             self.turn.duration_ms = duration_ms;
@@ -743,14 +755,27 @@ impl Engine {
                 if self.hook_prompts.len() > 64 {
                     self.hook_prompts.pop_front();
                 }
+                if let Some((id, status)) = transcript::task_notification(&text) {
+                    self.set_task_status(&id, &status);
+                }
+                let notice = text.trim_start().starts_with("<task-notification>");
                 self.finish_stopped_turn();
                 if self.turn_active {
                     match &self.turn.prompt_id {
-                        // Input while busy is delivered within the same turn (steer).
-                        Some(p) if *p == pid => return,
+                        // Input while busy is delivered within the same turn (steer), or after
+                        // its Stop as a turn of its own.
+                        Some(p) if *p == pid => {
+                            if !notice {
+                                self.pending_steers.push(text);
+                            }
+                            return;
+                        }
                         // A turn running at connect: a prompt during it is a steer of it.
                         None => {
                             self.turn.prompt_id = Some(pid);
+                            if !notice {
+                                self.pending_steers.push(text);
+                            }
                             return;
                         }
                         // The previous turn never got its Stop.
@@ -760,11 +785,8 @@ impl Engine {
                         }
                     }
                 }
-                let trigger = if text.trim_start().starts_with("<task-notification>") {
-                    "task_notification"
-                } else {
-                    "prompt"
-                };
+                let trigger = if notice { "task_notification" } else { "prompt" };
+                self.pending_steers.clear();
                 self.turn = TurnStats::start(Some(pid), trigger);
                 self.turn_active = true;
                 self.last_text = None;
@@ -775,6 +797,16 @@ impl Engine {
             }
             "Stop" | "StopFailure" => {
                 let pid = s("prompt_id");
+                // Another turn's Stop while the previous one still waits for the transcript: the
+                // previous one is over (a steer may have opened this one).
+                if self
+                    .stop_pending
+                    .is_some()
+                    && pid.is_some()
+                    && self.turn.prompt_id != pid
+                {
+                    self.finish_stopped_turn();
+                }
                 let ours = self.turn_active
                     && self.stop_pending.is_none()
                     && (self.turn.prompt_id.is_none() || self.turn.prompt_id == pid);
@@ -782,16 +814,27 @@ impl Engine {
                 if !ours {
                     return;
                 }
+                // A turn opened without its prompt id (running at connect, a steer delivered
+                // after Stop) takes the Stop's.
+                if self.turn.prompt_id.is_none() {
+                    self.turn.prompt_id = pid.clone();
+                }
                 if m.event == "StopFailure" {
                     self.turn.error = Some(json!({"kind": s("error"), "message": s("last_assistant_message")}));
                 } else if let Some(t) = s("last_assistant_message") {
                     self.last_text = Some(t);
                 }
                 let bg = i.get("background_tasks").cloned().unwrap_or(json!([]));
+                self.note_running_tasks(&bg);
                 let last = if m.event == "Stop" { self.last_text.clone() } else { None };
                 self.stop_pending = Some((Instant::now(), last, bg));
             }
             "PreToolUse" => {
+                // A turn opened without UserPromptSubmit (a steer delivered after Stop) learns
+                // its prompt id here.
+                if self.turn_active && self.turn.prompt_id.is_none() && i["agent_id"].is_null() {
+                    self.turn.prompt_id = s("prompt_id");
+                }
                 if let Some(id) = s("tool_use_id") {
                     self.pre_tools.push_back(PreTool {
                         id,
@@ -807,7 +850,25 @@ impl Engine {
             "PermissionRequest" => self.on_permission_request(m),
             "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => {
                 if let Some(id) = s("tool_use_id") {
+                    if m.event == "PostToolUse" {
+                        self.note_background_launch(&id, i);
+                    }
                     self.resolve(&id);
+                }
+            }
+            "SubagentStart" | "SubagentStop" => {
+                // Its Subagent Run file appears / is complete: look for it now.
+                if let Some(t) = self.tailer.as_mut() {
+                    t.rediscover();
+                }
+                if m.event == "SubagentStop"
+                    && let Some(id) = s("agent_id")
+                {
+                    // Finished on its own (a stopped one gets no SubagentStop); the notice that
+                    // follows says how.
+                    if self.hook_tasks.iter().any(|t| t.id == id && t.status == "running") {
+                        self.set_task_status(&id, "completed");
+                    }
                 }
             }
             _ => {}
@@ -850,7 +911,6 @@ impl Engine {
             tool_name: name,
             input,
             agent_id,
-            suggestions: i["permission_suggestions"].clone(),
             at: Instant::now(),
             reply,
         });
@@ -902,7 +962,112 @@ impl Engine {
     fn finish_stopped_turn(&mut self) {
         if let Some((_, last, bg)) = self.stop_pending.take() {
             self.emit_turn_end(last, bg);
+            // Input queued in it but not delivered within it runs next, with no
+            // UserPromptSubmit: open that turn now (its Stop ends it).
+            if !self.pending_steers.is_empty() {
+                self.pending_steers.clear();
+                self.turn = TurnStats::start(None, "prompt");
+                self.turn_active = true;
+                self.last_text = None;
+                if self.idle_at.is_some() {
+                    self.idle_at = Some(Instant::now());
+                }
+            }
         }
+    }
+
+    /// A background task the plugin saw start: Bash `run_in_background`, an async Agent, a
+    /// Workflow (from the tool's response).
+    fn note_background_launch(&mut self, tool_use_id: &str, i: &Value) {
+        let (resp, input) = (&i["tool_response"], &i["tool_input"]);
+        let text = |v: &Value| v.as_str().map(str::to_string);
+        let task = match i["tool_name"].as_str() {
+            Some("Bash") => text(&resp["backgroundTaskId"]).map(|id| (id, "shell")),
+            Some("Agent" | "Task") if resp["isAsync"] == true => text(&resp["agentId"]).map(|id| (id, "agent")),
+            Some("Workflow") => text(&resp["taskId"]).map(|id| (id, "workflow")),
+            _ => None,
+        };
+        let Some((id, kind)) = task else { return };
+        if self.hook_tasks.iter().any(|t| t.id == id) {
+            return;
+        }
+        let description = text(&input["description"])
+            .or_else(|| text(&resp["description"]))
+            .or_else(|| text(&resp["summary"]))
+            .or_else(|| text(&resp["workflowName"]));
+        self.hook_tasks.push(BgTask {
+            id,
+            kind,
+            tool_use_id: tool_use_id.to_string(),
+            description,
+            command: (kind == "shell").then(|| text(&input["command"])).flatten(),
+            status: "running".into(),
+        });
+    }
+
+    /// Stop's `background_tasks`: running tasks ccrpc did not see start are added.
+    fn note_running_tasks(&mut self, bg: &Value) {
+        for t in bg.as_array().into_iter().flatten() {
+            let Some(id) = t["id"].as_str() else { continue };
+            if self.hook_tasks.iter().any(|h| h.id == id)
+                || self.tailer.as_ref().is_some_and(|tl| tl.tasks().iter().any(|h| h.id == id))
+            {
+                continue;
+            }
+            let kind = match t["type"].as_str() {
+                Some("subagent") => "agent",
+                Some("shell") => "shell",
+                Some("workflow") => "workflow",
+                _ => continue,
+            };
+            self.hook_tasks.push(BgTask {
+                id: id.to_string(),
+                kind,
+                tool_use_id: String::new(),
+                description: t["description"].as_str().map(str::to_string),
+                command: t["command"].as_str().map(str::to_string),
+                status: t["status"].as_str().unwrap_or("running").to_string(),
+            });
+        }
+    }
+
+    fn set_task_status(&mut self, id: &str, status: &str) {
+        match self.hook_tasks.iter_mut().find(|t| t.id == id) {
+            Some(t) => t.status = status.to_string(),
+            None => {
+                // One ccrpc saw only in the transcript (started before it connected).
+                if let Some(mut t) = self
+                    .tailer
+                    .as_ref()
+                    .and_then(|tl| tl.tasks().iter().find(|t| t.id == id).cloned())
+                {
+                    t.status = status.to_string();
+                    self.hook_tasks.push(t);
+                }
+            }
+        }
+    }
+
+    /// Background tasks: what the plugin reported, over what the transcript recorded (tasks
+    /// started before ccrpc connected).
+    fn tasks(&self) -> Vec<BgTask> {
+        let mut out: Vec<BgTask> = self
+            .tailer
+            .as_ref()
+            .map(|t| t.tasks().to_vec())
+            .unwrap_or_default();
+        for h in &self.hook_tasks {
+            match out.iter_mut().find(|t| t.id == h.id) {
+                Some(t) => {
+                    t.status = h.status.clone();
+                    if t.tool_use_id.is_empty() {
+                        t.tool_use_id = h.tool_use_id.clone();
+                    }
+                }
+                None => out.push(h.clone()),
+            }
+        }
+        out
     }
 
     fn emit_turn_end(&mut self, last_text: Option<String>, background_tasks: Value) {
@@ -1202,7 +1367,6 @@ impl Engine {
             tool_name: pick.name.clone(),
             input: pick.input.clone(),
             agent_id: pick.agent_id.clone(),
-            suggestions: Value::Null,
             at: Instant::now(),
             reply: None,
         });
@@ -1851,15 +2015,23 @@ impl Engine {
         if self.requests[idx].reply.as_ref().is_some_and(hook::peer_gone) {
             self.requests[idx].reply = None;
         }
+        // "Always allow" is the dialog's own option: the rule it adds (`python3 *`) is not the
+        // suggestion the hook gets (the exact command). The held hook is let go after the key.
+        if *decision == Decision::AllowAlways && self.requests[idx].reply.is_some() {
+            self.writable()?;
+            let held = self.requests[idx].reply.take();
+            let res = self.answer_permission_on_screen(request_id, decision, None);
+            if res.is_err()
+                && let Some(r) = self.requests.iter_mut().find(|r| r.id == request_id)
+            {
+                r.reply = held;
+            }
+            return res;
+        }
         if self.requests[idx].reply.is_some() {
             self.writable()?;
-            let r = &self.requests[idx];
             let output = match decision {
-                Decision::Allow => hook::allow_output(None, None),
-                Decision::AllowAlways => match hook::always_allow_rules(&r.suggestions) {
-                    Some(rules) => hook::allow_output(Some(rules), None),
-                    None => return err("not_offered", "这次审批没有“总是允许”选项"),
-                },
+                Decision::Allow | Decision::AllowAlways => hook::allow_output(None, None),
                 Decision::Deny => hook::deny_output(message),
             };
             let stream = self.requests[idx].reply.take().expect("held");
@@ -2096,10 +2268,7 @@ impl Engine {
 
     /// Stops a running background task from Claude Code's `/tasks` panel.
     fn stop_task(&mut self, id: &str) -> CmdResult {
-        let task = self
-            .tailer
-            .as_ref()
-            .and_then(|t| t.tasks().iter().find(|t| t.id == id).cloned());
+        let task = self.tasks().into_iter().find(|t| t.id == id);
         let Some(task) = task else {
             return err("unknown_request", format!("没有后台任务 {id}"));
         };
@@ -2187,12 +2356,16 @@ impl Engine {
         if let Some(t) = self.tailer.as_mut() {
             t.mark_stopped(&tid);
         }
-        let status = self
-            .tailer
-            .as_ref()
-            .and_then(|t| t.tasks().iter().find(|t| t.id == tid))
-            .map(|t| t.status.clone());
-        Ok(json!({"status": status}))
+        // Claude Code's notice (`killed`) reaches the plugin at once when the main line is idle,
+        // else once the running tool ends; until then the task is `stopped`.
+        let status_of = |e: &Engine| e.tasks().into_iter().find(|t| t.id == tid).map(|t| t.status);
+        if status_of(self).as_deref() == Some("running") {
+            self.set_task_status(&tid, "stopped");
+        }
+        self.wait_until(Duration::from_secs(2), |e| {
+            status_of(e).is_some_and(|s| s != "running" && s != "stopped")
+        });
+        Ok(json!({"status": status_of(self)}))
     }
 
     fn get_state(&self) -> Value {
@@ -2246,9 +2419,7 @@ impl Engine {
             Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
             Command::Reclaim { force } => self.reclaim(*force),
             Command::SetMode { mode } => self.set_mode(*mode),
-            Command::GetTasks => Ok(json!({
-                "tasks": self.tailer.as_ref().map(|t| t.tasks().to_vec()).unwrap_or_default()
-            })),
+            Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
             Command::StopTask { task_id } => self.stop_task(task_id),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Steer { text } => self.steer(text),

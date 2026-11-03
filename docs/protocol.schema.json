@@ -1347,7 +1347,7 @@
         "properties": {
           "status": {
             "type": "string",
-            "description": "任务状态。"
+            "description": "停掉后的状态：插件报来的结束状态（通常 killed），还没报来时为 stopped。"
           }
         },
         "required": [

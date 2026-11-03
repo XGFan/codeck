@@ -23,8 +23,9 @@ use serde_json::{Value, json};
 
 use crate::wake::Wake;
 
-/// Version of the line protocol between `ccrpc hook` and ccrpc; recorded in the check-in.
-pub const HOOK_PROTOCOL: u32 = 1;
+/// Version of the plugin (its hook events and the line protocol between `ccrpc hook` and ccrpc);
+/// recorded in the check-in. 2: SubagentStart / SubagentStop.
+pub const HOOK_PROTOCOL: u32 = 2;
 
 /// ccrpc's own state directory: `CCRPC_STATE_DIR`, else `$XDG_STATE_HOME/ccrpc`, else
 /// `~/.local/state/ccrpc`. Never inside Claude Code's or ToH's directories.
@@ -323,18 +324,6 @@ pub fn deny_output(message: Option<&str>) -> Value {
     json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": d}})
 }
 
-/// The "always allow" updates of a permission request: Claude Code's suggestions minus mode
-/// switches (the dialog's "always allow" option does not change the mode). `None`: not offered.
-pub fn always_allow_rules(suggestions: &Value) -> Option<Value> {
-    let rules: Vec<Value> = suggestions
-        .as_array()?
-        .iter()
-        .filter(|s| s["type"].as_str() != Some("setMode"))
-        .cloned()
-        .collect();
-    (!rules.is_empty()).then_some(Value::Array(rules))
-}
-
 /// Listens on the Session's hook socket for as long as it lives.
 pub struct HookServer {
     path: PathBuf,
@@ -432,20 +421,6 @@ fn read_msg(s: &mut UnixStream) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn always_allow_drops_mode_switches() {
-        let s = json!([
-            {"type": "addDirectories", "directories": ["/w"], "destination": "session"},
-            {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
-        ]);
-        assert_eq!(
-            always_allow_rules(&s),
-            Some(json!([{"type": "addDirectories", "directories": ["/w"], "destination": "session"}]))
-        );
-        assert_eq!(always_allow_rules(&json!([{"type": "setMode", "mode": "plan"}])), None);
-        assert_eq!(always_allow_rules(&Value::Null), None);
-    }
 
     #[test]
     fn deny_interrupts_unless_there_is_feedback() {
@@ -548,7 +523,8 @@ mod tests {
             let sock = sock.clone();
             std::thread::spawn(move || {
                 let mut c = UnixStream::connect(&sock).unwrap();
-                c.write_all(b"{\"v\":1,\"input\":{\"hook_event_name\":\"PermissionRequest\"}}\n").unwrap();
+                let line = json!({"v": HOOK_PROTOCOL, "input": {"hook_event_name": "PermissionRequest"}});
+                c.write_all(format!("{line}\n").as_bytes()).unwrap();
             })
         };
         let m = recv(&server);
