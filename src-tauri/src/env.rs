@@ -39,23 +39,18 @@ fn read_login_env() -> Option<HashMap<String, String>> {
         .spawn()
         .ok()?;
     let mut out = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = out.read_to_end(&mut buf);
-        buf
+        let _ = tx.send(buf);
     });
+    // Bounded as a whole: something the shell config backgrounds may keep stdout open.
     let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if child.try_wait().ok()?.is_some() {
-            break;
-        }
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let buf = reader.join().ok()?;
+    let buf = rx.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    let _ = child.kill();
+    let _ = child.wait();
+    let buf = buf.ok()?;
     let env: HashMap<String, String> = buf
         .split(|b| *b == 0)
         .filter_map(|kv| {

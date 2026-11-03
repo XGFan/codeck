@@ -189,7 +189,7 @@ export type EventMsg =
   | ChoiceEvent
   | DialogEvent
   | UnrecognizedEvent
-  | { type: "follow_up_failed"; text: string; error: string }
+  | { type: "follow_up_failed"; text: string; error: { code: string; message: string } }
   | { type: "branch"; at_uuid: string | null }
   | WorkflowEvent
   | { type: "taken_over"; client: string | null }

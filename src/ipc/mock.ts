@@ -86,7 +86,8 @@ function emit(id: string, msg: InMsg) {
   if (!c || c.closed) return;
   if (msg.type === "state") c.state = msg;
   if (msg.type === "block" && !(msg as Block).agent_id) c.blocks.push(msg as Block);
-  if (msg.type === "turn_end") c.followUps = [];
+  // ccrpc sends one queued follow-up per idle turn.
+  if (msg.type === "turn_end") c.followUps.shift();
   for (const cb of lineCbs) cb(id, msg);
 }
 

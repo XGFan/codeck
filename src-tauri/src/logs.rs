@@ -36,14 +36,17 @@ pub fn conn_dir(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     let now = chrono::Local::now();
     let day = root.join(now.format("%Y-%m-%d").to_string());
     let base = format!("{name}-{}", now.format("%H%M%S"));
-    let mut dir = day.join(&base);
-    let mut n = 1;
-    while dir.exists() {
-        dir = day.join(format!("{base}-{n}"));
-        n += 1;
+    mkdir(&day)?;
+    // The leaf is created on its own (not recursively): two connections never share it.
+    for n in 0.. {
+        let dir = if n == 0 { day.join(&base) } else { day.join(format!("{base}-{n}")) };
+        match DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
     }
-    mkdir(&dir)?;
-    Ok(dir)
+    unreachable!()
 }
 
 /// Removes `<root>/<date>` directories older than `KEEP_DAYS` (only names that are dates).

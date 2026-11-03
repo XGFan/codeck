@@ -30,6 +30,10 @@ interface Store {
 }
 
 const pending = new Map<string, Pending>();
+/** Waiting for a connection's ccrpc to exit (reconnect: one ccrpc per Session at a time). */
+const exitWaiters = new Map<string, () => void>();
+/** Connections with an older page being fetched (one at a time each). */
+const loadingOlder = new Set<string>();
 let cmdSeq = 0;
 
 /** The live connection to a Session (by Holder ID, or a connection id itself). */
@@ -81,6 +85,10 @@ export const useStore = create<Store>((set, get) => {
       case "session_changed":
         void firstPage(conn);
         break;
+      case "branch":
+        // A branch before the loaded blocks emptied the stream: read it again.
+        if (before.loaded && !after.loaded) void firstPage(conn);
+        break;
       case "turn_end":
         if (get().selected !== after.holderId || document.hidden) update(conn, (c) => ({ ...c, unread: true }));
         void refreshState(conn);
@@ -93,6 +101,8 @@ export const useStore = create<Store>((set, get) => {
   };
 
   const onExit = (conn: string, code: number | null, stderr: string) => {
+    exitWaiters.get(conn)?.();
+    exitWaiters.delete(conn);
     for (const [id, p] of pending) {
       if (p.conn !== conn) continue;
       pending.delete(id);
@@ -181,16 +191,30 @@ export const useStore = create<Store>((set, get) => {
 
     async loadOlder(conn) {
       const c = get().conns[conn];
-      if (!c || !c.more || c.first == null) return;
-      const r = await get().command(conn, { type: "get_messages", before: c.first, limit: FIRST_PAGE, subagents: true });
-      if (r.success && r.data) update(conn, (x) => applyPage(x, r.data as unknown as MessagesPage, true));
+      if (!c || !c.more || c.first == null || loadingOlder.has(conn)) return;
+      loadingOlder.add(conn);
+      try {
+        const r = await get().command(conn, { type: "get_messages", before: c.first, limit: FIRST_PAGE, subagents: true });
+        if (r.success && r.data) update(conn, (x) => applyPage(x, r.data as unknown as MessagesPage, true));
+      } finally {
+        loadingOlder.delete(conn);
+      }
     },
 
     async reconnect(conn) {
       const c = get().conns[conn];
       if (!c?.holderId) return;
       void api.guiLog(conn, `reconnect ${c.holderId}`);
-      await api.disconnect(conn).catch(() => {});
+      if (!c.procExit) {
+        // The old ccrpc must be gone first: a second attach to the Session is refused.
+        const gone = new Promise<void>((resolve) => {
+          exitWaiters.set(conn, resolve);
+          window.setTimeout(resolve, 5000);
+        });
+        await api.disconnect(conn).catch(() => {});
+        await gone;
+        exitWaiters.delete(conn);
+      }
       set((s) => {
         const conns = { ...s.conns };
         delete conns[conn];

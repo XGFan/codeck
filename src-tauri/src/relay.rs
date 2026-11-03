@@ -32,7 +32,8 @@ pub enum Out {
 pub type Sink = Arc<dyn Fn(Out) + Send + Sync>;
 
 struct Conn {
-    stdin: Option<ChildStdin>,
+    /// Its own lock: a stalled ccrpc blocks only its own writes, not the connection table.
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
     wire: Arc<Mutex<Wire>>,
     gui: Arc<Mutex<File>>,
     dir: Arc<Mutex<PathBuf>>,
@@ -165,7 +166,7 @@ impl App {
         let dir = Arc::new(Mutex::new(dir));
         self.conns.lock().insert(
             id.clone(),
-            Conn { stdin: child.stdin.take(), wire: wire.clone(), gui: gui.clone(), dir: dir.clone() },
+            Conn { stdin: Arc::new(Mutex::new(child.stdin.take())), wire: wire.clone(), gui: gui.clone(), dir: dir.clone() },
         );
 
         let err_tail = Arc::new(Mutex::new(None::<String>));
@@ -185,12 +186,18 @@ impl App {
         let rename = sub == "new";
         std::thread::spawn(move || {
             let mut renamed = !rename;
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
+            let mut reader = BufReader::new(stdout);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                let line = String::from_utf8_lossy(&buf).trim_end_matches(['\n', '\r']).to_string();
                 wire.lock().write("recv", &line);
                 if !renamed {
-                    renamed = true;
-                    rename_new_dir(&line, &dir, &wire);
+                    renamed = rename_new_dir(&line, &dir, &wire);
                 }
                 sink(Out::Line { conn: conn.clone(), line });
             }
@@ -207,30 +214,35 @@ impl App {
 
     /// One command line to ccrpc (newlines would split it: replaced by spaces).
     pub fn send(&self, conn: &str, line: &str) -> R<()> {
-        let mut conns = self.conns.lock();
-        let c = conns.get_mut(conn).ok_or("ccrpc 已退出")?;
+        let (stdin, wire) = {
+            let conns = self.conns.lock();
+            let c = conns.get(conn).ok_or("ccrpc 已退出")?;
+            (c.stdin.clone(), c.wire.clone())
+        };
         let one = line.replace(['\n', '\r'], " ");
-        let stdin = c.stdin.as_mut().ok_or("已断开")?;
-        stdin
-            .write_all(format!("{one}\n").as_bytes())
-            .and_then(|_| stdin.flush())
-            .map_err(|e| format!("写不进 ccrpc：{e}"))?;
-        c.wire.lock().write("send", &one);
-        Ok(())
+        let mut stdin = stdin.lock();
+        let w = stdin.as_mut().ok_or("已断开")?;
+        // Logged before it is written, so the response never precedes its command in the wire.
+        wire.lock().write("send", &one);
+        w.write_all(format!("{one}\n").as_bytes())
+            .and_then(|_| w.flush())
+            .map_err(|e| format!("写不进 ccrpc：{e}"))
     }
 
     /// Closes ccrpc's stdin: it detaches and exits; the Session keeps running.
     pub fn disconnect(&self, conn: &str) {
-        if let Some(c) = self.conns.lock().get_mut(conn) {
-            logs::line(&mut c.gui.lock(), "disconnect");
-            c.stdin.take();
-        }
+        let Some((stdin, gui)) = self.conns.lock().get(conn).map(|c| (c.stdin.clone(), c.gui.clone())) else {
+            return;
+        };
+        logs::line(&mut gui.lock(), "disconnect");
+        stdin.lock().take();
     }
 
     /// Closes every connection (the app is quitting).
     pub fn disconnect_all(&self) {
-        for c in self.conns.lock().values_mut() {
-            c.stdin.take();
+        let all: Vec<_> = self.conns.lock().values().map(|c| c.stdin.clone()).collect();
+        for s in all {
+            s.lock().take();
         }
     }
 
@@ -264,15 +276,17 @@ impl App {
     }
 }
 
-/// A new Session's directory is named after its Holder ID once `ready` gives it.
-fn rename_new_dir(first: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(first) else { return };
-    let Some(h) = v["holder_id"].as_str().filter(|_| v["type"] == "ready") else { return };
+/// A new Session's directory is named after its Holder ID once `ready` gives it. True once that
+/// is settled (renamed, or it could not be).
+fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return false };
+    let Some(h) = v["holder_id"].as_str().filter(|_| v["type"] == "ready") else { return false };
     let mut d = dir.lock();
-    let Some(name) = d.file_name().and_then(|n| n.to_str()) else { return };
+    let Some(name) = d.file_name().and_then(|n| n.to_str()) else { return true };
     let to = d.with_file_name(name.replacen("new", h, 1));
-    if std::fs::rename(&*d, &to).is_ok() {
+    if !to.exists() && std::fs::rename(&*d, &to).is_ok() {
         wire.lock().moved(&to);
         *d = to;
     }
+    true
 }

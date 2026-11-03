@@ -185,15 +185,15 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       };
     }
     case "block": {
+      // The tool ran (main line or a background Subagent's): its request is over.
+      if (m.kind === "tool_result" && s.requests.some((r) => r.request_id === m.tool_use_id))
+        s = { ...s, requests: s.requests.filter((r) => r.request_id !== m.tool_use_id) };
       if (isSub(m)) return addSub(s, [m]);
       const key = blockKey(m);
       if (s.seen.has(key)) return s;
       const seen = new Set(s.seen);
       seen.add(key);
-      let next: ConnState = { ...s, seen, items: [...s.items, { kind: "block", key, block: m }] };
-      // The tool ran: its request is over.
-      if (m.kind === "tool_result") next = { ...next, requests: next.requests.filter((r) => r.request_id !== m.tool_use_id) };
-      return next;
+      return { ...s, seen, items: [...s.items, { kind: "block", key, block: m }] };
     }
     case "branch": {
       if (m.at_uuid == null) return { ...s, items: [], seen: new Set() };
@@ -205,7 +205,8 @@ export function apply(s: ConnState, m: InMsg): ConnState {
           break;
         }
       }
-      if (cut < 0) return s;
+      // Before what is loaded (an older page, or the first page still coming): start over and reload.
+      if (cut < 0) return { ...s, items: [], seen: new Set(), first: null, more: false, loaded: false };
       const items = s.items.slice(0, cut + 1);
       return { ...s, items, seen: new Set(items.filter((i) => i.kind === "block").map((i) => i.key)) };
     }
@@ -226,7 +227,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "workflow":
       return { ...s, workflows: { ...s.workflows, [m.run_id]: m } };
     case "follow_up_failed":
-      return notice(s, `排队的消息没发出去：${m.error}`);
+      return notice(s, `排队的消息没发出去：${m.error.message}`);
     case "layout_learned":
       return notice(s, `已学会新界面：${m.title}`);
     case "analysis_failed":

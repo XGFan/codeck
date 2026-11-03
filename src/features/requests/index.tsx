@@ -2,6 +2,7 @@ import { Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { diffStrings } from "@/lib/diff";
+import { isComposingKey } from "@/lib/hotkeys";
 import { cn } from "@/lib/cn";
 import type { ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "@/protocol";
 import type { ConnState, Request } from "@/state/conn";
@@ -98,14 +99,21 @@ function useAnswer(c: ConnState) {
     setError(null);
     const r = await command(c.conn, msg);
     setBusy(false);
-    if (!r.success) {
+    if (r.success) {
+      // Answered: off screen now, so the next card gets the keys (ccrpc ends it on the tool's result).
+      const id = msg.request_id;
+      useStore.setState((s) => {
+        const x = s.conns[c.conn];
+        return x ? { conns: { ...s.conns, [c.conn]: { ...x, requests: x.requests.filter((q) => q.request_id !== id) } } } : {};
+      });
+    } else {
       setError(r.error?.code === "not_offered" ? "这次审批没有“总是允许”选项" : `作答失败：${r.error?.message ?? r.error?.code ?? ""}`);
     }
   };
   return { busy, error, send };
 }
 
-/** Number keys 1–9 pick the n-th button while the card is the first one and focus is not in a text field. */
+/** Number keys 1–9 pick the n-th button while the card is the first one and focus is not in an editable field. */
 function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
   const ref = useRef(actions);
   ref.current = actions;
@@ -113,8 +121,8 @@ function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
     if (!enabled) return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT") && (el as HTMLTextAreaElement).value) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.isContentEditable)) return;
+      if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       const n = Number(e.key);
       if (n >= 1 && n <= ref.current.length) {
         e.preventDefault();

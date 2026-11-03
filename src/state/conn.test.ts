@@ -32,6 +32,14 @@ describe("conn reducer", () => {
     expect(uuids(apply(s, { type: "branch", at_uuid: null }))).toEqual([]);
   });
 
+  it("starts over (to reload) on a branch before the loaded blocks", () => {
+    const s = applyPage(fold([]), { blocks: [text("x"), text("y")], cursor: 5, first: 3, more: true }, false);
+    const b = apply(s, { type: "branch", at_uuid: "older-than-the-page" });
+    expect(b.items).toEqual([]);
+    expect(b.loaded).toBe(false);
+    expect(b.first).toBeNull();
+  });
+
   it("puts the first page before live blocks that arrived meanwhile, without duplicates", () => {
     const live = fold([text("c"), text("d")]);
     const s = applyPage(live, { blocks: [text("a"), text("b"), text("c")], cursor: 9, first: 3, more: true }, false);
@@ -61,8 +69,20 @@ describe("conn reducer", () => {
     expect(s.requests.map((r) => r.request_id)).toEqual(["t1", "t2"]);
     s = apply(s, { type: "state", state: "busy" });
     expect(s.requests.map((r) => r.request_id)).toEqual(["t2"]);
-    s = apply(s, { type: "block", kind: "tool_result", uuid: "r", index: 0, tool_use_id: "t2", content: "", is_error: false });
+    // The Subagent's own tool result (it carries agent_id) ends it.
+    s = apply(s, {
+      type: "block",
+      kind: "tool_result",
+      uuid: "r",
+      index: 0,
+      tool_use_id: "t2",
+      content: "",
+      is_error: false,
+      agent_id: "agent-1",
+      parent_tool_use_id: "toolu_A",
+    });
     expect(s.requests).toEqual([]);
+    expect(s.sub.toolu_A).toHaveLength(1);
   });
 
   it("re-announcing a request replaces it; a new screen card replaces the previous one", () => {

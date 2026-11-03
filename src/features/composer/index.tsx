@@ -45,6 +45,8 @@ export function Composer({ c }: { c: ConnState }) {
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || isComposingKey(e) || !live) return;
+      // Esc in a card's text field (feedback, "other") only leaves the field.
+      if ((e.target as HTMLElement | null)?.tagName === "INPUT") return;
       if (state !== "busy" && state !== "waiting") return;
       if (document.querySelector("[data-radix-popper-content-wrapper], [role=dialog]")) return;
       e.preventDefault();
@@ -72,25 +74,23 @@ export function Composer({ c }: { c: ConnState }) {
     setSending(false);
     if (!r.success) return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
     if (msg.type === "follow_up") void refreshQueue();
-    setText("");
+    // Keep what was typed while it was being sent.
+    setText((t) => (t.trim() === body ? "" : t));
     images.forEach((i) => URL.revokeObjectURL(i.url));
     setImages([]);
   };
 
+  const setQueue = (f: string[]) =>
+    useStore.setState((s) => (s.conns[c.conn] ? { conns: { ...s.conns, [c.conn]: { ...s.conns[c.conn], followUps: f } } } : {}));
+
   const refreshQueue = async () => {
     const r = await command(c.conn, { type: "get_state" });
-    if (r.success && Array.isArray(r.data?.follow_ups)) {
-      const f = r.data.follow_ups as string[];
-      useStore.setState((s) => ({ conns: { ...s.conns, [c.conn]: { ...s.conns[c.conn], followUps: f } } }));
-    }
+    if (r.success && Array.isArray(r.data?.follow_ups)) setQueue(r.data.follow_ups as string[]);
   };
 
   const cancel = async (index: number) => {
     const r = await command(c.conn, { type: "cancel_follow_up", index });
-    if (r.success && Array.isArray(r.data?.follow_ups)) {
-      const f = r.data.follow_ups as string[];
-      useStore.setState((s) => ({ conns: { ...s.conns, [c.conn]: { ...s.conns[c.conn], followUps: f } } }));
-    }
+    if (r.success && Array.isArray(r.data?.follow_ups)) setQueue(r.data.follow_ups as string[]);
   };
 
   const onPaste = async (e: React.ClipboardEvent) => {
