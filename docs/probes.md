@@ -125,3 +125,13 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - hook 进程的父进程就是 claude 进程（进程文件名里的 pid）。
 - hook 输入都带 `session_id`、`transcript_path`、`cwd`；除 SessionStart 外还有 `prompt_id`、`permission_mode`（`default` / `plan` / `acceptEdits`）。
 - `/clear`：回车后约 40ms SessionEnd（`reason: "clear"`），随即 SessionStart（`source: "clear"`，带新的 `session_id` 与 `transcript_path`）；进程文件的 `sessionId` 在回车后约 90ms 已换新，与上面 2.1.316 记的约 1.3s 不同。
+
+### 补测（实现前）
+
+- **超时**：PermissionRequest hook 设 `timeout: 700`，阻塞到 663s 仍在，723s 前被 SIGTERM（超过缺省 600s 的值生效）；超时后审批框仍在、进程文件仍 `waiting`，人照常可答。
+- **插话（steer）**：忙时输入在入队时触发 UserPromptSubmit，`prompt` 为插话正文，`prompt_id` **与当前一轮相同**；本轮只有一个 Stop。transcript 的用户条目带 `promptId`。
+- **斜杠命令与 `!` 命令**：`/status`、`/model …` 不触发任何 hook（`/model` 弹出 `Switch model?` 确认框）；`!echo bang` 不触发 UserPromptSubmit，但触发一次 Stop（新的 `prompt_id`，`last_assistant_message` 为空），transcript 里是同一 `promptId` 的 `<bash-input>` / `<bash-stdout>`。
+- **“总是允许”**：Bash `touch` 的审批框第 2 项是 `Yes, and always allow access to <cwd> from this project`；`permission_suggestions` 为 `addDirectories`（`destination: "session"`）与 `setMode acceptEdits`。在 TUI 选第 2 项不写任何 settings 文件、不切模式（仍 manual），下一次同样的 `touch` 仍要审批。
+- **deny 加 `interrupt: true`**：与在审批框选 No 相同——显示 `Interrupted · What should Claude do instead?`，回 idle，不触发 Stop。
+- **Workflow**：`Run a dynamic workflow?` 审批同样触发 PermissionRequest（`tool_input` 只有 `script`，没有 `permission_suggestions`），审批框与 hook 同时出现；hook 回 `allow` 生效。
+- **审批框刚出现时丢掉按键**：后台 Subagent 的审批框（标题 `Bash command · from the general-purpose agent`，提示行多 `ctrl+x ctrl+k twice to stop background agents`）一出现就按 `1` 不生效，审批框原样还在；隔 200ms 以上再按就生效（主线仍在流式输出也一样）。→ 按键作答前等审批框出现满 500ms，按后 2 秒内没离开且仍是同一请求就再按一次。

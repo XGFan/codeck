@@ -928,16 +928,24 @@
     "response_data": {
       "prompt": {
         "title": "prompt",
-        "description": "提示词对应的用户消息 uuid。",
+        "description": "提示词对应的用户消息 uuid 与插件给的 prompt id。",
         "type": "object",
         "properties": {
           "uuid": {
             "type": "string",
             "description": "transcript 里该用户消息的 uuid。"
+          },
+          "prompt_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "插件看到的提交（与该轮 turn_end 的 prompt_id 相同）；没看到为 null。"
           }
         },
         "required": [
-          "uuid"
+          "uuid",
+          "prompt_id"
         ]
       },
       "steer": {
@@ -995,7 +1003,7 @@
           },
           "message_uuid": {
             "type": "string",
-            "description": "有 message 时，其作为 prompt 发出的用户消息 uuid。"
+            "description": "按屏幕按键拒绝（后台 Subagent 等）且有 message 时，message 作为 prompt 发出的用户消息 uuid；经插件作答时没有。"
           }
         },
         "required": [
@@ -1080,6 +1088,13 @@
                   },
                   "input": {
                     "description": "工具输入。"
+                  },
+                  "agent_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "后台 Subagent 的请求时为它的 agent id。"
                   }
                 },
                 "required": [
@@ -1681,7 +1696,7 @@
             "$ref": "#/$defs/waiting"
           },
           "protocol": {
-            "const": 1,
+            "const": 2,
             "description": "协议版本。"
           },
           "holder_id": {
@@ -1854,12 +1869,26 @@
           "type": {
             "const": "turn_end"
           },
+          "prompt_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "插件给的提示词 id；连接时已在进行的一轮为 null。"
+          },
+          "trigger": {
+            "enum": [
+              "prompt",
+              "task_notification"
+            ],
+            "description": "prompt：提示词；task_notification：后台任务的结果通知。"
+          },
           "last_text": {
             "type": [
               "string",
               "null"
             ],
-            "description": "本轮最后一段主线 assistant 文字。"
+            "description": "Stop 的 last_assistant_message；StopFailure、中止为 null。"
           },
           "error": {
             "description": "API 报错，没有为 null。",
@@ -1909,13 +1938,23 @@
               "null"
             ],
             "description": "按价格表估算的美元，有模型没有价格时为 null。"
+          },
+          "background_tasks": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Stop 时仍在运行的后台任务（Claude Code 原样：id、type、status、description 等）。"
           }
         },
         "required": [
           "type",
+          "prompt_id",
+          "trigger",
           "last_text",
           "error",
           "aborted",
+          "background_tasks",
           "duration_ms",
           "usage",
           "api_cost"
@@ -1945,25 +1984,15 @@
               "string",
               "null"
             ],
-            "description": "来自 Subagent Run 时的 agent id。"
-          },
-          "layout": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "由布局库认出时的布局 id，内置识别器认出时为 null。"
-          },
-          "learned": {
-            "type": "boolean",
-            "description": "该布局是否为分析器学到的。"
+            "description": "后台 Subagent 的请求时为它的 agent id（这类请求按屏幕作答）。"
           }
         },
         "required": [
           "type",
           "request_id",
           "tool_name",
-          "input"
+          "input",
+          "agent_id"
         ]
       },
       "question": {

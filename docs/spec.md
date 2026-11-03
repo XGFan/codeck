@@ -1,22 +1,26 @@
 # ccrpc 规格
 
-术语见 [CONTEXT.md](../CONTEXT.md)；下面引用的 Claude Code 行为都是实测结论，证据在 [probes.md](./probes.md)（Claude Code 2.1.316）。
+术语见 [CONTEXT.md](../CONTEXT.md)；下面引用的 Claude Code 行为都是实测结论，证据在 [probes.md](./probes.md)（Claude Code 2.1.316；hooks 与插件为 2.1.317）。
 
 ## 1. 目标与边界
 
 - 调用方只在 Host 本机；ccrpc 只服务本机 clay 里的 Session：`ccrpc new` 自己启动的，以及人手动在 clay Pane 里启动的。
-- **对 Claude Code 透明**：不加 hooks、MCP、channel、启动参数，不用 `-p`。写只经 Holder 的 PTY；读只用 transcript、进程文件、屏幕。
-- **对数据只读**：Claude Code 配置目录与 ToH 状态目录下的文件只用 `File::open` 读。
+- **必须装 ccrpc 插件**（[ADR-0003](./adr/0003-require-ccrpc-plugin.md)）：插件只含 hooks（不含 skills、agents、命令、MCP，不占上下文），只在 clay Pane 里生效（看 `TOH_HOLDER_ID`），hook 只在 PermissionRequest 时输出 ccrpc 给的决定，其余一律不写 stdout。没有插件的 Session 不能成为受控 Session。不加 MCP、channel，不用 `-p`。
+- **不改变 Claude Code 的表现**：人在 TUI 上看到的界面与能做的操作与没有插件时一样；只有阻塞时界面照常显示的 hook 才会扣住等 ccrpc（见 5.3）。
+- 写只经 Holder 的 PTY 与插件的 PermissionRequest 回复；读用 transcript、进程文件、屏幕与插件报来的 hook 事件。
+- **对数据只读**：Claude Code 配置目录与 ToH 状态目录下的文件只用 `File::open` 读。`ccrpc plugin install` 经 `claude plugin` 命令安装插件，由 Claude Code 自己写配置。ccrpc 自己的状态目录（报到、hook socket）为 `CCRPC_STATE_DIR` > `$XDG_STATE_HOME/ccrpc` > `~/.local/state/ccrpc`。
 - **不与人共用 Session**（[ADR-0001](./adr/0001-own-pty-size-and-yield-on-takeover.md)）：连接 Holder socket 时以 `client: "ccrpc"` 附着并订阅尺寸所有者通知，随后发 Resize 成为尺寸所有者。有人在用的 Session 不连，连着时被人接手就只读（见 2、5 节）。
-- 不处理：同一 Session 连多个 ccrpc、远程调用、token 级流式。
+- 不处理：同一 Session 连多个 ccrpc（第二个 `attach` 报 `已有 ccrpc 连着这个 Session`）、远程调用、token 级流式。
 
 ## 2. 命令行
 
 ```
 ccrpc new [--cwd DIR] [--size COLSxROWS] [-- claude 参数…]   # 经 toh new 在 clay 里启动 claude，然后进入 RPC 循环
 ccrpc attach [--force] [--size COLSxROWS] <Holder ID | sessionId>   # 接入已在运行的 Session，进入 RPC 循环
-ccrpc ls                                    # 本机 clay 里运行中的 Claude Code：Holder ID、sessionId、status、cwd（制表符分隔）
-ccrpc doctor                                # 检查 toh、claude 版本、目录、TUI、布局库、分析器（每行 ok / warn / fail）
+ccrpc ls                                    # 本机 clay 里运行中的 Claude Code：Holder ID、sessionId、status、cwd、plugin（已报到）或 -（制表符分隔）
+ccrpc doctor                                # 检查 toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器（每行 ok / warn / fail）
+ccrpc plugin install | uninstall            # 生成并安装 / 卸载 ccrpc 插件（用户级，已在运行的 claude 要重启才加载）
+ccrpc plugin generate <目录>                 # 只生成插件（marketplace 在 <目录>，插件在 <目录>/ccrpc，供 claude --plugin-dir）
 ccrpc layouts list                          # 布局库里的布局（id、builtin / learned、kind、title）
 ccrpc layouts export <仓库目录>              # 把本机学到的布局写进仓库的 layouts/，重新构建后成为内置布局
 ccrpc debug replay <transcript.jsonl>…      # 逐行回放 transcript：实时视图须与 get_messages 一致，打印每个 Branch
@@ -27,15 +31,19 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - PTY 尺寸：连上后 ccrpc 把 PTY 设为 `--size`（缺省 160×48）。尺寸归最后操作者，ToH 的 Client 只在把 Pane 切到前台或按键时才抢尺寸，所以尺寸所有者就是“谁在用”。
 - 有人在用：`attach` 时尺寸所有者是另一个在线的 Client，就报错退出（`Session 正被 <client> 使用，加 --force 强制连接`）；`--force` 跳过。`new` 自己启动的 Pane 不检查。Holder 不报告尺寸所有者（旧版本）时放行，并在 stderr 提示。
 - `debug` 子命令只看、只写，不改 PTY 尺寸。
+- 插件：`new` 在插件未启用（用户 settings 的 `enabledPlugins` 里没有 `ccrpc@ccrpc`）且 claude 参数里没有 `--plugin-dir` 时报错；claude 的进程文件出现 5 秒仍没有报到也报错退出。`attach` 要求该 claude 已报到（见 3 节），否则报错并提示重启 claude。
+- `ccrpc plugin install`：在 `$XDG_DATA_HOME/ccrpc/plugin`（缺省 `~/.local/share/ccrpc/plugin`）生成本地 marketplace `ccrpc` 与插件 `ccrpc`（hooks 调用当前 ccrpc 可执行文件的绝对路径），再经 `claude plugin marketplace add|update`、`claude plugin install|update` 装成用户级插件。换了 ccrpc 的位置要重新 install。
 - 目录：ToH 状态目录按 `--toh-state-dir` > `TOH_STATE_DIR` > `~/.local/state/toh`；Claude Code 配置目录按 `--claude-config-dir` > `CLAUDE_CONFIG_DIR` > `~/.claude`（两个选项写在子命令之前）。配置目录不是缺省值时，`new` 以 `env CLAUDE_CONFIG_DIR=… claude` 启动（`toh new` 只把少数变量带进 Pane）。`toh` 需在 PATH 里。claude 运行 20 秒仍没有进程文件时，在 stderr 提示可能是配置目录不对。
 
 ## 3. 定位
 
-Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ 它子孙进程里名为 `claude` 的进程 → `<cc>/sessions/<pid>.json`（`sessionId`、`cwd`）→ transcript `<cc>/projects/<cwd 中非字母数字换成 ->/<sessionId>.jsonl`（找不到时在 `projects/*/` 下按文件名找）。Subagent Run 的 transcript 是 `<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 关联到主线的 Agent 工具调用。Pane shell 的 tty（只读打开后 `TIOCGWINSZ`）给出连接时的 PTY 尺寸，也用于被接手后跟随尺寸、在旧 Holder 上判断接手。
+Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ 它子孙进程里名为 `claude` 的进程 → `<cc>/sessions/<pid>.json`（`status`、`cwd`）与插件的报到 `<ccrpc 状态目录>/sessions/<pid>.json`（`session_id`、`transcript_path`）。Subagent Run 的 transcript 是 `<sessionId>/subagents/agent-<id>.jsonl`，同名 `.meta.json` 的 `toolUseId` 关联到主线的 Agent 工具调用。Pane shell 的 tty（只读打开后 `TIOCGWINSZ`）给出连接时的 PTY 尺寸，也用于被接手后跟随尺寸、在旧 Holder 上判断接手。
 
 - `attach <sessionId>`：在进程文件里找到 pid，再沿父进程链找到 `child_pid` 是其祖先的 Holder；不在 Holder 里的 Session 报错，不可控。
-- **sessionId 会变**：`/clear` 后约 1.3s 进程文件的 `sessionId` 换新，ccrpc 切到新 transcript 并发 `session_changed`。
-- 连接时（`ready` 之前）以及切换 Session 时，第一次查找就已存在的 transcript 当作历史读到文件末尾：不发 `block`，但记下挂起的工具调用和已出现的提示词（用于确认命令）。之后才出现的 transcript（新 Session 的第一条提示词、`/clear` 之后）按实时读。
+- **报到**：插件的 SessionStart hook（`startup`、`resume`、`clear`、`compact`、`fork`）把 claude pid、`session_id`、`transcript_path`、hook 协议版本写进报到（ccrpc 自己的目录，0600）。`attach` 要求报到存在、hook 协议一致、`session_id` 与进程文件一致；只经 `/reload-plugins` 加载的插件不会报到。
+- **hook 通道**：ccrpc 找到 claude 后监听 `<ccrpc 状态目录>/s/<claude pid>.sock`（先监听再读报到）；hook 按父进程（claude）pid 连接，连不上就无输出退出。
+- **sessionId 会变**：`/clear`、`/resume` 等触发 SessionStart，ccrpc 按它给的 `session_id` 与 `transcript_path` 切到新 transcript 并发 `session_changed`。
+- 连接时（`ready` 之前）以及切换 Session 时，已存在的 transcript 当作历史读到文件末尾：不发 `block`，但记下挂起的工具调用和已出现的提示词（用于确认命令）。之后才出现的 transcript（新 Session 的第一条提示词、`/clear` 之后）按实时读。
 
 ## 4. 状态
 
@@ -43,12 +51,12 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 |---|---|
 | `starting` | 还没有进程文件：claude 未启动，或停在 onboarding / 目录信任等启动界面（这些界面期间没有进程文件） |
 | `idle` / `busy` | 进程文件 `status` |
-| `waiting` | `status = waiting`。子类：`waitingFor = "permission prompt"` → `permission`；`"input needed"` 且有挂起的 AskUserQuestion → `question`（tool_use 比状态晚约 120ms 落盘，最多等 1.5s 再判为 `dialog`）；其余 → `dialog` |
+| `waiting` | `status = waiting`。子类：`waitingFor = "permission prompt"` → `permission`；`"input needed"` 且插件报来了 AskUserQuestion 的 PermissionRequest → `question`（500ms 内没有则判为 `dialog`）；其余 → `dialog` |
 | `exited` | claude 进程消失或 Holder 断开 |
 
 - 由事件驱动：stdin 的新行、Holder 的帧（屏幕输出、尺寸所有者）、进程文件与 transcript 目录的文件变化都会立即触发一次检查；没有事件时每 250ms 兜底检查一次，命令等待期间每 50ms 一次。
 - Subagent Run 的文件长度没变就不读；60 秒没有变化的改为每 5 秒查一次长度。
-- **一轮**从 transcript 出现用户提示词、或状态变为 `busy` 开始。**`turn_end`**：状态为 `idle` 时读到 `system`/`turn_duration`（idle 比本轮最后内容早约 100ms；后台 Subagent 会让主线在 busy 期间先写一条 `turn_duration`，那条不算）；进入 idle 后 2s 仍没读到也发。下一轮在此之前就开始时，先补发上一轮的 `turn_end`。从 idle 打开又关掉的对话框不算一轮；一轮开了却既没 busy 也没结束标记（立即报错、在 busy 出现前中止）时，空闲 5 秒后结束。中止说明 `[Request interrupted by user…]` 与 `!` 命令的记录不算提示词。
+- **一轮**（见术语表）以插件为准：从 UserPromptSubmit 开始，到同一 `prompt_id` 的 Stop（完成）或 StopFailure（API 报错）结束；收到后等 transcript 写出本轮的 `turn_duration`（最多 2s）再发 `turn_end`，用量与用时才完整。中止（Esc、不带 message 的拒绝）不触发 Stop：一轮开着而状态回到 `idle` 1.5s 仍没有 Stop，按中止结束（`aborted: true`）。忙时插话的 UserPromptSubmit 带当前一轮的 `prompt_id`，不另开一轮；后台任务的结果通知是另一条提示词（`<task-notification>`），自成一轮（`trigger: "task_notification"`）；`!` 命令只有 Stop、没有 UserPromptSubmit，不算一轮。连接时已在进行的一轮由它的下一个 Stop 结束（`prompt_id` 为 null）。
 
 ## 5. 协议
 
@@ -57,7 +65,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 命令：`{"id":"7","type":"prompt","text":"…"}`，`id` 可选，字符串或数字。
 - 响应：`{"type":"response","id":"7","command":"prompt","success":true,"data":{…}}`；失败为 `"success":false,"error":{"code":"…","message":"…"}`。
 - 事件：`{"type":"<事件名>",…}`，没有 `id`。
-- 连接后先发 `ready`：`protocol`（1）、`holder_id`、`session_id`、`cwd`、`claude_version`、`state`（及 `waiting`）、`size`（`[列, 行]`）、`taken_over`、`warnings`（Claude Code 不是实测过的版本、Holder 不报尺寸所有者时各一句）。连接前就有的 Workflow Run 在 `ready` 之后各发一次当前状态。
+- 连接后先发 `ready`：`protocol`（2）、`holder_id`、`session_id`、`cwd`、`claude_version`、`state`（及 `waiting`）、`size`（`[列, 行]`）、`taken_over`、`warnings`（Claude Code 不是实测过的版本、Holder 不报尺寸所有者时各一句）。连接前就有的 Workflow Run 在 `ready` 之后各发一次当前状态。
 - **被接手**：连着时尺寸所有者变成另一个 Client（旧 Holder 则是 PTY 尺寸变了），发 `taken_over`，清空 `follow_up` 队列；此后只有 `get_state`、`get_messages`、`get_screen`、`get_tool_result`、`get_tasks`、`cancel_follow_up`、`reclaim` 可用，其余命令返回 `taken_over`（命令执行中途被接手也在下一次写入前停下）。接手的人离开后用 `reclaim` 取回，或重新 `attach`。
 - **命令按到达顺序逐条执行**；需要等待的命令（如 `prompt` 等 transcript 确认）执行期间事件照常发出，但下一条命令要等它返回。
 
@@ -65,16 +73,16 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 | 命令 | 可用状态 | 做法 | 成功时 `data` |
 |---|---|---|---|
-| `prompt {text, images?}` | idle 且上一轮已结束（上一轮只差结束标记时最多等 6s） | 先清空输入框（中止后被放回的提示词），bracketed paste 写正文，再发 `\r`（写入与回车前都确认屏幕上是输入框而不是对话框）；等 transcript 出现这条用户消息（≤30s）。以 `/` 或 `!` 开头的正文会被 Claude Code 当作斜杠命令或 shell 命令 ；`images` 为 Host 上的图片文件路径，正文之前逐个以 bracketed paste 写入路径、确认输入框出现 `[Image #n]` | `uuid` |
+| `prompt {text, images?}` | idle 且上一轮已结束（上一轮只差结束时最多等 6s） | 先清空输入框（中止后被放回的提示词），bracketed paste 写正文，再发 `\r`（写入与回车前都确认屏幕上是输入框而不是对话框）；等 transcript 出现这条用户消息（≤30s）。以 `/` 或 `!` 开头的正文会被 Claude Code 当作斜杠命令或 shell 命令 ；`images` 为 Host 上的图片文件路径，正文之前逐个以 bracketed paste 写入路径、确认输入框出现 `[Image #n]` | `uuid`、`prompt_id`（插件看到的提交，没看到为 null） |
 | `steer {text}` | busy | 先清空输入框再同样写入；忙时输入会排队，在当前工具调用结束后送达（transcript `queue-operation`/`enqueue`，随后作为 `queued_command` 附件交给模型）。等 enqueue（≤10s） | `delivered_as`：`queued`；若这时本轮恰好结束、被当作新提示词，则为 `prompt` |
 | `follow_up {text}` | 除 exited | 进 ccrpc 队列；在两条命令之间、`idle` 且上一轮已结束时按 `prompt` 依次发出（不会在别的命令等待期间发出）；失败发 `follow_up_failed` 事件 | `queued`（队列长度） |
 | `abort` | busy / waiting | 发 `Esc`；等状态离开 busy / waiting（≤10s） | `state` |
-| `answer_permission {request_id, decision, message?}` | waiting.permission | 识别审批框，按 `decision`（`allow` / `allow_always` / `deny`）对应选项的数字键；`message` 只能配 `deny`，拒绝后回到 idle 再作为 `prompt` 发出 | `state`；有 `message` 时另有 `message_uuid` |
-| `answer_question {request_id, answers}` | waiting.question | `answers` 与题目一一对应：`{"options":[label…]}` 或 `{"other":"文本"}`；逐题等到屏幕显示该题再作答：单选按数字，多选按需切换勾选后 `→`（只有一题时移到 `Submit` 行回车），Other 按 `Type something` 的数字、输入文字、回车；多题最后在 Review 标签按 `Submit answers` | `state` |
+| `answer_permission {request_id, decision, message?}` | waiting.permission | 请求在插件里等着（主线）：经 hook 回决定——`allow`；`allow_always` 回填 `permission_suggestions` 里除 `setMode` 外的项（没有则 `not_offered`）；`deny` 不带 `message` 时中断本轮（同审批框的 No），带 `message` 时它作为反馈交给模型、本轮继续。请求不在插件里等（后台 Subagent、hook 已超时）：识别审批框按对应选项的数字键，`message` 在拒绝、回到 idle 后作为 `prompt` 发出 | `state`；按键拒绝且有 `message` 时另有 `message_uuid` |
+| `answer_question {request_id, answers}` | waiting.question | 只经插件：`answers` 与题目一一对应，`{"options":[label…]}`（多选以 `, ` 连接）或 `{"other":"文本"}`（单选、多选都可），作为 AskUserQuestion 的 `answers` 回给 hook；提问不在插件里等时返回 `unsupported` | `state` |
 | `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行） | `{}` |
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
-| `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`；挂起的 choice 为它的 `choice` 事件）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over` |
+| `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`、`agent_id`；挂起的 choice 为它的 `choice` 事件）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over` |
 | `get_messages {since?}` | 任意 | 当前 transcript 主文件的内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）；`since` 为上次返回的 `cursor`，只返回之后写入的块。`cursor` 是不透明的数（文件偏移），Main Line 变了也有效 | `blocks`、`cursor` |
 | `get_screen` | 任意 | — | `lines`（每行去尾部空白）、`cursor`（`[行, 列]`，0 起） |
 | `cancel_follow_up {index?}` | 任意 | 撤销 follow_up 队列里第 `index` 条（0 起），不带则全部撤销 | `removed`、`follow_ups`（剩下的） |
@@ -85,7 +93,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `answer_choice {request_id, option}` | waiting（有挂起的 choice） | 另取一次 Snapshot 确认屏幕上仍是该布局，`option` 按选项文字（完全一致，否则唯一前缀）找到编号按下 | `state` |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 
-错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果）、`taken_over`（Session 已被人接手）、`not_taken_over`（`reclaim` 时没被接手）、`not_offered`（审批框没有“总是允许”）、`unsupported`（多选题的 Other）、`unrecognized_screen`、`input_not_empty`、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
+错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果）、`taken_over`（Session 已被人接手）、`not_taken_over`（`reclaim` 时没被接手）、`not_offered`（没有“总是允许”）、`unsupported`（提问不在插件里等）、`unrecognized_screen`、`input_not_empty`、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
 
 ### 5.2 事件
 
@@ -94,8 +102,8 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `ready` | 见上 |
 | `state` | `state`；`waiting` 时另有 `waiting: {kind, waiting_for}` |
 | `block` | `kind`（`user` / `text` / `thinking` / `tool_use` / `tool_result`）、`uuid`、`index`（消息内序号）；`text`；`tool_use` 的 `id`、`name`、`input`；`tool_result` 的 `tool_use_id`、`content`（文本，超过 100KB 截断）、`is_error`，输出太大被存进 `tool-results/` 时 `content` 是 transcript 里的预览（模型看到的也只有它），另有 `persisted: {path, size}`；忙时插话送达的用户内容 `queued: true`；来自 Subagent Run 时另有 `agent_id`、`parent_tool_use_id`，属于 Workflow Run 时另有 `run_id`（`parent_tool_use_id` 为 Workflow 调用的 id） |
-| `turn_end` | `last_text`：本轮最后一段主线 assistant 文字（没有则为 null）；`error`：API 报错 `{kind, message}`（如 `server_error`、`rate_limit`），没有为 null；`aborted`：本轮被中止；`duration_ms`：`turn_duration` 的用时，没有则为 ccrpc 量的；`usage`：`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`（本轮期间读到的主线与 Subagent Run 的 assistant 消息，每个 message id 计一次；连接时已在进行的一轮只算连接之后的部分）；`api_cost`：按 cv-core 价格表估算的美元，有模型没有价格时为 null |
-| `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id`、`layout`（由布局库认出时为布局 id，内置识别器认出时为 null）、`learned`（布局是否为分析器学到的） |
+| `turn_end` | `prompt_id`：插件给的提示词 id（连接时已在进行的一轮为 null）；`trigger`：`prompt` / `task_notification`；`last_text`：Stop 的 `last_assistant_message`（StopFailure、中止为 null）；`error`：API 报错 `{kind, message}`（StopFailure 的 `error`，如 `rate_limit`、`server_error`、`unknown`），没有为 null；`aborted`：本轮被中止；`background_tasks`：Stop 时仍在运行的后台任务（Claude Code 原样：`id`、`type`、`status`、`description` 等），没有为 `[]`；`duration_ms`：`turn_duration` 的用时，没有则为 ccrpc 量的；`usage`：`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`（本轮期间读到的主线与 Subagent Run 的 assistant 消息，每个 message id 计一次；连接时已在进行的一轮只算连接之后的部分）；`api_cost`：按 cv-core 价格表估算的美元，有模型没有价格时为 null |
+| `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id`（后台 Subagent 的请求） |
 | `question` | `request_id`、`questions`（AskUserQuestion 输入原样）、`agent_id` |
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键 |
@@ -111,10 +119,15 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `session_exit` | — |
 
 - 不发 slash 命令的本地记录（`<command-name>` 等）与 `isMeta` 条目。
-- `question` 在进程文件为 `input needed` 且 transcript 里有未完成的 AskUserQuestion 时发。
-- `permission_request` 按**屏幕上的审批框**认定对应的工具调用：在未完成的 tool_use（主线或 Subagent Run，排除 AskUserQuestion、Agent、Task）里，找命令（Bash）、文件名（Edit / Write / Read 等）、URL 或 pattern 出现在审批框正文里的那个；都没有可比对的内容时，只有唯一候选才认。3 秒内认不出就改发 `dialog`（交给 `send_keys`）。
-- 状态变化、或已发出的请求对应的工具有了结果（连续两次审批可能合并成一段 waiting），都会重新认定并再发事件。已结束的请求不再参与匹配；仍有两个以上工具都能对上审批框时不认定（改发 `dialog`）。
-- `answer_permission` 作答前重新确认屏幕上的审批框仍对应该 `request_id`，按键前另取一次 Snapshot 再核对一次。
+- `question` 在进程文件为 `input needed` 且插件报来了 AskUserQuestion 时发。
+- `permission_request` 来自插件的 PermissionRequest（它没有 `tool_use_id`，按紧挨在前的 PreToolUse 的工具名、输入与 agent 配对）。
+- 状态变化、或已发出的请求结束（插件报来它的 PostToolUse / PostToolUseFailure / PermissionDenied，连续两次审批可能合并成一段 waiting），都会重新认定并再发事件；回到 `idle` 时所有请求都结束。
+- 按键作答的请求（后台 Subagent）按**屏幕上的审批框**认定：在这类请求里找命令（Bash）、文件名（Edit / Write / Read 等）、URL 或 pattern 出现在审批框正文里的那个；都没有可比对的内容时，只有唯一候选才认；1 秒内认不出就交给分析器或改发 `dialog`。作答前重新确认屏幕上的审批框仍对应该 `request_id`，按键前另取一次 Snapshot 再核对一次。
+
+### 5.3 插件代答
+
+- 插件的 PermissionRequest 等 ccrpc 一行回复。主线的审批与 AskUserQuestion：审批框与 hook 同时显示，ccrpc 扣住 hook 等调用方作答，回复决定后审批框收起（TUI 多一行 `Allowed / Denied by PermissionRequest hook`）。后台 Subagent 的请求（hook 阻塞期间审批框不显示）、ExitPlanMode（hook 只能拒绝）、被接手后的请求：ccrpc 立即回复“无决定”，界面照常出现，按屏幕作答。
+- 放行：人先在 TUI 里作答（插件报来该工具的结果）、Session 回到 idle、被接手、ccrpc 断开时，ccrpc 放掉还扣着的 hook（无输出），审批框交还给人。PermissionRequest 的 hook 超时为 86400s；超时后审批框仍在，`answer_permission` 改为按键。
 
 ## 6. 写入
 
@@ -126,7 +139,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 ## 7. 屏幕识别
 
 - 布局库（[ADR-0002](./adr/0002-ai-learned-layouts-take-effect-at-once.md)）：内置布局在仓库 `layouts/*.json`，编译时嵌入（`CCRPC_BUILTIN_LAYOUTS=0` 关闭，测试用）；学到的布局在 `CCRPC_LAYOUT_DIR`，缺省 `$XDG_DATA_HOME/ccrpc/layouts`（`~/.local/share/ccrpc/layouts`），每个布局一个文件，含当时的屏幕与 Claude Code 版本。布局 = 问题行（原文）+ 编号选项（编号、文字的稳定开头、含义）。用前做结构检查：屏幕上有该问题行，其后是 strict 编号菜单（编号不超过 9），编号与布局一致、每项文字以布局的文字开头；含义另有不依赖模型的字面检查：`No…` 只能是拒绝，`Yes…` 不能是拒绝（含 `auto mode` / `bypass` 的在审批类里只能是 `other`，在选择里不能是 allow_always），审批类恰好一个拒绝且在最后，其余文字的选项在审批类里只能是 `other`；`Do you want…` / `Run a dynamic workflow?` 不能是 choice；审批类还要对得上一个挂起的工具调用。审批等待中只有挂起的工具是 ExitPlanMode 时才发 choice。学到的布局加载时重算 id、在它自己的屏幕上复核。
-- 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。内置识别器认得的屏幕不送分析；审批等待满 3 秒（给 transcript 写出工具调用的时间）才分析；同一对话框只分析一次，每小时最多 10 次，同时只有一个分析；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
+- 分析器：内置识别与布局库都认不出、且等待超过 250ms 时，把整屏文字、`waitingFor` 与挂起工具（插件报来的请求，没有则为 transcript 里未完成的工具调用）的输入发给模型（`CCRPC_ANALYZER_API_KEY`，`CCRPC_ANALYZER_BASE_URL` 缺省 `https://api.deepseek.com/anthropic`，`CCRPC_ANALYZER_MODEL` 缺省 `deepseek-flash`；没有 key 时关闭）。内置识别器认得的屏幕不送分析；审批等待满 3 秒（给 transcript 写出工具调用的时间）才分析；同一对话框只分析一次，每小时最多 10 次，同时只有一个分析；分析期间不降级为 `dialog`。结果在它自己的屏幕上通过结构检查才存进布局库，立即使用，发 `layout_learned`；否则发 `analysis_failed`，照旧 `dialog`。工具审批归为 `permission_request`，其余编号菜单发 `choice`。
 
 - 屏幕 = 常驻的 `alacritty_terminal` VT：每收到 Holder 的 Snapshot 从头重建，之后的 Output 增量喂入；VT 尺寸跟 PTY 一致（被接手后按 tty 的 `TIOCGWINSZ` 跟随，变了就重新要一次 Snapshot）。
 - 审批框：`Do you want …?` 之后的编号菜单；Workflow 的审批框问 `Run a dynamic workflow?`，菜单在脚本说明之后（说明里可能有编号的阶段，取其后最后一个从 1 开始的编号块），选项为 `Yes, run it` / `View raw script` / `No`。按文字判断含义：`Yes`（Workflow 为 `Yes, run it`）→ allow；`Yes, …` 且含 `always allow` / `don't ask again` / `allow all`、不含 `auto mode` → allow_always；`No` 开头 → deny。必须同时有 allow 与 deny，否则不认。编号随场景变化，绝不按固定编号。
@@ -136,12 +149,11 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 ## 8. 测试
 
 - 单测：`tests/fixtures/` 的屏幕文本与 transcript（M0 录制、脱敏）回放：transcript 尾随、屏幕识别、协议解析。
-- 端到端（`tests/e2e.rs`，`#[ignore]`）：独立 `TOH_STATE_DIR`（`/tmp` 下的短路径，unix socket 路径有约 104 字节上限；clay 启用、`[lan] bind = "127.0.0.1"`、`mdns = false`，模型相关变量经 `[backends.clay] env` 传给 Pane），去掉 `TOH_CONFIG` 与宿主终端变量；独立 `CLAUDE_CONFIG_DIR`（预置跳过 onboarding 与目录信任、`permissions.defaultMode = "default"`）；模型缺省 DeepSeek `deepseek-flash`（`https://api.deepseek.com/anthropic`），key 读 `CCRPC_E2E_API_KEY`。清理只杀记下的 Holder pid。
+- 端到端（`tests/e2e.rs`，`#[ignore]`）：ccrpc 插件为本次构建生成、经 `claude --plugin-dir` 加载（不安装），独立 `CCRPC_STATE_DIR`（`/tmp` 下）；独立 `TOH_STATE_DIR`（`/tmp` 下的短路径，unix socket 路径有约 104 字节上限；clay 启用、`[lan] bind = "127.0.0.1"`、`mdns = false`，模型相关变量经 `[backends.clay] env` 传给 Pane），去掉 `TOH_CONFIG` 与宿主终端变量；独立 `CLAUDE_CONFIG_DIR`（预置跳过 onboarding 与目录信任、`permissions.defaultMode = "default"`）；模型缺省 DeepSeek `deepseek-flash`（`https://api.deepseek.com/anthropic`），key 读 `CCRPC_E2E_API_KEY`。清理只杀记下的 Holder pid。
 
 - 权限模式：输入框下的模式行，`manual mode on` / `accept edits on` / `plan mode on` / `auto mode on`，shift+tab 依次循环。
 - 后台任务面板（`/tasks`）：标题 `Background`，下面的行带 `❯` 光标，提示行 `↑/↓ to select · Enter to view · x to stop · Esc to close`；只有一项时直接是详情（`… details`，提示行同样有 `x to stop`）。
 
 ## 9. 已知限制
 
-- 多选题的 Other（自由文本）未实测，返回 `unsupported`。
 - 屏幕布局按 2.1.316 识别；Claude Code 改了文字或布局时识别器会拒绝（`unrecognized`），需要更新 recognize.rs 与 fixture。

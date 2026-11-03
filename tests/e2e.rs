@@ -8,7 +8,9 @@
 //!
 //! Isolation: a fresh `TOH_STATE_DIR` under /tmp (unix socket paths must stay short) with clay
 //! enabled, loopback-only and mDNS off; a fresh `CLAUDE_CONFIG_DIR` pre-seeded to skip onboarding
-//! and folder trust, in manual permission mode. Cleanup kills only the recorded Holder pid.
+//! and folder trust, in manual permission mode; a fresh `CCRPC_STATE_DIR` under /tmp. The ccrpc
+//! Plugin is loaded with `claude --plugin-dir` (generated for this build), never installed.
+//! Cleanup kills only the recorded Holder pid.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -34,6 +36,12 @@ const HOST_TERMINAL_VARS: &[&str] = &[
 
 struct Env {
     _toh: tempfile::TempDir,
+    _state: tempfile::TempDir,
+    _plugin: tempfile::TempDir,
+    /// ccrpc's state directory (check-ins, hook sockets).
+    state_dir: PathBuf,
+    /// The generated ccrpc Plugin (`--plugin-dir`).
+    plugin_dir: PathBuf,
     _cc: tempfile::TempDir,
     _work: tempfile::TempDir,
     _layouts: tempfile::TempDir,
@@ -54,6 +62,14 @@ fn setup(key: &str) -> Env {
         .unwrap();
     let cc = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
+    let state = tempfile::Builder::new()
+        .prefix("ccrpc-st-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let state_dir = state.path().canonicalize().unwrap();
+    let plugin = tempfile::tempdir().unwrap();
+    let plugin_dir =
+        ccrpc::plugin::generate(plugin.path(), Path::new(env!("CARGO_BIN_EXE_ccrpc"))).unwrap();
     let toh_dir = toh.path().canonicalize().unwrap();
     let cc_dir = cc.path().canonicalize().unwrap();
     let work_dir = work.path().canonicalize().unwrap();
@@ -62,6 +78,7 @@ fn setup(key: &str) -> Env {
     let model = std::env::var("CCRPC_E2E_MODEL").unwrap_or_else(|_| "deepseek-flash".into());
     let env_vars = [
         ("CLAUDE_CONFIG_DIR", cc_dir.display().to_string()),
+        ("CCRPC_STATE_DIR", state_dir.display().to_string()),
         ("ANTHROPIC_BASE_URL", base),
         ("ANTHROPIC_AUTH_TOKEN", key.to_string()),
         ("ANTHROPIC_MODEL", model.clone()),
@@ -106,6 +123,10 @@ fn setup(key: &str) -> Env {
     let layout_dir = layouts.path().to_path_buf();
     Env {
         _toh: toh,
+        _state: state,
+        _plugin: plugin,
+        state_dir,
+        plugin_dir,
         _cc: cc,
         _work: work,
         _layouts: layouts,
@@ -155,6 +176,7 @@ fn ccrpc_cmd(env: &Env) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ccrpc"));
     cmd.env("TOH_STATE_DIR", &env.toh_dir)
         .env("CLAUDE_CONFIG_DIR", &env.cc_dir)
+        .env("CCRPC_STATE_DIR", &env.state_dir)
         .env("CCRPC_LAYOUT_DIR", &env.layout_dir)
         .env_remove("CCRPC_ANALYZER_API_KEY");
     if env.analyzer {
@@ -184,7 +206,10 @@ fn ccrpc_cmd(env: &Env) -> Command {
 impl Rpc {
     fn start(env: &Env) -> Rpc {
         let mut cmd = ccrpc_cmd(env);
-        cmd.args(["new", "--cwd"]).arg(&env.work);
+        cmd.args(["new", "--cwd"])
+            .arg(&env.work)
+            .args(["--", "--plugin-dir"])
+            .arg(&env.plugin_dir);
         Rpc::spawn(cmd)
     }
 
@@ -315,7 +340,7 @@ fn holder_pid(toh_dir: &Path, holder: &str) -> Option<u32> {
 /// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
 fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["protocol"], 1);
+    assert_eq!(ready["protocol"], 2);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.holder_pid = holder_pid(&env.toh_dir, &holder);
     assert!(rpc.holder_pid.is_some());
@@ -404,7 +429,12 @@ fn controls_a_real_session() {
         json!({"type": "prompt", "text": "Reply with exactly the word PONG and nothing else."}),
     );
     assert!(d["uuid"].is_string());
+    assert!(d["prompt_id"].is_string(), "{d}");
     let te = rpc.event("turn_end", Duration::from_secs(60));
+    // One prompt, one turn: the plugin's prompt id.
+    assert_eq!(te["prompt_id"], d["prompt_id"], "{te}");
+    assert_eq!(te["trigger"], "prompt");
+    assert_eq!(te["background_tasks"], json!([]));
     assert!(
         te["last_text"].as_str().unwrap_or("").contains("PONG"),
         "{te}"
@@ -460,7 +490,8 @@ fn controls_a_real_session() {
         json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "deny",
         "message": "Do not delete anything. Reply with exactly KEPT."}),
     );
-    assert!(d["message_uuid"].is_string());
+    // Through the plugin the message is the model's feedback; the turn goes on.
+    assert!(d.get("message_uuid").is_none(), "{d}");
     rpc.until("KEPT", Duration::from_secs(60), |v| {
         v["type"] == "turn_end" && v["last_text"].as_str().unwrap_or("").contains("KEPT")
     });
@@ -569,8 +600,13 @@ fn controls_a_real_session() {
     let seen = run_turn_allowing(
         &mut rpc,
         "sa1",
-        "Use the Agent tool exactly once (subagent_type general-purpose) with this task: run the shell command `echo SUBAGENT-OK` with Bash and report its output. Then reply with exactly the subagent's report.",
+        "Use the Agent tool exactly once (subagent_type general-purpose) with this task: run the shell command `touch subagent.txt && echo SUBAGENT-OK` with Bash and report its output. Then reply with exactly the subagent's report.",
     );
+    let mut sub_requests: Vec<Value> = seen
+        .iter()
+        .filter(|v| v["type"] == "permission_request" && v["agent_id"].is_string())
+        .cloned()
+        .collect();
     let agent_call = seen
         .iter()
         .find(|v| v["kind"] == "tool_use" && (v["name"] == "Agent" || v["name"] == "Task"))
@@ -586,11 +622,17 @@ fn controls_a_real_session() {
     if !seen.iter().any(|v| {
         v["type"] == "turn_end" && v["last_text"].as_str().unwrap_or("").contains("SUBAGENT-OK")
     }) {
-        rpc.until("subagent report", Duration::from_secs(120), |v| {
+        // The background Subagent's own approval comes after that first turn: answered on the
+        // screen (its hook does not wait), with agent_id.
+        let (te, answered) = until_answering(&mut rpc, "subagent report", |v| {
             v["type"] == "turn_end"
                 && v["last_text"].as_str().unwrap_or("").contains("SUBAGENT-OK")
         });
+        assert_eq!(te["trigger"], "task_notification", "{te}");
+        sub_requests.extend(answered.into_iter().filter(|v| v["agent_id"].is_string()));
     }
+    assert!(!sub_requests.is_empty(), "Subagent 的 touch 没有经 permission_request（带 agent_id）作答");
+    assert!(env.work.join("subagent.txt").exists());
 
     // Workflow Run (when the model has the Workflow tool): workflow snapshots and run_id blocks
     let seen = run_turn_allowing(
@@ -738,6 +780,27 @@ fn controls_a_real_session() {
     }
 }
 
+/// Waits for `pred`, allowing every permission request on the way; returns the match and the
+/// requests answered.
+fn until_answering(rpc: &mut Rpc, what: &str, pred: impl Fn(&Value) -> bool) -> (Value, Vec<Value>) {
+    let mut n = 0;
+    let mut answered = Vec::new();
+    loop {
+        let v = rpc.until(what, Duration::from_secs(180), |v| {
+            pred(v) || v["type"] == "permission_request"
+        });
+        if pred(&v) {
+            return (v, answered);
+        }
+        answered.push(v.clone());
+        n += 1;
+        rpc.call(
+            &format!("ua-{n}"),
+            json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}),
+        );
+    }
+}
+
 /// After a prompt that runs a shell command: returns the request id if a permission prompt comes
 /// first, `None` once the command is running without one.
 fn wait_permission_or_tool(rpc: &mut Rpc) -> Option<Value> {
@@ -784,6 +847,15 @@ fn yields_when_a_person_takes_over() {
         return;
     };
     let env = setup(&key);
+    // Without the plugin there is no Controlled Session.
+    let out = ccrpc_cmd(&env)
+        .args(["new", "--cwd"])
+        .arg(&env.work)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ccrpc 插件未启用"));
     let mut rpc = Rpc::start(&env);
     let ready = start_session(&mut rpc, &env);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
@@ -825,9 +897,23 @@ fn yields_when_a_person_takes_over() {
     let scr = rpc.call("r4", json!({"type": "get_screen"}));
     assert_eq!(scr["lines"].as_array().unwrap().len(), 48);
 
+    // One ccrpc per Session.
+    let out = ccrpc_cmd(&env)
+        .args(["attach", "--force", &holder])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("已有 ccrpc 连着"), "{err}");
+    let st = rpc.call("r5", json!({"type": "get_state"}));
+    assert_eq!(st["taken_over"], false, "the refused ccrpc did not touch the Pane");
+
     // Another ccrpc refuses the Session while a person holds it, unless forced.
+    // (The Pane outlives this ccrpc: the forced one cleans it up.)
+    let holder_pid = rpc.holder_pid.take();
+    drop(rpc);
     let person = person_takes_over(&env, &holder);
-    rpc.event("taken_over", Duration::from_secs(10));
     let out = ccrpc_cmd(&env)
         .args(["attach", &holder])
         .stdin(Stdio::null())
@@ -837,6 +923,7 @@ fn yields_when_a_person_takes_over() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("正被 e2e-person 使用"), "{err}");
     let mut forced = Rpc::attach(&env, &["--force", &holder]);
+    forced.holder_pid = holder_pid;
     let ready = forced.event("ready", Duration::from_secs(20));
     assert_eq!(ready["holder_id"], holder.as_str());
     forced.call("f1", json!({"type": "get_state"}));

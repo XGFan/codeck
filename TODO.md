@@ -8,6 +8,7 @@
 
 ## 兼容升级与协议补全（已落地，后续）
 
+- ccrpc 插件：StopFailure（API 报错结束一轮）、PostToolUseFailure / PermissionDenied 结束请求、hook 已超时后回落按键、`allow_always` 经插件回填，都没有端到端用例；Claude Code 升级后先重跑 probes.md 的 hooks 一节（hook 输入字段、阻塞时界面是否照常显示）
 - 学到的布局只在本机：常见界面学到后用 `ccrpc layouts export .` 导出成内置布局，提交前检查其中的整屏文字
 - 分析器只处理“等待作答的对话框”；输入框、模式行、后台任务面板仍是代码里的识别，Claude Code 改了这些界面要改 recognize.rs
 - `stop_task` 停 Subagent 只按面板上的描述匹配，没有端到端用例（目前只测了后台 shell）
@@ -47,10 +48,10 @@ GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block`
 
 ## 已知限制
 
-- /clear 后约 1.3s 内（新 sessionId 被察觉之前）发出的 prompt，其 block 落在“历史”里不发出（prompt 本身照常成功）
 - 第一次查找 transcript 时偶发的文件系统错误会让已有 transcript 之后按实时读，重放历史 block
-- 同一个审批框期间进程文件若 waiting→busy→waiting 抖动，该请求会降级为 dialog，需用 send_keys 作答
-- 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理，没有端到端用例
+- 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理（插件报来前一个的 PostToolUse 后重新认定），没有端到端用例
+- 同时有几个后台 Subagent 在等审批、且工具输入里都没有可在审批框里比对的内容时，认不出屏幕上是哪个，改发 `dialog`
+- 插件装在用户级：每次工具调用都会起一次 `ccrpc hook` 进程（不在 clay Pane 里立即退出），换了 ccrpc 可执行文件的位置要重新 `ccrpc plugin install`
 - Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block
 - 原样重发的判定只认纯文字提示词：带图片的提示词重发也会报 `branch`；带图片的提示词也不参与 Branch 的分叉判定
 - `get_messages` 每次从头重放主文件，很长的 Session 会慢

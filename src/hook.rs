@@ -47,6 +47,11 @@ pub fn socket_path(state: &Path, claude_pid: u32) -> PathBuf {
     state.join("s").join(format!("{claude_pid}.sock"))
 }
 
+/// Another ccrpc listens on the Session's hook socket.
+pub fn socket_in_use(state: &Path, claude_pid: u32) -> bool {
+    UnixStream::connect(socket_path(state, claude_pid)).is_ok()
+}
+
 /// What the plugin's SessionStart hook records for one Claude Code process.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CheckIn {

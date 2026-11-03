@@ -1,6 +1,6 @@
 # ccrpc
 
-让 Host 本机的脚本用 JSONL 驱动跑在 ToH clay Pane 里的交互式 Claude Code：ccrpc 只经 Holder 写 PTY、只读 transcript / 进程文件 / 屏幕，Claude Code 对此无感知。
+让 Host 本机的脚本用 JSONL 驱动跑在 ToH clay Pane 里的交互式 Claude Code：ccrpc 经 Holder 写 PTY，读 transcript / 进程文件 / 屏幕，并通过只含 hooks 的 ccrpc 插件得知审批、提问与轮次边界、代答审批与提问；插件不占上下文，也不改变 Claude Code 的表现。
 
 ## 前提
 
@@ -8,6 +8,7 @@
 - Rust ≥ 1.91（edition 2024）。
 - PATH 里有 `toh`，并已执行 `toh setup clay`。
 - PATH 里有 `claude`。
+- 装好 ccrpc 插件（见下）。
 
 ## 构建
 
@@ -18,6 +19,14 @@ cargo build --release
 产物是 `target/release/ccrpc`。
 
 ## 快速上手
+
+先装 ccrpc 插件（用户级；之后启动的 claude 生效，已在运行的要重启才加载）：
+
+```sh
+ccrpc plugin install      # 卸载：ccrpc plugin uninstall
+```
+
+插件只含 hooks，只在 clay Pane 里生效：SessionStart 时在 ccrpc 的状态目录（`CCRPC_STATE_DIR`，缺省 `~/.local/state/ccrpc`）报到，其余事件交给连着这个 Session 的 ccrpc，没有 ccrpc 连着时什么也不做。hooks 调用的是安装时那个 ccrpc 可执行文件，换了位置要重新 install。
 
 在自己的项目目录里起一个受控 Session：
 
@@ -33,15 +42,17 @@ ccrpc new --cwd ~/proj
 ccrpc attach <Holder ID | sessionId>
 ```
 
+没有加载插件的 Session（装插件前就在跑的 claude）不能 attach：重启 claude（如 `claude --resume <sessionId>`）后再连。一个 Session 同时只能连一个 ccrpc。
+
 ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxROWS` 可改）；有人正在 ToH 上用这个 Pane（持有 PTY 尺寸）时 `attach` 报错，`--force` 强制连接；连着时有人接手，ccrpc 发 `taken_over` 并转为只读，调用方重新 `attach` 才能再写入。
 
-列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd，制表符分隔）：
+列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔）：
 
 ```sh
 ccrpc ls
 ```
 
-检查依赖与配置（toh、claude 版本、目录、TUI、布局库、分析器），每行 `ok` / `warn` / `fail`：
+检查依赖与配置（toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器），每行 `ok` / `warn` / `fail`：
 
 ```sh
 ccrpc doctor
@@ -54,11 +65,11 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
 
 ```
-< {"type":"ready","protocol":1,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.316","state":"idle","size":[160,48]}
+< {"type":"ready","protocol":2,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.316","state":"idle","size":[160,48]}
 > {"id":"1","type":"prompt","text":"给 src/util.rs 补一个单元测试"}
 < {"type":"state","state":"busy"}
 < {"type":"block","kind":"user","uuid":"2a1f…","index":0,"text":"给 src/util.rs 补一个单元测试"}
-< {"type":"response","id":"1","command":"prompt","success":true,"data":{"uuid":"2a1f…"}}
+< {"type":"response","id":"1","command":"prompt","success":true,"data":{"uuid":"2a1f…","prompt_id":"5d0c…"}}
 < {"type":"block","kind":"text","uuid":"7c03…","index":0,"text":"先看一下这个文件。"}
 < {"type":"block","kind":"tool_use","uuid":"9d4e…","index":0,"id":"toolu_01Read","name":"Read","input":{"file_path":"/Users/me/proj/src/util.rs"}}
 < {"type":"block","kind":"tool_result","uuid":"b512…","index":0,"tool_use_id":"toolu_01Read","content":"1  pub fn add(a: i32, b: i32) -> i32 {…","is_error":false}
@@ -71,7 +82,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 < {"type":"block","kind":"tool_result","uuid":"e019…","index":0,"tool_use_id":"toolu_02Edit","content":"The file … has been updated.","is_error":false}
 < {"type":"block","kind":"text","uuid":"f3b2…","index":0,"text":"已补上单元测试。"}
 < {"type":"state","state":"idle"}
-< {"type":"turn_end","last_text":"已补上单元测试。"}
+< {"type":"turn_end","prompt_id":"5d0c…","trigger":"prompt","last_text":"已补上单元测试。","error":null,"aborted":false,"background_tasks":[],"duration_ms":8120,"usage":{…},"api_cost":0.012}
 ```
 
 `prompt` 的响应在 transcript 里出现这条用户消息之后才回；命令执行期间事件照常发出，下一条命令等它返回。每个内容块在 transcript 里单独一行，各有自己的 `uuid`。
@@ -88,8 +99,8 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `steer {text}` | `busy` 时写入，在本轮工具调用之间送达 |
 | `follow_up {text}` | 进 ccrpc 队列，变成 `idle` 后依次发出 |
 | `abort` | 发 `Esc`，等状态离开 `busy` / `waiting` |
-| `answer_permission {request_id, decision, message?}` | 按屏幕选项键作答审批，`message` 只能配 `deny` |
-| `answer_question {request_id, answers}` | 逐题作答 AskUserQuestion |
+| `answer_permission {request_id, decision, message?}` | 作答审批（经插件；后台 Subagent 的审批按屏幕选项键），`message` 只能配 `deny`，作为反馈交给模型 |
+| `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项或自由文本） |
 | `slash {command}` | 输入 `/<command>` 后回车 |
 | `set_model {model}` / `compact {instructions?}` / `clear` | 分别等于对应的 slash 命令 |
 | `send_keys {keys}` | 依次写命名按键、`{"text":…}` 或 `{"bytes":…}` |
@@ -110,8 +121,8 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `ready` | 连接后的第一条，含 Holder ID、sessionId、cwd、claude 版本与状态 |
 | `state` | 状态变化，`waiting` 时带子类与 `waitingFor` |
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
-| `turn_end` | 一轮结束：`last_text`、`error`、`aborted`、`duration_ms`、`usage`、`api_cost` |
-| `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id` |
+| `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
+| `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id`，后台 Subagent 的带 `agent_id` |
 | `question` | 挂起的 AskUserQuestion |
 | `dialog` | 其余对话框与启动界面 |
 | `unrecognized` | 屏幕认不出，此时不按任何键 |
@@ -132,8 +143,8 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 
 ## 边界
 
-- 对 Claude Code 透明：不加 hooks、MCP、channel、启动参数，不用 `-p`。
-- 写只经 Holder 的 PTY；读只用 transcript、进程文件与屏幕；Claude Code 配置目录与 ToH 状态目录下的文件只读。
+- 必须装 ccrpc 插件（[ADR-0003](docs/adr/0003-require-ccrpc-plugin.md)）：只含 hooks，只在 clay Pane 里生效，不占上下文，不改变 Claude Code 的表现（人在 TUI 上看到、能做的与没有插件时一样）。不加 MCP、channel，不用 `-p`。
+- 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录与 ToH 状态目录下的文件只读（插件由 `claude plugin` 命令安装）。
 - 只服务本机 clay 里的 Session，调用方也只在 Host 本机；不与人共用 Session（[ADR-0001](docs/adr/0001-own-pty-size-and-yield-on-takeover.md)）。
 - 命令按到达顺序逐条执行；排队只有 `follow_up`。
 - 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
@@ -146,7 +157,7 @@ cargo test
 
 单测回放 `tests/fixtures/` 里录制的 transcript 与屏幕文本。
 
-端到端会启动真实 Claude Code，消耗模型额度，并使用隔离的 `TOH_STATE_DIR` 与 `CLAUDE_CONFIG_DIR`：
+端到端会启动真实 Claude Code，消耗模型额度，并使用隔离的 `TOH_STATE_DIR`、`CLAUDE_CONFIG_DIR` 与 `CCRPC_STATE_DIR`；ccrpc 插件为本次构建生成，经 `claude --plugin-dir` 加载，不安装：
 
 ```sh
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
