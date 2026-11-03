@@ -322,6 +322,8 @@ struct HookRequest {
     input: Value,
     agent_id: Option<String>,
     suggestions: Value,
+    /// When the plugin reported it.
+    at: Instant,
     /// The waiting hook: the answer goes back through it. `None`: answered on the screen (a
     /// background Subagent's request, ExitPlanMode, or the hook is gone).
     reply: Option<UnixStream>,
@@ -545,11 +547,15 @@ impl Engine {
             }
             return;
         };
-        // A check-in left by an earlier claude with the same pid: wait for this one's.
-        if self.pf.as_ref().and_then(|p| p.session_id.as_deref()).is_some_and(|s| s != c.session_id) {
+        // A check-in left by an earlier claude with the same pid (another Pane, or another
+        // Session): wait for this one's.
+        if c.holder_id != self.holder_id
+            || self.pf.as_ref().and_then(|p| p.session_id.as_deref()).is_some_and(|s| s != c.session_id)
+        {
             let since = *self.no_checkin_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= CHECKIN_GRACE && self.fatal.is_none() {
-                self.fatal = hook::checkin_problem(Some(&c), self.pf.as_ref().and_then(|p| p.session_id.as_deref()));
+                self.fatal = hook::checkin_problem(Some(&c), self.pf.as_ref().and_then(|p| p.session_id.as_deref()))
+                    .or_else(|| hook::checkin_problem(None, None));
             }
             return;
         }
@@ -845,6 +851,7 @@ impl Engine {
             input,
             agent_id,
             suggestions: i["permission_suggestions"].clone(),
+            at: Instant::now(),
             reply,
         });
     }
@@ -942,10 +949,21 @@ impl Engine {
         // waiting hooks). A background Subagent's request may show its dialog only now.
         if s == State::Idle {
             self.idle_at = Some(Instant::now());
+            // A background one whose tool is no longer pending (its Subagent was stopped) is over
+            // too; a new one may not have its tool_use in the transcript yet.
+            let pending = |id: &str| {
+                self.tailer
+                    .as_ref()
+                    .is_some_and(|t| t.pending().iter().any(|p| p.id == id))
+            };
             let ids: Vec<String> = self
                 .requests
                 .iter()
-                .filter(|r| r.agent_id.is_none() || r.reply.is_some())
+                .filter(|r| {
+                    r.agent_id.is_none()
+                        || r.reply.is_some()
+                        || (r.at.elapsed() >= Duration::from_secs(3) && !pending(&r.id))
+                })
                 .map(|r| r.id.clone())
                 .collect();
             for id in ids {
@@ -1152,7 +1170,9 @@ impl Engine {
     /// A permission dialog the plugin never reported (it was up before ccrpc connected): taken
     /// from the transcript's pending tool whose command / file shows in it, answered with keys.
     fn adopt_pending(&mut self, s: &Screen) {
-        if self.requests.iter().any(|r| r.is_approval()) {
+        if self.requests.iter().any(|r| r.is_approval())
+            || self.waiting_age() < Duration::from_millis(250)
+        {
             return;
         }
         let Some((_, body)) = self.dialog_of(&s.lines) else {
@@ -1165,6 +1185,8 @@ impl Engine {
             .filter(|p| !NO_PERMISSION_TOOLS.contains(&p.name.as_str()))
             .filter(|p| !CHOICE_TOOLS.contains(&p.name.as_str()))
             .filter(|p| !self.resolved.contains(&p.id))
+            // A tool the plugin reported at PreToolUse gets its own PermissionRequest.
+            .filter(|p| !self.pre_tools.iter().any(|t| t.id == p.id))
             .collect();
         let matched: Vec<_> = cands
             .iter()
@@ -1181,6 +1203,7 @@ impl Engine {
             input: pick.input.clone(),
             agent_id: pick.agent_id.clone(),
             suggestions: Value::Null,
+            at: Instant::now(),
             reply: None,
         });
     }
