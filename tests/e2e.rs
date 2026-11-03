@@ -1475,6 +1475,16 @@ fn mock_model_session() {
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
     let p = rpc.event("progress", Duration::from_secs(15));
     assert!(p["verb"].is_string() && p["text"].as_str().unwrap().contains('…'), "{p}");
+    // A follow-up queued while busy, with an image: sent as a prompt once idle.
+    let img = env.work.join("dot.png");
+    std::fs::write(&img, red_dot_png()).unwrap();
+    let q = rpc.call("f1", json!({"type": "follow_up", "text": "after-image", "images": [img]}));
+    assert_eq!(q["queued"], 1, "{q}");
+    rpc.event("turn_end", Duration::from_secs(30));
+    let u = rpc.until("follow-up", Duration::from_secs(30), |v| {
+        v["type"] == "follow_up_failed" || (v["type"] == "block" && v["kind"] == "user" && v["text"].as_str().is_some_and(|t| t.contains("after-image")))
+    });
+    assert_eq!(u["type"], "block", "follow_up 没发出去：{u}");
     rpc.event("turn_end", Duration::from_secs(30));
 
     // Paging back from the newest.

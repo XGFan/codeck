@@ -507,6 +507,13 @@
             "type": "string",
             "minLength": 1,
             "description": "提示词正文。"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Host 上的图片文件路径；发出时同 prompt，正文之前逐个粘贴。"
           }
         },
         "required": [

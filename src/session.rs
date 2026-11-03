@@ -436,7 +436,8 @@ pub struct Engine {
     announced: Option<String>,
     startup_checked: Option<Instant>,
     startup_last: Option<Vec<String>>,
-    follow_ups: VecDeque<String>,
+    /// Queued follow-ups: text and image paths.
+    follow_ups: VecDeque<(String, Vec<String>)>,
     marks: Marks,
     /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
     resolved: HashSet<String>,
@@ -1954,10 +1955,10 @@ impl Engine {
         if self.state != State::Idle || self.turn_active {
             return;
         }
-        let Some(text) = self.follow_ups.pop_front() else {
+        let Some((text, images)) = self.follow_ups.pop_front() else {
             return;
         };
-        if let Err((code, msg)) = self.send_prompt(&text) {
+        if let Err((code, msg)) = self.send_prompt_with(&text, &images) {
             self.emit(json!({"type": "follow_up_failed", "text": text, "error": {"code": code, "message": msg}}));
         }
     }
@@ -2492,6 +2493,10 @@ impl Engine {
         Ok(json!({}))
     }
 
+    fn follow_up_texts(&self) -> Vec<&str> {
+        self.follow_ups.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
     fn cancel_follow_up(&mut self, index: Option<usize>) -> CmdResult {
         let removed = match index {
             Some(i) if i < self.follow_ups.len() => {
@@ -2506,7 +2511,7 @@ impl Engine {
             }
             None => std::mem::take(&mut self.follow_ups).len(),
         };
-        Ok(json!({"removed": removed, "follow_ups": self.follow_ups}))
+        Ok(json!({"removed": removed, "follow_ups": self.follow_up_texts()}))
     }
 
     /// Takes the Session back after a takeover: without `force` only once the person's client
@@ -2705,7 +2710,7 @@ impl Engine {
         v["session_id"] = json!(self.session_id);
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["follow_up_queue"] = json!(self.follow_ups.len());
-        v["follow_ups"] = json!(self.follow_ups);
+        v["follow_ups"] = json!(self.follow_up_texts());
         v["taken_over"] = json!(self.taken_over);
         let info = self.session_info();
         for k in ["mode", "model", "context_tokens"] {
@@ -2801,10 +2806,10 @@ impl Engine {
             Command::StopTask { task_id } => self.stop_task(task_id),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Steer { text } => self.steer(text),
-            Command::FollowUp { text } => {
+            Command::FollowUp { text, images } => {
                 self.require(true, "")?;
                 Self::clean_text(text)?;
-                self.follow_ups.push_back(text.clone());
+                self.follow_ups.push_back((text.clone(), images.clone()));
                 Ok(json!({"queued": self.follow_ups.len()}))
             }
             Command::Abort => self.abort(),

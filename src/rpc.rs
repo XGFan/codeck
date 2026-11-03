@@ -42,6 +42,8 @@ pub enum Command {
     },
     FollowUp {
         text: String,
+        /// As `prompt`'s: pasted by path when the follow-up is sent.
+        images: Vec<String>,
     },
     Abort,
     AnswerPermission {
@@ -325,6 +327,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         }),
         "follow_up" => Ok(Command::FollowUp {
             text: req_text(obj, kind, "text")?,
+            images: opt_strings(obj, kind, "images")?,
         }),
         "abort" => Ok(Command::Abort),
         "answer_permission" => {
@@ -577,7 +580,8 @@ mod tests {
             Request {
                 id: None,
                 command: Command::FollowUp {
-                    text: "next".into()
+                    text: "next".into(),
+                    images: vec![],
                 },
             }
         );
