@@ -69,19 +69,25 @@ impl History {
     /// main-file offsets), the newest `limit` of them; with `subagents`, the Subagent Run blocks
     /// under the Agent / Workflow calls on the page.
     pub fn page(&self, since: u64, before: Option<u64>, limit: Option<usize>, subagents: bool) -> Value {
-        let off = |b: &Block| self.tailer.offset_of(&b.uuid).unwrap_or(0);
-        let range: Vec<&Block> = self
+        let off = |b: &Block| self.tailer.offset_of(&b.uuid);
+        let range: Vec<(&Block, u64)> = self
             .main
             .iter()
-            .filter(|b| off(b) >= since && before.is_none_or(|x| off(b) < x))
+            .filter_map(|b| off(b).map(|o| (b, o)))
+            .filter(|&(_, o)| o >= since && before.is_none_or(|x| o < x))
             .collect();
-        let skip = limit.map_or(0, |n| range.len().saturating_sub(n));
-        let page = &range[skip..];
+        let mut skip = limit.map_or(0, |n| range.len().saturating_sub(n));
+        // The blocks of one entry share its cursor: a page holds all of them.
+        while skip > 0 && range[skip - 1].1 == range[skip].1 {
+            skip -= 1;
+        }
+        let page: Vec<&Block> = range[skip..].iter().map(|(b, _)| *b).collect();
+        let first = range.get(skip).map(|(_, o)| *o);
         let mut v = json!({
             "blocks": page,
             "cursor": self.tailer.read_to(),
             // Where the page starts: `before` for the page before it.
-            "first": page.first().map(|b| off(b)),
+            "first": first,
             "more": skip > 0,
         });
         if subagents {
@@ -96,10 +102,12 @@ impl History {
                 .collect();
             v["subagent_blocks"] = json!(subs);
         }
+        v["path"] = json!(self.path);
         v
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Query {
     pub since: u64,
     pub before: Option<u64>,
@@ -193,6 +201,14 @@ mod tests {
         f.write_all(entry("u5", Some("u4"), "prompt 5").as_bytes()).unwrap();
         h.update();
         assert_eq!(texts(&h.page(cursor, None, None, false)), ["prompt 5"]);
+        // An entry with two blocks is never split across pages.
+        let two = json!({"type": "user", "uuid": "u6", "parentUuid": "u5", "sessionId": "s",
+            "message": {"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}});
+        f.write_all((two.to_string() + "\n").as_bytes()).unwrap();
+        h.update();
+        let p1 = h.page(0, None, Some(1), false);
+        assert_eq!(texts(&p1), ["a", "b"]);
+        assert_eq!(texts(&h.page(0, p1["first"].as_u64(), Some(1), false)), ["prompt 5"]);
         // Same view as reading the whole file afresh.
         let (fresh, _) = crate::transcript::main_blocks(&p, 0);
         assert_eq!(h.page(0, None, None, false)["blocks"], json!(fresh));

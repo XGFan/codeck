@@ -13,6 +13,7 @@ pub fn open(path: &std::path::Path) -> anyhow::Result<()> {
         .create(true)
         .append(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .map_err(|e| anyhow::anyhow!("打不开日志 {}：{e}", path.display()))?;
     let _ = LOG.set(Mutex::new(f));

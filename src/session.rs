@@ -329,6 +329,8 @@ struct HookRequest {
     agent_id: Option<String>,
     /// When the plugin reported it.
     at: Instant,
+    /// Since when the Session is no longer waiting while this hook still is.
+    away_since: Option<Instant>,
     /// The waiting hook: the answer goes back through it. `None`: answered on the screen (a
     /// background Subagent's request, ExitPlanMode, or the hook is gone).
     reply: Option<UnixStream>,
@@ -380,8 +382,9 @@ pub struct Engine {
     screen_mode: Option<String>,
     /// `session_info` last sent.
     info_sent: Option<Value>,
-    /// Screen generation last looked at for the mode line and the spinner.
+    /// Screen generation last looked at for the mode line and the spinner, and when.
     looked_gen: u64,
+    looked_at: Option<Instant>,
     /// `progress` last sent: (text, when).
     progress_sent: Option<(String, Instant)>,
     /// The engine cannot go on (no plugin, another ccrpc): `run` returns this error.
@@ -497,6 +500,7 @@ impl Engine {
             screen_mode: None,
             info_sent: None,
             looked_gen: u64::MAX,
+            looked_at: None,
             progress_sent: None,
             fatal: None,
             holder_id: holder_id.to_string(),
@@ -763,9 +767,19 @@ impl Engine {
         }
         // A held hook Claude Code killed (answered in the dialog, timed out): the request, if
         // still on screen, is answered with keys from now on.
+        let waiting = matches!(self.state, State::Waiting { .. });
         for r in &mut self.requests {
             if r.reply.as_ref().is_some_and(hook::peer_gone) {
                 r.reply = None;
+            }
+            // Answered in the TUI (its hook is not killed then): the Session went on without it
+            // for a while — not a flicker.
+            if r.reply.is_some() {
+                if waiting {
+                    r.away_since = None;
+                } else if r.away_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(1) {
+                    r.reply = None;
+                }
             }
         }
         if self.answered_until.is_some_and(|t| Instant::now() >= t) {
@@ -832,9 +846,10 @@ impl Engine {
     /// busy (the spinner line; at most once a second unless its verb changed).
     fn look_at_screen(&mut self) {
         let gen_now = self.conn.generation();
-        if gen_now != self.looked_gen
-            && let Some(m) = self.mode_now()
-        {
+        // A spinner redraws the screen ~10 times a second: look at most every 300ms.
+        let fresh = gen_now != self.looked_gen
+            && self.looked_at.is_none_or(|t| t.elapsed() >= Duration::from_millis(300));
+        if fresh && let Some(m) = self.mode_now() {
             self.screen_mode = Some(m.name().to_string());
         }
         let info = self.session_info();
@@ -844,10 +859,11 @@ impl Engine {
             self.emit(v);
             self.info_sent = Some(info);
         }
-        if gen_now == self.looked_gen {
+        if !fresh {
             return;
         }
         self.looked_gen = gen_now;
+        self.looked_at = Some(Instant::now());
         if self.state != State::Busy {
             self.progress_sent = None;
             return;
@@ -1069,6 +1085,7 @@ impl Engine {
             input,
             agent_id,
             at: Instant::now(),
+            away_since: None,
             reply,
         });
     }
@@ -1588,6 +1605,7 @@ impl Engine {
             input: pick.input.clone(),
             agent_id: pick.agent_id.clone(),
             at: Instant::now(),
+            away_since: None,
             reply: None,
         });
     }
@@ -2641,18 +2659,30 @@ impl Engine {
 
     /// A page of the history, from the history thread (events keep flowing while it reads).
     fn get_messages(&mut self, q: history::Query) -> CmdResult {
-        let Some(t) = &self.tailer else {
-            return Ok(json!({"blocks": [], "cursor": 0, "first": null, "more": false}));
-        };
-        let rx = self.history.page(t.main_path(), q);
-        let mut got = None;
-        self.wait_until(Duration::from_secs(120), |_| {
-            if got.is_none() {
-                got = rx.try_recv().ok();
+        // The Session may change while the page is read (/clear): read the new one then.
+        for _ in 0..3 {
+            let Some(path) = self.tailer.as_ref().map(|t| t.main_path().to_path_buf()) else {
+                return Ok(json!({"blocks": [], "cursor": 0, "first": null, "more": false}));
+            };
+            let rx = self.history.page(&path, history::Query { ..q });
+            let mut got = None;
+            self.wait_until(Duration::from_secs(120), |_| {
+                if got.is_none() {
+                    got = rx.try_recv().ok();
+                }
+                got.is_some()
+            });
+            let Some(mut v) = got else {
+                return err("timeout", "120 秒内没读完 transcript");
+            };
+            if self.tailer.as_ref().is_some_and(|t| t.main_path() == path) {
+                if let Some(m) = v.as_object_mut() {
+                    m.remove("path");
+                }
+                return Ok(v);
             }
-            got.is_some()
-        });
-        got.ok_or_else(|| ("timeout", "120 秒内没读完 transcript".to_string()))
+        }
+        err("timeout", "读的期间 Session 一直在换")
     }
 
     /// `/exit`, then wait for claude to be gone; `close_pane` also ends the Pane's shell.
@@ -2778,6 +2808,10 @@ impl Engine {
         v["size"] = json!([self.size.0, self.size.1]);
         v["taken_over"] = json!(self.taken_over);
         v["co_display"] = json!(self.co_display);
+        let info = self.session_info();
+        for k in ["mode", "model", "context_tokens"] {
+            v[k] = info[k].clone();
+        }
         let mut warnings = Vec::new();
         if let Some(ver) = &version
             && !TESTED_CLAUDE_VERSIONS.contains(&ver.as_str())

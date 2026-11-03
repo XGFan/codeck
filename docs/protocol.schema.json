@@ -1842,6 +1842,27 @@
           "co_display": {
             "type": "boolean",
             "description": "是否共显（--co-display）：不发 Resize、不判接手。"
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "主线最后一条 assistant 消息的模型。"
+          },
+          "context_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
           }
         },
         "required": [

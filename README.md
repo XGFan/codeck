@@ -52,7 +52,7 @@ ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxR
 ccrpc ls [--json]
 ```
 
-`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`--log FILE` 把状态判定、hook 事件与按键记进文件，排查用。
+`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`--log FILE` 把状态判定、hook 事件与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
 
 检查依赖与配置（toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器），每行 `ok` / `warn` / `fail`：
 
