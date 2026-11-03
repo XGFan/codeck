@@ -17,12 +17,16 @@
 
 ## GUI MVP 要的改动（只在本机用，不发布）
 
-GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block` + `branch`），每个运行中的 clay Claude Code 各连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
+GUI 是另起的 Tauri 应用 cc-gui（`~/Developer/Joy/cc-gui`，设计见它的 docs/spec.md），内容只来自 ccrpc（`get_messages` + `block` + `branch`），每个运行中的 clay Claude Code 各连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
 
 已做：`ls --json`（带标题）、`get_state` 的 `mode` / `model` / `context_tokens` 与 `session_info` 推送、`--co-display`、目录信任框作为 choice、`exit {close_pane, stop_tasks}`、`--log`、`progress` 事件、`get_messages` 的分页 / 增量缓存 / 后台线程 / `subagents`。
 
+- `--log` 补足供排查：命令的响应（成败、错误码）、屏幕识别的决策（用了哪个布局、为什么拒绝）、waiting 与 `unrecognized` 时的整屏、开头写 ccrpc 与 Claude Code 版本（GUI 常开 `--log`，与它自己的 wire / gui 日志放同一目录）
+- `permission_request` 带 `options`（`[{label, meaning}]`，同 `choice`，`label` 为审批框全文，GUI 据此显示“总是允许”及它会加的规则）：收到 PermissionRequest 后最多等 1 秒认出屏幕上的审批框再发，认不出照发、`options: null`
+- `choice` 与 `permission_request` 带 `layout_source`（`builtin` / `learned`），GUI 给分析器学来的标“AI 识别”
+- 端到端的 mock 用例可把 ccrpc 的 stdin / stdout 原样录进目录（如 `CCRPC_E2E_WIRE_DIR`），供 cc-gui 当回放 fixture（mock 模型的内容，不需要脱敏）
 - rewind：`rewind {uuid, restore}` 经选择器作答（先实测提示词多时选择器的滚动与截断、恢复代码的确认菜单变体）
-- 认不出的界面：屏幕变化推送（或继续靠共显在 TUI 里处理）
+- 认不出的界面：v0 先经分析器归类，归不了的 GUI 只显示屏幕原文、在 TUI 里处理（不在 GUI 里按键）
 - 斜杠命令、模型的候选列表
 - 去掉共显前：GUI 覆盖所有对话框
 
@@ -41,12 +45,15 @@ GUI 另起一个 Tauri 应用，内容只来自 ccrpc（`get_messages` + `block`
 
 ## 待确认
 
+- 忙时在 TUI 里按 Enter 的输入何时送达：probes.md 记为当前工具结束即插进本轮（`absorbed_mid_turn`，即 steer），但日常使用的体感是本轮结束后才发（像 follow_up）；在当前版本重测，分清是版本变化、还是多数时候本轮已没有工具调用可夹带
+
 - ToH Client 会不会把 `ccrpc new` 刚建的 Pane 自动切到前台并抢尺寸（会的话 ccrpc 一连上就被判为接手）
 - 后台挂着的 Mac / web Client 上次操作过的 Pane 仍算“有人在用”，`attach` 要 `--force`；是否改为按最近一次输入时间判断（需要 Holder 报告）
 - 按键间隔现在常是 50ms（忙时 spinner 也算屏幕有反应），端到端都过；换慢机器或更长菜单时留意
 
 ## 已知限制
 
+- 共显时 `prompt` / `steer` 写入前照常清空输入框：人在 TUI 里写了没发的内容会被清掉（GUI 为主、TUI 里少写草稿，先不处理）
 - 第一次查找 transcript 时偶发的文件系统错误会让已有 transcript 之后按实时读，重放历史 block
 - 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理（插件报来前一个的 PostToolUse 后重新认定），没有端到端用例
 - 同时有几个后台 Subagent 在等审批、且工具输入里都没有可在审批框里比对的内容时，认不出屏幕上是哪个，改发 `dialog`
