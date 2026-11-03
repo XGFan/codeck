@@ -104,3 +104,16 @@ describe("findCall", () => {
     expect(findCall(main, sub, "nope")).toBeNull();
   });
 });
+
+describe("interruptions", () => {
+  it("stay in the turn they interrupted", () => {
+    const item = (b: Record<string, unknown>) => ({ kind: "block" as const, key: `${b.uuid}:0`, block: { type: "block", index: 0, ...b } as never });
+    const turns = buildTurns([
+      item({ kind: "user", uuid: "u1", text: "do it" }),
+      item({ kind: "text", uuid: "a1", text: "working" }),
+      item({ kind: "user", uuid: "u2", text: "[Request interrupted by user]" }),
+      item({ kind: "user", uuid: "u3", text: "next" }),
+    ]);
+    expect(turns.map((t) => t.rows.map((r) => r.kind))).toEqual([["user", "text", "user"], ["user"]]);
+  });
+});

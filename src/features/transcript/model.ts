@@ -24,6 +24,9 @@ export interface ToolCall {
   unfinished: boolean;
 }
 
+/** claude's record of an interruption (Esc, a denial that stops the turn): part of that turn. */
+export const isInterruption = (text: string) => text.startsWith("[Request interrupted by user");
+
 /** Calls rendered as a card that opens the Subagent / Workflow panel. */
 export const isAgentCall = (name: string) => name === "Agent" || name === "Task" || name === "Workflow";
 
@@ -169,7 +172,7 @@ export function buildTurns(items: Item[]): Turn[] {
       continue;
     }
     const b = it.block;
-    if (!cur || (b.kind === "user" && !b.queued && cur.blocks.length > 0)) {
+    if (!cur || (b.kind === "user" && !b.queued && !isInterruption(b.text) && cur.blocks.length > 0)) {
       segs.push((cur = { key: it.key, blocks: [], end: null, endKey: "" }));
     }
     cur.blocks.push(b);

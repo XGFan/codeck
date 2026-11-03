@@ -7,6 +7,7 @@ import type { TurnEndEvent } from "@/protocol";
 import { useStore } from "@/state/store";
 import { useUi } from "@/state/ui";
 import type { GroupItem, Row, ToolCall, ToolResult } from "./model";
+import { isInterruption } from "./model";
 import { ToolCallView } from "./tools";
 import { expandKey, str, toolKey, useExpanded } from "./tools/data";
 import { StatusBadge } from "./tools/parts";
@@ -45,6 +46,13 @@ function RoleLine() {
 function RowView({ conn, row, userLabel }: { conn: string; row: Row; userLabel: string }) {
   switch (row.kind) {
     case "user":
+      // claude records an interruption (Esc, a denial that stops the turn) as a user message.
+      if (isInterruption(row.text))
+        return (
+          <div data-testid="interrupted" className="self-center text-[12px] text-secondary">
+            已中止
+          </div>
+        );
       return <UserBubble text={row.text} queued={row.queued} label={userLabel} />;
     case "text":
       return (
