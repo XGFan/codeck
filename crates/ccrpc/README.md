@@ -104,7 +104,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `answer_permission {request_id, decision, message?}` | 作答审批（经插件；后台 Subagent 的审批按屏幕选项键），`message` 只能配 `deny`，作为反馈交给模型 |
 | `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项或自由文本） |
 | `slash {command}` | 输入 `/<command>` 后回车 |
-| `set_model {model}` / `compact {instructions?}` / `clear` | 分别等于对应的 slash 命令 |
+| `set_model {model}` / `set_effort {level}` / `compact {instructions?}` / `clear` | 分别等于对应的 slash 命令（`/model`、`/effort` 也会改新 Session 的默认；中途切换的确认以 `choice` 出现） |
 | `send_keys {keys}` | 依次写命名按键、`{"text":…}` 或 `{"bytes":…}` |
 | `get_state` | 立即返回状态、挂起的请求、队列长度 |
 | `get_messages {since?, before?, limit?, subagents?}` | 返回 Main Line 上的内容块与游标，可从最新往回分页、可带 Subagent Run 的块（后台线程增量读取） |
@@ -136,7 +136,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `taken_over` / `reclaimed` | 有人在 ToH 上接手了这个 Session，之后只读 / 已取回 |
 | `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
-| `session_info` | 权限模式、模型、上下文大小变了 |
+| `session_info` | 权限模式、模型、思考等级、上下文大小变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |
 

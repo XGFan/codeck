@@ -1,0 +1,38 @@
+{
+  "id": "5f5a26f9b8f0839c",
+  "kind": "choice",
+  "title": "Change effort level?",
+  "options": [
+    {
+      "number": 1,
+      "label": "Yes, switch to",
+      "meaning": "allow",
+      "description": "切换思考等级（对话历史要重新读一遍）"
+    },
+    {
+      "number": 2,
+      "label": "No, go back",
+      "meaning": "deny",
+      "description": "保持当前思考等级"
+    }
+  ],
+  "claude_version": "2.1.318",
+  "screen": [
+    "",
+    "❯ hello",
+    "",
+    "⏺ ok",
+    "",
+    "✻ Worked for 0s · done 7:20 PM",
+    "",
+    "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◉ xhigh · /effort ▔",
+    "   Change effort level?",
+    "",
+    "   Your next response will be slower and use more tokens",
+    "   This conversation is cached for the current effort level. Switching to low means the full history gets re-read.",
+    "",
+    "   ❯ 1. Yes, switch to low",
+    "     2. No, go back",
+    ""
+  ]
+}

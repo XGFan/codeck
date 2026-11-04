@@ -44,6 +44,9 @@ pub struct RawEntry {
     pub is_compact_summary: Option<bool>,
     #[serde(default, deserialize_with = "lenient::boolean")]
     pub is_api_error_message: Option<bool>,
+    /// Assistant entries: the effort level the reply ran at (`low` … `max`; newer versions only).
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub effort: Option<String>,
     /// Cost Claude Code itself logged on assistant entries (older versions only).
     #[serde(rename = "costUSD", default, deserialize_with = "lenient::number")]
     pub cost_usd: Option<f64>,

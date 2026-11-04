@@ -1741,6 +1741,76 @@ fn mock_model_steer_image() {
     });
 }
 
+/// Model and effort from here: `set_effort` / `set_model` mid-conversation ask first (built-in
+/// choice layouts), and `session_info` says what was set at once — from the command's output and
+/// the TUI's effort mark — on the scripted model (no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_model_and_effort() {
+    let env = setup_with("mock-key", &mock_model(), "claude-opus-4-7");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    rpc.call("p1", json!({"type": "prompt", "text": "hello"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    let st = rpc.call("g0", json!({"type": "get_state"}));
+    assert_eq!(st["effort"], "xhigh", "{st}");
+    // Mid-conversation the TUI asks first (the history is re-read); answered as a choice.
+    let confirm = |rpc: &mut Rpc, id: &str, title: &str, yes: &str| {
+        let c = rpc.until(title, Duration::from_secs(10), |v| v["type"] == "choice");
+        assert_eq!(c["title"], title, "{c}");
+        assert_eq!(c["layout_source"], "builtin", "{c}");
+        assert_eq!(c["options"][0]["label"], yes, "{c}");
+        rpc.call(
+            id,
+            json!({"type": "answer_choice", "request_id": c["request_id"], "option": yes}),
+        );
+    };
+
+    // Model: then its name at once; Sonnet 4.5 has no effort levels.
+    rpc.forget();
+    rpc.call(
+        "m1",
+        json!({"type": "set_model", "model": "claude-sonnet-4-5"}),
+    );
+    confirm(&mut rpc, "c1", "Switch model?", "Yes, switch to Sonnet 4.5");
+    let i = rpc.until("sonnet", Duration::from_secs(10), |v| {
+        v["type"] == "session_info" && v["model"] == "Sonnet 4.5"
+    });
+    assert!(i["effort"].is_null(), "{i}");
+
+    // Nothing said to Sonnet yet: set at once, the effort from the TUI's mark.
+    rpc.forget();
+    rpc.call("m2", json!({"type": "set_model", "model": "fable"}));
+    let i = rpc.until("fable", Duration::from_secs(10), |v| {
+        v["type"] == "session_info" && v["model"] == "Fable 5.1" && v["effort"].is_string()
+    });
+    assert_ne!(i["effort"], "low", "{i}");
+
+    // Effort, after a reply on Fable. Claude Code asks only the first time in a Session (the
+    // effort question's layout was seen live in an earlier run and is checked on its screen).
+    rpc.call("p2", json!({"type": "prompt", "text": "again"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    rpc.forget();
+    rpc.call("e1", json!({"type": "set_effort", "level": "low"}));
+    let v = rpc.until("effort low", Duration::from_secs(10), |v| {
+        v["type"] == "choice" || (v["type"] == "session_info" && v["effort"] == "low")
+    });
+    if v["type"] == "choice" {
+        assert_eq!(v["title"], "Change effort level?", "{v}");
+        assert_eq!(v["layout_source"], "builtin", "{v}");
+        rpc.call(
+            "c2",
+            json!({"type": "answer_choice", "request_id": v["request_id"], "option": v["options"][0]["label"]}),
+        );
+        rpc.until("effort low", Duration::from_secs(10), |v| {
+            v["type"] == "session_info" && v["effort"] == "low"
+        });
+    }
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!(st["model"], "Fable 5.1", "{st}");
+}
+
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on
 /// the scripted model (no credits).
 #[test]

@@ -121,6 +121,8 @@ pub enum TxEvent {
         /// From the main file (not a Subagent Run).
         main: bool,
         model: Option<String>,
+        /// The effort level the reply ran at, when Claude Code recorded one.
+        effort: Option<String>,
         usage: ::transcript::pricing::Usage,
         /// Cost Claude Code logged itself, if any.
         logged_cost: Option<f64>,
@@ -150,6 +152,45 @@ pub enum TxEvent {
     },
     /// A Workflow Run's state changed (the whole state, protocol shape).
     Workflow(Value),
+    /// A local `/model` or `/effort` (run from here or typed in the TUI) said what it set, in the
+    /// main file: the model's display name (`Opus 4.7`) and / or the effort level.
+    Setting {
+        model: Option<String>,
+        effort: Option<String>,
+    },
+}
+
+/// What a `/model` or `/effort` output says it set: `Set model to \`Opus 4.7\` and saved …`,
+/// `Kept model as Opus 4.7`, `Set model to Opus 4.7 (default) …`, `Set effort level to low (…`.
+pub fn local_setting(s: &str) -> Option<(Option<String>, Option<String>)> {
+    let t = s.trim();
+    let t = t.strip_prefix("<local-command-stdout>").unwrap_or(t);
+    let t = t
+        .split("</local-command-stdout>")
+        .next()
+        .unwrap_or(t)
+        .trim();
+    if let Some(rest) = t
+        .strip_prefix("Set model to ")
+        .or_else(|| t.strip_prefix("Kept model as "))
+    {
+        let name = rest
+            .split(" and saved")
+            .next()
+            .unwrap_or(rest)
+            .lines()
+            .next()
+            .unwrap_or("");
+        let name = name.replace('`', "");
+        let name = name.trim().trim_end_matches("(default)").trim();
+        return (!name.is_empty()).then(|| (Some(name.to_string()), None));
+    }
+    let rest = t.strip_prefix("Set effort level to ")?;
+    let level: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    (!level.is_empty()).then(|| (None, Some(level.to_lowercase())))
 }
 
 /// A background task Claude Code started: a Subagent Run, a shell or a Workflow Run.
@@ -748,8 +789,11 @@ impl Tailer {
             }
             // Newer Claude Code records a local slash command (`/rename`, `/model x`) this way.
             "system" if agent.is_none() && e.subtype.as_deref() == Some("local_command") => {
-                if let Some(text) = decode_str(e.content.as_deref()).and_then(|c| command_line(&c))
-                {
+                let content = decode_str(e.content.as_deref());
+                if let Some((model, effort)) = content.as_deref().and_then(local_setting) {
+                    out.push(TxEvent::Setting { model, effort });
+                }
+                if let Some(text) = content.and_then(|c| command_line(&c)) {
                     out.push(TxEvent::UserPrompt { uuid, text });
                 }
             }
@@ -847,6 +891,7 @@ impl Tailer {
                         out.push(TxEvent::Usage {
                             main: agent.is_none(),
                             model: msg.model.clone(),
+                            effort: e.effort.clone(),
                             usage: ::transcript::pricing::Usage::from_tokens(
                                 n(u.input_tokens),
                                 n(u.output_tokens),
@@ -862,6 +907,11 @@ impl Tailer {
                 match &msg.content {
                     Some(RawContent::Text(s)) if !assistant => {
                         if prompt::is_command_record(s) {
+                            if agent.is_none()
+                                && let Some((model, effort)) = local_setting(s)
+                            {
+                                out.push(TxEvent::Setting { model, effort });
+                            }
                             if agent.is_none()
                                 && let Some(text) = command_line(s)
                             {
@@ -1428,6 +1478,64 @@ mod tests {
         let evs = t.poll();
         assert!(!evs.is_empty());
         assert!(t.pending_named("AskUserQuestion").is_none());
+    }
+
+    #[test]
+    fn model_and_effort_outputs_say_what_was_set() {
+        assert_eq!(
+            local_setting(
+                "<local-command-stdout>Set model to `Sonnet 4.5` and saved as your default for new sessions\n         ANTHROPIC_MODEL is set</local-command-stdout>"
+            ),
+            Some((Some("Sonnet 4.5".into()), None))
+        );
+        assert_eq!(
+            local_setting(
+                "Set model to Opus 4.7 (default) and saved as your default for new sessions"
+            ),
+            Some((Some("Opus 4.7".into()), None))
+        );
+        assert_eq!(
+            local_setting("Kept model as `Opus 4.7`"),
+            Some((Some("Opus 4.7".into()), None))
+        );
+        assert_eq!(
+            local_setting(
+                "<local-command-stdout>Set effort level to low (saved as your default for new sessions): Quick</local-command-stdout>"
+            ),
+            Some((None, Some("low".into())))
+        );
+        assert_eq!(
+            local_setting("<local-command-stdout>Cancelled</local-command-stdout>"),
+            None
+        );
+        // Both record shapes: a `user` entry (2.1.316) and a `system` / `local_command` one.
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let user = json!({"type": "user", "uuid": "o1", "message": {"role": "user",
+            "content": "<local-command-stdout>Set effort level to low (saved as your default for new sessions): Quick</local-command-stdout>"}});
+        let system = json!({"type": "system", "subtype": "local_command", "uuid": "o2",
+            "content": "<local-command-stdout>Set model to `Fable 5.1` and saved as your default for new sessions</local-command-stdout>"});
+        let reply = json!({"type": "assistant", "uuid": "a1", "effort": "high",
+            "message": {"id": "m1", "model": "claude-fable-5-1", "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}], "usage": {"input_tokens": 1, "output_tokens": 1}}});
+        write_lines(&main, &[user, system, reply]);
+        let evs = Tailer::new(&main).poll();
+        let got: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match e {
+                TxEvent::Setting { model, effort } => Some((model.clone(), effort.clone())),
+                TxEvent::Usage { model, effort, .. } => Some((model.clone(), effort.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (None, Some("low".into())),
+                (Some("Fable 5.1".into()), None),
+                (Some("claude-fable-5-1".into()), Some("high".into())),
+            ]
+        );
     }
 
     #[test]

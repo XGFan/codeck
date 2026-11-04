@@ -405,6 +405,9 @@
           "$ref": "#/$defs/commands/set_model"
         },
         {
+          "$ref": "#/$defs/commands/set_effort"
+        },
+        {
           "$ref": "#/$defs/commands/compact"
         },
         {
@@ -669,7 +672,7 @@
       },
       "set_model": {
         "title": "set_model",
-        "description": "即 slash model X；idle 时可用。",
+        "description": "即 slash model X；idle 时可用。对话中途切换时 Claude Code 可能先问一句（历史要重新读一遍），以 choice 事件出现。",
         "type": "object",
         "properties": {
           "type": {
@@ -687,6 +690,29 @@
         "required": [
           "type",
           "model"
+        ],
+        "additionalProperties": false
+      },
+      "set_effort": {
+        "title": "set_effort",
+        "description": "即 slash effort X；idle 时可用。对话中途切换时 Claude Code 可能先问一句（历史要重新读一遍），以 choice 事件出现。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "set_effort"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "level": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]+$",
+            "description": "思考等级：low / medium / high / xhigh / max（模型支持的那些），或 auto。"
+          }
+        },
+        "required": [
+          "type",
+          "level"
         ],
         "additionalProperties": false
       },
@@ -1168,6 +1194,13 @@
         "properties": {},
         "required": []
       },
+      "set_effort": {
+        "title": "set_effort",
+        "description": "空对象。",
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
       "compact": {
         "title": "compact",
         "description": "空对象。",
@@ -1306,7 +1339,14 @@
               "string",
               "null"
             ],
-            "description": "主线最后一条 assistant 消息的模型。"
+            "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
           },
           "context_tokens": {
             "type": [
@@ -1706,6 +1746,16 @@
         {
           "properties": {
             "command": {
+              "const": "set_effort"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/set_effort"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
               "const": "compact"
             },
             "data": {
@@ -1990,7 +2040,14 @@
               "string",
               "null"
             ],
-            "description": "主线最后一条 assistant 消息的模型。"
+            "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
           },
           "context_tokens": {
             "type": [
@@ -2689,7 +2746,7 @@
       },
       "session_info": {
         "title": "session_info",
-        "description": "权限模式、模型或上下文大小变了。",
+        "description": "权限模式、模型、思考等级或上下文大小变了。",
         "type": "object",
         "properties": {
           "type": {
@@ -2707,7 +2764,14 @@
               "string",
               "null"
             ],
-            "description": "主线最后一条 assistant 消息的模型。"
+            "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
           },
           "context_tokens": {
             "type": [
@@ -2721,6 +2785,7 @@
           "type",
           "mode",
           "model",
+          "effort",
           "context_tokens"
         ]
       },

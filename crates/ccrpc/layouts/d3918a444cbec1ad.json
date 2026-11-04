@@ -1,0 +1,38 @@
+{
+  "id": "d3918a444cbec1ad",
+  "kind": "choice",
+  "title": "Switch model?",
+  "options": [
+    {
+      "number": 1,
+      "label": "Yes, switch to",
+      "meaning": "allow",
+      "description": "切换模型（对话历史要重新读一遍）"
+    },
+    {
+      "number": 2,
+      "label": "No, go back",
+      "meaning": "deny",
+      "description": "保持当前模型"
+    }
+  ],
+  "claude_version": "2.1.318",
+  "screen": [
+    "",
+    "❯ hello",
+    "",
+    "⏺ ok",
+    "",
+    "✻ Baked for 0s · done 7:53 PM",
+    "",
+    "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◉ xhigh · /effort ▔",
+    "   Switch model?",
+    "",
+    "   Your next response will be slower and use more tokens",
+    "   This conversation is cached for the current model. Switching to Sonnet 4.5 means the full history gets re-read.",
+    "",
+    "   ❯ 1. Yes, switch to Sonnet 4.5",
+    "     2. No, go back",
+    ""
+  ]
+}

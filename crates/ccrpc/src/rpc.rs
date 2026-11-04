@@ -65,6 +65,10 @@ pub enum Command {
     SetModel {
         model: String,
     },
+    /// `/effort <level>`.
+    SetEffort {
+        level: String,
+    },
     Compact {
         instructions: Option<String>,
     },
@@ -385,6 +389,14 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         "set_model" => Ok(Command::SetModel {
             model: req_text(obj, kind, "model")?,
         }),
+        "set_effort" => {
+            let level = req_text(obj, kind, "level")?;
+            // One word typed after `/effort`: nothing that could add arguments or keys.
+            if !level.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err(format!("set_effort 的 level 只能是字母或数字：{level:?}"));
+            }
+            Ok(Command::SetEffort { level })
+        }
         "compact" => Ok(Command::Compact {
             instructions: opt_text(obj, kind, "instructions")?,
         }),
@@ -486,6 +498,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::AnswerQuestion { .. } => "answer_question",
         Command::Slash { .. } => "slash",
         Command::SetModel { .. } => "set_model",
+        Command::SetEffort { .. } => "set_effort",
         Command::Compact { .. } => "compact",
         Command::Clear => "clear",
         Command::SendKeys { .. } => "send_keys",
@@ -671,6 +684,18 @@ mod tests {
                 },
             }
         );
+        assert_eq!(
+            parse(r#"{"type":"set_effort","level":"xhigh"}"#),
+            Request {
+                id: None,
+                command: Command::SetEffort {
+                    level: "xhigh".into()
+                },
+            }
+        );
+        // One word only: nothing typed after it.
+        err(r#"{"type":"set_effort","level":"low max"}"#);
+        err(r#"{"type":"set_effort","level":"low\n"}"#);
         assert_eq!(
             parse(r#"{"type":"compact","instructions":"focus on tests"}"#),
             Request {
@@ -893,6 +918,7 @@ mod tests {
             "answer_question",
             "slash",
             "set_model",
+            "set_effort",
             "compact",
             "clear",
             "send_keys",

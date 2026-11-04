@@ -417,6 +417,9 @@ pub struct Engine {
     history: HistoryWorker,
     /// Main line's last model and context size; the permission mode the plugin last saw.
     model: Option<String>,
+    /// The effort level: the TUI's `◉ xhigh · /effort` mark, what `/effort` said it set, else
+    /// the last reply's; none for a model without effort levels.
+    effort: Option<String>,
     context_tokens: Option<u64>,
     hook_mode: Option<String>,
     /// The mode line last seen (a dialog may cover it).
@@ -543,6 +546,7 @@ impl Engine {
             co_display: opts.co_display,
             history: HistoryWorker::start(wake.clone()),
             model: None,
+            effort: None,
             context_tokens: None,
             hook_mode: None,
             screen_mode: None,
@@ -722,11 +726,13 @@ impl Engine {
                         TxEvent::Usage {
                             main: true,
                             model,
+                            effort,
                             usage,
                             ..
                         } => {
-                            self.note_main_usage(model.as_deref(), &usage);
+                            self.note_main_usage(model.as_deref(), effort.as_deref(), &usage);
                         }
+                        TxEvent::Setting { model, effort } => self.note_setting(model, effort),
                         _ => {}
                     }
                 }
@@ -783,14 +789,16 @@ impl Engine {
                     }
                 }
             }
+            TxEvent::Setting { model, effort } => self.note_setting(model, effort),
             TxEvent::Usage {
                 main,
                 model,
+                effort,
                 usage,
                 logged_cost,
             } => {
                 if main {
-                    self.note_main_usage(model.as_deref(), &usage);
+                    self.note_main_usage(model.as_deref(), effort.as_deref(), &usage);
                 }
                 if self.turn_active {
                     let t = &mut self.turn;
@@ -893,9 +901,18 @@ impl Engine {
         self.look_at_screen();
     }
 
-    fn note_main_usage(&mut self, model: Option<&str>, u: &::transcript::pricing::Usage) {
+    fn note_main_usage(
+        &mut self,
+        model: Option<&str>,
+        effort: Option<&str>,
+        u: &::transcript::pricing::Usage,
+    ) {
         if let Some(m) = model.filter(|m| !m.is_empty() && *m != "<synthetic>") {
             self.model = Some(m.to_string());
+        }
+        // Older versions record none: keep what the screen said.
+        if let Some(e) = effort.filter(|e| !e.is_empty()) {
+            self.effort = Some(e.to_string());
         }
         let ctx = u.input + u.cache_read + u.cache_write_5m + u.cache_write_1h;
         if ctx > 0.0 {
@@ -920,8 +937,22 @@ impl Engine {
         })
     }
 
+    /// `/model` or `/effort` set something (here or in the TUI). A new model may not have the
+    /// old effort level, or any: the screen's mark says again.
+    fn note_setting(&mut self, model: Option<String>, effort: Option<String>) {
+        if let Some(m) = model {
+            if self.model.as_deref() != Some(m.as_str()) {
+                self.effort = None;
+            }
+            self.model = Some(m);
+        }
+        if let Some(e) = effort {
+            self.effort = Some(e);
+        }
+    }
+
     fn session_info(&self) -> Value {
-        json!({"mode": self.mode(), "model": self.model, "context_tokens": self.context_tokens})
+        json!({"mode": self.mode(), "model": self.model, "effort": self.effort, "context_tokens": self.context_tokens})
     }
 
     /// On a new screen: `session_info` when mode / model / context changed, `progress` while
@@ -933,8 +964,13 @@ impl Engine {
             && self
                 .looked_at
                 .is_none_or(|t| t.elapsed() >= Duration::from_millis(300));
-        if fresh && let Some(m) = self.mode_now() {
-            self.screen_mode = Some(m.name().to_string());
+        if fresh && let Ok(s) = self.screen() {
+            if let Some(m) = recognize::permission_mode(&s.lines) {
+                self.screen_mode = Some(m.name().to_string());
+            }
+            if let Some(e) = recognize::effort(&s.lines) {
+                self.effort = Some(e);
+            }
         }
         let info = self.session_info();
         if self.info_sent.as_ref() != Some(&info)
@@ -3224,7 +3260,7 @@ impl Engine {
         v["queue"] = json!(self.queue);
         v["taken_over"] = json!(self.taken_over);
         let info = self.session_info();
-        for k in ["mode", "model", "context_tokens"] {
+        for k in ["mode", "model", "effort", "context_tokens"] {
             v[k] = info[k].clone();
         }
         v["co_display"] = json!(self.co_display);
@@ -3342,6 +3378,7 @@ impl Engine {
             } => self.answer_question(request_id, answers),
             Command::Slash { command } => self.slash(command),
             Command::SetModel { model } => self.slash(&format!("model {model}")),
+            Command::SetEffort { level } => self.slash(&format!("effort {level}")),
             Command::Compact { instructions } => match instructions {
                 Some(i) => self.slash(&format!("compact {i}")),
                 None => self.slash("compact"),
@@ -3417,7 +3454,7 @@ impl Engine {
         v["co_display"] = json!(self.co_display);
         v["queue"] = json!(self.queue);
         let info = self.session_info();
-        for k in ["mode", "model", "context_tokens"] {
+        for k in ["mode", "model", "effort", "context_tokens"] {
             v[k] = info[k].clone();
         }
         let mut warnings = Vec::new();

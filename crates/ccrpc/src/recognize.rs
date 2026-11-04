@@ -865,6 +865,43 @@ pub fn permission_mode(lines: &[String]) -> Option<crate::rpc::PermissionMode> {
     })
 }
 
+/// The effort level marked above the input box's top right (`◉ xhigh · /effort`, `○ low ·
+/// /effort`; also on a dialog's frame). None when the model has no effort levels or it is not
+/// on screen.
+pub fn effort(lines: &[String]) -> Option<String> {
+    const LEVELS: [&str; 6] = ["low", "medium", "high", "xhigh", "max", "auto"];
+    lines.iter().rev().find_map(|l| {
+        let at = l.find("· /effort")?;
+        let level = l[..at].split_whitespace().last()?.to_lowercase();
+        LEVELS.contains(&level.as_str()).then_some(level)
+    })
+}
+
+#[cfg(test)]
+mod effort_tests {
+    use super::effort;
+
+    fn l(s: &[&str]) -> Vec<String> {
+        s.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn reads_the_mark_above_the_input_box_or_on_a_dialog_frame() {
+        let idle = l(&[
+            "✻ Worked for 0s · done 7:20 PM",
+            "                                                       ◉ xhigh · /effort",
+            "────────────────────────────────────────",
+            "❯",
+        ]);
+        assert_eq!(effort(&idle).as_deref(), Some("xhigh"));
+        let dialog = l(&["▔▔▔▔▔▔▔▔▔▔▔▔ ○ low · /effort ▔", "   Change effort level?"]);
+        assert_eq!(effort(&dialog).as_deref(), Some("low"));
+        // A model without effort levels shows no mark; prose mentioning /effort is not one.
+        assert_eq!(effort(&l(&["❯", "  ⏸ manual mode on"])), None);
+        assert_eq!(effort(&l(&["use the · /effort command"])), None);
+    }
+}
+
 /// The background tasks panel (`/tasks`): a list with a `❯` cursor, or one task's details.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TasksPanel {
