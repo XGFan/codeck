@@ -5,7 +5,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use ::transcript::assemble::{LoadedFile, WorkflowFiles, prompt, skeleton, tree, workflow};
+use ::transcript::assemble::{
+    LoadedFile, WorkflowFiles, content, nodes, prompt, skeleton, subagent, tree, workflow,
+};
+use ::transcript::parse::{ReadOptions, read_entries_with};
 use ::transcript::model::FileRole;
 use ::transcript::raw::{RawBlock, RawContent, RawEntry, decode_str};
 use serde::Serialize;
@@ -476,7 +479,7 @@ impl Tailer {
                     if b.kind == BlockKind::User
                         && b.text
                             .as_deref()
-                            .is_some_and(|t| t.starts_with("[Request interrupted by user"))
+                            .is_some_and(prompt::is_interruption)
                     {
                         kind = Emitted::Interruption;
                     }
@@ -712,12 +715,12 @@ impl Tailer {
             "system" if agent.is_none() && e.subtype.as_deref() == Some("turn_duration") => {
                 self.pending.retain(|_, p| p.agent_id.is_some());
                 out.push(TxEvent::TurnEnd {
-                    duration_ms: line.duration_ms.map(|d| d.max(0.0) as u64),
+                    duration_ms: e.duration_ms.map(|d| d.max(0.0) as u64),
                 });
             }
             "queue-operation" if agent.is_none() => {
-                if line.operation.as_deref() == Some("enqueue") {
-                    let content = unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
+                if e.operation.as_deref() == Some("enqueue") {
+                    let content = prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
                     out.push(TxEvent::Enqueued { content });
                 }
             }
@@ -790,7 +793,7 @@ impl Tailer {
                                 None => String::new(),
                             };
                             out.push(TxEvent::ApiError {
-                                kind: line.error.clone(),
+                                kind: e.error.clone(),
                                 message,
                             });
                         }
@@ -822,10 +825,10 @@ impl Tailer {
                 }
                 match &msg.content {
                     Some(RawContent::Text(s)) if !assistant => {
-                        if is_command_record(s) {
+                        if prompt::is_command_record(s) {
                             return;
                         }
-                        let s = &unwrap_pasted(s);
+                        let s = &prompt::unwrap_pasted(s);
                         if agent.is_none()
                             && let Some((id, status)) = task_notification(s)
                             && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
@@ -835,7 +838,7 @@ impl Tailer {
                         let mut b = Block::new(BlockKind::User, &uuid, 0);
                         b.text = Some(s.clone());
                         // Claude Code's own interruption notes are not prompts and open no turn.
-                        if agent.is_none() && !s.starts_with("[Request interrupted by user") {
+                        if agent.is_none() && !prompt::is_interruption(s) {
                             // A new prompt starts a new turn: its last text is not the previous one's.
                             self.last_text = None;
                             out.push(TxEvent::UserPrompt {
@@ -880,7 +883,7 @@ impl Tailer {
                             return;
                         }
                         if image_prompt {
-                            let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).map(|t| unwrap_pasted(&t)).collect();
+                            let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).map(|t| prompt::unwrap_pasted(&t)).collect();
                             self.last_text = None;
                             out.push(TxEvent::UserPrompt {
                                 uuid: uuid.clone(),
@@ -926,7 +929,7 @@ impl Tailer {
         match rb.block_type() {
             "text" => {
                 let t = rb.text_str()?;
-                let t = if assistant { t } else { unwrap_pasted(&t) };
+                let t = if assistant { t } else { prompt::unwrap_pasted(&t) };
                 if assistant && agent.is_none() {
                     self.last_text = Some(t.clone());
                 }
@@ -976,9 +979,9 @@ impl Tailer {
                 let tid = rb.tool_use_id.clone().unwrap_or_default();
                 let tool = self.pending.remove(&tid);
                 let mut b = Block::new(BlockKind::ToolResult, uuid, i);
-                let text = result_text(rb.content.as_deref());
+                let text = nodes::result_content(rb.content.as_deref()).0;
                 if agent.is_none()
-                    && let Some((kind, id)) = background_launch(&text)
+                    && let Some((kind, id)) = subagent::background_launch(&text)
                     && !self.tasks.iter().any(|t| t.id == id)
                 {
                     let input = tool.as_ref().map(|t| &t.input);
@@ -1121,46 +1124,6 @@ fn image_type(b: &RawBlock) -> String {
         .unwrap_or_else(|| "image/png".into())
 }
 
-/// A prompt without the `<pasted_content id="xxxx">` … `</pasted_content id="xxxx">` tags Claude
-/// Code may put around a long paste (an account-level switch): the text as it was sent. Each tag
-/// goes with the line break or space it adds on its inner side.
-pub fn unwrap_pasted(s: &str) -> String {
-    const OPEN: &str = "<pasted_content id=\"";
-    const CLOSE: &str = "</pasted_content id=\"";
-    if !s.contains("pasted_content id=\"") {
-        return s.to_string();
-    }
-    // `<tag id="` + 4 hex digits + `">` at the start of `rest`: its length.
-    let tag_len = |rest: &str, head: &str| -> Option<usize> {
-        let id = rest.strip_prefix(head)?.get(..4)?;
-        (id.bytes().all(|b| b.is_ascii_hexdigit()) && rest[head.len() + 4..].starts_with("\">"))
-            .then_some(head.len() + 6)
-    };
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < s.len() {
-        let rest = &s[i..];
-        if let Some(n) = tag_len(rest, OPEN) {
-            i += n;
-            if s[i..].starts_with(['\n', ' ']) {
-                i += 1;
-            }
-            continue;
-        }
-        if let Some(n) = tag_len(rest, CLOSE) {
-            if out.ends_with(['\n', ' ']) {
-                out.pop();
-            }
-            i += n;
-            continue;
-        }
-        let c = rest.chars().next().unwrap();
-        out.push(c);
-        i += c.len_utf8();
-    }
-    out
-}
-
 /// The prompt text of a main-file user prompt entry.
 fn prompt_text(l: &Line) -> Option<String> {
     let e = &l.entry;
@@ -1168,27 +1131,20 @@ fn prompt_text(l: &Line) -> Option<String> {
         return None;
     }
     match e.message.as_ref()?.content.as_ref()? {
-        RawContent::Text(t) if !is_command_record(t) && !t.starts_with("[Request interrupted") => {
-            Some(unwrap_pasted(t))
+        RawContent::Text(t) if !prompt::is_command_record(t) && !prompt::is_interruption(t) => {
+            Some(prompt::unwrap_pasted(t))
         }
         _ => None,
     }
 }
 
-/// The file a `<persisted-output>` preview points to, only when it is in this Session's
-/// `tool-results/` (a tool's own output could imitate the preview).
+/// The file a `<persisted-output>` preview points to, only when the preview names this Session's
+/// own `tool-results/` (a tool's own output could imitate the preview).
 fn persisted_path(text: &str, session_dir: &Path) -> Option<PathBuf> {
-    if !text.trim_start().starts_with("<persisted-output>") {
-        return None;
-    }
-    const MARK: &str = "Full output saved to: ";
-    let rest = &text[text.find(MARK)? + MARK.len()..];
-    let p = PathBuf::from(rest.lines().next()?.trim());
-    let dir = session_dir.join("tool-results");
-    let ok = p.parent() == Some(dir.as_path())
-        && p.file_name().is_some()
-        && !p.components().any(|c| matches!(c, std::path::Component::ParentDir));
-    ok.then_some(p)
+    let claimed = Path::new(nodes::persisted_output_path(text)?);
+    let name = content::persisted_basename(claimed.to_str()?)?;
+    let p = content::persisted_path(session_dir, &name)?;
+    (claimed.parent() == p.parent()).then_some(p)
 }
 
 /// A regular text file read with the block cap (read-only; no symlinks, nothing that blocks).
@@ -1216,30 +1172,11 @@ fn read_meta_tool_use_id(dir: &Path, stem: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// One complete transcript line: the transcript crate's tolerant entry plus the `operation` field of
-/// `queue-operation` entries (which the transcript crate does not model).
+/// One complete transcript line (queued commands not rewritten: a steer stays apart).
 struct Line {
     entry: RawEntry,
-    operation: Option<String>,
-    error: Option<String>,
-    duration_ms: Option<f64>,
     /// Byte offset of the line in its file.
     offset: u64,
-}
-
-/// Fields of a few entry kinds that the transcript crate does not model.
-#[derive(serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct ExtraFields {
-    /// `queue-operation`.
-    #[serde(default)]
-    operation: Option<String>,
-    /// API error messages (`isApiErrorMessage`): `server_error`, `rate_limit`, …
-    #[serde(default)]
-    error: Option<String>,
-    /// `system` / `turn_duration`.
-    #[serde(default)]
-    duration_ms: Option<f64>,
 }
 
 struct Chunk {
@@ -1250,163 +1187,23 @@ struct Chunk {
 }
 
 /// Reads the complete lines of `path` from byte `from` (read-only; a partial last line is left
-/// for the next read; lines that are not JSON objects are skipped). Not the transcript crate's `read_entries`:
-/// that one rewrites `queued_command` attachments into user messages (steer needs them apart) and
-/// has no read cap.
+/// for the next read; lines that are not JSON objects are skipped), at most [`MAX_READ`] bytes,
+/// without rewriting `queued_command` attachments (steer needs them apart from prompts).
 fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(path)?;
-    let len = f.metadata()?.len();
-    if len <= from {
-        return Ok(Chunk {
-            lines: Vec::new(),
-            consumed_to: from.min(len),
-            capped: false,
-        });
-    }
-    f.seek(SeekFrom::Start(from))?;
-    let want = (len - from).min(MAX_READ);
-    let mut buf = Vec::with_capacity(want as usize);
-    f.take(want).read_to_end(&mut buf)?;
-    let end = match buf.iter().rposition(|&b| b == b'\n') {
-        Some(i) => i + 1,
-        // A single line longer than the read cap: skip what was read (the rest of the line then
-        // fails to parse and is skipped too) instead of re-reading it forever.
-        None if want == MAX_READ => {
-            return Ok(Chunk {
-                lines: Vec::new(),
-                consumed_to: from + want,
-                capped: true,
-            });
-        }
-        None => {
-            return Ok(Chunk {
-                lines: Vec::new(),
-                consumed_to: from,
-                capped: false,
-            });
-        }
-    };
-    let mut lines = Vec::new();
-    let mut at = from;
-    for raw in buf[..end].split(|&b| b == b'\n') {
-        let offset = at;
-        at += raw.len() as u64 + 1;
-        let raw = raw.trim_ascii();
-        if raw.is_empty() {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_slice::<RawEntry>(raw) else {
-            continue;
-        };
-        let wants_extra = entry.entry_type() == "queue-operation"
-            || entry.is_api_error_message == Some(true)
-            || entry.subtype.as_deref() == Some("turn_duration");
-        let extra = if wants_extra {
-            serde_json::from_slice::<ExtraFields>(raw).unwrap_or_default()
-        } else {
-            ExtraFields::default()
-        };
-        lines.push(Line {
-            entry,
-            operation: extra.operation,
-            error: extra.error,
-            duration_ms: extra.duration_ms,
-            offset,
-        });
-    }
+    let opts = ReadOptions { max_bytes: Some(MAX_READ), normalize: false };
+    let c = read_entries_with(path, from, opts)?;
     Ok(Chunk {
-        lines,
-        consumed_to: from + end as u64,
-        capped: want == MAX_READ,
+        lines: c.records.into_iter().map(|r| Line { entry: r.entry, offset: r.offset }).collect(),
+        // A file that shrank: continue from its new end.
+        consumed_to: c.consumed_to.min(c.file_len),
+        capped: c.capped,
     })
-}
-
-/// A tool result saying a background task started: `(kind, task id)`.
-fn background_launch(text: &str) -> Option<(&'static str, String)> {
-    let after = |mark: &str| {
-        let rest = &text[text.find(mark)? + mark.len()..];
-        let id: String = rest
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-            .collect();
-        (!id.is_empty()).then_some(id)
-    };
-    if text.starts_with("Async agent launched") {
-        return after("agentId:").map(|id| ("agent", id));
-    }
-    if text.starts_with("Command running in background with ID:") {
-        return after("with ID:").map(|id| ("shell", id));
-    }
-    if text.starts_with("Workflow launched in background") {
-        return after("Task ID:").map(|id| ("workflow", id));
-    }
-    None
-}
-
-/// The Session's title: the last `custom-title` (set by the person), else the last `ai-title`.
-/// Only lines that can hold one are parsed.
-pub fn session_title(main: &Path) -> Option<String> {
-    use std::io::BufRead;
-    let f = std::fs::File::open(main).ok()?;
-    let (mut custom, mut ai) = (None, None);
-    for line in std::io::BufReader::new(f).split(b'\n').map_while(|l| l.ok()) {
-        if !line.windows(7).any(|w| w == b"-title\"") {
-            continue;
-        }
-        let Ok(v) = serde_json::from_slice::<Value>(&line) else { continue };
-        let pick = |k: &str| v[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
-        match v["type"].as_str() {
-            Some("custom-title") => custom = pick("customTitle").or(custom),
-            Some("ai-title") => ai = pick("aiTitle").or(ai),
-            _ => {}
-        }
-    }
-    custom.or(ai)
 }
 
 /// A `<task-notification>` that ended a task: `(task id, status)`.
 pub fn task_notification(text: &str) -> Option<(String, String)> {
-    let tag = |name: &str| {
-        let open = format!("<{name}>");
-        let start = text.find(&open)? + open.len();
-        let end = text[start..].find(&format!("</{name}>"))? + start;
-        Some(text[start..end].trim().to_string())
-    };
-    if !text.contains("<task-notification>") {
-        return None;
-    }
-    Some((tag("task-id")?, tag("status")?))
-}
-
-/// Slash-command bookkeeping that Claude Code records as user entries.
-fn is_command_record(s: &str) -> bool {
-    let t = s.trim_start();
-    t.starts_with("<local-command-caveat>")
-        || t.starts_with("<command-name>")
-        || t.starts_with("<command-message>")
-        || t.starts_with("<local-command-stdout>")
-        || t.starts_with("<local-command-stderr>")
-        || t.starts_with("<bash-input>")
-        || t.starts_with("<bash-stdout>")
-        || t.starts_with("<bash-stderr>")
-}
-
-fn result_text(raw: Option<&serde_json::value::RawValue>) -> String {
-    let Some(raw) = raw else {
-        return String::new();
-    };
-    match serde_json::from_str::<Value>(raw.get()) {
-        Ok(Value::String(s)) => s,
-        Ok(Value::Array(a)) => a
-            .iter()
-            .filter_map(|b| b.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Ok(other) => other.to_string(),
-        Err(_) => String::new(),
-    }
+    let n = prompt::task_notification(text)?;
+    Some((n.task_id?, n.status?))
 }
 
 fn cap(mut s: String) -> String {
@@ -1718,37 +1515,6 @@ mod tests {
     fn system(uuid: &str, parent: Option<&str>, subtype: &str, logical: Option<&str>) -> Value {
         json!({"type": "system", "subtype": subtype, "uuid": uuid, "parentUuid": parent,
             "logicalParentUuid": logical, "content": ""})
-    }
-
-    #[test]
-    fn title_prefers_the_custom_one() {
-        let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("s.jsonl");
-        let lines = [
-            json!({"type": "ai-title", "aiTitle": "first guess"}),
-            json!({"type": "user", "uuid": "u", "message": {"role": "user", "content": "mentions -title\" in text"}}),
-            json!({"type": "ai-title", "aiTitle": "better guess"}),
-        ];
-        let body: String = lines.iter().map(|l| l.to_string() + "\n").collect();
-        std::fs::write(&p, &body).unwrap();
-        assert_eq!(session_title(&p).as_deref(), Some("better guess"));
-        std::fs::write(&p, body + &json!({"type": "custom-title", "customTitle": "Mine"}).to_string()).unwrap();
-        assert_eq!(session_title(&p).as_deref(), Some("Mine"));
-    }
-
-    #[test]
-    fn pasted_content_tags_are_taken_off() {
-        // As recorded for a long paste after an image (2.1.317).
-        let rec = "[Image #1]\n\n<pasted_content id=\"1b44\">\nline one\nline two\n</pasted_content id=\"1b44\">\n";
-        assert_eq!(unwrap_pasted(rec), "[Image #1]\n\nline one\nline two\n");
-        assert_eq!(
-            unwrap_pasted("<pasted_content id=\"a0f9\"> x </pasted_content id=\"a0f9\">").trim(),
-            "x"
-        );
-        // Not a tag of Claude Code's: kept.
-        let other = "see <pasted_content id=\"zz\"> and 中文";
-        assert_eq!(unwrap_pasted(other), other);
-        assert_eq!(unwrap_pasted("plain"), "plain");
     }
 
     #[test]

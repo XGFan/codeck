@@ -290,6 +290,18 @@ pub fn tool_result(
     }
 }
 
+/// The path a `<persisted-output>` preview (a tool result too large to keep inline) says the
+/// full output was saved to. Callers use only its basename ([`content::persisted_basename`]):
+/// a tool's own output could imitate the preview.
+pub fn persisted_output_path(text: &str) -> Option<&str> {
+    if !text.trim_start().starts_with("<persisted-output>") {
+        return None;
+    }
+    let marker = "saved to: ";
+    let start = text.find(marker)? + marker.len();
+    Some(text[start..].lines().next()?.trim()).filter(|p| !p.is_empty())
+}
+
 /// §3.4 step 12: a `<persisted-output>` result or `toolUseResult.persistedOutputPath` gives a
 /// basename-only reference (the absolute path is never used).
 pub fn persisted_ref(e: &RawEntry, text: &str) -> Option<PersistedRef> {
@@ -300,15 +312,7 @@ pub fn persisted_ref(e: &RawEntry, text: &str) -> Option<PersistedRef> {
     let from_field = fields
         .as_ref()
         .and_then(|f| f.persisted_output_path.clone());
-    let path = from_field.or_else(|| {
-        if !text.starts_with("<persisted-output>") {
-            return None;
-        }
-        let marker = "saved to: ";
-        let start = text.find(marker)? + marker.len();
-        let line = text[start..].lines().next()?.trim();
-        Some(line.to_owned())
-    })?;
+    let path = from_field.or_else(|| persisted_output_path(text).map(str::to_owned))?;
     Some(PersistedRef {
         file_name: content::persisted_basename(&path)?,
         size_bytes: fields.and_then(|f| f.persisted_output_size).unwrap_or(0.0),
@@ -638,6 +642,20 @@ fn raw_block(path: &Path, offset: u64, index: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_output_path_reads_the_saved_path() {
+        let text = "<persisted-output>\nOutput too large (42.4KB). Full output saved to: /a/b/tool-results/x.txt\n\nPreview (first 2KB):\nFULL";
+        assert_eq!(persisted_output_path(text), Some("/a/b/tool-results/x.txt"));
+        assert_eq!(
+            persisted_output_path("see <persisted-output> saved to: /a/b"),
+            None
+        );
+        assert_eq!(
+            persisted_output_path("<persisted-output>\nOutput too large (1KB).\n"),
+            None
+        );
+    }
 
     #[test]
     fn caps_text_by_bytes_and_lines() {

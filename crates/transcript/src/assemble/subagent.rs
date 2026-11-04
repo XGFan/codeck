@@ -46,6 +46,30 @@ pub fn parse_meta(json: Option<&str>) -> AgentMeta {
         .unwrap_or_default()
 }
 
+/// A tool result saying a background task started: `(kind, task id)` with kind `agent`
+/// (Agent / Task with `run_in_background`), `shell` (Bash) or `workflow`.
+pub fn background_launch(text: &str) -> Option<(&'static str, String)> {
+    let after = |mark: &str| {
+        let rest = &text[text.find(mark)? + mark.len()..];
+        let id: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+        (!id.is_empty()).then_some(id)
+    };
+    if text.starts_with("Async agent launched") {
+        return after("agentId:").map(|id| ("agent", id));
+    }
+    if text.starts_with("Command running in background with ID:") {
+        return after("with ID:").map(|id| ("shell", id));
+    }
+    if text.starts_with("Workflow launched in background") {
+        return after("Task ID:").map(|id| ("workflow", id));
+    }
+    None
+}
+
 /// A parsed task-notification prompt.
 #[derive(Debug, Clone)]
 pub struct Notification {
@@ -303,4 +327,26 @@ pub fn nested_links(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_launch_kinds() {
+        assert_eq!(
+            background_launch("Async agent launched successfully.\nagentId: a1b2-c3 (use it…)"),
+            Some(("agent", "a1b2-c3".into()))
+        );
+        assert_eq!(
+            background_launch("Command running in background with ID: bx9z. Output…"),
+            Some(("shell", "bx9z".into()))
+        );
+        assert_eq!(
+            background_launch("Workflow launched in background. Task ID: w_42\n"),
+            Some(("workflow", "w_42".into()))
+        );
+        assert_eq!(background_launch("done"), None);
+    }
 }

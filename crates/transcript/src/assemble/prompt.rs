@@ -10,10 +10,11 @@ const TEAMMATE_PREAMBLE: &str = "Another Claude session sent a message:";
 /// Title / first-prompt length cap in characters (§3.4 step 9).
 pub const TITLE_CHARS: usize = 120;
 
-/// Text of a user message: the plain string content, or its `text` blocks joined by `\n`.
+/// Text of a user message: the plain string content, or its `text` blocks joined by `\n`;
+/// `<pasted_content>` tags removed ([`unwrap_pasted`]).
 pub fn user_text(e: &RawEntry) -> String {
     if let Some(t) = e.content_text() {
-        return t.to_owned();
+        return unwrap_pasted(t);
     }
     let mut out = String::new();
     for b in e.blocks() {
@@ -26,7 +27,91 @@ pub fn user_text(e: &RawEntry) -> String {
             out.push_str(&t);
         }
     }
+    unwrap_pasted(&out)
+}
+
+/// A prompt without the `<pasted_content id="xxxx">` … `</pasted_content id="xxxx">` tags Claude
+/// Code may put around a long paste (an account-level switch): the text as it was sent. Each tag
+/// goes with the line break or space it adds on its inner side.
+pub fn unwrap_pasted(s: &str) -> String {
+    const OPEN: &str = "<pasted_content id=\"";
+    const CLOSE: &str = "</pasted_content id=\"";
+    if !s.contains("pasted_content id=\"") {
+        return s.to_string();
+    }
+    // `<tag id="` + 4 hex digits + `">` at the start of `rest`: its length.
+    let tag_len = |rest: &str, head: &str| -> Option<usize> {
+        let id = rest.strip_prefix(head)?.get(..4)?;
+        (id.bytes().all(|b| b.is_ascii_hexdigit()) && rest[head.len() + 4..].starts_with("\">"))
+            .then_some(head.len() + 6)
+    };
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        let rest = &s[i..];
+        if let Some(n) = tag_len(rest, OPEN) {
+            i += n;
+            if s[i..].starts_with(['\n', ' ']) {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(n) = tag_len(rest, CLOSE) {
+            if out.ends_with(['\n', ' ']) {
+                out.pop();
+            }
+            i += n;
+            continue;
+        }
+        let c = rest.chars().next().unwrap();
+        out.push(c);
+        i += c.len_utf8();
+    }
     out
+}
+
+/// Slash-command and `!` shell bookkeeping that Claude Code records as user entries: the
+/// command line, its caveat and its output. Not a prompt of the person's.
+pub fn is_command_record(s: &str) -> bool {
+    let t = s.trim_start();
+    t.starts_with("<local-command-caveat>")
+        || t.starts_with("<command-name>")
+        || t.starts_with("<command-message>")
+        || t.starts_with("<local-command-stdout>")
+        || t.starts_with("<local-command-stderr>")
+        || t.starts_with("<bash-input>")
+        || t.starts_with("<bash-stdout>")
+        || t.starts_with("<bash-stderr>")
+}
+
+/// Claude Code's own note of an interruption (Esc, a denial that stops the turn):
+/// `[Request interrupted by user]`, `[Request interrupted by user for tool use]`.
+pub fn is_interruption(s: &str) -> bool {
+    s.starts_with("[Request interrupted by user")
+}
+
+/// The fields of a `<task-notification>` (a background task's end, recorded as a user message).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskNotice {
+    pub task_id: Option<String>,
+    pub tool_use_id: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// `text` (leading whitespace ignored) as a `<task-notification>`.
+pub fn task_notification(text: &str) -> Option<TaskNotice> {
+    let t = text.trim_start();
+    t.starts_with("<task-notification>").then(|| notice_fields(t))
+}
+
+fn notice_fields(t: &str) -> TaskNotice {
+    TaskNotice {
+        task_id: tag(t, "task-id"),
+        tool_use_id: tag(t, "tool-use-id"),
+        status: tag(t, "status"),
+        summary: tag(t, "summary"),
+    }
 }
 
 /// Classifies a user entry that is neither a tool result nor a compact summary.
@@ -37,11 +122,12 @@ pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
     let t = text.trim_start();
     let origin_kind = e.origin.as_ref().and_then(|o| o.kind.as_deref());
     if origin_kind == Some("task-notification") || t.starts_with("<task-notification>") {
+        let n = notice_fields(t);
         return PromptOrigin::TaskNotification {
-            task_id: tag(t, "task-id"),
-            tool_use_id: tag(t, "tool-use-id"),
-            status: tag(t, "status"),
-            summary: tag(t, "summary"),
+            task_id: n.task_id,
+            tool_use_id: n.tool_use_id,
+            status: n.status,
+            summary: n.summary,
         };
     }
     let teammate = t.strip_prefix(TEAMMATE_PREAMBLE).map_or(t, str::trim_start);
@@ -236,6 +322,60 @@ mod tests {
         // A typed prompt that merely mentions the tag stays human.
         let typed = "Fix how `<teammate-message teammate_id=\"x\">` renders";
         assert_eq!(classify(&e, typed), PromptOrigin::Human);
+    }
+
+    #[test]
+    fn pasted_content_tags_are_taken_off() {
+        let rec = "[Image #1]\n\n<pasted_content id=\"1b44\">\nline one\nline two\n</pasted_content id=\"1b44\">\n";
+        assert_eq!(unwrap_pasted(rec), "[Image #1]\n\nline one\nline two\n");
+        assert_eq!(
+            unwrap_pasted("<pasted_content id=\"a0f9\"> x </pasted_content id=\"a0f9\">").trim(),
+            "x"
+        );
+        let other = "see <pasted_content id=\"zz\"> and 中文"; // 不是 Claude Code 的标签：保留
+        assert_eq!(unwrap_pasted(other), other);
+        assert_eq!(unwrap_pasted("plain"), "plain");
+
+        // `user_text` unwraps the tags too (here the content is a plain string).
+        let e = entry(
+            r#"{"type":"user","message":{"role":"user","content":"<pasted_content id=\"1b44\">\nline one\n</pasted_content id=\"1b44\">\n"}}"#,
+        );
+        assert_eq!(user_text(&e), "line one\n");
+    }
+
+    #[test]
+    fn task_notification_fields() {
+        let n = task_notification(
+            "  <task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_9</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>",
+        )
+        .expect("a task notification");
+        assert_eq!(n.task_id.as_deref(), Some("b1"));
+        assert_eq!(n.tool_use_id.as_deref(), Some("toolu_9"));
+        assert_eq!(n.status.as_deref(), Some("completed"));
+        assert_eq!(n.summary.as_deref(), Some("done"));
+
+        assert!(task_notification("see <task-notification>").is_none());
+        let no_status =
+            task_notification("<task-notification>\n<task-id>b2</task-id>\n</task-notification>")
+                .expect("a task notification");
+        assert_eq!(no_status.task_id.as_deref(), Some("b2"));
+        assert_eq!(no_status.status, None);
+    }
+
+    #[test]
+    fn command_records_and_interruptions() {
+        assert!(is_command_record("<command-name>/x</command-name>"));
+        assert!(is_command_record("  <bash-input>ls</bash-input>"));
+        assert!(is_command_record(
+            "<local-command-stdout>ok</local-command-stdout>"
+        ));
+        assert!(!is_command_record("hello <command-name>"));
+
+        assert!(is_interruption("[Request interrupted by user]"));
+        assert!(is_interruption(
+            "[Request interrupted by user for tool use]"
+        ));
+        assert!(!is_interruption("hello"));
     }
 
     #[test]

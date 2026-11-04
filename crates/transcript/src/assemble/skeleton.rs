@@ -23,6 +23,28 @@ struct ParentRefs {
     prev_in_file: Option<usize>,
 }
 
+/// The Session's title from its main file alone: the last `custom-title` (set by the person),
+/// else the last `ai-title` — the same rule [`build`] applies. Only lines that can hold one are
+/// parsed, so a running Session's title is cheap to re-read.
+pub fn read_title(main: &std::path::Path) -> Option<String> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(main).ok()?;
+    let (mut custom, mut ai) = (None, None);
+    for line in std::io::BufReader::new(f).split(b'\n').map_while(|l| l.ok()) {
+        if !line.windows(7).any(|w| w == b"-title\"") {
+            continue;
+        }
+        let Ok(e) = serde_json::from_slice::<RawEntry>(&line) else { continue };
+        let pick = |v: Option<String>| v.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+        match e.entry_type() {
+            "custom-title" => custom = pick(e.custom_title).or(custom),
+            "ai-title" => ai = pick(e.ai_title).or(ai),
+            _ => {}
+        }
+    }
+    custom.or(ai)
+}
+
 pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
     // Largest file first (size ≈ offset of the last record); stable for equal sizes.
     let mut ranked: Vec<usize> = (0..files.len()).collect();
@@ -328,4 +350,29 @@ pub fn tokens_by_message(s: &SessionSkeleton) -> HashMap<&str, TokenTotals> {
         t.cache_creation = t.cache_creation.max(u.cache_creation);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_title_prefers_the_custom_one() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.jsonl");
+        let lines = [
+            serde_json::json!({"type": "ai-title", "aiTitle": "first guess"}),
+            serde_json::json!({"type": "user", "uuid": "u", "message": {"role": "user", "content": "mentions -title\" in text"}}),
+            serde_json::json!({"type": "ai-title", "aiTitle": "better guess"}),
+        ];
+        let body: String = lines.iter().map(|l| l.to_string() + "\n").collect();
+        std::fs::write(&p, &body).unwrap();
+        assert_eq!(read_title(&p).as_deref(), Some("better guess"));
+        std::fs::write(
+            &p,
+            body + &serde_json::json!({"type": "custom-title", "customTitle": "Mine"}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(read_title(&p).as_deref(), Some("Mine"));
+    }
 }

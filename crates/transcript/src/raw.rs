@@ -50,6 +50,15 @@ pub struct RawEntry {
     /// `system` entries.
     #[serde(default, deserialize_with = "lenient::string")]
     pub level: Option<String>,
+    /// `queue-operation` entries: `enqueue`, `dequeue`, `remove`, …
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub operation: Option<String>,
+    /// API error messages (`isApiErrorMessage`): `server_error`, `rate_limit`, …
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub error: Option<String>,
+    /// `system` / `turn_duration`.
+    #[serde(default, deserialize_with = "lenient::number")]
+    pub duration_ms: Option<f64>,
     /// `system` / `queue-operation` content (usually a string).
     #[serde(default)]
     pub content: Option<Box<RawValue>>,

@@ -712,7 +712,7 @@ impl Engine {
                     && b.kind == BlockKind::User
                     && b.text
                         .as_deref()
-                        .is_some_and(|t| t.starts_with("[Request interrupted by user"))
+                        .is_some_and(::transcript::assemble::prompt::is_interruption)
                 {
                     self.turn.aborted = true;
                 }
@@ -954,7 +954,7 @@ impl Engine {
             }
             "UserPromptSubmit" => {
                 let pid = s("prompt_id").unwrap_or_default();
-                let text = crate::transcript::unwrap_pasted(&s("prompt").unwrap_or_default());
+                let text = ::transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
                 self.hook_seq += 1;
                 self.hook_prompts.push_back((self.hook_seq, pid.clone(), text.clone()));
                 if self.hook_prompts.len() > 64 {

@@ -107,7 +107,7 @@ fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
             "plugin": plugin,
             "claude_pid": claude.pid,
             "version": pf.as_ref().and_then(|p| p.version.clone()),
-            "title": transcript.as_deref().and_then(crate::transcript::session_title),
+            "title": transcript.as_deref().and_then(::transcript::assemble::skeleton::read_title),
         }));
     }
     if json_out {
