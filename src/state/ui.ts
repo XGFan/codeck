@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-/** A pasted image waiting to be sent: its saved path and a preview URL. */
+/** A pasted image waiting to be sent: its saved path and a preview `data:` URL. */
 export interface DraftImage {
   path: string;
   url: string;

@@ -122,6 +122,9 @@ test("a learned choice is marked, a branch drops what it replaced, an unknown di
   await send(page, "顺便把标题也改了", "Meta");
   await page.getByTestId("permission-card").getByTestId("allow").click();
   await expect(page.getByTestId("turn-end")).toHaveCount(1);
+  // The prompt's image, fetched from ccrpc.
+  await expect(page.getByTestId("prompt-image")).toHaveCount(1);
+  await expect.poll(() => page.getByTestId("prompt-image").evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
 
   await send(page, "按计划来");
   const choice = page.getByTestId("choice-card");
@@ -155,7 +158,11 @@ test("a new Session is started in the picked folder", async ({ page }) => {
 test("a pasted image goes with the prompt", async ({ page }) => {
   await open(page, "turns");
   await pasteImage(page);
-  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  const preview = page.getByTestId("images").locator("img");
+  await expect(preview).toHaveCount(1);
+  // The app's CSP allows data: images only (a blob: preview showed blank).
+  expect(await preview.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+  await expect.poll(() => preview.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
   await send(page, "MOCK-SLOW please");
   const p = await lastSent(page, "prompt");
   expect(p?.images).toEqual(["/tmp/cc-gui-mock-1.png"]);

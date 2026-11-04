@@ -82,6 +82,9 @@ if (typeof window !== "undefined") (window as unknown as { __mock: MockProbe }).
 
 const later = (f: () => void) => setTimeout(f, 0);
 
+/** A 1×1 PNG: every `get_image`. */
+const RED_DOT = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+
 function emit(id: string, msg: InMsg) {
   const c = conns.get(id);
   if (!c || c.closed) return;
@@ -142,6 +145,8 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       });
     case "get_tasks":
       return respond(id, msg, { tasks: [] });
+    case "get_image":
+      return respond(id, msg, { media_type: "image/png", data: RED_DOT });
     case "get_screen":
       return respond(id, msg, { lines: [], cursor: [0, 0] });
     case "get_tool_result": {

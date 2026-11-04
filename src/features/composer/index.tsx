@@ -76,7 +76,6 @@ export function Composer({ c }: { c: ConnState }) {
     setText((t) => (t.trim() === body ? "" : t));
     // Only the images that went with it: one pasted meanwhile stays.
     const gone = new Set(images.map((i) => i.path));
-    images.forEach((i) => URL.revokeObjectURL(i.url));
     setImages((x) => x.filter((i) => !gone.has(i.path)));
   };
 
@@ -99,8 +98,10 @@ export function Composer({ c }: { c: ConnState }) {
     e.preventDefault();
     for (const f of files) {
       try {
-        const path = await api.saveImage(await toBase64(f), extOf(f.type)!);
-        setImages((x) => [...x, { path, url: URL.createObjectURL(f) }]);
+        const b64 = await toBase64(f);
+        const path = await api.saveImage(b64, extOf(f.type)!);
+        // A data: URL: the app's CSP allows data: images, not blob:.
+        setImages((x) => [...x, { path, url: `data:${f.type};base64,${b64}` }]);
       } catch (err) {
         setError(`存不了图片：${String(err)}`);
       }

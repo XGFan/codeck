@@ -1,4 +1,6 @@
 import { ChevronDown, ChevronRight, CircleX, Network, Workflow } from "lucide-react";
+import { useEffect } from "react";
+import { create } from "zustand";
 import { CopyButton } from "@/components/ui/copy-button";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
@@ -53,7 +55,7 @@ function RowView({ conn, row, userLabel }: { conn: string; row: Row; userLabel: 
             已中止
           </div>
         );
-      return <UserBubble text={row.text} queued={row.queued} label={userLabel} />;
+      return <UserBubble conn={conn} row={row} label={userLabel} />;
     case "text":
       return (
         <div data-testid="text-block" className="group/copy relative w-full">
@@ -76,7 +78,8 @@ function RowView({ conn, row, userLabel }: { conn: string; row: Row; userLabel: 
   }
 }
 
-function UserBubble({ text, queued, label }: { text: string; queued: boolean; label: string }) {
+function UserBubble({ conn, row, label }: { conn: string; row: Extract<Row, { kind: "user" }>; label: string }) {
+  const { text, queued } = row;
   return (
     <div data-testid="user-block" data-queued={queued || undefined} className="group/copy flex w-full flex-col items-end gap-1.5">
       <div className="flex items-center gap-2 text-[11px] text-secondary">
@@ -90,11 +93,45 @@ function UserBubble({ text, queued, label }: { text: string; queued: boolean; la
           queued ? "border-dashed border-live-waiting/40 bg-selection/30" : "border-selection bg-selection/50",
         )}
       >
+        {row.images.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="prompt-images">
+            {row.images.map((_, i) => (
+              <PromptImage key={i} conn={conn} uuid={row.uuid} index={i} />
+            ))}
+          </div>
+        )}
         {text}
       </div>
     </div>
   );
 }
+
+/** One of a prompt's images, fetched with `get_image` (kept per connection, uuid and index). */
+function PromptImage({ conn, uuid, index }: { conn: string; uuid: string; index: number }) {
+  const k = `${conn}:${uuid}:${index}`;
+  const img = useImages((s) => s.images[k]);
+  useEffect(() => {
+    if (useImages.getState().images[k]) return;
+    useImages.setState((s) => ({ images: { ...s.images, [k]: { loading: true } } }));
+    void useStore
+      .getState()
+      .command(conn, { type: "get_image", uuid, index })
+      .then((r) => {
+        const d = r.success ? r.data : undefined;
+        const url = typeof d?.data === "string" && typeof d.media_type === "string" ? `data:${d.media_type};base64,${d.data}` : undefined;
+        useImages.setState((s) => ({ images: { ...s.images, [k]: url ? { url } : { error: true } } }));
+      });
+  }, [conn, k, uuid, index]);
+  if (img?.url)
+    return <img src={img.url} alt="" className="max-h-40 max-w-60 rounded border border-border object-contain" data-testid="prompt-image" />;
+  return (
+    <span className="flex size-14 items-center justify-center rounded border border-border text-[11px] text-secondary">
+      {img?.error ? "取不到图片" : "…"}
+    </span>
+  );
+}
+
+const useImages = create<{ images: Record<string, { url?: string; loading?: boolean; error?: boolean }> }>(() => ({ images: {} }));
 
 function Thinking({ conn, k, text }: { conn: string; k: string; text: string }) {
   const key = expandKey(conn, `thinking:${k}`);

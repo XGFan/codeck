@@ -25,6 +25,8 @@ interface BlockBase {
 export interface UserBlock extends BlockBase {
   kind: "user";
   text: string;
+  /** A prompt's images (media types); their data comes from `get_image`. */
+  images?: string[];
 }
 export interface TextBlock extends BlockBase {
   kind: "text";

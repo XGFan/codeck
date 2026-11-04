@@ -33,7 +33,7 @@ export const isAgentCall = (name: string) => name === "Agent" || name === "Task"
 export type GroupItem = { type: "call"; call: ToolCall } | { type: "thinking"; key: string; text: string };
 
 export type Row =
-  | { kind: "user"; key: string; text: string; queued: boolean }
+  | { kind: "user"; key: string; text: string; queued: boolean; uuid: string; images: string[] }
   | { kind: "text"; key: string; text: string }
   | { kind: "thinking"; key: string; text: string }
   | { kind: "tool"; key: string; call: ToolCall }
@@ -117,7 +117,7 @@ export function buildRows(blocks: Block[], results: Map<string, ToolResult> = re
     switch (b.kind) {
       case "user":
         flush();
-        rows.push({ kind: "user", key: keyOf(b), text: b.text, queued: b.queued === true });
+        rows.push({ kind: "user", key: keyOf(b), text: b.text, queued: b.queued === true, uuid: b.uuid, images: b.images ?? [] });
         break;
       case "text":
         if (!b.text.trim()) break;
