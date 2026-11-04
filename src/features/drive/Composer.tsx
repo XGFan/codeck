@@ -31,14 +31,14 @@ function focusFirstCard() {
 }
 
 /**
- * The input box: idle → `prompt` (a built-in slash command → `slash`); busy → `follow_up` (⌘Enter
- * `steer`); waiting → not sent, focus goes to the card. Esc is handled by the drive panel. What is
+ * The input box: idle → `prompt` (a built-in slash command → `slash`); busy → `steer`, as Enter in
+ * the terminal (Claude Code's own queue, shown in the TUI, delivered when the current tool call
+ * ends); waiting → not sent, focus goes to the card. Esc is handled by the drive panel. What is
  * typed lives in the drive store, so switching Sessions keeps it. Typing `/name` lists matching
  * commands: ↑↓ pick, Tab (or Enter on a different one) completes, Esc hides the list.
  */
 export function Composer({ c }: { c: ConnState }) {
   const command = useDrive((s) => s.command);
-  const setFollowUps = useDrive((s) => s.setFollowUps);
   const key = draftKey(c);
   const { text, images } = useDrive((s) => s.drafts[key]) ?? EMPTY_DRAFT;
   const setDraft = useDrive((s) => s.setDraft);
@@ -66,7 +66,7 @@ export function Composer({ c }: { c: ConnState }) {
     setPick(0);
   };
 
-  const submit = async (steer: boolean) => {
+  const submit = async () => {
     const body = text.trim();
     if (live && state === "waiting") return focusFirstCard();
     if (!body || sending || !live) return;
@@ -81,31 +81,23 @@ export function Composer({ c }: { c: ConnState }) {
     if (state === "idle") {
       const command = slashCommand(body, images.length > 0, list);
       msg = command != null ? { type: "slash", command } : { type: "prompt", text: body, ...withImages };
-    } else if (state === "busy" && steer) {
-      if (images.length) return setError("插话不能带图片");
-      msg = { type: "steer", text: body };
     } else if (state === "busy") {
-      // Queued, it would go as a `prompt` waiting 30 s for a record a panel never leaves.
+      if (images.length) return setError("忙时不能发图片，等空闲时再发");
+      // A panel opened from the queue would hold the turn until someone closes it in the terminal.
       const panel = commandOf(body, list);
       if (panel?.source === "builtin" && panel.interactive) return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
-      msg = { type: "follow_up", text: body, ...withImages };
+      msg = { type: "steer", text: body };
     } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);
     const r = await command(c.conn, msg);
     setSending(false);
     if (!r.success) return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
-    if (msg.type === "follow_up") void useDrive.getState().refreshState(c.conn);
     // Keep what was typed while it was being sent.
     setText((t) => (t.trim() === body ? "" : t));
     // Only the images that went with it: one pasted meanwhile stays.
     const gone = new Set(images.map((i) => i.path));
     setImages((x) => x.filter((i) => !gone.has(i.path)));
-  };
-
-  const cancel = async (index: number) => {
-    const r = await command(c.conn, { type: "cancel_follow_up", index });
-    if (r.success && Array.isArray(r.data?.follow_ups)) setFollowUps(c.conn, r.data.follow_ups as string[]);
   };
 
   const onPaste = async (e: React.ClipboardEvent) => {
@@ -133,7 +125,7 @@ export function Composer({ c }: { c: ConnState }) {
         ? "Session 已结束"
         : "连接中…"
     : state === "busy"
-      ? "Enter 排到本轮之后 · ⌘Enter 立即插话 · Esc 中止"
+      ? "Enter 插话，当前工具调用结束后送达 · Esc 中止"
       : state === "waiting"
         ? "先回答上面的请求 · Esc 中止"
         : state === "idle"
@@ -142,19 +134,6 @@ export function Composer({ c }: { c: ConnState }) {
 
   return (
     <div className="shrink-0" data-testid="composer">
-      {c.followUps.length > 0 && (
-        <ul className="mb-1.5 space-y-1" data-testid="follow-ups">
-          {c.followUps.map((f, i) => (
-            <li key={`${i}:${f}`} className="flex items-center gap-2 rounded-md border border-dashed border-border px-2 py-1 text-[12px]">
-              <span className="shrink-0 text-secondary">排队</span>
-              <span className="min-w-0 flex-1 truncate">{f}</span>
-              <button type="button" aria-label="撤销" onClick={() => void cancel(i)} className="text-secondary hover:text-text" data-testid="cancel-follow-up">
-                <X size={12} aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       <div className={cn("relative rounded-xl border border-border bg-ground px-3 pt-2 pb-1.5", live ? "focus-within:border-accent" : "opacity-60")}>
         {matches.length > 0 && (
           <ul
@@ -248,7 +227,7 @@ export function Composer({ c }: { c: ConnState }) {
             }
             if (e.key !== "Enter" || e.shiftKey) return;
             e.preventDefault();
-            void submit(e.metaKey || e.ctrlKey);
+            void submit();
           }}
           placeholder={state === "busy" ? "补充或排队下一条…" : "给 Claude 发消息"}
           aria-label="给 Claude 发消息"
@@ -269,7 +248,7 @@ export function Composer({ c }: { c: ConnState }) {
             type="button"
             aria-label="发送"
             disabled={!live || !text.trim() || sending || state === "waiting" || state === "starting"}
-            onClick={() => void submit(false)}
+            onClick={() => void submit()}
             className="flex size-6 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
             data-testid="send"
           >

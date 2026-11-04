@@ -5,7 +5,7 @@
 // recording can stand for a Session of CoDeck's mock data and keeps its ids when re-recorded. Connecting replays what ccrpc printed up to the first
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
-// get_tasks, cancel_follow_up) are answered from what was replayed. `new-session` is not listed:
+// get_tasks) are answered from what was replayed. `new-session` is not listed:
 // `driveNew` opens it.
 
 import type { InMsg, LsEntry } from "@/features/drive/protocol";
@@ -65,7 +65,6 @@ interface Conn {
   fx: Fixture;
   cursor: number;
   state: unknown;
-  followUps: string[];
   closed: boolean;
 }
 
@@ -100,8 +99,6 @@ function emit(id: string, msg: InMsg) {
   const c = conns.get(id);
   if (!c || c.closed) return;
   if (msg.type === "state") c.state = msg;
-  // ccrpc sends one queued follow-up per idle turn.
-  if (msg.type === "turn_end") c.followUps.shift();
   for (const cb of lineCbs) cb(id, msg);
 }
 
@@ -143,19 +140,13 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
   switch (msg.type) {
     case "get_state": {
       const s = (c.state ?? { state: "idle" }) as Record<string, unknown>;
-      return respond(id, msg, { ...s, follow_ups: c.followUps, follow_up_queue: c.followUps.length });
+      return respond(id, msg, s);
     }
     case "get_tasks":
       return respond(id, msg, { tasks: [] });
     // Typed into the TUI; what it does shows on the screen, not in a reply.
     case "slash":
       return c.state && (c.state as { state?: string }).state !== "idle" ? respond(id, msg, null, "not_idle") : respond(id, msg, {});
-    case "cancel_follow_up": {
-      const i = msg.index as number | undefined;
-      const removed = i == null ? c.followUps.length : 1;
-      c.followUps = i == null ? [] : c.followUps.filter((_, j) => j !== i);
-      return respond(id, msg, { removed, follow_ups: c.followUps });
-    }
     default:
       return respond(id, msg, null, `录制里没有 ${String(msg.type)}`);
   }
@@ -163,7 +154,7 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
 
 function open(fx: Fixture): string {
   const id = `mock${++seq}`;
-  conns.set(id, { fx, cursor: 0, state: null, followUps: [], closed: false });
+  conns.set(id, { fx, cursor: 0, state: null, closed: false });
   replay(id);
   return id;
 }
@@ -221,7 +212,6 @@ export function createMockDrive(): DriveApi {
       probe.sent.push({ conn: id, msg });
       const c = conns.get(id);
       if (!c || c.closed) throw new Error("ccrpc 已退出");
-      if (msg.type === "follow_up") c.followUps.push(String(msg.text));
       const next = c.fx.lines[c.cursor];
       if (next?.dir === "send" && next.msg?.type === msg.type) {
         c.cursor++;

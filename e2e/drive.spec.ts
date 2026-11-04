@@ -122,7 +122,7 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   expect(await lastSent(page, "answer_question")).toMatchObject({ answers: [{ options: ["Blue"] }] });
 });
 
-test("忙时 Enter 排队（可撤销）、⌘Enter 插话；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({ page }) => {
+test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({ page }) => {
   await drive(page, RICH);
   await expect(state(page)).toContainText("空闲");
   // At 1280 wide the title row keeps its buttons; the drive controls get a row of their own.
@@ -140,12 +140,14 @@ test("忙时 Enter 排队（可撤销）、⌘Enter 插话；数字键作答；D
   await expect(state(page)).toContainText("工作中");
   await expect(page.getByTestId("progress")).toContainText("Thinking");
 
+  await expect(page.getByTestId("drive-hint")).toContainText("Enter 插话");
   await send(page, "做完再跑一下测试");
-  await expect(page.getByTestId("follow-ups")).toContainText("做完再跑一下测试");
-  expect(await lastSent(page, "follow_up")).toMatchObject({ text: "做完再跑一下测试" });
+  await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "做完再跑一下测试" });
+  await expect(page.getByTestId("drive-input")).toHaveValue("");
 
   await send(page, "顺便把标题也改了", "Meta");
-  expect(await lastSent(page, "steer")).toMatchObject({ text: "顺便把标题也改了" });
+  await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "顺便把标题也改了" });
+  expect(await lastSent(page, "follow_up")).toBeUndefined();
 
   const card = page.getByTestId("permission-card");
   await expect(card).toContainText("README.md");
@@ -155,8 +157,6 @@ test("忙时 Enter 排队（可撤销）、⌘Enter 插话；数字键作答；D
   await expect(card.getByTestId("deny")).toHaveText("3. No");
   // This Session's card and the LCP Session, counted once each.
   await expect.poll(async () => (await probe(page)).badge).toBe(2);
-  await page.getByTestId("cancel-follow-up").click();
-  await expect(page.getByTestId("follow-ups")).toHaveCount(0);
   // With focus in the conversation, number keys do not answer.
   await page.getByTestId("transcript").click({ position: { x: 4, y: 4 } });
   await page.keyboard.press("1");

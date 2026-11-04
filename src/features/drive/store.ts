@@ -54,9 +54,6 @@ interface DriveStore {
   disconnect(conn: string): Promise<void>;
   reconnect(conn: string): Promise<void>;
   refreshTasks(conn: string): Promise<void>;
-  /** `get_state`'s queued follow-ups. */
-  refreshState(conn: string): Promise<void>;
-  setFollowUps(conn: string, followUps: string[]): void;
   dropRequest(conn: string, requestId: string): void;
   dismissNotice(conn: string, id: number): void;
   setError(key: string, e: string | null): void;
@@ -142,7 +139,6 @@ export const useDrive = create<DriveStore>((set, get) => {
           selectOnReady.delete(conn);
           select(msg.session_id);
         }
-        void get().refreshState(conn);
         void get().refreshTasks(conn);
         break;
       case "session_changed": {
@@ -153,11 +149,7 @@ export const useDrive = create<DriveStore>((set, get) => {
       }
       case "turn_end":
         if (useUi.getState().sessionId !== after.sessionId || document.hidden) update(conn, (c) => ({ ...c, unread: true }));
-        void get().refreshState(conn);
         void get().refreshTasks(conn);
-        break;
-      case "state":
-        if (before.state !== msg.state && (msg.state === "idle" || msg.state === "busy")) void get().refreshState(conn);
         break;
     }
   };
@@ -399,15 +391,6 @@ export const useDrive = create<DriveStore>((set, get) => {
         const tasks = r.data.tasks as Task[];
         update(conn, (c) => ({ ...c, tasks }));
       }
-    },
-
-    async refreshState(conn) {
-      const r = await get().command(conn, { type: "get_state" });
-      if (r.success && r.data) get().setFollowUps(conn, Array.isArray(r.data.follow_ups) ? (r.data.follow_ups as string[]) : []);
-    },
-
-    setFollowUps(conn, followUps) {
-      update(conn, (c) => ({ ...c, followUps }));
     },
 
     dropRequest(conn, requestId) {

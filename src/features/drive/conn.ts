@@ -37,7 +37,6 @@ export interface ConnState {
   contextTokens: number | null;
   requests: Request[];
   progress: ProgressEvent | null;
-  followUps: string[];
   tasks: Task[];
   /** The last turn's end (duration, usage, cost, error, aborted). */
   lastTurn: TurnEndEvent | null;
@@ -46,7 +45,7 @@ export interface ConnState {
   sessionExited: boolean;
   /** A turn ended while this Session was not on screen. */
   unread: boolean;
-  /** Short notices (follow_up failures, analysis results…), newest last. */
+  /** Short notices (analysis results, takeovers…), newest last. */
   notices: { id: number; text: string }[];
 }
 
@@ -65,7 +64,6 @@ export function initial(conn: string, holderId: string | null): ConnState {
     contextTokens: null,
     requests: [],
     progress: null,
-    followUps: [],
     tasks: [],
     lastTurn: null,
     procExit: null,

@@ -114,18 +114,18 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **环境**：第一次用到驾驶时读一次登录 shell 的环境（`$SHELL -l -c env`），作为所有 ccrpc 子进程的环境，不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
 - **可驾驶的 Session**：窗口可见、且至少有一个 Live Session 或驾驶连接时运行 `ccrpc ls --json`，上一次返回后隔 2 秒再运行下一次；条件不满足时停止（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时立即查一次再继续；停止前发出、停止后才返回的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 或读取 ccrpc 信息失败时停止轮询，错误显示在「设置 › 驾驶」，可重试。
 - **标题栏**：选中的 Session 在 `ccrpc ls` 里且插件已报到时显示「驾驶」（`ccrpc attach --co-display`）；插件未报到时按钮禁用，悬停提示「ccrpc 插件未加载，重启 claude 后可驾驶」；不在列表里（不在 clay 里，或 ccrpc 不可用）时不显示。已连接时「驾驶」按钮消失，标题栏在元信息行下方另起一行，显示状态、模型、权限模式（可点，`set_mode`；空闲或忙时可切换）、上下文 token、悬停出现的「复制排查信息」（holder_id、session_id、cwd 与这个连接的日志目录）和「断开」（关闭 ccrpc 的 stdin，Session 照常运行）。连接保持到断开、Session 或 ccrpc 退出、应用退出。
-- **驾驶区**：在对话区下方、与对话区同宽，只在当前 Session 已连接时出现。自上而下：ccrpc 意外退出的横幅（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束、通知（follow_up 没发出、学会新界面、界面识别失败、被接手 / 取回，可关）、请求卡片、忙时的进度行（否则为上一轮的用时、token、API 金额、错误、已中止）、排队的 follow_up（可撤销）、输入框（粘贴的图片、后台任务角标，点开可停止）。
+- **驾驶区**：在对话区下方、与对话区同宽，只在当前 Session 已连接时出现。自上而下：ccrpc 意外退出的横幅（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束、通知（学会新界面、界面识别失败、被接手 / 取回，可关）、请求卡片、忙时的进度行（否则为上一轮的用时、token、API 金额、错误、已中止）、输入框（粘贴的图片、后台任务角标，点开可停止）。
 - **输入框**：
 
   | 状态 | Enter | 其他 |
   |---|---|---|
   | idle | `prompt` | |
-  | busy | `follow_up` | ⌘Enter `steer` |
+  | busy | `steer`（与终端里忙时按 Enter 一样：进 Claude Code 的队列，TUI 里可见，当前工具调用结束后送达；没有工具调用可夹带时排到本轮之后） | |
   | waiting | 不发送，焦点移到第一张请求卡片 | |
   | busy / waiting | | Esc `abort`（焦点在驾驶区时） |
 
-  - 粘贴的图片存到 `~/Library/Caches/dev.joy.codeck/images/`，输入框上方以 `data:` 地址预览，路径作为 `images` 传给 `prompt` / `follow_up`；`steer` 不带图片。
-  - 斜杠命令：idle 时内置命令（以及补全清单里没有、形如命令名的名字）走 `slash`——本地命令和打开面板的命令在 transcript 里不留可等的记录；自定义命令、skill、`/Users/…` 这类路径、多行或带图片的，以及取不到补全清单时，走 `prompt`。忙时照常 `follow_up`，但会打开界面的内置命令不发送，提示等空闲时再发（排队后会以 `prompt` 发出，等满 30 秒）。
+  - 粘贴的图片存到 `~/Library/Caches/dev.joy.codeck/images/`，输入框上方以 `data:` 地址预览，路径作为 `images` 传给 `prompt`；忙时（`steer`）不能带图片，提示等空闲时再发。
+  - 斜杠命令：idle 时内置命令（以及补全清单里没有、形如命令名的名字）走 `slash`——本地命令和打开面板的命令在 transcript 里不留可等的记录；自定义命令、skill、`/Users/…` 这类路径、多行或带图片的，以及取不到补全清单时，走 `prompt`。忙时照常 `steer`，但会打开界面的内置命令不发送，提示等空闲时再发（从队列里打开的界面会一直挡着本轮，要到终端里关）。
   - 补全：输入框只有 `/名字`（还没有空格、换行）时，上方列出匹配的命令（名字完全相同 > 前缀 > 命名空间 `:` 之后的前缀 > 包含）；只输入 `/` 时列出全部，列表可滚动，显示描述、来源（内置 / 用户 / 项目 / 插件），会在终端里打开界面的内置命令标「打开界面」；↑↓ 选择，Tab 补全，Enter 在选中项与输入不同时补全、相同时发送，Esc 只收起列表。清单来自内置命令表、数据根下的 `commands/`、`skills/`，Session cwd 下的 `.claude/commands`、`.claude/skills`，以及用户和项目设置里启用的插件的 commands / skills（插件的以 `插件名:` 为前缀）；只读，同名时前者优先。
   - 共显时写入会清空 TUI 输入框里没发的内容（ccrpc 的已知限制）。
   - 没发出的输入按 Session 保留，切换 Session、重连后仍在。

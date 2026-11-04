@@ -6,8 +6,8 @@
 {"t": 1793700000060, "dir": "recv", "msg": {"type": "response", "id": "p1", "command": "prompt", "success": true, "data": {"uuid": "u1", "prompt_id": "P1"}}}
 {"t": 1793700000070, "dir": "recv", "msg": {"type": "block", "kind": "text", "uuid": "a1", "index": 0, "text": "我先看看 **README**。"}}
 {"t": 1793700000080, "dir": "recv", "msg": {"type": "progress", "text": "Thinking… (3s · ↓ 120 tokens)", "verb": "Thinking", "elapsed_s": 3, "tokens": 120}}
-{"t": 1793700000090, "dir": "send", "msg": {"id": "f1", "type": "follow_up", "text": "做完再跑一下测试"}}
-{"t": 1793700000100, "dir": "recv", "msg": {"type": "response", "id": "f1", "command": "follow_up", "success": true, "data": {"queued": 1}}}
+{"t": 1793700000090, "dir": "send", "msg": {"id": "f1", "type": "steer", "text": "做完再跑一下测试"}}
+{"t": 1793700000100, "dir": "recv", "msg": {"type": "response", "id": "f1", "command": "steer", "success": true, "data": {"delivered_as": "queued"}}}
 {"t": 1793700000110, "dir": "send", "msg": {"id": "s1", "type": "steer", "text": "顺便把标题也改了"}}
 {"t": 1793700000120, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u2", "index": 0, "text": "顺便把标题也改了", "queued": true}}
 {"t": 1793700000121, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u2n", "index": 0, "queued": true, "text": "<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n<summary>Background command \"Run tests\" completed (exit code 0)</summary>\n</task-notification>"}}
