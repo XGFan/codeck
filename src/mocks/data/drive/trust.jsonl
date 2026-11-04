@@ -1,0 +1,6 @@
+{"t": 1793700000000, "dir": "meta", "ls": {"title": "trust", "cwd": "/work/orbit-web", "session_id": "3d9f84b1-0007-4000-8000-000000000007"}}
+{"dir":"recv","msg":{"claude_version":null,"co_display":false,"context_tokens":null,"cwd":null,"holder_id":"m74729830ae3e","mode":null,"model":null,"protocol":2,"session_id":null,"size":[160,48],"state":"starting","taken_over":false,"type":"ready","warnings":[]},"t":1793726650660}
+{"dir":"recv","msg":{"layout":"trust_folder","layout_source":"builtin","options":[{"description":null,"label":"Yes, I trust this folder","meaning":"allow"},{"description":null,"label":"No, exit","meaning":"deny"}],"request_id":"choice:1","title":"Is this a project you created or one you trust?","tool_use_id":null,"type":"choice"},"t":1793726653769}
+{"dir":"send","msg":{"id":"t1","option":"Yes, I trust this folder","request_id":"choice:1","type":"answer_choice"},"t":1793726653770}
+{"dir":"recv","msg":{"state":"idle","type":"state"},"t":1793726653882}
+{"dir":"recv","msg":{"command":"answer_choice","data":{"state":"idle"},"id":"t1","success":true,"type":"response"},"t":1793726653883}

@@ -1,22 +1,42 @@
 import { Plus, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
-import type { SessionQuery } from "@/ipc/bindings";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey } from "@/lib/hotkeys";
-import { useSessions } from "@/queries";
+import { useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { TurnEndEvent } from "./protocol";
 import { Requests } from "./Requests";
-import { connFor, draftKey, useDrive, waitingSessions } from "./store";
+import { connFor, draftKey, errorKey, useDrive, waitingSessions } from "./store";
 
 export { DriveBar, DriveConnect } from "./Header";
 export { DriveSettings } from "./Settings";
 export { connFor, useDrive } from "./store";
 
-const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
+/**
+ * The Viewer's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
+ * arrives, from the Session list it already loaded (unfiltered at startup) — no query of its own.
+ */
+function useLive(): { id: string; waiting: boolean }[] {
+  const live = useDrive((s) => s.live);
+  const { data: list } = useSessionList();
+  return useMemo(
+    () =>
+      live
+        ? live.map((e) => ({ id: e.sessionId, waiting: e.state.status === "waiting" }))
+        : (list ?? []).filter((s) => s.live).map((s) => ({ id: s.id, waiting: s.live!.status === "waiting" })),
+    [live, list],
+  );
+}
+
+/** Sessions waiting for an answer: Live ones that wait (every Session), and connected ones with a card. */
+function useWaiting(): string[] {
+  const live = useLive();
+  const conns = useDrive((s) => s.conns);
+  return useMemo(() => waitingSessions(live.filter((l) => l.waiting).map((l) => l.id), conns), [live, conns]);
+}
 
 /**
  * Starts driving's background work (ccrpc's events; `ccrpc ls` polling while some Session is Live or driven)
@@ -26,18 +46,57 @@ export function DriveRoot() {
   const start = useDrive((s) => s.start);
   const setWanted = useDrive((s) => s.setWanted);
   useEffect(() => start(), [start]);
-  const { data: sessions } = useSessions(ALL_SESSIONS);
-  const conns = useDrive((s) => s.conns);
-  const anyLive = (sessions ?? []).some((s) => s.live != null);
-  const anyConn = Object.keys(conns).length > 0;
+  const anyLive = useLive().length > 0;
+  const anyConn = useDrive((s) => Object.keys(s.conns).length > 0);
   useEffect(() => setWanted(anyLive || anyConn), [anyLive, anyConn, setWanted]);
-  // Waiting Sessions: the Viewer's Live data (every Session) and connected Sessions with a card.
-  const liveWaiting = (sessions ?? []).filter((s) => s.live?.status === "waiting").map((s) => s.id);
-  const n = waitingSessions(liveWaiting, conns).length;
+  const n = useWaiting().length;
   useEffect(() => {
     void api.setBadge(n).catch(() => {});
   }, [n]);
   return null;
+}
+
+/**
+ * On coming back to the window: the Session on screen has nothing to answer but another one waits — one
+ * line at the top; clicking it opens that Session. Gone once the selection changes.
+ */
+export function ElsewhereBanner() {
+  const waiting = useWaiting();
+  const { data: list } = useSessionList();
+  const ref = useRef({ waiting, list });
+  ref.current = { waiting, list };
+  const [shown, setShown] = useState<{ id: string; title: string } | null>(null);
+  const select = useUi((s) => s.selectSession);
+  useEffect(() => {
+    const check = () => {
+      const cur = useUi.getState().sessionId;
+      const { waiting, list } = ref.current;
+      const other = waiting.find((id) => id !== cur);
+      if ((cur != null && waiting.includes(cur)) || !other) return setShown(null);
+      const ls = useDrive.getState().ls.find((e) => e.session_id === other);
+      const title = list?.find((s) => s.id === other)?.title ?? ls?.title ?? ls?.cwd?.split("/").pop() ?? "另一个 Session";
+      setShown({ id: other, title });
+    };
+    window.addEventListener("focus", check);
+    const un = useUi.subscribe((s, p) => {
+      if (s.sessionId !== p.sessionId) setShown(null);
+    });
+    return () => {
+      window.removeEventListener("focus", check);
+      un();
+    };
+  }, []);
+  if (!shown) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-2 bg-selection px-6 py-1.5 text-[12px] text-accent">
+      <button type="button" data-testid="elsewhere" onClick={() => select(shown.id)} className="min-w-0 flex-1 truncate text-left">
+        {shown.title} 在等你作答，点此切过去
+      </button>
+      <button type="button" aria-label="关闭" onClick={() => setShown(null)}>
+        <X size={12} aria-hidden />
+      </button>
+    </div>
+  );
 }
 
 /** 「新建 Session」 at the top of the Session list: pick a folder, `ccrpc new`. */
@@ -114,7 +173,7 @@ function Panel({ c }: { c: ConnState }) {
     e.preventDefault();
     e.stopPropagation();
     void command(c.conn, { type: "abort" }).then((r) => {
-      if (!r.success) setError(`中止失败：${r.error?.message ?? ""}`);
+      if (!r.success) setError(errorKey(c), `中止失败：${r.error?.message ?? ""}`);
     });
   };
 

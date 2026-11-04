@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { api } from "@/ipc";
-import type { DriveInfo } from "@/ipc/bindings";
+import type { DriveInfo, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { apply, initial, type ConnState } from "./conn";
+import { createEarlyBuffer } from "./early";
 import type { InMsg, LsEntry, ResponseMsg, Task } from "./protocol";
 
 const POLL_MS = 2000;
@@ -29,10 +30,12 @@ interface DriveStore {
   /** Why `ccrpc ls` stopped being polled. */
   lsError: string | null;
   conns: Record<string, ConnState>;
-  /** The last action that failed in the header (connect, set_mode…). */
-  error: string | null;
+  /** The last failed action by Session id (a connection id before it has one): connect, set_mode, abort… */
+  errors: Record<string, string>;
   /** Why the last 「新建 Session」 failed (shown in the Session list). */
   newError: string | null;
+  /** The Viewer's Live Sessions from its `LiveChanged` events; null until the first one. */
+  live: LiveEntry[] | null;
   /** Unsent input by Session id (a connection id before it has one): kept across switches and reconnects. */
   drafts: Record<string, Draft>;
 
@@ -43,7 +46,8 @@ interface DriveStore {
   /** Polls `ccrpc ls` again after it stopped. */
   retry(): void;
   loadInfo(): Promise<void>;
-  connect(holderId: string): Promise<void>;
+  /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
+  connect(holderId: string, sessionId: string): Promise<void>;
   newSession(): Promise<void>;
   /** Sends a command and waits for its response (never rejects: failures are responses). */
   command(conn: string, msg: Record<string, unknown>): Promise<ResponseMsg>;
@@ -55,7 +59,7 @@ interface DriveStore {
   setFollowUps(conn: string, followUps: string[]): void;
   dropRequest(conn: string, requestId: string): void;
   dismissNotice(conn: string, id: number): void;
-  setError(e: string | null): void;
+  setError(key: string, e: string | null): void;
   setNewError(e: string | null): void;
   setDraft(key: string, f: (d: Draft) => Draft): void;
 }
@@ -72,8 +76,15 @@ const exitWaiters = new Map<string, () => void>();
 const closing = new Set<string>();
 /** New Sessions to select once they have a session id. */
 const selectOnReady = new Set<string>();
+/** Events of connections whose id has not come back from `driveConnect` / `driveNew` yet. */
+const early = createEarlyBuffer();
+/** Connections already removed: their late events are dropped, not held. */
+const removed = new Set<string>();
 let cmdSeq = 0;
 let pollTimer: number | undefined;
+let polling = false;
+/** Bumped whenever polling stops: a `ccrpc ls` answer from an older generation is dropped. */
+let pollGen = 0;
 let lastLs = "";
 let wanted = false;
 
@@ -100,6 +111,8 @@ export const holderConnected = (s: Pick<Lookup, "conns">, holderId: string) =>
   Object.values(s.conns).some((c) => c.holderId === holderId && !c.procExit);
 
 export const draftKey = (c: ConnState) => c.sessionId ?? c.conn;
+/** Where a connection's errors are shown: its Session (the connection before it has one). */
+export const errorKey = draftKey;
 
 export const useDrive = create<DriveStore>((set, get) => {
   const update = (conn: string, f: (c: ConnState) => ConnState) =>
@@ -117,7 +130,10 @@ export const useDrive = create<DriveStore>((set, get) => {
       return;
     }
     const before = get().conns[conn];
-    if (!before) return;
+    if (!before) {
+      if (!removed.has(conn)) early.push(conn, { kind: "line", msg });
+      return;
+    }
     update(conn, (c) => apply(c, msg));
     const after = get().conns[conn]!;
     switch (msg.type) {
@@ -147,6 +163,10 @@ export const useDrive = create<DriveStore>((set, get) => {
   };
 
   const onExit = (conn: string, code: number | null, stderr: string) => {
+    if (!get().conns[conn]) {
+      if (!removed.has(conn)) early.push(conn, { kind: "exit", code, stderr });
+      return;
+    }
     exitWaiters.get(conn)?.();
     exitWaiters.delete(conn);
     for (const [id, p] of pending) {
@@ -159,38 +179,65 @@ export const useDrive = create<DriveStore>((set, get) => {
     update(conn, (c) => ({ ...c, procExit: { code, stderr }, requests: [], progress: null }));
   };
 
-  const addConn = (conn: string, holderId: string | null) => set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId) } }));
-  const removeConn = (conn: string) =>
+  /** Adds a connection, then replays what arrived for it before its id came back. */
+  const addConn = (conn: string, holderId: string | null) => {
+    set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId) } }));
+    for (const e of early.take(conn)) {
+      if (e.kind === "line") onLine(conn, e.msg);
+      else onExit(conn, e.code, e.stderr);
+    }
+  };
+  const removeConn = (conn: string) => {
+    removed.add(conn);
+    closing.delete(conn);
+    exitWaiters.get(conn)?.();
+    exitWaiters.delete(conn);
     set((s) => {
       const conns = { ...s.conns };
       delete conns[conn];
       return { conns };
     });
+  };
+  const setErr = (key: string, e: string | null) =>
+    set((s) => {
+      const errors = { ...s.errors };
+      if (e == null) delete errors[key];
+      else errors[key] = e;
+      return { errors };
+    });
 
   /** Polls while wanted, visible and not failed; when it starts again it asks at once. */
   const sync = () => {
     const go = wanted && document.visibilityState === "visible" && !get().lsError && !get().infoError;
-    if (go && pollTimer === undefined) {
-      pollTimer = window.setInterval(() => void poll(), POLL_MS);
-      void poll();
-    } else if (!go && pollTimer !== undefined) {
-      window.clearInterval(pollTimer);
-      pollTimer = undefined;
+    if (go && !polling) {
+      polling = true;
+      void poll(++pollGen);
+    } else if (!go && polling) {
+      stopPolling();
     }
   };
-  const poll = async () => {
-    if (pollTimer === undefined) return;
+  const stopPolling = () => {
+    polling = false;
+    pollGen++;
+    window.clearTimeout(pollTimer);
+    pollTimer = undefined;
+  };
+  /** One `ccrpc ls`; the next is scheduled only after it answers. */
+  const poll = async (gen: number) => {
     try {
       const ls = await api.driveList();
+      if (gen !== pollGen) return;
       const text = JSON.stringify(ls);
       if (text !== lastLs) {
         lastLs = text;
         set({ ls });
       }
     } catch (e) {
+      if (gen !== pollGen) return;
       set({ lsError: `ccrpc ls 失败：${errText(e)}` });
-      sync();
+      return sync();
     }
+    pollTimer = window.setTimeout(() => void poll(gen), POLL_MS);
   };
 
   /** The Session on screen has been seen. */
@@ -205,8 +252,9 @@ export const useDrive = create<DriveStore>((set, get) => {
     ls: [],
     lsError: null,
     conns: {},
-    error: null,
+    errors: {},
     newError: null,
+    live: null,
     drafts: {},
 
     start() {
@@ -216,6 +264,7 @@ export const useDrive = create<DriveStore>((set, get) => {
       // Fresh closures: a second `start` (StrictMode) must not share a listener the first one removes.
       keep(api.onDriveLine((conn, msg) => onLine(conn, msg)));
       keep(api.onDriveExit((conn, code, stderr) => onExit(conn, code, stderr)));
+      keep(api.onLiveChanged((p) => set({ live: p.live })));
       const onVisible = () => {
         sync();
         if (document.visibilityState === "visible") markSeen();
@@ -229,8 +278,7 @@ export const useDrive = create<DriveStore>((set, get) => {
         offs.forEach((f) => f());
         document.removeEventListener("visibilitychange", onVisible);
         unUi();
-        window.clearInterval(pollTimer);
-        pollTimer = undefined;
+        stopPolling();
       };
     },
 
@@ -261,15 +309,15 @@ export const useDrive = create<DriveStore>((set, get) => {
       }
     },
 
-    async connect(holderId) {
-      set({ error: null });
+    async connect(holderId, sessionId) {
+      setErr(sessionId, null);
       void api.driveGuiLog(null, `connect ${holderId}`);
       // A connection that exited is replaced.
       set((s) => ({ conns: Object.fromEntries(Object.entries(s.conns).filter(([, c]) => c.holderId !== holderId || !c.procExit)) }));
       try {
         addConn(await api.driveConnect(holderId), holderId);
       } catch (e) {
-        set({ error: `连接失败：${errText(e)}` });
+        setErr(sessionId, `连接失败：${errText(e)}`);
       }
     },
 
@@ -312,7 +360,8 @@ export const useDrive = create<DriveStore>((set, get) => {
       void api.driveGuiLog(conn, "disconnect");
       if (c.procExit) return removeConn(conn);
       closing.add(conn);
-      await api.driveDisconnect(conn).catch(() => {});
+      // The backend no longer knows it (its ccrpc already exited): nothing is left to wait for.
+      await api.driveDisconnect(conn).catch(() => removeConn(conn));
     },
 
     async reconnect(conn) {
@@ -326,7 +375,7 @@ export const useDrive = create<DriveStore>((set, get) => {
           window.setTimeout(resolve, 5000);
         });
         closing.add(conn);
-        await api.driveDisconnect(conn).catch(() => {});
+        await api.driveDisconnect(conn).catch(() => removeConn(conn));
         await gone;
         exitWaiters.delete(conn);
       }
@@ -334,7 +383,7 @@ export const useDrive = create<DriveStore>((set, get) => {
       try {
         addConn(await api.driveConnect(c.holderId), c.holderId);
       } catch (e) {
-        set({ error: `重连失败：${errText(e)}` });
+        setErr(errorKey(c), `重连失败：${errText(e)}`);
       }
     },
 
@@ -363,8 +412,8 @@ export const useDrive = create<DriveStore>((set, get) => {
       update(conn, (c) => ({ ...c, notices: c.notices.filter((n) => n.id !== id) }));
     },
 
-    setError(e) {
-      set({ error: e });
+    setError(key, e) {
+      setErr(key, e);
     },
 
     setNewError(e) {

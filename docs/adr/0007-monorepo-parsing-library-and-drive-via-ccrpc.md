@@ -2,7 +2,7 @@
 
 Claude Viewer、ccrpc、cc-gui 原是三个仓库，各自实现了一遍「把 transcript 变成可显示的内容」：cv-core 的 assemble、ccrpc 的 transcript 尾随、cc-gui 前端把 ccrpc 的 block 拼成消息行。Claude Code 的格式一变要改三处，三处的行为也已出现分歧（`<pasted_content>` 标签、Bash 输出细节）。ccrpc 依赖 cv-core 的内部模块，却靠提交在仓库里的 `[patch]` 指向同级目录，单独构建不了；cv-core 里有一部分改动只是为了给 ccrpc 用。
 
-因此合成一个仓库（一个 Cargo workspace、一个 pnpm workspace），功能按两块分：
+因此合成一个仓库（一个 Cargo workspace），功能按两块分：
 
 - **transcript 解析是库**（`crates/transcript`）：容错解析、组装成显示模型、进程文件、价格。进程内调用——Viewer 建索引要批量解析成千上万个文件，走进程通信没有意义。cv-core 只剩索引、搜索、统计；ccrpc 只依赖这个库，不再编译 SQLite。同一条判定规则只在库里实现一次。
 - **Claude Code 的控制经 ccrpc 进程**（JSONL 协议）：ccrpc 持有 PTY、hook socket 与状态机，是独立的产品，脚本照样可以用它。

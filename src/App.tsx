@@ -1,5 +1,5 @@
 import { useUi } from "@/state/ui";
-import { DrivePanel, DriveRoot } from "@/features/drive";
+import { DrivePanel, DriveRoot, ElsewhereBanner } from "@/features/drive";
 import { FindBar } from "@/features/find";
 import { Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
@@ -35,6 +35,7 @@ export default function App() {
 
         <main data-testid="pane-conversation" className="flex min-h-0 min-w-0 flex-col bg-ground">
           {!sessionId && <div data-tauri-drag-region="deep" className="h-[52px] shrink-0" />}
+          <ElsewhereBanner />
           <SessionHeader />
           <FindBar />
           <div className="flex min-h-0 flex-1">

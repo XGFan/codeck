@@ -109,7 +109,11 @@ function useAnswer(c: ConnState) {
   return { busy, error, send };
 }
 
-/** Number keys pick the n-th button of the first card while focus is not in an editable field and no dialog is open. */
+/**
+ * Number keys pick the n-th button of the first card, only while focus is inside the drive panel (a card
+ * button, e.g. after Enter while waiting) and not in an editable field: reading the transcript with a card
+ * pending must not answer it.
+ */
 function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
   const ref = useRef(actions);
   ref.current = actions;
@@ -117,7 +121,8 @@ function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
     if (!enabled) return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      if (!el?.closest?.("[data-testid=drive-panel]")) return;
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable) return;
       if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       const ui = useUi.getState();
       if (ui.searchOpen || ui.statsOpen || ui.settingsOpen || document.querySelector("[role=dialog], [data-radix-popper-content-wrapper]")) return;

@@ -44,6 +44,7 @@ export function Composer({ c }: { c: ConnState }) {
 
   const submit = async (steer: boolean) => {
     const body = text.trim();
+    if (live && state === "waiting") return focusFirstCard();
     if (!body || sending || !live) return;
     let msg: Record<string, unknown>;
     const withImages = images.length ? { images: images.map((i) => i.path) } : {};
@@ -52,7 +53,6 @@ export function Composer({ c }: { c: ConnState }) {
       if (images.length) return setError("插话不能带图片");
       msg = { type: "steer", text: body };
     } else if (state === "busy") msg = { type: "follow_up", text: body, ...withImages };
-    else if (state === "waiting") return focusFirstCard();
     else return setError("Session 还没准备好");
     setSending(true);
     setError(null);

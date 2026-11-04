@@ -1,9 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+/** The `turn_end` prompt ids of a recorded fixture, in order (they change when it is re-recorded). */
+function recordedTurns(name: string): string[] {
+  return readFileSync(`src/mocks/data/drive/${name}.jsonl`, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.dir === "recv" && l.msg?.type === "turn_end")
+    .map((l) => l.msg.prompt_id as string);
+}
+const toolsTurns = recordedTurns("tools");
 
 // Driving against the mock ccrpc (src/ipc/mock-drive.ts): each src/mocks/data/drive/*.jsonl is a
 // recorded wire.jsonl replayed as one `ccrpc ls` entry, standing for a Session of the mock data:
 // ui-cases → the rich Live Session, tools → the Flux Session, session-changed → the auth Session
-// (its `/clear` moves to the JWT one), no-plugin → the LCP Live Session (plugin not reported).
+// (its `/clear` moves to the JWT one), no-plugin → the LCP Live Session (plugin not reported),
+// turns → the zod Session, trust → the review Session, refused → the Longhorn Session (its ccrpc exits
+// before `driveConnect` returns).
 
 const RICH = "为 /v1/chat 接口增加令牌桶限流中间件";
 const TOOLS = "为 Flux 增加 kestrel-cli 镜像自动更新";
@@ -11,6 +25,9 @@ const AUTH = "重构认证模块：拆分 token 校验与会话存储";
 const JWT = "认证模块重构（改用 JWT 轮换）";
 const NO_PLUGIN = "优化首页首屏加载（LCP 3.2s → 1.8s）";
 const NOT_LISTED = "排查 Redis 连接池泄漏";
+const TURNS = "迁移表单校验到 zod";
+const TRUST = "/review 订单列表页";
+const REFUSED = "Longhorn 卷扩容与备份策略";
 
 type Probe = { sent: { msg: Record<string, unknown> }[]; lists: number; guiLog: string[]; badge: number };
 const probe = (page: Page) => page.evaluate(() => window.__cvDrive as unknown as Probe);
@@ -35,6 +52,19 @@ async function send(page: Page, text: string, mod?: "Meta") {
 }
 
 const state = (page: Page) => page.getByTestId("drive-state");
+
+/** Pastes a 1×1 PNG into the input box. */
+async function pasteImage(page: Page) {
+  await page.getByTestId("drive-input").focus();
+  await page.evaluate(() => {
+    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([png], "dot.png", { type: "image/png" }));
+    const ev = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: DataTransfer };
+    Object.defineProperty(ev, "clipboardData", { value: dt });
+    document.querySelector("[data-testid=drive-input]")!.dispatchEvent(ev);
+  });
+}
 
 test("标题栏：ccrpc ls 里的 Live Session 可驾驶，插件未报到时禁用，其他 Session 没有", async ({ page }) => {
   await page.goto("/");
@@ -74,13 +104,13 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await card.getByTestId("allow").click();
   await expect(card).toHaveCount(0);
   expect(await lastSent(page, "answer_permission")).toMatchObject({ decision: "allow", request_id: "toolu_mock0000" });
-  await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", "bde86738-435b-4bc0-a683-8a7041fc094e");
+  await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[0]);
 
   await send(page, "MOCK-TOOL again");
   await page.getByTestId("permission-card").getByTestId("deny-with-message").click();
   await page.getByTestId("deny-message").fill("not now");
   await page.getByTestId("deny-message").press("Enter");
-  await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", "865a69a7-f3b6-4c4e-b72e-2e90c1273c86");
+  await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[1]);
   expect(await lastSent(page, "answer_permission")).toMatchObject({ decision: "deny", message: "not now" });
 
   await send(page, "MOCK-ASK which");
@@ -88,7 +118,7 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await expect(q).toContainText("Which color?");
   await q.getByTestId("question-option").filter({ hasText: "Blue" }).click();
   await q.getByTestId("submit-answer").click();
-  await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", "41d9c85f-2f71-48f6-b0d8-2bcf2e6b0d71");
+  await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[2]);
   expect(await lastSent(page, "answer_question")).toMatchObject({ answers: [{ options: ["Blue"] }] });
 });
 
@@ -127,8 +157,15 @@ test("忙时 Enter 排队（可撤销）、⌘Enter 插话；数字键作答；D
   await expect.poll(async () => (await probe(page)).badge).toBe(2);
   await page.getByTestId("cancel-follow-up").click();
   await expect(page.getByTestId("follow-ups")).toHaveCount(0);
-  // Number keys answer the first card while focus is outside the input box.
-  await page.getByTestId("header").getByRole("heading", { name: RICH }).click();
+  // With focus in the conversation, number keys do not answer.
+  await page.getByTestId("transcript").click({ position: { x: 4, y: 4 } });
+  await page.keyboard.press("1");
+  await page.waitForTimeout(200);
+  await expect(card).toBeVisible();
+  expect(await lastSent(page, "answer_permission")).toBeUndefined();
+  // Enter in the (empty) input box moves focus to the card; then number keys answer it.
+  await page.getByTestId("drive-input").press("Enter");
+  await expect(card.getByTestId("allow")).toBeFocused();
   await page.keyboard.press("1");
   await expect(card).toHaveCount(0);
   expect(await lastSent(page, "answer_permission")).toMatchObject({ decision: "allow" });
@@ -219,4 +256,69 @@ test("ccrpc ls 只在有 Live Session 或驾驶连接时轮询，恢复时立即
   await page.evaluate((id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1, source: "processFile" }), ids[0]!);
   await expect.poll(async () => (await probe(page)).lists, { timeout: 1500 }).toBe(before + 1);
   await expect(page.getByTestId("drive-connect")).toBeVisible();
+});
+
+test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一直「连接中」", async ({ page }) => {
+  await drive(page, REFUSED);
+  await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
+  await expect(page.getByTestId("proc-exit")).toContainText("正被 mac 使用");
+  await expect(page.getByTestId("drive-hint")).toHaveText("ccrpc 已退出");
+  await expect(page.getByTestId("reconnect")).toBeVisible();
+});
+
+test("目录信任框是选择卡片", async ({ page }) => {
+  await drive(page, TRUST);
+  const card = page.getByTestId("choice-card");
+  await expect(card).toContainText("trust");
+  await expect(card.getByTestId("ai-badge")).toHaveCount(0);
+  await card.getByTestId("choice-option").filter({ hasText: "Yes, I trust this folder" }).click();
+  await expect(card).toHaveCount(0);
+  await expect(state(page)).toContainText("空闲");
+  expect(await lastSent(page, "answer_choice")).toMatchObject({ option: "Yes, I trust this folder" });
+});
+
+test("粘贴的图片随提示词发出", async ({ page }) => {
+  await drive(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  await pasteImage(page);
+  const preview = page.getByTestId("images").locator("img");
+  await expect(preview).toHaveCount(1);
+  // The app's CSP allows data: images only.
+  expect(await preview.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+  await expect.poll(() => preview.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
+  await send(page, "MOCK-SLOW please");
+  expect((await lastSent(page, "prompt"))?.images).toEqual(["/mock/Caches/dev.joy.claude-viewer/images/1.png"]);
+  await expect(page.getByTestId("images")).toHaveCount(0);
+});
+
+test("没发出的输入跟着 Session，切换后仍在", async ({ page }) => {
+  await drive(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("drive-input").fill("还没写完的草稿");
+  await pasteImage(page);
+  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  await open(page, TOOLS);
+  await page.getByTestId("drive-connect").click();
+  await expect(state(page)).toContainText("空闲");
+  await expect(page.getByTestId("drive-input")).toHaveValue("");
+  await expect(page.getByTestId("images")).toHaveCount(0);
+  await open(page, TURNS);
+  await expect(page.getByTestId("drive-input")).toHaveValue("还没写完的草稿");
+  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+});
+
+test("切回窗口时当前 Session 无事而别处在等作答：顶部一行提示，点击切过去", async ({ page }) => {
+  await page.goto("/");
+  // The LCP Live Session waits: no hint while it is the one on screen.
+  await open(page, NO_PLUGIN);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(200);
+  await expect(page.getByTestId("elsewhere")).toHaveCount(0);
+
+  await open(page, NOT_LISTED);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByTestId("elsewhere")).toHaveText(`${NO_PLUGIN} 在等你作答，点此切过去`);
+  await page.getByTestId("elsewhere").click();
+  await expect(page.getByTestId("header").getByRole("heading", { name: NO_PLUGIN })).toBeVisible();
+  await expect(page.getByTestId("elsewhere")).toHaveCount(0);
 });

@@ -1,8 +1,8 @@
 // Wire-replay ccrpc for the mock API (`pnpm dev:mock`, E2E): each `src/mocks/data/drive/*.jsonl` is a
 // recorded `wire.jsonl` (`{t, dir: "send" | "recv", msg}`, plus `{dir: "exit", code, stderr}` and an
 // optional first `{dir: "meta", ls: {...}}` that overrides the `ccrpc ls` entry) and shows up as one
-// `ls` entry. A meta `session_id` is also written into the recorded `ready`, so a recording can stand
-// for a Session of the Viewer's mock data. Connecting replays what ccrpc printed up to the first
+// `ls` entry. A meta `session_id` (and `holder_id`) is also written into the recorded `ready`, so a
+// recording can stand for a Session of the Viewer's mock data and keeps its ids when re-recorded. Connecting replays what ccrpc printed up to the first
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks, cancel_follow_up) are answered from what was replayed. `new-session` is not listed:
@@ -18,12 +18,15 @@ interface WireLine {
   code?: number | null;
   stderr?: string;
   ls?: Partial<LsEntry>;
+  /** On the meta line: `driveConnect` returns this long after the replay starts (events before the id). */
+  connect_delay_ms?: number;
 }
 
 interface Fixture {
   name: string;
   lines: WireLine[];
   ls: LsEntry;
+  connectDelayMs: number;
 }
 
 const raw = import.meta.glob("/src/mocks/data/drive/*.jsonl", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
@@ -33,9 +36,12 @@ function parse(name: string, text: string): Fixture {
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as WireLine);
-  const meta = lines.find((l) => l.dir === "meta")?.ls ?? {};
+  const metaLine = lines.find((l) => l.dir === "meta");
+  const meta = metaLine?.ls ?? {};
   const readyLine = lines.find((l) => l.dir === "recv" && l.msg?.type === "ready");
+  // A meta `session_id` / `holder_id` stands in for the recorded one, so re-recording keeps the ids stable.
   if (readyLine?.msg && meta.session_id) readyLine.msg = { ...readyLine.msg, session_id: meta.session_id };
+  if (readyLine?.msg && meta.holder_id) readyLine.msg = { ...readyLine.msg, holder_id: meta.holder_id };
   const ready = readyLine?.msg ?? {};
   const ls: LsEntry = {
     holder_id: String(ready.holder_id ?? name),
@@ -48,7 +54,7 @@ function parse(name: string, text: string): Fixture {
     title: name,
     ...meta,
   };
-  return { name, lines: lines.filter((l) => l.dir !== "meta"), ls };
+  return { name, lines: lines.filter((l) => l.dir !== "meta"), ls, connectDelayMs: metaLine?.connect_delay_ms ?? 0 };
 }
 
 const fixtures: Fixture[] = Object.entries(raw)
@@ -197,7 +203,10 @@ export function createMockDrive(): DriveApi {
     driveConnect: async (holderId) => {
       const fx = fixtures.find((f) => f.ls.holder_id === holderId);
       if (!fx) throw new Error(`没有 ${holderId} 的录制`);
-      return open(fx);
+      const id = open(fx);
+      // Tauri does not promise the command's answer before the connection's first events.
+      if (fx.connectDelayMs) await new Promise((r) => setTimeout(r, fx.connectDelayMs));
+      return id;
     },
     driveNew: async () => {
       const fx = fixtures.find((f) => f.name === "new-session");
@@ -220,7 +229,8 @@ export function createMockDrive(): DriveApi {
     },
     driveDisconnect: async (id) => {
       const c = conns.get(id);
-      if (!c || c.closed) return;
+      // Like the backend: a connection whose ccrpc has exited is unknown.
+      if (!c || c.closed) throw new Error("ccrpc 已退出");
       c.closed = true;
       later(() => exitCbs.forEach((cb) => cb(id, 0, "")));
     },

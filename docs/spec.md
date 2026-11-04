@@ -112,7 +112,7 @@
 经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`src-tauri/src/drive`）只管 ccrpc 子进程、转发 JSONL、写日志；协议解析与状态在前端（`src/features/drive`）。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
 
 - **环境**：第一次用到驾驶时读一次登录 shell 的环境（`$SHELL -l -c env`），作为所有 ccrpc 子进程的环境，不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CV_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
-- **可驾驶的 Session**：窗口可见、且至少有一个 Live Session 或驾驶连接时，每 2 秒运行一次 `ccrpc ls --json`；条件不满足时停止（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时立即查一次再继续。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 或读取 ccrpc 信息失败时停止轮询，错误显示在「设置 › 驾驶」，可重试。
+- **可驾驶的 Session**：窗口可见、且至少有一个 Live Session 或驾驶连接时运行 `ccrpc ls --json`，上一次返回后隔 2 秒再运行下一次；条件不满足时停止（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时立即查一次再继续；停止前发出、停止后才返回的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 或读取 ccrpc 信息失败时停止轮询，错误显示在「设置 › 驾驶」，可重试。
 - **标题栏**：选中的 Session 在 `ccrpc ls` 里且插件已报到时显示「驾驶」（`ccrpc attach --co-display`）；插件未报到时按钮禁用，悬停提示「ccrpc 插件未加载，重启 claude 后可驾驶」；不在列表里（不在 clay 里，或 ccrpc 不可用）时不显示。已连接时「驾驶」按钮消失，标题栏在元信息行下方另起一行，显示状态、模型、权限模式（可点，`set_mode`；空闲或忙时可切换）、上下文 token、悬停出现的「复制排查信息」（holder_id、session_id、cwd 与这个连接的日志目录）和「断开」（关闭 ccrpc 的 stdin，Session 照常运行）。连接保持到断开、Session 或 ccrpc 退出、应用退出。
 - **驾驶区**：在对话区下方、与对话区同宽，只在当前 Session 已连接时出现。自上而下：ccrpc 意外退出的横幅（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束、通知（follow_up 没发出、学会新界面、界面识别失败、被接手 / 取回，可关）、请求卡片、忙时的进度行（否则为上一轮的用时、token、API 金额、错误、已中止）、排队的 follow_up（可撤销）、输入框（粘贴的图片、后台任务角标，点开可停止）。
 - **输入框**：
@@ -138,10 +138,13 @@
   | `dialog` / `unrecognized` | 只读等宽显示屏幕原文，注明需在 Mac Client 的终端里处理 | 无按键；状态离开 waiting 即消失 |
 
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
-  - 多个请求竖向叠放，主线在上；焦点不在输入框、没有弹窗时，数字键 1/2/3 选第一张卡片的选项；作答成功即收起该卡片。
+  - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。
+  - 数字键 1/2/3 选第一张卡片的选项，只在焦点位于驾驶区内且不在输入框里时（例如 waiting 时在输入框按 Enter，焦点移到卡片之后）；焦点在对话区、Subagent 面板等处时按数字键不作答——卡片不是主视图，读对话时误按不能批准工具调用。
 - **Session 列表**：顶部「新建 Session」（不依赖 `ccrpc ls`）：选目录 → `ccrpc new --co-display --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件，进索引前主区显示「新 Session，发送第一条提示词后显示对话」，驾驶区照常可用；进索引后自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
 - **`session_changed`**（在 TUI 里 `/clear` 等）：正在看旧 Session 时，选中切换到新 Session。
+- **别处在等**：切回窗口时，当前 Session 没有要作答的、而别的 Session 在等作答（与 Dock 角标同一口径），对话区顶部显示一行「<标题> 在等你作答，点此切过去」，点击选中那个 Session；切换 Session 后消失，可关闭。
 - **Dock 角标**：等待作答的 Session 数 = Live 状态为 waiting 的 Session（全部 Session，不限于已连接）∪ 已连接且有请求卡片的 Session，去重。
+- **与 cc-gui 不同之处**（有意不移植）：等作答的 Session 不在列表里置顶，Session 列表保持原有排序（Live 点为琥珀色）；`ccrpc doctor` 的 fail 不在启动时顶部提示，只在「设置 › 驾驶」里显示（启动时不读 ccrpc 信息）。
 - **设置 › 驾驶**：ccrpc 路径、`ccrpc doctor` 的结果（fail 醒目显示）、分析器是否开启（登录 shell 环境里设置了 `CCRPC_ANALYZER_API_KEY`）、日志目录。这些信息在打开该页时才读取。
 - **日志**：常开，按连接分目录，仅本人可读写，保留 14 天：
 
@@ -156,7 +159,7 @@
 
 - 解析器的回归测试使用 fixture：从真实 Session 精简后脱敏（保留结构，文本替换成占位内容），覆盖 Branch、Fork、compact、Subagent、Workflow、后台 agent、失败的调用、图片等情况。
 - E2E：Playwright 驱动前端并 mock IPC（`tauri-driver` 不支持 macOS）；Rust 后端单独测试。
-- 驾驶的 E2E 用 wire 回放的 mock ccrpc：`src/mocks/data/drive/*.jsonl` 是录下（或手写）的 `wire.jsonl`，收到命令回录下的响应，事件按录下的顺序推；`meta` 行里的 `session_id` 把录制对应到 mock 数据里的 Session。
+- 驾驶的 E2E 用 wire 回放的 mock ccrpc：`src/mocks/data/drive/*.jsonl` 是录下（或手写）的 `wire.jsonl`，收到命令回录下的响应，事件按录下的顺序推；`meta` 行里的 `session_id` 把录制对应到 mock 数据里的 Session，`connect_delay_ms` 让连接命令晚于事件返回（复现 ccrpc 秒退时退出事件先到）。
 - 启动、后台调度、配置类流程必须在真实应用中验证（单测覆盖不到，例如曾出现的全文索引任务互相让位导致永不执行）。
 
 ## 技术栈

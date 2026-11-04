@@ -1,7 +1,7 @@
 import { Layers, Square } from "lucide-react";
 import { Popover } from "radix-ui";
 import type { ConnState } from "./conn";
-import { useDrive } from "./store";
+import { errorKey, useDrive } from "./store";
 
 const KIND: Record<string, string> = { agent: "Subagent", shell: "Shell", workflow: "Workflow" };
 
@@ -36,7 +36,7 @@ export function Tasks({ c }: { c: ConnState }) {
                     className="flex size-5 items-center justify-center rounded hover:bg-selection disabled:opacity-40"
                     onClick={async () => {
                       const r = await command(c.conn, { type: "stop_task", task_id: t.id });
-                      if (!r.success) setError(`停止失败：${r.error?.message ?? ""}`);
+                      if (!r.success) setError(errorKey(c), `停止失败：${r.error?.message ?? ""}`);
                       void refresh(c.conn);
                     }}
                   >
