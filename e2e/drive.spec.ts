@@ -114,8 +114,32 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   expect(await lastSent(page, "answer_permission")).toMatchObject({ decision: "deny", message: "not now" });
 
   await send(page, "MOCK-ASK which");
-  const q = page.getByTestId("question-card");
+  // A main-line question is answered on its transcript card; the drive panel only points there.
+  await expect(page.getByTestId("question-hint")).toBeVisible();
+  await expect(page.getByTestId("question-card")).toHaveCount(0);
+  await page.evaluate(() => {
+    const sid = "a7c63e92-0008-4000-8000-000000000008";
+    const input = { questions: [{ question: "Which color?", header: "Color", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] };
+    window.__cvMock!.appendNode(sid, {
+      id: "e2e-ask",
+      timestampMs: Date.now(),
+      hidden: false,
+      inherited: false,
+      body: {
+        kind: "assistant",
+        messageId: "m-e2e-ask",
+        model: null,
+        usage: null,
+        isApiError: false,
+        blocks: [{ kind: "toolCall", toolUseId: "toolu_mock0002", name: "AskUserQuestion", inputJson: JSON.stringify(input), inputTruncated: false, result: null, subagentId: null, workflowRunId: null, notificationNodeId: null }],
+      },
+    });
+    window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
+  });
+  await page.getByTestId("question-jump").click();
+  const q = page.locator("[data-testid=ask][data-answering]");
   await expect(q).toContainText("Which color?");
+  await expect(q.getByTestId("ask-status")).toHaveText("等待回答");
   await q.getByTestId("question-option").filter({ hasText: "Blue" }).click();
   await q.getByTestId("submit-answer").click();
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[2]);

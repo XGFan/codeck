@@ -8,11 +8,12 @@ import { useSessionList, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
-import type { TurnEndEvent } from "./protocol";
+import type { QuestionEvent, TurnEndEvent } from "./protocol";
 import { Requests } from "./Requests";
 import { connFor, draftKey, errorKey, lsEntryFor, useDrive, waitingSessions } from "./store";
 
 export { DriveBar, DriveConnect } from "./Header";
+export { QuestionForm } from "./Requests";
 export { DriveSettings } from "./Settings";
 export { connFor, lsEntryFor, useDrive } from "./store";
 
@@ -134,6 +135,14 @@ export function NewSessionError() {
       </button>
     </div>
   );
+}
+
+/** The open Session's connection when it waits on this main-line AskUserQuestion (answered on its transcript card). */
+export function useQuestionRequest(toolUseId: string): { r: QuestionEvent; c: ConnState } | null {
+  const sessionId = useUi((s) => s.sessionId);
+  const c = useDrive((s) => connFor(s, sessionId));
+  const r = c?.requests.find((x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !x.agent_id);
+  return c && r && !c.procExit && !c.sessionExited ? { r, c } : null;
 }
 
 /** A connected Session's turn ended and it has not been looked at since. */

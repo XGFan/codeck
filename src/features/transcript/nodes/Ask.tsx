@@ -1,5 +1,6 @@
 import { Check, MessageCircleQuestionMark } from "lucide-react";
 import type { Node } from "@/ipc/bindings";
+import { QuestionForm, useQuestionRequest } from "@/features/drive";
 import { cn } from "@/lib/cn";
 import type { RoleInfo, ToolCallBlock } from "../grouping";
 import { parseJson } from "../tools/data";
@@ -55,26 +56,32 @@ export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; 
   const fallback = result && !failed && !clarify && !answered ? result.text.trim() : "";
   const at = result?.timestampMs != null ? `你 · ${clock(result.timestampMs)} ` : "";
   const status = !result ? "等待回答" : failed ? "未回答" : clarify ? `${at}选择先聊聊` : `${at}已回答`;
+  // Driven and waiting on this question: answered right here.
+  const pending = useQuestionRequest(call.toolUseId);
+  const answering = !result && pending;
   return (
     <AssistantSegment role={role}>
       <Anchor nodeId={node.id} toolUseId={call.toolUseId} className="w-full">
         <div
           data-testid="ask"
           data-failed={failed || undefined}
-          className={cn("w-full overflow-hidden rounded-lg border", failed ? "border-error/30" : "border-border")}
+          data-answering={answering ? "" : undefined}
+          className={cn("w-full overflow-hidden rounded-lg border", failed ? "border-error/30" : answering ? "border-live-waiting/60 shadow-sm" : "border-border")}
         >
           <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
             <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
             <span className="font-semibold">向你提问</span>
             {questions.length > 1 && <span className="text-secondary">{questions.length} 个问题</span>}
-            <span data-testid="ask-status" className={cn("ml-auto", failed ? "text-error" : "text-secondary")}>
+            <span data-testid="ask-status" className={cn("ml-auto", failed ? "text-error" : answering ? "text-live-waiting" : "text-secondary")}>
               {status}
             </span>
           </div>
           <div className="flex flex-col gap-3 bg-ground px-3 py-2.5">
-            {questions.map((q, i) => (
-              <QuestionView key={`${i}|${q.question}`} q={q} answer={answers[q.question]} note={notes[q.question]?.notes} />
-            ))}
+            {answering ? (
+              <QuestionForm r={answering.r} c={answering.c} />
+            ) : (
+              questions.map((q, i) => <QuestionView key={`${i}|${q.question}`} q={q} answer={answers[q.question]} note={notes[q.question]?.notes} />)
+            )}
             {fallback && <div className="text-[12px] whitespace-pre-wrap text-secondary">{fallback}</div>}
           </div>
           {failed && <div className="border-t border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">{result.text}</div>}
@@ -92,10 +99,10 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
   const custom = picked.filter((p) => !labels.has(p)).join(", ");
   return (
     <div data-testid="ask-question" className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2 text-[12px]">
-        {q.header && <span className="rounded bg-selection px-1.5 py-px text-[11px] text-accent">{q.header}</span>}
+      <div className="flex items-start gap-2 text-[12px]">
+        {q.header && <span className="shrink-0 rounded bg-selection px-1.5 py-px text-[11px] whitespace-nowrap text-accent">{q.header}</span>}
         <span className="font-medium">{q.question}</span>
-        {q.multiSelect && <span className="text-[11px] text-secondary">多选</span>}
+        {q.multiSelect && <span className="shrink-0 text-[11px] text-secondary">多选</span>}
       </div>
       {options.map((o, i) => {
         const on = picked.includes(o.label);

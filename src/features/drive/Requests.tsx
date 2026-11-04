@@ -1,10 +1,12 @@
 import { Check, MessageCircleQuestionMark, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import { PendingText, toolKey, ToolCallView } from "@/features/transcript/tools";
 import type { ToolCall } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
+import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
 import type { ConnState, Request } from "./conn";
 import type { AskQuestion, ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
@@ -39,7 +41,7 @@ function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
     case "permission_request":
       return <PermissionCard r={r} c={c} focus={focus} />;
     case "question":
-      return <QuestionCard r={r} c={c} />;
+      return r.agent_id ? <QuestionCard r={r} c={c} /> : <QuestionHint r={r} />;
     case "choice":
       return <ChoiceCard r={r} c={c} focus={focus} />;
     default:
@@ -250,8 +252,52 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
   );
 }
 
-/** AskUserQuestion, drawn like the transcript's 「向你提问」 card, with the options to pick. */
+/**
+ * A main-line AskUserQuestion is answered on its 「向你提问」 card in the transcript ([`QuestionForm`]); the
+ * drive panel only says so, with a jump to it (the card may still be on its way while the transcript updates).
+ */
+function QuestionHint({ r }: { r: QuestionEvent }) {
+  const { data } = useCurrentTranscript();
+  const node = data?.scope.kind === "main" ? data.nodes.find((n) => n.body.kind === "assistant" && n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.request_id)) : undefined;
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-live-waiting/60 px-3 py-2 text-[12px]" data-testid="question-hint">
+      <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="shrink-0 text-accent" aria-hidden />
+      <span className="min-w-0 flex-1 truncate">Claude 在对话里向你提问，在那张卡片上作答</span>
+      {node && (
+        <button
+          type="button"
+          onClick={() => scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.request_id, flashMs: 2000 })}
+          className="shrink-0 text-accent hover:underline"
+          data-testid="question-jump"
+        >
+          跳到提问
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A background Subagent's AskUserQuestion: not in the main transcript, so a card of its own here. */
 function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
+  const qs = Array.isArray(r.questions) ? r.questions : [];
+  return (
+    <section data-testid="question-card" className="w-full overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm">
+      <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
+        <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
+        <span className="font-semibold">向你提问</span>
+        {qs.length > 1 && <span className="text-secondary">{qs.length} 个问题</span>}
+        {r.agent_id && <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {r.agent_id.slice(0, 8)}</span>}
+        <span className="ml-auto text-live-waiting">等待回答</span>
+      </div>
+      <div className="bg-ground px-3 py-2.5">
+        <QuestionForm r={r} c={c} />
+      </div>
+    </section>
+  );
+}
+
+/** The questions of an AskUserQuestion to pick and submit, styled as the transcript's 「向你提问」 card. */
+export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const { busy, error, send } = useAnswer(c);
   const qs = Array.isArray(r.questions) ? r.questions : [];
   const [picked, setPicked] = useState<string[][]>(() => qs.map(() => []));
@@ -272,72 +318,63 @@ function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
       }),
     );
   return (
-    <section data-testid="question-card" className="w-full overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm">
-      <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
-        <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
-        <span className="font-semibold">向你提问</span>
-        {qs.length > 1 && <span className="text-secondary">{qs.length} 个问题</span>}
-        {r.agent_id && <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {r.agent_id.slice(0, 8)}</span>}
-        <span className="ml-auto text-live-waiting">等待回答</span>
+    <div className="flex flex-col gap-3" data-testid="question-form">
+      {qs.map((q, i) => (
+        <fieldset key={i} className="m-0 flex flex-col gap-1.5 border-0 p-0">
+          <legend className="mb-1.5 flex items-start gap-2 p-0 text-[12px]">
+            {q.header && <span className="shrink-0 rounded bg-selection px-1.5 py-px text-[11px] whitespace-nowrap text-accent">{q.header}</span>}
+            <span className="font-medium">{q.question}</span>
+            {q.multiSelect && <span className="shrink-0 text-[11px] text-secondary">多选</span>}
+          </legend>
+          {q.options.map((o) => {
+            const on = !!picked[i]?.includes(o.label);
+            return (
+              <button
+                type="button"
+                key={o.label}
+                aria-pressed={on}
+                data-testid="question-option"
+                onClick={() => toggle(i, q, o.label)}
+                className={cn(
+                  "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent",
+                  on ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
+                )}
+              >
+                <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">{on && <Check size={13} strokeWidth={2.2} />}</span>
+                <span>
+                  <span className="font-medium">{o.label}</span>
+                  {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
+                </span>
+              </button>
+            );
+          })}
+          <label
+            className={cn(
+              "flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px] focus-within:border-accent",
+              other[i]?.trim() && !picked[i]?.length ? "border-accent/50 bg-selection" : "border-border",
+            )}
+          >
+            <span className="shrink-0 pl-5.5 text-secondary">其他：</span>
+            <input
+              value={other[i] ?? ""}
+              onChange={(e) => setOther((p) => p.map((x, j) => (j === i ? e.target.value : x)))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
+              }}
+              placeholder="自己写答案"
+              className="h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary"
+              data-testid="question-other"
+            />
+          </label>
+        </fieldset>
+      ))}
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={busy || !ready} onClick={submit} data-testid="submit-answer">
+          提交
+        </Button>
+        {error && <span className="text-[12px] text-error">{error}</span>}
       </div>
-      <div className="flex flex-col gap-3 bg-ground px-3 py-2.5">
-        {qs.map((q, i) => (
-          <fieldset key={i} className="m-0 flex flex-col gap-1.5 border-0 p-0">
-            <legend className="mb-1.5 flex items-center gap-2 p-0 text-[12px]">
-              {q.header && <span className="rounded bg-selection px-1.5 py-px text-[11px] text-accent">{q.header}</span>}
-              <span className="font-medium">{q.question}</span>
-              {q.multiSelect && <span className="text-[11px] text-secondary">多选</span>}
-            </legend>
-            {q.options.map((o) => {
-              const on = !!picked[i]?.includes(o.label);
-              return (
-                <button
-                  type="button"
-                  key={o.label}
-                  aria-pressed={on}
-                  data-testid="question-option"
-                  onClick={() => toggle(i, q, o.label)}
-                  className={cn(
-                    "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent",
-                    on ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
-                  )}
-                >
-                  <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">{on && <Check size={13} strokeWidth={2.2} />}</span>
-                  <span>
-                    <span className="font-medium">{o.label}</span>
-                    {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
-                  </span>
-                </button>
-              );
-            })}
-            <label
-              className={cn(
-                "flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px] focus-within:border-accent",
-                other[i]?.trim() && !picked[i]?.length ? "border-accent/50 bg-selection" : "border-border",
-              )}
-            >
-              <span className="shrink-0 pl-5.5 text-secondary">其他：</span>
-              <input
-                value={other[i] ?? ""}
-                onChange={(e) => setOther((p) => p.map((x, j) => (j === i ? e.target.value : x)))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
-                }}
-                placeholder="自己写答案"
-                className="h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary"
-                data-testid="question-other"
-              />
-            </label>
-          </fieldset>
-        ))}
-        <div className="flex items-center gap-2">
-          <Button size="sm" disabled={busy || !ready} onClick={submit} data-testid="submit-answer">
-            提交
-          </Button>
-          {error && <span className="text-[12px] text-error">{error}</span>}
-        </div>
-      </div>
-    </section>
+    </div>
   );
 }
 
