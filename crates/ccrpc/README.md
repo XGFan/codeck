@@ -169,7 +169,7 @@ cargo test
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-`mock_model_turns`、`mock_model_session`、`mock_model_tools`、`mock_model_follow_up` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、后台任务的通知那一轮之后才发 follow_up、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（cc-gui 的回放 fixture 由此而来）。
+`mock_model_turns`、`mock_model_session`、`mock_model_tools`、`mock_model_follow_up` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、后台任务的通知那一轮之后才发 follow_up、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（Claude Viewer 驾驶功能 E2E 的回放 fixture 由此而来）。
 
 可选变量：`CCRPC_E2E_TUI=fullscreen`（用全屏 TUI 跑）、`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用仓库同级目录的 `toh/target/debug/toh`，没有则用 PATH 里的）。
 
