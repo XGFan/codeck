@@ -96,11 +96,10 @@ export function Composer({ c }: { c: ConnState }) {
       const command = slashCommand(body, images.length > 0, list);
       msg = command != null ? { type: "slash", command } : { type: "prompt", text: body, ...withImages };
     } else if (state === "busy") {
-      if (images.length) return setError("忙时不能发图片，等空闲时再发");
       // A panel opened from the queue would hold the turn until someone closes it in the terminal.
       const panel = commandOf(body, list);
       if (panel?.source === "builtin" && panel.interactive) return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
-      msg = { type: "steer", text: body };
+      msg = { type: "steer", text: body, ...withImages };
     } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);

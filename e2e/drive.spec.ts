@@ -141,7 +141,17 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   const q = page.locator("[data-testid=ask][data-answering]");
   await expect(q).toContainText("Which color?");
   await expect(q.getByTestId("ask-status")).toHaveText("等待回答");
-  await q.getByTestId("question-option").filter({ hasText: "Blue" }).click();
+  // One answer: an option or the written one, never both.
+  const blue = q.getByTestId("question-option").filter({ hasText: "Blue" });
+  const otherRow = q.getByTestId("question-other-row");
+  await blue.click();
+  await expect(blue).toHaveAttribute("aria-pressed", "true");
+  await q.getByTestId("question-other").fill("Green");
+  await expect(blue).toHaveAttribute("aria-pressed", "false");
+  await expect(otherRow).toHaveAttribute("data-on", "true");
+  await blue.click();
+  await expect(otherRow).not.toHaveAttribute("data-on");
+  await expect(q.getByTestId("question-other")).toHaveValue("Green"); // set aside, not lost
   await q.getByTestId("submit-answer").click();
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[2]);
   expect(await lastSent(page, "answer_question")).toMatchObject({ answers: [{ options: ["Blue"] }] });
@@ -179,8 +189,14 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(page.getByTestId("transcript").getByTestId("progress")).toContainText("Thinking");
 
   await expect(page.getByTestId("drive-input")).toHaveAttribute("placeholder", /^插话/);
+  // An image goes along with a steer too.
+  await pasteImage(page);
+  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
   await send(page, "做完再跑一下测试");
-  await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "做完再跑一下测试" });
+  await expect
+    .poll(() => lastSent(page, "steer"))
+    .toMatchObject({ text: "做完再跑一下测试", images: ["/mock/Caches/dev.joy.codeck/images/1.png"] });
+  await expect(page.getByTestId("images")).toHaveCount(0);
   await expect(page.getByTestId("drive-input")).toHaveValue("");
   // The TUI's own queue, as the terminal shows it; sent at once on request (ctrl+enter there).
   await expect(page.getByTestId("queue-item")).toHaveText(["做完再跑一下测试"]);
@@ -457,7 +473,7 @@ test("粘贴的图片随提示词发出", async ({ page }) => {
   await expect(page.getByTestId("images")).toHaveCount(0);
 });
 
-test("没发出的输入跟着 Session，切换后仍在", async ({ page }) => {
+test("没发出的输入跟着 Session，切换、重启后仍在，发出后清掉", async ({ page }) => {
   await drive(page, TURNS);
   await expect(state(page)).toContainText("空闲");
   await page.getByTestId("drive-input").fill("还没写完的草稿");
@@ -471,6 +487,21 @@ test("没发出的输入跟着 Session，切换后仍在", async ({ page }) => {
   await open(page, TURNS);
   await expect(page.getByTestId("drive-input")).toHaveValue("还没写完的草稿");
   await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+
+  // And across a restart: back when the Session is driven again.
+  await page.reload();
+  await open(page, TURNS);
+  await page.getByTestId("drive-connect").click();
+  await expect(page.getByTestId("drive-input")).toHaveValue("还没写完的草稿");
+  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  // Sent, it is gone for good.
+  await page.getByTestId("drive-input").press("Enter");
+  await expect(page.getByTestId("drive-input")).toHaveValue("");
+  await page.reload();
+  await open(page, TURNS);
+  await page.getByTestId("drive-connect").click();
+  await expect(state(page)).toContainText("空闲");
+  await expect(page.getByTestId("drive-input")).toHaveValue("");
 });
 
 test("切回窗口时当前 Session 无事而别处在等作答：顶部一行提示，点击切过去", async ({ page }) => {

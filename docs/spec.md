@@ -125,18 +125,18 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   | waiting | 不发送，焦点移到第一张请求卡片 | |
   | busy / waiting | | Esc `abort`（焦点在驾驶区时） |
 
-  - 粘贴的图片存到 `~/Library/Caches/dev.joy.codeck/images/`，输入框上方以 `data:` 地址预览，路径作为 `images` 传给 `prompt`；忙时（`steer`）不能带图片，提示等空闲时再发。
+  - 粘贴的图片存到 `~/Library/Caches/dev.joy.codeck/images/`，输入框上方以 `data:` 地址预览，路径作为 `images` 传给 `prompt`，忙时一样传给 `steer`（队列里这条以 `[Image #n]` 开头，同终端）。
   - 斜杠命令：idle 时内置命令（以及补全清单里没有、形如命令名的名字）走 `slash`——本地命令和打开面板的命令在 transcript 里不留可等的记录；自定义命令、skill、`/Users/…` 这类路径、多行或带图片的，以及取不到补全清单时，走 `prompt`。忙时照常 `steer`，但会打开界面的内置命令不发送，提示等空闲时再发（从队列里打开的界面会一直挡着本轮，要到终端里关）。
   - 补全：输入框只有 `/名字`（还没有空格、换行）时，上方列出匹配的命令（名字完全相同 > 前缀 > 命名空间 `:` 之后的前缀 > 包含）；只输入 `/` 时列出全部，列表可滚动，显示描述、来源（内置 / 用户 / 项目 / 插件），会在终端里打开界面的内置命令标「打开界面」；↑↓ 选择，Tab 补全，Enter 在选中项与输入不同时补全、相同时发送，Esc 只收起列表。清单来自内置命令表、数据根下的 `commands/`、`skills/`，Session cwd 下的 `.claude/commands`、`.claude/skills`，以及用户和项目设置里启用的插件的 commands / skills（插件的以 `插件名:` 为前缀）；只读，同名时前者优先。
   - 共显时写入会清空 TUI 输入框里没发的内容（ccrpc 的已知限制）。
-  - 没发出的输入按 Session 保留，切换 Session、重连后仍在。
+  - 没发出的输入（文字和粘贴的图片）按 Session 保留，切换 Session、重连、重启应用后仍在；存在 localStorage（`codeck.drive.drafts`，只存有 Session id 的，空的不存；图片预览超出存储上限时只存文字），发出后清掉。
   - 输入框聚焦时 `j` / `k` 等单键快捷键不响应；Esc 在卡片里的输入框中只离开输入框，在驾驶区以外或 idle 时保持原有含义（关闭 Subagent 面板等）。
 - **请求卡片**：
 
   | 事件 | 卡片 | 作答 |
   |---|---|---|
   | `permission_request` | 工具名 + 工具输入（用对话区的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
-  | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选），驾驶区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在驾驶区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
+  | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用），驾驶区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在驾驶区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
   | `choice` | 标题 + 选项按钮 | `answer_choice`（按 label） |
   | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
 

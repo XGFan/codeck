@@ -302,14 +302,20 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const qs = Array.isArray(r.questions) ? r.questions : [];
   const [picked, setPicked] = useState<string[][]>(() => qs.map(() => []));
   const [other, setOther] = useState<string[]>(() => qs.map(() => ""));
-  const ready = qs.every((_, i) => picked[i]?.length || other[i]?.trim());
+  // The answer is either the options picked or the written one, never both: typing in 其他 drops
+  // the picked options, picking an option sets the written text aside (kept, greyed).
+  const [useOther, setUseOther] = useState<boolean[]>(() => qs.map(() => false));
+  const otherOn = (i: number) => !!useOther[i] && !!other[i]?.trim();
+  const ready = qs.every((_, i) => picked[i]?.length || otherOn(i));
   const submit = () =>
     void send({
       type: "answer_question",
       request_id: r.request_id,
-      answers: qs.map((_, i) => (other[i]?.trim() && !picked[i]?.length ? { other: other[i]!.trim() } : { options: picked[i] })),
+      answers: qs.map((_, i) => (otherOn(i) ? { other: other[i]!.trim() } : { options: picked[i] })),
     });
-  const toggle = (i: number, q: AskQuestion, label: string) =>
+  const at = <T,>(xs: T[], i: number, v: T) => xs.map((x, j) => (j === i ? v : x));
+  const toggle = (i: number, q: AskQuestion, label: string) => {
+    setUseOther((u) => at(u, i, false));
     setPicked((p) =>
       p.map((x, j) => {
         if (j !== i) return x;
@@ -317,6 +323,11 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
         return q.multiSelect ? (on ? x.filter((l) => l !== label) : [...x, label]) : on ? [] : [label];
       }),
     );
+  };
+  const chooseOther = (i: number) => {
+    setUseOther((u) => at(u, i, true));
+    setPicked((p) => at(p, i, []));
+  };
   return (
     <div className="flex flex-col gap-3" data-testid="question-form">
       {qs.map((q, i) => (
@@ -340,7 +351,7 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
                   on ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
                 )}
               >
-                <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">{on && <Check size={13} strokeWidth={2.2} />}</span>
+                <Mark on={on} multi={!!q.multiSelect} className="mt-0.5" />
                 <span>
                   <span className="font-medium">{o.label}</span>
                   {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
@@ -349,20 +360,31 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
             );
           })}
           <label
+            data-testid="question-other-row"
+            data-on={otherOn(i) || undefined}
             className={cn(
               "flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px] focus-within:border-accent",
-              other[i]?.trim() && !picked[i]?.length ? "border-accent/50 bg-selection" : "border-border",
+              otherOn(i) ? "border-accent/50 bg-selection" : "border-border",
             )}
           >
-            <span className="shrink-0 pl-5.5 text-secondary">其他：</span>
+            <Mark on={otherOn(i)} multi={!!q.multiSelect} />
+            <span className="shrink-0 text-secondary">其他：</span>
             <input
               value={other[i] ?? ""}
-              onChange={(e) => setOther((p) => p.map((x, j) => (j === i ? e.target.value : x)))}
+              onChange={(e) => {
+                setOther((p) => at(p, i, e.target.value));
+                chooseOther(i);
+              }}
+              // Back to the written answer by clicking into it.
+              onFocus={() => other[i]?.trim() && chooseOther(i)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
               }}
               placeholder="自己写答案"
-              className="h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary"
+              className={cn(
+                "h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary",
+                !otherOn(i) && other[i]?.trim() && "text-secondary line-through decoration-secondary/60",
+              )}
               data-testid="question-other"
             />
           </label>
@@ -375,6 +397,23 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
         {error && <span className="text-[12px] text-error">{error}</span>}
       </div>
     </div>
+  );
+}
+
+/** The choice's mark: a radio dot for one answer, a check box when several can be picked. */
+function Mark({ on, multi, className }: { on: boolean; multi: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex size-3.5 shrink-0 items-center justify-center border",
+        className,
+        multi ? "rounded-[3px]" : "rounded-full",
+        on ? "border-accent bg-accent text-white" : "border-secondary/50 bg-ground",
+      )}
+    >
+      {on && (multi ? <Check size={10} strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />)}
+    </span>
   );
 }
 
