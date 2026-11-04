@@ -19,8 +19,18 @@ pub fn login_env() -> HashMap<String, String> {
     // Where toh / claude / ccrpc usually live, in case the shell gave nothing better.
     let home = env.get("HOME").cloned().unwrap_or_default();
     let path = env.get("PATH").cloned().unwrap_or_default();
-    let mut dirs: Vec<String> = path.split(':').filter(|s| !s.is_empty()).map(String::from).collect();
-    for extra in [format!("{home}/.local/bin"), "/opt/homebrew/bin".into(), "/usr/local/bin".into(), "/usr/bin".into(), "/bin".into()] {
+    let mut dirs: Vec<String> = path
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    for extra in [
+        format!("{home}/.local/bin"),
+        "/opt/homebrew/bin".into(),
+        "/usr/local/bin".into(),
+        "/usr/bin".into(),
+        "/bin".into(),
+    ] {
         if !dirs.contains(&extra) {
             dirs.push(extra);
         }
@@ -65,7 +75,10 @@ fn read_login_env() -> Option<HashMap<String, String>> {
 /// The ccrpc to run: `CODECK_CCRPC`, else `~/.local/bin/ccrpc` (where `ccrpc plugin install` is
 /// expected to have been run from), else `ccrpc` on PATH.
 /// The analyzer's variables set in 「设置 › 驾驶」 override the login shell's (empty ones are left out).
-pub fn with_analyzer(env: &HashMap<String, String>, a: &crate::settings::AnalyzerSettings) -> HashMap<String, String> {
+pub fn with_analyzer(
+    env: &HashMap<String, String>,
+    a: &crate::settings::AnalyzerSettings,
+) -> HashMap<String, String> {
     let mut env = env.clone();
     for (k, v) in [
         ("CCRPC_ANALYZER_API_KEY", &a.api_key),

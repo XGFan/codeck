@@ -84,9 +84,15 @@ impl Vt {
                     }
                     // Claude Code draws its cursor as an inverse cell: on the first cell of dim
                     // text it belongs to that text (typed text always ends before the cursor).
-                    let next = c + if cell.flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 };
+                    let next = c + if cell.flags.contains(Flags::WIDE_CHAR) {
+                        2
+                    } else {
+                        1
+                    };
                     let dim = cell.flags.contains(Flags::DIM)
-                        || (cell.flags.contains(Flags::INVERSE) && next < grid.columns() && is_dim(next));
+                        || (cell.flags.contains(Flags::INVERSE)
+                            && next < grid.columns()
+                            && is_dim(next));
                     s.push(cell.c);
                     u.push(if dim { ' ' } else { cell.c });
                     if let Some(zw) = cell.zerowidth() {
@@ -154,7 +160,11 @@ mod tests {
         assert_eq!(s.lines[0], "❯\u{a0}Try \"edit\" ok");
         assert_eq!(s.undimmed[0], "❯\u{a0}           ok");
         // The drawn cursor on the placeholder's first cell; an inverse cell before normal text stays.
-        let s = Screen::render("❯ \x1b[7mT\x1b[0;2mry\x1b[0m a\x1b[7mb\x1b[0mc".as_bytes(), 20, 1);
+        let s = Screen::render(
+            "❯ \x1b[7mT\x1b[0;2mry\x1b[0m a\x1b[7mb\x1b[0mc".as_bytes(),
+            20,
+            1,
+        );
         assert_eq!(s.lines[0], "❯ Try abc");
         assert_eq!(s.undimmed[0], "❯     abc");
     }

@@ -392,8 +392,9 @@ pub fn transcript(
             })
         }
         TranscriptScope::Subagent { agent_id } => {
-            let file = agent_file
-                .ok_or_else(|| TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
+            let file = agent_file.ok_or_else(|| {
+                TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件"))
+            })?;
             let files = std::slice::from_ref(file);
             let sk = skeleton::build(files);
             let path = branch::resolve_path(&sk, &r.branch_choices);

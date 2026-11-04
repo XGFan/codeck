@@ -39,7 +39,11 @@ pub fn conn_dir(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     mkdir(&day)?;
     // The leaf is created on its own (not recursively): two connections never share it.
     for n in 0.. {
-        let dir = if n == 0 { day.join(&base) } else { day.join(format!("{base}-{n}")) };
+        let dir = if n == 0 {
+            day.join(&base)
+        } else {
+            day.join(format!("{base}-{n}"))
+        };
         match DirBuilder::new().mode(0o700).create(&dir) {
             Ok(()) => return Ok(dir),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -51,7 +55,9 @@ pub fn conn_dir(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 
 /// Removes `<root>/<date>` directories older than `KEEP_DAYS` (only names that are dates).
 pub fn prune(root: &Path, today: chrono::NaiveDate) {
-    let Ok(rd) = std::fs::read_dir(root) else { return };
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = e.file_name();
         let Some(d) = name
@@ -69,11 +75,20 @@ pub fn prune(root: &Path, today: chrono::NaiveDate) {
 /// Removes regular files directly in `dir` last modified more than `KEEP_DAYS` days ago (pasted
 /// images: a prompt's image is read when it is sent).
 pub fn prune_files(dir: &Path) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let keep = std::time::Duration::from_secs(KEEP_DAYS as u64 * 24 * 3600);
     for e in rd.flatten() {
-        let Ok(m) = std::fs::symlink_metadata(e.path()) else { continue };
-        if m.is_file() && m.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > keep) {
+        let Ok(m) = std::fs::symlink_metadata(e.path()) else {
+            continue;
+        };
+        if m.is_file()
+            && m.modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > keep)
+        {
             let _ = std::fs::remove_file(e.path());
         }
     }
@@ -96,7 +111,12 @@ impl Wire {
     pub fn with_max(path: PathBuf, max: u64) -> std::io::Result<Wire> {
         let file = append(&path)?;
         let size = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Ok(Wire { path, file, size, max })
+        Ok(Wire {
+            path,
+            file,
+            size,
+            max,
+        })
     }
 
     /// Moves the directory the file is in (a new Session's directory gets its Holder ID).
@@ -157,7 +177,10 @@ mod tests {
         assert!(rows[0]["t"].as_u64().unwrap() > 0);
         assert_eq!(rows[1]["msg"], "not json");
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
@@ -181,7 +204,10 @@ mod tests {
         for n in ["2026-10-01", "2026-10-25", "notes"] {
             std::fs::create_dir(d.path().join(n)).unwrap();
         }
-        prune(d.path(), chrono::NaiveDate::from_ymd_opt(2026, 11, 4).unwrap());
+        prune(
+            d.path(),
+            chrono::NaiveDate::from_ymd_opt(2026, 11, 4).unwrap(),
+        );
         assert!(!d.path().join("2026-10-01").exists());
         assert!(d.path().join("2026-10-25").exists());
         assert!(d.path().join("notes").exists());
@@ -193,8 +219,14 @@ mod tests {
         let (old, new) = (d.path().join("1-1.png"), d.path().join("2-2.png"));
         std::fs::write(&old, b"x").unwrap();
         std::fs::write(&new, b"x").unwrap();
-        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 3600);
-        File::options().write(true).open(&old).unwrap().set_modified(long_ago).unwrap();
+        let long_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 3600);
+        File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
         std::fs::create_dir(d.path().join("sub")).unwrap();
         prune_files(d.path());
         assert!(!old.exists());

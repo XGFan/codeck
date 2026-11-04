@@ -226,7 +226,9 @@ pub fn is_transcript_path(roots: &Roots, path: &Path) -> bool {
     });
     parent_ok
         && path.extension().is_some_and(|x| x == "jsonl")
-        && !path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+        && !path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 #[cfg(test)]
@@ -285,10 +287,22 @@ mod tests {
             toh_state: PathBuf::from("/t"),
             claude_config: PathBuf::from("/c"),
         };
-        assert!(is_transcript_path(&roots, Path::new("/c/projects/-w/s.jsonl")));
-        assert!(!is_transcript_path(&roots, Path::new("/c/projects/s.jsonl")), "inside a project dir");
-        assert!(!is_transcript_path(&roots, Path::new("/c/projects/-w/s.json")));
+        assert!(is_transcript_path(
+            &roots,
+            Path::new("/c/projects/-w/s.jsonl")
+        ));
+        assert!(
+            !is_transcript_path(&roots, Path::new("/c/projects/s.jsonl")),
+            "inside a project dir"
+        );
+        assert!(!is_transcript_path(
+            &roots,
+            Path::new("/c/projects/-w/s.json")
+        ));
         assert!(!is_transcript_path(&roots, Path::new("/etc/x.jsonl")));
-        assert!(!is_transcript_path(&roots, Path::new("/c/projects/-w/../../x.jsonl")));
+        assert!(!is_transcript_path(
+            &roots,
+            Path::new("/c/projects/-w/../../x.jsonl")
+        ));
     }
 }

@@ -25,7 +25,9 @@ impl Drop for Holder {
     fn drop(&mut self) {
         // Only the Holder this test started.
         let Some(id) = &self.id else { return };
-        let Ok(b) = std::fs::read(self.toh.join("holders").join(format!("{id}.json"))) else { return };
+        let Ok(b) = std::fs::read(self.toh.join("holders").join(format!("{id}.json"))) else {
+            return;
+        };
         let v: Value = serde_json::from_slice(&b).unwrap_or(Value::Null);
         if let Some(pid) = v["holder_pid"].as_i64() {
             unsafe { libc::kill(pid as i32, libc::SIGTERM) };
@@ -33,7 +35,12 @@ impl Drop for Holder {
     }
 }
 
-fn next(rx: &mpsc::Receiver<Out>, what: &str, secs: u64, mut pred: impl FnMut(&Value) -> bool) -> Value {
+fn next(
+    rx: &mpsc::Receiver<Out>,
+    what: &str,
+    secs: u64,
+    mut pred: impl FnMut(&Value) -> bool,
+) -> Value {
     let deadline = Instant::now() + Duration::from_secs(secs);
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
@@ -60,11 +67,24 @@ fn relays_a_real_session_and_logs_it() {
         .env("CODECK_SANDBOX", &sandbox)
         .output()
         .unwrap();
-    assert!(out.status.success(), "env.sh: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "env.sh: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let work = String::from_utf8(out.stdout).unwrap().trim().to_string();
 
     let mut env: HashMap<String, String> = std::env::vars().collect();
-    for k in ["TOH_CONFIG", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TOH_HOLDER_ID", "KITTY_WINDOW_ID", "WEZTERM_PANE", "KAKU_UNIX_SOCKET", "ITERM_SESSION_ID"] {
+    for k in [
+        "TOH_CONFIG",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "TOH_HOLDER_ID",
+        "KITTY_WINDOW_ID",
+        "WEZTERM_PANE",
+        "KAKU_UNIX_SOCKET",
+        "ITERM_SESSION_ID",
+    ] {
         env.remove(k);
     }
     let s = |p: &str| sandbox.join(p).display().to_string();
@@ -77,7 +97,13 @@ fn relays_a_real_session_and_logs_it() {
         env.insert("PATH".into(), format!("{}:{path}", toh.display()));
     }
     let logs = tempfile::tempdir().unwrap();
-    let app = App::new(env, sandbox.join("ccrpc-wrap"), logs.path().to_path_buf(), logs.path().join("img")).unwrap();
+    let app = App::new(
+        env,
+        sandbox.join("ccrpc-wrap"),
+        logs.path().to_path_buf(),
+        logs.path().join("img"),
+    )
+    .unwrap();
     let (tx, rx) = mpsc::channel();
     let tx = std::sync::Mutex::new(tx);
     let sink = Arc::new(move |o: Out| {
@@ -85,14 +111,21 @@ fn relays_a_real_session_and_logs_it() {
     });
 
     let conn = app.new_session(sink, &work).unwrap();
-    let mut holder = Holder { toh: sandbox.join("toh"), id: None };
+    let mut holder = Holder {
+        toh: sandbox.join("toh"),
+        id: None,
+    };
     let ready = next(&rx, "ready", 60, |v| v["type"] == "ready");
     let hid = ready["holder_id"].as_str().unwrap().to_string();
     holder.id = Some(hid.clone());
     assert_eq!(ready["co_display"], true);
     // A new Session's log directory is renamed after its Holder ID.
     let dir = app.log_dir(&conn).unwrap();
-    assert!(dir.file_name().unwrap().to_str().unwrap().starts_with(&hid), "{}", dir.display());
+    assert!(
+        dir.file_name().unwrap().to_str().unwrap().starts_with(&hid),
+        "{}",
+        dir.display()
+    );
 
     let mut seq = 0;
     let mut send = |app: &App, mut v: Value| -> String {
@@ -104,9 +137,14 @@ fn relays_a_real_session_and_logs_it() {
     };
     // Idle (a startup notice offering auto mode is declined, as in ccrpc's e2e).
     loop {
-        let v = next(&rx, "idle", 60, |v| (v["type"] == "state" && v["state"] == "idle") || v["type"] == "dialog");
+        let v = next(&rx, "idle", 60, |v| {
+            (v["type"] == "state" && v["state"] == "idle") || v["type"] == "dialog"
+        });
         if v["type"] == "dialog" {
-            send(&app, json!({"type": "send_keys", "keys": ["down", "enter"]}));
+            send(
+                &app,
+                json!({"type": "send_keys", "keys": ["down", "enter"]}),
+            );
             continue;
         }
         break;
@@ -114,15 +152,32 @@ fn relays_a_real_session_and_logs_it() {
     std::thread::sleep(Duration::from_secs(2));
 
     let p = send(&app, json!({"type": "prompt", "text": "MOCK-TOOL please"}));
-    let pr = next(&rx, "permission_request", 60, |v| v["type"] == "permission_request");
-    assert!(pr["options"].as_array().is_some_and(|o| o.len() >= 2), "{pr}");
-    send(&app, json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}));
+    let pr = next(&rx, "permission_request", 60, |v| {
+        v["type"] == "permission_request"
+    });
+    assert!(
+        pr["options"].as_array().is_some_and(|o| o.len() >= 2),
+        "{pr}"
+    );
+    send(
+        &app,
+        json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}),
+    );
     let end = next(&rx, "turn_end", 60, |v| v["type"] == "turn_end");
     assert_eq!(end["aborted"], false);
     assert!(Path::new(&work).join("mock-tool.txt").exists());
     let m = send(&app, json!({"type": "get_messages", "limit": 50}));
-    let page = next(&rx, "get_messages", 30, |v| v["type"] == "response" && v["id"] == m);
-    assert!(page["data"]["blocks"].as_array().unwrap().iter().any(|b| b["kind"] == "tool_result"), "{page}");
+    let page = next(&rx, "get_messages", 30, |v| {
+        v["type"] == "response" && v["id"] == m
+    });
+    assert!(
+        page["data"]["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["kind"] == "tool_result"),
+        "{page}"
+    );
 
     send(&app, json!({"type": "exit", "close_pane": true}));
     next(&rx, "session_exit", 30, |v| v["type"] == "session_exit");
@@ -140,12 +195,24 @@ fn relays_a_real_session_and_logs_it() {
 
     // The three logs, in the connection's directory.
     let wire = std::fs::read_to_string(dir.join("wire.jsonl")).unwrap();
-    let rows: Vec<Value> = wire.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let rows: Vec<Value> = wire
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
     assert_eq!(rows[0]["dir"], "recv");
     assert_eq!(rows[0]["msg"]["type"], "ready");
-    assert!(rows.iter().any(|r| r["dir"] == "send" && r["msg"]["id"] == p));
+    assert!(
+        rows.iter()
+            .any(|r| r["dir"] == "send" && r["msg"]["id"] == p)
+    );
     let ccrpc_log = std::fs::read_to_string(dir.join("ccrpc.log")).unwrap();
-    assert!(ccrpc_log.contains(&format!("holder={hid}")), "ccrpc.log 没有版本行");
+    assert!(
+        ccrpc_log.contains(&format!("holder={hid}")),
+        "ccrpc.log 没有版本行"
+    );
     let gui = std::fs::read_to_string(dir.join("gui.log")).unwrap();
-    assert!(gui.contains("spawn") && gui.contains("exit code=Some(0)"), "{gui}");
+    assert!(
+        gui.contains("spawn") && gui.contains("exit code=Some(0)"),
+        "{gui}"
+    );
 }

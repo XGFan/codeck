@@ -3,7 +3,6 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{fixture_dir, ids};
 use codeck_core::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, SessionSkeleton, assemble, build_skeleton,
     transcript, tree,
@@ -13,6 +12,7 @@ use codeck_core::model::{
     TranscriptScope,
 };
 use codeck_core::parse::{parse_bytes, read_entries};
+use common::{fixture_dir, ids};
 
 fn load(path: &Path) -> LoadedFile {
     LoadedFile {

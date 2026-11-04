@@ -3,10 +3,10 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{fixture_dir, ids};
 use codeck_core::assemble::{LoadedFile, build_skeleton, summarize};
 use codeck_core::model::FileRole;
 use codeck_core::parse::{parse_bytes, read_entries};
+use common::{fixture_dir, ids};
 
 fn load(path: &Path) -> LoadedFile {
     let chunk = read_entries(path, 0).expect("read fixture");

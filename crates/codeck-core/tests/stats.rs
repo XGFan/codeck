@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone};
-use common::{copy_dir_all, fixture_dir, ids};
 use codeck_core::model::{
     DataRootSource, Drill, SessionQuery, SessionSort, Stats, StatsRequest, TimeRange,
 };
 use codeck_core::{Engine, EngineConfig};
+use common::{copy_dir_all, fixture_dir, ids};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -311,7 +311,8 @@ fn tokens_counted_once_per_message_id() {
     assert_eq!(st.overview.output_tokens, 5151.0);
     assert_eq!(st.overview.messages, 20);
     assert_eq!(st.overview.sessions, 1);
-    let sum = |f: fn(&codeck_core::model::DailyModelTokens) -> f64| st.daily.iter().map(f).sum::<f64>();
+    let sum =
+        |f: fn(&codeck_core::model::DailyModelTokens) -> f64| st.daily.iter().map(f).sum::<f64>();
     assert_eq!(sum(|d| d.input), 51.0);
     assert_eq!(sum(|d| d.output), 5151.0);
     assert_eq!(sum(|d| d.cache_read), 1_761_742.0);
@@ -643,7 +644,10 @@ fn activity_over_seven_days_is_hourly() {
             }),
         })
         .unwrap();
-    assert_eq!(st.activity.bucket, codeck_core::model::ActivityBucket::Hour1);
+    assert_eq!(
+        st.activity.bucket,
+        codeck_core::model::ActivityBucket::Hour1
+    );
     // 7 × 24 hours from a mid-hour start touch 169 hourly bars.
     assert_eq!(st.activity.bars.len(), 169);
     assert_eq!(

@@ -167,8 +167,12 @@ Describe the dialog at the bottom of the screen as JSON:
 
 /// The model's JSON (possibly wrapped in prose or a code fence) as a layout.
 pub fn parse_answer(text: &str) -> Result<Layout> {
-    let start = text.find('{').ok_or_else(|| anyhow!("分析器没有给出 JSON"))?;
-    let end = text.rfind('}').ok_or_else(|| anyhow!("分析器没有给出 JSON"))?;
+    let start = text
+        .find('{')
+        .ok_or_else(|| anyhow!("分析器没有给出 JSON"))?;
+    let end = text
+        .rfind('}')
+        .ok_or_else(|| anyhow!("分析器没有给出 JSON"))?;
     let v: Value = serde_json::from_str(&text[start..=end]).context("分析器给出的 JSON 读不出")?;
     let kind = match v["kind"].as_str() {
         Some("permission") => LayoutKind::Permission,
@@ -288,14 +292,26 @@ mod tests {
                 .unwrap();
             head
         });
-        let a = Analyzer { base_url, model: "m".into(), key: "k-123".into() };
+        let a = Analyzer {
+            base_url,
+            model: "m".into(),
+            key: "k-123".into(),
+        };
         let lines = vec!["Do you want to proceed?".to_string()];
-        let req = Request { lines: &lines, waiting_for: "approve", pending: Vec::new(), claude_version: None };
+        let req = Request {
+            lines: &lines,
+            waiting_for: "approve",
+            pending: Vec::new(),
+            claude_version: None,
+        };
         let err = a.analyze(&req).unwrap_err().to_string();
         assert!(err.starts_with("分析器请求失败"), "{err}");
         let head = server.join().unwrap();
         assert_eq!(head[0], "post /v1/messages http/1.1");
         assert!(head.contains(&"x-api-key: k-123".to_string()), "{head:?}");
-        assert!(head.contains(&"anthropic-version: 2023-06-01".to_string()), "{head:?}");
+        assert!(
+            head.contains(&"anthropic-version: 2023-06-01".to_string()),
+            "{head:?}"
+        );
     }
 }

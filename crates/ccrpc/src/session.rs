@@ -255,14 +255,21 @@ impl Marks {
     /// A prompt that went into Claude Code's queue: its text, or (sent with images) ending with it.
     fn prompt_enqueued_after(&self, after: u64, text: &str, images: bool) -> bool {
         self.enqueued.iter().any(|(s, t)| {
-            *s > after && if images { t.trim().ends_with(text.trim()) } else { t.trim() == text.trim() }
+            *s > after
+                && if images {
+                    t.trim().ends_with(text.trim())
+                } else {
+                    t.trim() == text.trim()
+                }
         })
     }
 
     /// An enqueue recorded without its text: input submitted just as a turn began, or a message
     /// from another Claude Code session.
     fn blank_enqueued_after(&self, after: u64) -> bool {
-        self.enqueued.iter().any(|(s, t)| *s > after && t.trim().is_empty())
+        self.enqueued
+            .iter()
+            .any(|(s, t)| *s > after && t.trim().is_empty())
     }
 }
 
@@ -293,16 +300,30 @@ fn question_answers(
     answers: &[Answer],
 ) -> std::result::Result<serde_json::Map<String, Value>, String> {
     if questions.len() != answers.len() {
-        return Err(format!("有 {} 道题，给了 {} 个答案", questions.len(), answers.len()));
+        return Err(format!(
+            "有 {} 道题，给了 {} 个答案",
+            questions.len(),
+            answers.len()
+        ));
     }
     let mut out = serde_json::Map::new();
     for (i, (q, a)) in questions.iter().zip(answers).enumerate() {
-        let title = q.get("question").and_then(Value::as_str).unwrap_or_default();
-        let multi = q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false);
+        let title = q
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let multi = q
+            .get("multiSelect")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let labels: Vec<&str> = q
             .get("options")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|o| o.get("label").and_then(Value::as_str)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|o| o.get("label").and_then(Value::as_str))
+                    .collect()
+            })
             .unwrap_or_default();
         let text = match a {
             Answer::Options(chosen) => {
@@ -490,9 +511,9 @@ impl Engine {
                 conn.detach();
                 bail!("Session 正被 {client} 使用，加 --force 强制连接");
             }
-            Owner::Unknown => eprintln!(
-                "ccrpc: Holder {holder_id} 不报告尺寸所有者，无法确认是否有人在用"
-            ),
+            Owner::Unknown => {
+                eprintln!("ccrpc: Holder {holder_id} 不报告尺寸所有者，无法确认是否有人在用")
+            }
             _ => {}
         }
         // Co-display leaves the size to the people's Clients.
@@ -642,12 +663,19 @@ impl Engine {
         // A check-in left by an earlier claude with the same pid (another Pane, or another
         // Session): wait for this one's.
         if c.holder_id != self.holder_id
-            || self.pf.as_ref().and_then(|p| p.session_id.as_deref()).is_some_and(|s| s != c.session_id)
+            || self
+                .pf
+                .as_ref()
+                .and_then(|p| p.session_id.as_deref())
+                .is_some_and(|s| s != c.session_id)
         {
             let since = *self.no_checkin_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= CHECKIN_GRACE && self.fatal.is_none() {
-                self.fatal = hook::checkin_problem(Some(&c), self.pf.as_ref().and_then(|p| p.session_id.as_deref()))
-                    .or_else(|| hook::checkin_problem(None, None));
+                self.fatal = hook::checkin_problem(
+                    Some(&c),
+                    self.pf.as_ref().and_then(|p| p.session_id.as_deref()),
+                )
+                .or_else(|| hook::checkin_problem(None, None));
             }
             return;
         }
@@ -657,7 +685,10 @@ impl Engine {
         }
         let path = PathBuf::from(&c.transcript_path);
         if !locate::is_transcript_path(&self.roots, &path) {
-            self.fatal = Some(format!("ccrpc 插件报到的 transcript 不在 Claude Code 的 projects 目录里：{}", path.display()));
+            self.fatal = Some(format!(
+                "ccrpc 插件报到的 transcript 不在 Claude Code 的 projects 目录里：{}",
+                path.display()
+            ));
             return;
         }
         let history = path.exists();
@@ -688,7 +719,12 @@ impl Engine {
                         TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
                             self.last_text = b.text.clone();
                         }
-                        TxEvent::Usage { main: true, model, usage, .. } => {
+                        TxEvent::Usage {
+                            main: true,
+                            model,
+                            usage,
+                            ..
+                        } => {
                             self.note_main_usage(model.as_deref(), &usage);
                         }
                         _ => {}
@@ -821,7 +857,9 @@ impl Engine {
             if r.reply.is_some() {
                 if waiting {
                     r.away_since = None;
-                } else if r.away_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(1) {
+                } else if r.away_since.get_or_insert_with(Instant::now).elapsed()
+                    >= Duration::from_secs(1)
+                {
                     r.reply = None;
                 }
             }
@@ -892,12 +930,16 @@ impl Engine {
         let gen_now = self.conn.generation();
         // A spinner redraws the screen ~10 times a second: look at most every 300ms.
         let fresh = gen_now != self.looked_gen
-            && self.looked_at.is_none_or(|t| t.elapsed() >= Duration::from_millis(300));
+            && self
+                .looked_at
+                .is_none_or(|t| t.elapsed() >= Duration::from_millis(300));
         if fresh && let Some(m) = self.mode_now() {
             self.screen_mode = Some(m.name().to_string());
         }
         let info = self.session_info();
-        if self.info_sent.as_ref() != Some(&info) && (info["mode"].is_string() || info["model"].is_string()) {
+        if self.info_sent.as_ref() != Some(&info)
+            && (info["mode"].is_string() || info["model"].is_string())
+        {
             let mut v = info.clone();
             v["type"] = json!("session_info");
             self.emit(v);
@@ -912,7 +954,11 @@ impl Engine {
             self.progress_sent = None;
             return;
         }
-        let Some(sp) = self.screen().ok().and_then(|s| recognize::spinner(&s.lines)) else {
+        let Some(sp) = self
+            .screen()
+            .ok()
+            .and_then(|s| recognize::spinner(&s.lines))
+        else {
             return;
         };
         let send = match &self.progress_sent {
@@ -960,9 +1006,11 @@ impl Engine {
             }
             "UserPromptSubmit" => {
                 let pid = s("prompt_id").unwrap_or_default();
-                let text = ::transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
+                let text =
+                    ::transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
                 self.hook_seq += 1;
-                self.hook_prompts.push_back((self.hook_seq, pid.clone(), text.clone()));
+                self.hook_prompts
+                    .push_back((self.hook_seq, pid.clone(), text.clone()));
                 if self.hook_prompts.len() > 64 {
                     self.hook_prompts.pop_front();
                 }
@@ -1001,7 +1049,11 @@ impl Engine {
                         }
                     }
                 }
-                let trigger = if notice { "task_notification" } else { "prompt" };
+                let trigger = if notice {
+                    "task_notification"
+                } else {
+                    "prompt"
+                };
                 self.pending_steers.clear();
                 self.turn = TurnStats::start(Some(pid), trigger);
                 self.turn_active = true;
@@ -1016,12 +1068,7 @@ impl Engine {
                 // Another turn's Stop (a steer's turn) while this one still waits for the transcript:
                 // claude fires both before writing either turn, so this one ends at its marker (or
                 // after STOP_CATCH_UP) with all its blocks, and the other Stop is handled then.
-                if self
-                    .stop_pending
-                    .is_some()
-                    && pid.is_some()
-                    && self.turn.prompt_id != pid
-                {
+                if self.stop_pending.is_some() && pid.is_some() && self.turn.prompt_id != pid {
                     // A third one: the oldest waits no longer.
                     if let Some(prev) = self.deferred_stop.take() {
                         self.end_stopped_turn();
@@ -1044,13 +1091,18 @@ impl Engine {
                     self.turn.prompt_id = pid.clone();
                 }
                 if m.event == "StopFailure" {
-                    self.turn.error = Some(json!({"kind": s("error"), "message": s("last_assistant_message")}));
+                    self.turn.error =
+                        Some(json!({"kind": s("error"), "message": s("last_assistant_message")}));
                 } else if let Some(t) = s("last_assistant_message") {
                     self.last_text = Some(t);
                 }
                 let bg = i.get("background_tasks").cloned().unwrap_or(json!([]));
                 self.note_running_tasks(&bg);
-                let last = if m.event == "Stop" { self.last_text.clone() } else { None };
+                let last = if m.event == "Stop" {
+                    self.last_text.clone()
+                } else {
+                    None
+                };
                 self.stop_pending = Some((Instant::now(), last, bg));
             }
             "PreToolUse" => {
@@ -1091,7 +1143,11 @@ impl Engine {
                 {
                     // Finished on its own (a stopped one gets no SubagentStop); the notice that
                     // follows says how.
-                    if self.hook_tasks.iter().any(|t| t.id == id && t.status == "running") {
+                    if self
+                        .hook_tasks
+                        .iter()
+                        .any(|t| t.id == id && t.status == "running")
+                    {
                         self.set_task_status(&id, "completed");
                     }
                 }
@@ -1217,7 +1273,9 @@ impl Engine {
         let text = |v: &Value| v.as_str().map(str::to_string);
         let task = match i["tool_name"].as_str() {
             Some("Bash") => text(&resp["backgroundTaskId"]).map(|id| (id, "shell")),
-            Some("Agent" | "Task") if resp["isAsync"] == true => text(&resp["agentId"]).map(|id| (id, "agent")),
+            Some("Agent" | "Task") if resp["isAsync"] == true => {
+                text(&resp["agentId"]).map(|id| (id, "agent"))
+            }
             Some("Workflow") => text(&resp["taskId"]).map(|id| (id, "workflow")),
             _ => None,
         };
@@ -1247,7 +1305,10 @@ impl Engine {
         for t in bg.as_array().into_iter().flatten() {
             let Some(id) = t["id"].as_str() else { continue };
             if self.hook_tasks.iter().any(|h| h.id == id)
-                || self.tailer.as_ref().is_some_and(|tl| tl.tasks().iter().any(|h| h.id == id))
+                || self
+                    .tailer
+                    .as_ref()
+                    .is_some_and(|tl| tl.tasks().iter().any(|h| h.id == id))
             {
                 continue;
             }
@@ -1374,7 +1435,11 @@ impl Engine {
         } else {
             self.idle_at = None;
         }
-        crate::clog!("state {:?} (raw {:?})", s, self.raw_since.as_ref().map(|r| &r.0));
+        crate::clog!(
+            "state {:?} (raw {:?})",
+            s,
+            self.raw_since.as_ref().map(|r| &r.0)
+        );
         self.state = s;
         let mut v = self.state.to_json();
         v["type"] = json!("state");
@@ -1414,10 +1479,14 @@ impl Engine {
                 let kind = match wf.as_str() {
                     "permission prompt" => WaitKind::Permission,
                     "input needed" => {
-                        let has_ask = self.requests.iter().any(|r| r.tool_name == "AskUserQuestion");
+                        let has_ask = self
+                            .requests
+                            .iter()
+                            .any(|r| r.tool_name == "AskUserQuestion");
                         if has_ask {
                             WaitKind::Question
-                        } else if since.elapsed() < CLASSIFY_GRACE || self.answered_until.is_some() {
+                        } else if since.elapsed() < CLASSIFY_GRACE || self.answered_until.is_some()
+                        {
                             return; // the plugin's PermissionRequest may still be on its way
                         } else if self.pending_ask().is_some() {
                             // Asked while no ccrpc held the hook (attached later): answered on the screen.
@@ -1491,7 +1560,14 @@ impl Engine {
         } else if recognize::TRUST_NO.starts_with(option) && !option.is_empty() {
             false
         } else {
-            return err("bad_request", format!("没有对应的选项：{option}；可选 [{:?}, {:?}]", recognize::TRUST_YES, recognize::TRUST_NO));
+            return err(
+                "bad_request",
+                format!(
+                    "没有对应的选项：{option}；可选 [{:?}, {:?}]",
+                    recognize::TRUST_YES,
+                    recognize::TRUST_NO
+                ),
+            );
         };
         for _ in 0..3 {
             let now = self.fresh_screen()?;
@@ -1548,7 +1624,11 @@ impl Engine {
             let shown = self.choice_layout.as_ref().is_some_and(|lid| {
                 self.screen()
                     .ok()
-                    .and_then(|s| self.library.find_kind(&s.lines, LayoutKind::Choice).map(|(l, _)| &l.id == lid))
+                    .and_then(|s| {
+                        self.library
+                            .find_kind(&s.lines, LayoutKind::Choice)
+                            .map(|(l, _)| &l.id == lid)
+                    })
                     .unwrap_or(false)
             });
             if shown {
@@ -1606,7 +1686,11 @@ impl Engine {
                 (o.number, o.label, c)
             })
             .collect();
-        Some((PermissionDialog { options }, l.body(lines)?, l.source.clone()))
+        Some((
+            PermissionDialog { options },
+            l.body(lines)?,
+            l.source.clone(),
+        ))
     }
 
     /// The options of `r`'s dialog on `lines` (`[{label, meaning}]`, labels as shown) and where
@@ -1735,8 +1819,14 @@ impl Engine {
                 // Its dialog is drawn meanwhile: announced once the options on it are read (for
                 // "always allow"), or without them after OPTIONS_GRACE.
                 let screen = self.screen().ok();
-                if let Some(r) = self.requests.iter().find(|r| r.is_approval() && r.reply.is_some()) {
-                    let opts = screen.as_ref().and_then(|s| self.dialog_options(r, &s.lines));
+                if let Some(r) = self
+                    .requests
+                    .iter()
+                    .find(|r| r.is_approval() && r.reply.is_some())
+                {
+                    let opts = screen
+                        .as_ref()
+                        .and_then(|s| self.dialog_options(r, &s.lines));
                     if opts.is_none() && r.at.elapsed() < OPTIONS_GRACE {
                         return;
                     }
@@ -1759,7 +1849,9 @@ impl Engine {
                 if let Some(id) = screen.as_ref().and_then(|s| self.screen_request(s))
                     && let Some(r) = self.open_request(&id)
                 {
-                    let opts = screen.as_ref().and_then(|s| self.dialog_options(r, &s.lines));
+                    let opts = screen
+                        .as_ref()
+                        .and_then(|s| self.dialog_options(r, &s.lines));
                     crate::clog!("recognize permission {} on screen", r.id);
                     let ev = Self::permission_event(r, opts);
                     self.announced = Some(id);
@@ -1788,7 +1880,11 @@ impl Engine {
                 }
             }
             WaitKind::Question => {
-                let (id, input, agent_id) = match self.requests.iter().find(|r| r.tool_name == "AskUserQuestion") {
+                let (id, input, agent_id) = match self
+                    .requests
+                    .iter()
+                    .find(|r| r.tool_name == "AskUserQuestion")
+                {
                     Some(r) => (r.id.clone(), r.input.clone(), r.agent_id.clone()),
                     None => match self.pending_ask() {
                         Some(p) => (p.id.clone(), p.input.clone(), None),
@@ -1827,10 +1923,15 @@ impl Engine {
             ..
         } = &self.state
         {
-            let tools: Vec<&HookRequest> =
-                self.requests.iter().filter(|r| r.tool_name != "AskUserQuestion").collect();
+            let tools: Vec<&HookRequest> = self
+                .requests
+                .iter()
+                .filter(|r| r.tool_name != "AskUserQuestion")
+                .collect();
             let tools_ok = !tools.is_empty()
-                && tools.iter().all(|r| CHOICE_TOOLS.contains(&r.tool_name.as_str()));
+                && tools
+                    .iter()
+                    .all(|r| CHOICE_TOOLS.contains(&r.tool_name.as_str()));
             if !tools_ok {
                 return false;
             }
@@ -1980,7 +2081,10 @@ impl Engine {
             _ => return err("not_waiting", format!("当前状态为 {}", self.state.name())),
         }
         if self.announced.as_deref() != Some(request_id) || !request_id.starts_with("choice:") {
-            return err("unknown_request", format!("当前挂起的选择不是 {request_id}"));
+            return err(
+                "unknown_request",
+                format!("当前挂起的选择不是 {request_id}"),
+            );
         }
         self.settle_dialog();
         let now = self.fresh_screen()?;
@@ -1991,18 +2095,25 @@ impl Engine {
             return err("unknown_request", "屏幕上已经不是这个选择");
         }
         let exact: Vec<_> = opts.iter().filter(|o| o.label == option).collect();
-        let prefix: Vec<_> = opts.iter().filter(|o| o.label.starts_with(option)).collect();
+        let prefix: Vec<_> = opts
+            .iter()
+            .filter(|o| o.label.starts_with(option))
+            .collect();
         let pick = match (exact.as_slice(), prefix.as_slice()) {
             ([o], _) | ([], [o]) => o.number,
             _ => {
                 let labels: Vec<&str> = opts.iter().map(|o| o.label.as_str()).collect();
-                return err("bad_request", format!("没有唯一对应的选项：{option}；可选 {labels:?}"));
+                return err(
+                    "bad_request",
+                    format!("没有唯一对应的选项：{option}；可选 {labels:?}"),
+                );
             }
         };
         self.keys(pick.to_string().as_bytes())?;
         let rid = request_id.to_string();
         let ok = self.wait_until(Duration::from_secs(10), |e| {
-            !matches!(e.state, State::Waiting { .. }) || e.announced.as_deref() != Some(rid.as_str())
+            !matches!(e.state, State::Waiting { .. })
+                || e.announced.as_deref() != Some(rid.as_str())
         });
         if ok {
             Ok(json!({"state": self.state.name()}))
@@ -2147,10 +2258,12 @@ impl Engine {
 
     fn paste(&self, text: &str) -> std::result::Result<(), CmdErr> {
         self.writable()?;
-        crate::clog!("paste {} chars: {:?}", text.chars().count(), text.chars().take(60).collect::<String>());
-        self.conn
-            .paste(text)
-            .map_err(|e| ("io", format!("{e:#}")))
+        crate::clog!(
+            "paste {} chars: {:?}",
+            text.chars().count(),
+            text.chars().take(60).collect::<String>()
+        );
+        self.conn.paste(text).map_err(|e| ("io", format!("{e:#}")))
     }
 
     fn keys(&self, bytes: &[u8]) -> std::result::Result<(), CmdErr> {
@@ -2186,7 +2299,9 @@ impl Engine {
     /// Empties the prompt input box (`ctrl+u` + backspace per line), checking the screen.
     fn clear_input(&mut self) -> std::result::Result<(), CmdErr> {
         // Just after startup the Process File says idle before the TUI is drawn.
-        self.wait_screen(Duration::from_secs(2), |_, s| recognize::input_text(s).map(|_| ()));
+        self.wait_screen(Duration::from_secs(2), |_, s| {
+            recognize::input_text(s).map(|_| ())
+        });
         for _ in 0..3 {
             let text = self.input_box_now()?;
             if text.is_empty() {
@@ -2296,7 +2411,10 @@ impl Engine {
             }
         };
         // Claude Code may have started a turn just before Enter: then the prompt waits in its queue.
-        let queued = |e: &Engine| e.marks.prompt_enqueued_after(before, &clean, !images.is_empty());
+        let queued = |e: &Engine| {
+            e.marks
+                .prompt_enqueued_after(before, &clean, !images.is_empty())
+        };
         let ok = self.wait_until(Duration::from_secs(30), |e| {
             found(e).is_some() || queued(e) || e.marks.blank_enqueued_after(before)
         });
@@ -2307,7 +2425,14 @@ impl Engine {
             // A blank enqueue may be another session's message: it is this prompt only when no
             // user entry follows at once and the text has left the input box.
             self.wait_until(Duration::from_secs(2), |e| found(e).is_some() || queued(e));
-            let needle: String = clean.trim().lines().next().unwrap_or("").chars().take(20).collect();
+            let needle: String = clean
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(20)
+                .collect();
             let still_typed = self
                 .screen()
                 .ok()
@@ -2439,10 +2564,17 @@ impl Engine {
     ) -> CmdResult {
         self.check_request(WaitKind::Permission, request_id)?;
         let Some(idx) = self.requests.iter().position(|r| r.id == request_id) else {
-            return err("unknown_request", format!("当前挂起的请求不是 {request_id}"));
+            return err(
+                "unknown_request",
+                format!("当前挂起的请求不是 {request_id}"),
+            );
         };
         // A hook that went away while waiting: answer on the screen instead.
-        if self.requests[idx].reply.as_ref().is_some_and(hook::peer_gone) {
+        if self.requests[idx]
+            .reply
+            .as_ref()
+            .is_some_and(hook::peer_gone)
+        {
             self.requests[idx].reply = None;
         }
         // "Always allow" is the dialog's own option: the rule it adds (`python3 *`) is not the
@@ -2536,7 +2668,9 @@ impl Engine {
         let mut res = self.wait_leave_request(request_id)?;
         // The dialog's No interrupts the turn: the message goes as the next prompt.
         if let Some(msg) = message {
-            if !self.wait_until(Duration::from_secs(10), |e| e.state == State::Idle && !e.turn_active) {
+            if !self.wait_until(Duration::from_secs(10), |e| {
+                e.state == State::Idle && !e.turn_active
+            }) {
                 return err("timeout", "拒绝后 10 秒内没有回到 idle，说明没有发出");
             }
             let sent = self.send_prompt(msg)?;
@@ -2550,13 +2684,27 @@ impl Engine {
     fn answer_question(&mut self, request_id: &str, answers: &[Answer]) -> CmdResult {
         self.check_request(WaitKind::Question, request_id)?;
         let held = self.requests.iter().position(|r| r.id == request_id);
-        let Some(idx) = held.filter(|&i| self.requests[i].reply.as_ref().is_some_and(|r| !hook::peer_gone(r))) else {
+        let Some(idx) = held.filter(|&i| {
+            self.requests[i]
+                .reply
+                .as_ref()
+                .is_some_and(|r| !hook::peer_gone(r))
+        }) else {
             // No hook waits for it (asked before ccrpc attached, or the hook went away): keys.
             let input = match held {
                 Some(i) => self.requests[i].input.clone(),
-                None => match self.tailer.as_ref().and_then(|t| t.pending_by_id(request_id)) {
+                None => match self
+                    .tailer
+                    .as_ref()
+                    .and_then(|t| t.pending_by_id(request_id))
+                {
                     Some(p) => p.input.clone(),
-                    None => return err("unknown_request", format!("当前挂起的请求不是 {request_id}")),
+                    None => {
+                        return err(
+                            "unknown_request",
+                            format!("当前挂起的请求不是 {request_id}"),
+                        );
+                    }
                 },
             };
             return self.answer_question_on_screen(request_id, &input, answers);
@@ -2633,31 +2781,55 @@ impl Engine {
     /// Answers an AskUserQuestion with keys on its dialog (no hook waits for it): each question's
     /// option number (a multi-select one toggles to the wanted set, then Submit), or `Type
     /// something.` then the text; several questions end on the Review tab.
-    fn answer_question_on_screen(&mut self, request_id: &str, input: &Value, answers: &[Answer]) -> CmdResult {
-        let questions = input.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
+    fn answer_question_on_screen(
+        &mut self,
+        request_id: &str,
+        input: &Value,
+        answers: &[Answer],
+    ) -> CmdResult {
+        let questions = input
+            .get("questions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         // Validates every answer before the first key.
         question_answers(&questions, answers).map_err(|m| ("bad_request", m))?;
         let mut plan = Vec::new();
         for (i, (q, a)) in questions.iter().zip(answers).enumerate() {
-            let multi = q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false);
+            let multi = q
+                .get("multiSelect")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if multi && matches!(a, Answer::Other(_)) {
-                return err("unsupported", format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1));
+                return err(
+                    "unsupported",
+                    format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1),
+                );
             }
-            let title = q.get("question").and_then(Value::as_str).unwrap_or_default().to_string();
+            let title = q
+                .get("question")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             plan.push((title, a, multi));
         }
         self.writable()?;
         let mut tabbed = false;
         for (title, a, multi) in plan {
             if !self.request_is(&WaitKind::Question, request_id) {
-                return err("unknown_request", format!("作答中请求已经变了，不再是 {request_id}"));
+                return err(
+                    "unknown_request",
+                    format!("作答中请求已经变了，不再是 {request_id}"),
+                );
             }
             tabbed |= self.answer_one_on_screen(&title, a, multi)?;
         }
         if tabbed {
-            let review = self.wait_screen(Duration::from_secs(3), |_, s| match recognize::ask(&s.lines) {
-                Some(recognize::AskScreen::Review { submit }) => Some(submit),
-                _ => None,
+            let review = self.wait_screen(Duration::from_secs(3), |_, s| {
+                match recognize::ask(&s.lines) {
+                    Some(recognize::AskScreen::Review { submit }) => Some(submit),
+                    _ => None,
+                }
             });
             let Some((submit, _)) = review else {
                 return Err(self.unrecognized("answer_question", None));
@@ -2669,10 +2841,21 @@ impl Engine {
     }
 
     /// One question of [`Self::answer_question_on_screen`]; returns whether the dialog is tabbed.
-    fn answer_one_on_screen(&mut self, title: &str, a: &Answer, multi: bool) -> std::result::Result<bool, CmdErr> {
-        let found = self.wait_screen(Duration::from_secs(3), |_, s| match recognize::ask(&s.lines) {
-            Some(recognize::AskScreen::Question(q)) if recognize::same_text(&q.title, title) => Some(q),
-            _ => None,
+    fn answer_one_on_screen(
+        &mut self,
+        title: &str,
+        a: &Answer,
+        multi: bool,
+    ) -> std::result::Result<bool, CmdErr> {
+        let found = self.wait_screen(Duration::from_secs(3), |_, s| {
+            match recognize::ask(&s.lines) {
+                Some(recognize::AskScreen::Question(q))
+                    if recognize::same_text(&q.title, title) =>
+                {
+                    Some(q)
+                }
+                _ => None,
+            }
         });
         let Some((q, s)) = found else {
             return Err(self.unrecognized("answer_question", None));
@@ -2684,10 +2867,17 @@ impl Engine {
                 };
                 self.keys(n.to_string().as_bytes())?;
                 // Type only once the free-text field is active (digits would pick options).
-                let editing = self.wait_screen(Duration::from_secs(2), |_, s| match recognize::ask(&s.lines) {
-                    Some(recognize::AskScreen::Question(q)) if recognize::same_text(&q.title, title) && q.editing => Some(()),
-                    _ => None,
-                });
+                let editing =
+                    self.wait_screen(Duration::from_secs(2), |_, s| {
+                        match recognize::ask(&s.lines) {
+                            Some(recognize::AskScreen::Question(q))
+                                if recognize::same_text(&q.title, title) && q.editing =>
+                            {
+                                Some(())
+                            }
+                            _ => None,
+                        }
+                    });
                 if editing.is_none() {
                     return Err(self.unrecognized("answer_question", None));
                 }
@@ -2717,14 +2907,21 @@ impl Engine {
                     let (Some(sub), Some(cur)) = (q.submit_row, q.cursor_row) else {
                         return Err(self.unrecognized("answer_question", Some(&s)));
                     };
-                    let rows_between =
-                        q.options.iter().filter(|o| o.row > cur && o.row < sub).count() + usize::from(q.other.is_some());
+                    let rows_between = q
+                        .options
+                        .iter()
+                        .filter(|o| o.row > cur && o.row < sub)
+                        .count()
+                        + usize::from(q.other.is_some());
                     for _ in 0..rows_between {
                         self.keys(b"\x1b[B")?;
                     }
                     let on_submit = self
                         .wait_screen(Duration::from_secs(2), |_, s| {
-                            s.lines.get(sub).filter(|l| l.trim_start().starts_with("❯ Submit")).map(|_| ())
+                            s.lines
+                                .get(sub)
+                                .filter(|l| l.trim_start().starts_with("❯ Submit"))
+                                .map(|_| ())
                         })
                         .is_some();
                     if !on_submit {
@@ -2782,7 +2979,10 @@ impl Engine {
             Some(i) => {
                 return err(
                     "bad_request",
-                    format!("follow_up 队列只有 {} 条，没有第 {i} 条", self.follow_ups.len()),
+                    format!(
+                        "follow_up 队列只有 {} 条，没有第 {i} 条",
+                        self.follow_ups.len()
+                    ),
                 );
             }
             None => std::mem::take(&mut self.follow_ups).len(),
@@ -2802,7 +3002,10 @@ impl Engine {
         match self.conn.owner() {
             Owner::Me | Owner::Nobody => {}
             Owner::Other(c) if !force => {
-                return err("taken_over", format!("Session 正被 {c} 使用，加 force 强制取回"));
+                return err(
+                    "taken_over",
+                    format!("Session 正被 {c} 使用，加 force 强制取回"),
+                );
             }
             Owner::Unknown if !force => {
                 return err(
@@ -2823,7 +3026,9 @@ impl Engine {
     }
 
     fn mode_now(&self) -> Option<rpc::PermissionMode> {
-        self.screen().ok().and_then(|s| recognize::permission_mode(&s.lines))
+        self.screen()
+            .ok()
+            .and_then(|s| recognize::permission_mode(&s.lines))
     }
 
     /// Cycles the permission mode with shift+tab until the footer shows `mode`.
@@ -2847,7 +3052,10 @@ impl Engine {
             let Some((m, _)) = next else {
                 let now = self.mode_now().map_or("未知", |m| m.name());
                 self.unrecognized("set_mode", None);
-                return err("unrecognized_screen", format!("set_mode：模式行没有变化，当前为 {now}"));
+                return err(
+                    "unrecognized_screen",
+                    format!("set_mode：模式行没有变化，当前为 {now}"),
+                );
             };
             cur = m;
             // Never stop on bypass permissions: it is passed through, not a target.
@@ -2857,7 +3065,10 @@ impl Engine {
         }
         if cur == rpc::PermissionMode::Bypass {
             self.unrecognized("set_mode", None);
-            return err("unrecognized_screen", "set_mode：停在了 bypass permissions，当前为 bypass");
+            return err(
+                "unrecognized_screen",
+                "set_mode：停在了 bypass permissions，当前为 bypass",
+            );
         }
         if cur == mode {
             return Ok(json!({"mode": mode.name()}));
@@ -2872,7 +3083,10 @@ impl Engine {
             return err("unknown_request", format!("没有后台任务 {id}"));
         };
         if task.status != "running" {
-            return err("bad_request", format!("后台任务 {id} 已经结束（{}）", task.status));
+            return err(
+                "bad_request",
+                format!("后台任务 {id} 已经结束（{}）", task.status),
+            );
         }
         // The panel shows a shell by its command and an agent or a Workflow by its description.
         let needle = match task.kind {
@@ -2882,12 +3096,16 @@ impl Engine {
         .unwrap_or_default();
         let needle = recognize::collapse_ws(&needle);
         if needle.is_empty() {
-            return err("unrecognized_screen", format!("后台任务 {id} 没有可在面板里比对的命令或描述"));
+            return err(
+                "unrecognized_screen",
+                format!("后台任务 {id} 没有可在面板里比对的命令或描述"),
+            );
         }
         let fits = |text: &str| recognize::collapse_ws(text).contains(&needle);
         self.slash("tasks")?;
-        let Some((panel, s)) = self.wait_screen(Duration::from_secs(3), |_, s| recognize::tasks_panel(&s.lines))
-        else {
+        let Some((panel, s)) = self.wait_screen(Duration::from_secs(3), |_, s| {
+            recognize::tasks_panel(&s.lines)
+        }) else {
             return Err(self.unrecognized("stop_task", None));
         };
         match panel {
@@ -2910,8 +3128,10 @@ impl Engine {
                 // cursor is on the target row.
                 let mut moved = false;
                 for _ in 0..=rows.len() {
-                    let Some(recognize::TasksPanel::List(now)) =
-                        self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines))
+                    let Some(recognize::TasksPanel::List(now)) = self
+                        .screen()
+                        .ok()
+                        .and_then(|s| recognize::tasks_panel(&s.lines))
                     else {
                         break;
                     };
@@ -2939,13 +3159,22 @@ impl Engine {
         }
         self.keys(b"x")?;
         // The panel shows it at once; Claude Code tells the transcript only on the next turn.
-        let ended = self.wait_screen(Duration::from_secs(5), |_, s| match recognize::tasks_panel(&s.lines) {
-            Some(recognize::TasksPanel::List(rows)) => recognize::task_row(&rows, &needle).is_err().then_some(()),
+        let ended = self.wait_screen(Duration::from_secs(5), |_, s| match recognize::tasks_panel(
+            &s.lines,
+        ) {
+            Some(recognize::TasksPanel::List(rows)) => {
+                recognize::task_row(&rows, &needle).is_err().then_some(())
+            }
             Some(recognize::TasksPanel::Details(t)) => (!t.contains("running")).then_some(()),
             // The panel closed: back at the input box (not replaced by some other dialog).
             None => recognize::input_text(s).map(|_| ()),
         });
-        if self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines)).is_some() {
+        if self
+            .screen()
+            .ok()
+            .and_then(|s| recognize::tasks_panel(&s.lines))
+            .is_some()
+        {
             self.keys(b"\x1b")?;
         }
         if ended.is_none() {
@@ -2957,7 +3186,12 @@ impl Engine {
         }
         // Claude Code's notice (`killed`) reaches the plugin at once when the main line is idle,
         // else once the running tool ends; until then the task is `stopped`.
-        let status_of = |e: &Engine| e.tasks().into_iter().find(|t| t.id == tid).map(|t| t.status);
+        let status_of = |e: &Engine| {
+            e.tasks()
+                .into_iter()
+                .find(|t| t.id == tid)
+                .map(|t| t.status)
+        };
         if status_of(self).as_deref() == Some("running") {
             self.set_task_status(&tid, "stopped");
         }
@@ -3044,7 +3278,10 @@ impl Engine {
             if asked.as_ref().is_some_and(|(a, _)| *a) {
                 if !stop_tasks {
                     self.keys(b"\x1b")?;
-                    return err("not_idle", "还有后台任务在运行：加 stop_tasks 退出并停掉它们");
+                    return err(
+                        "not_idle",
+                        "还有后台任务在运行：加 stop_tasks 退出并停掉它们",
+                    );
                 }
                 self.keys(b"\r")?;
             }
@@ -3123,24 +3360,36 @@ impl Engine {
                 limit: *limit,
                 subagents: *subagents,
             }),
-            Command::Exit { close_pane, stop_tasks } => self.exit(*close_pane, *stop_tasks),
+            Command::Exit {
+                close_pane,
+                stop_tasks,
+            } => self.exit(*close_pane, *stop_tasks),
             Command::GetScreen => {
                 let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
                 Ok(json!({"lines": s.lines, "cursor": [s.cursor.0, s.cursor.1]}))
             }
             Command::GetToolResult { tool_use_id } => {
-                let found = self.tailer.as_ref().and_then(|t| t.tool_result(tool_use_id));
+                let found = self
+                    .tailer
+                    .as_ref()
+                    .and_then(|t| t.tool_result(tool_use_id));
                 match found {
                     Some((content, persisted)) => {
                         Ok(json!({"content": content, "persisted": persisted}))
                     }
-                    None => err("unknown_request", format!("找不到 {tool_use_id} 的工具结果")),
+                    None => err(
+                        "unknown_request",
+                        format!("找不到 {tool_use_id} 的工具结果"),
+                    ),
                 }
             }
             Command::GetImage { uuid, index } => {
                 match self.tailer.as_ref().and_then(|t| t.image(uuid, *index)) {
                     Some((media_type, data)) => Ok(json!({"media_type": media_type, "data": data})),
-                    None => err("unknown_request", format!("找不到 {uuid} 的第 {index} 张图片")),
+                    None => err(
+                        "unknown_request",
+                        format!("找不到 {uuid} 的第 {index} 张图片"),
+                    ),
                 }
             }
         }
@@ -3175,7 +3424,9 @@ impl Engine {
         if let Some(ver) = &version
             && !TESTED_CLAUDE_VERSIONS.contains(&ver.as_str())
         {
-            warnings.push(format!("Claude Code {ver} 不是实测过的版本，认不出的界面会交给分析器或报 unrecognized"));
+            warnings.push(format!(
+                "Claude Code {ver} 不是实测过的版本，认不出的界面会交给分析器或报 unrecognized"
+            ));
         }
         if !self.holder_reports_owner {
             warnings.push("Holder 不报告尺寸所有者，只能靠 PTY 尺寸变化判断接手".to_string());
@@ -3227,8 +3478,8 @@ impl Engine {
         // A turn already running is adopted: its Stop (whatever its prompt id) ends it. The
         // Process File says so even while its waiting is not classified yet.
         let raw = self.pf.as_ref().and_then(|p| p.status.as_deref());
-        self.turn_active =
-            matches!(self.state, State::Busy | State::Waiting { .. }) || matches!(raw, Some("busy" | "waiting"));
+        self.turn_active = matches!(self.state, State::Busy | State::Waiting { .. })
+            || matches!(raw, Some("busy" | "waiting"));
         if self.turn_active {
             self.turn = TurnStats::start(None, "prompt");
         }
@@ -3303,7 +3554,9 @@ pub struct Opts {
 
 /// `COLSxROWS`.
 fn parse_size(s: &str) -> Result<(u16, u16)> {
-    let (c, r) = s.split_once('x').context("--size 的格式是 COLSxROWS，如 160x48")?;
+    let (c, r) = s
+        .split_once('x')
+        .context("--size 的格式是 COLSxROWS，如 160x48")?;
     let (c, r): (u16, u16) = (
         c.parse().context("--size 的列数不对")?,
         r.parse().context("--size 的行数不对")?,
@@ -3366,11 +3619,15 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
             "--log" => crate::log::open(Path::new(it.next().context("--log 需要文件")?))?,
             "--size" => opts.size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
             t if target.is_none() && !t.starts_with('-') => target = Some(t.to_string()),
-            _ => bail!("用法：ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>"),
+            _ => bail!(
+                "用法：ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>"
+            ),
         }
     }
     let Some(target) = target else {
-        bail!("用法：ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>");
+        bail!(
+            "用法：ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>"
+        );
     };
     let target = &target;
     let holder = resolve_target(roots, target)?;
@@ -3381,9 +3638,10 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     };
     let checkin = hook::read_checkin(&hook::state_dir(), claude.pid);
     let pf = procfile::read(roots, claude.pid);
-    if let Some(problem) =
-        hook::checkin_problem(checkin.as_ref(), pf.as_ref().and_then(|p| p.session_id.as_deref()))
-    {
+    if let Some(problem) = hook::checkin_problem(
+        checkin.as_ref(),
+        pf.as_ref().and_then(|p| p.session_id.as_deref()),
+    ) {
         bail!(problem);
     }
     if hook::socket_in_use(&hook::state_dir(), claude.pid) {
@@ -3429,7 +3687,10 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     // So does a non-default ccrpc state directory, for the plugin's hooks.
     let mut env = Vec::new();
     if roots.claude_config != Roots::default_claude_config() {
-        env.push(format!("CLAUDE_CONFIG_DIR={}", roots.claude_config.display()));
+        env.push(format!(
+            "CLAUDE_CONFIG_DIR={}",
+            roots.claude_config.display()
+        ));
     }
     if let Some(d) = std::env::var_os("CCRPC_STATE_DIR").filter(|v| !v.is_empty()) {
         env.push(format!("CCRPC_STATE_DIR={}", PathBuf::from(d).display()));
@@ -3547,14 +3808,50 @@ mod tests {
         assert_eq!(a["Which linters?"], "eslint, clippy");
         assert_eq!(a["Indent style?"], "two spaces");
         // Other on a multi-select is free text too.
-        assert!(question_answers(&qs, &[Answer::Other("all".into()), Answer::Options(vec!["Tabs".into()])]).is_ok());
-        assert!(question_answers(&qs, &[Answer::Options(vec!["nope".into()]), Answer::Options(vec!["Tabs".into()])]).is_err());
-        assert!(question_answers(&qs, &[Answer::Options(vec![]), Answer::Options(vec!["Tabs".into()])]).is_err());
         assert!(
-            question_answers(&qs, &[Answer::Options(vec!["ruff".into()]), Answer::Options(vec!["Tabs".into(), "Spaces".into()])])
-                .is_err(),
+            question_answers(
+                &qs,
+                &[
+                    Answer::Other("all".into()),
+                    Answer::Options(vec!["Tabs".into()])
+                ]
+            )
+            .is_ok()
+        );
+        assert!(
+            question_answers(
+                &qs,
+                &[
+                    Answer::Options(vec!["nope".into()]),
+                    Answer::Options(vec!["Tabs".into()])
+                ]
+            )
+            .is_err()
+        );
+        assert!(
+            question_answers(
+                &qs,
+                &[
+                    Answer::Options(vec![]),
+                    Answer::Options(vec!["Tabs".into()])
+                ]
+            )
+            .is_err()
+        );
+        assert!(
+            question_answers(
+                &qs,
+                &[
+                    Answer::Options(vec!["ruff".into()]),
+                    Answer::Options(vec!["Tabs".into(), "Spaces".into()])
+                ]
+            )
+            .is_err(),
             "single choice"
         );
-        assert!(question_answers(&qs[..1], &[]).is_err(), "one answer per question");
+        assert!(
+            question_answers(&qs[..1], &[]).is_err(),
+            "one answer per question"
+        );
     }
 }

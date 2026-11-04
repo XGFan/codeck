@@ -40,8 +40,9 @@ fn scope_view<'a>(
     match scope {
         TranscriptScope::Main => Ok((Cow::Borrowed(&s.skeleton), &s.main_files)),
         TranscriptScope::Subagent { agent_id } => {
-            let f = agent_file
-                .ok_or_else(|| TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
+            let f = agent_file.ok_or_else(|| {
+                TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件"))
+            })?;
             let files = std::slice::from_ref(f);
             Ok((Cow::Owned(skeleton::build(files)), files))
         }

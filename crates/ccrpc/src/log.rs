@@ -41,7 +41,10 @@ pub fn screen<'a>(lines: impl Iterator<Item = &'a str>) {
         return;
     }
     let rows: Vec<&str> = lines.collect();
-    let end = rows.iter().rposition(|l| !l.trim().is_empty()).map_or(0, |i| i + 1);
+    let end = rows
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .map_or(0, |i| i + 1);
     for r in &rows[..end] {
         line(format_args!("  | {r}"));
     }

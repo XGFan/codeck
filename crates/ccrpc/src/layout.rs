@@ -71,7 +71,8 @@ pub struct ScreenOption {
 /// What an option's own text says, independent of any model: `Yes…` goes ahead, `No…` refuses.
 fn lexical(label: &str) -> Option<Meaning> {
     let l = label.trim().to_lowercase().replace('’', "'");
-    let word = |w: &str| l == w || l.starts_with(&format!("{w},")) || l.starts_with(&format!("{w} "));
+    let word =
+        |w: &str| l == w || l.starts_with(&format!("{w},")) || l.starts_with(&format!("{w} "));
     if word("no") {
         Some(Meaning::Deny)
     } else if word("yes") {
@@ -346,8 +347,9 @@ mod tests {
         Layout {
             id: String::new(),
             kind: LayoutKind::Choice,
-            title: "Claude has written up a plan and is ready to execute. Would you like to proceed?"
-                .into(),
+            title:
+                "Claude has written up a plan and is ready to execute. Would you like to proceed?"
+                    .into(),
             options: vec![
                 LayoutOption {
                     number: 1,
@@ -393,7 +395,10 @@ mod tests {
     fn matches_its_screen_and_nothing_else() {
         let opts = plan().match_screen(&plan_screen()).unwrap();
         assert_eq!(opts.len(), 3);
-        assert_eq!(opts[2].label, "Tell Claude what to change shift+tab to approve with this feedback");
+        assert_eq!(
+            opts[2].label,
+            "Tell Claude what to change shift+tab to approve with this feedback"
+        );
         // A different menu under the same title is refused.
         let mut other = plan_screen();
         other[4] = "     2. Something else".into();
@@ -436,14 +441,27 @@ mod tests {
             screen: vec![],
         };
         use Meaning::*;
-        assert!(perm([Allow, AllowAlways, Deny]).match_screen(&screen).is_some());
+        assert!(
+            perm([Allow, AllowAlways, Deny])
+                .match_screen(&screen)
+                .is_some()
+        );
         // An injected swap: `Yes` as deny, `No` as allow.
-        assert!(perm([Deny, AllowAlways, Allow]).match_screen(&screen).is_none());
+        assert!(
+            perm([Deny, AllowAlways, Allow])
+                .match_screen(&screen)
+                .is_none()
+        );
         // A tool permission question is never learned as a choice.
         let mut c = perm([Allow, AllowAlways, Deny]);
         c.kind = LayoutKind::Choice;
         assert!(c.match_screen(&screen).is_none());
-        assert!(perm([Allow, AllowAlways, Deny]).body(&screen).unwrap().contains("rm-rfbuild"));
+        assert!(
+            perm([Allow, AllowAlways, Deny])
+                .body(&screen)
+                .unwrap()
+                .contains("rm-rfbuild")
+        );
     }
 
     #[test]
@@ -466,27 +484,44 @@ mod tests {
             id: String::new(),
             kind: LayoutKind::Permission,
             title: title.clone(),
-            options: ["Yes", "Yes, and always allow", "Yes, and switch to auto mode", "No"]
-                .iter()
-                .zip(m)
-                .enumerate()
-                .map(|(i, (l, meaning))| LayoutOption {
-                    number: i as u32 + 1,
-                    label: l.to_string(),
-                    meaning,
-                    description: None,
-                })
-                .collect(),
+            options: [
+                "Yes",
+                "Yes, and always allow",
+                "Yes, and switch to auto mode",
+                "No",
+            ]
+            .iter()
+            .zip(m)
+            .enumerate()
+            .map(|(i, (l, meaning))| LayoutOption {
+                number: i as u32 + 1,
+                label: l.to_string(),
+                meaning,
+                description: None,
+            })
+            .collect(),
             source: String::new(),
             claude_version: None,
             learned_at: None,
             screen: vec![],
         };
         use Meaning::*;
-        assert!(layout([Allow, AllowAlways, Other, Deny]).match_screen(&screen).is_some());
+        assert!(
+            layout([Allow, AllowAlways, Other, Deny])
+                .match_screen(&screen)
+                .is_some()
+        );
         // Switching to auto mode is never allow / allow_always in a permission dialog.
-        assert!(layout([Allow, AllowAlways, Allow, Deny]).match_screen(&screen).is_none());
-        assert!(layout([Allow, AllowAlways, AllowAlways, Deny]).match_screen(&screen).is_none());
+        assert!(
+            layout([Allow, AllowAlways, Allow, Deny])
+                .match_screen(&screen)
+                .is_none()
+        );
+        assert!(
+            layout([Allow, AllowAlways, AllowAlways, Deny])
+                .match_screen(&screen)
+                .is_none()
+        );
     }
 
     #[test]
@@ -501,7 +536,10 @@ mod tests {
         let path = lib.save(l).unwrap();
         assert!(path.exists());
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let back = read_dir_layouts(dir.path());
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].source, "learned");

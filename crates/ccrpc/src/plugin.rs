@@ -56,7 +56,10 @@ fn shell_quote(s: &str) -> String {
 
 /// The command every hook runs.
 pub fn hook_command(exe: &Path) -> String {
-    format!("{} hook --protocol {HOOK_PROTOCOL}", shell_quote(&exe.display().to_string()))
+    format!(
+        "{} hook --protocol {HOOK_PROTOCOL}",
+        shell_quote(&exe.display().to_string())
+    )
 }
 
 /// `hooks/hooks.json` for `exe`.
@@ -107,7 +110,8 @@ pub fn generate(root: &Path, exe: &Path) -> Result<PathBuf> {
 fn claude(roots: &Roots, args: &[&str]) -> Result<std::process::Output> {
     let mut c = Command::new("claude");
     c.args(args).env("CLAUDE_CONFIG_DIR", &roots.claude_config);
-    c.output().context("运行 claude 失败（claude 在 PATH 里吗？）")
+    c.output()
+        .context("运行 claude 失败（claude 在 PATH 里吗？）")
 }
 
 fn ok_or_bail(what: &str, out: &std::process::Output) -> Result<()> {
@@ -134,22 +138,40 @@ pub fn install(roots: &Roots) -> Result<()> {
     let dir = root.display().to_string();
     let listed = claude(roots, &["plugin", "marketplace", "list"])?;
     if String::from_utf8_lossy(&listed.stdout).contains(&dir) {
-        ok_or_bail("更新 marketplace", &claude(roots, &["plugin", "marketplace", "update", MARKETPLACE])?)?;
+        ok_or_bail(
+            "更新 marketplace",
+            &claude(roots, &["plugin", "marketplace", "update", MARKETPLACE])?,
+        )?;
     } else {
-        ok_or_bail("添加 marketplace", &claude(roots, &["plugin", "marketplace", "add", &dir])?)?;
+        ok_or_bail(
+            "添加 marketplace",
+            &claude(roots, &["plugin", "marketplace", "add", &dir])?,
+        )?;
     }
     if installed(roots) {
-        ok_or_bail("更新插件", &claude(roots, &["plugin", "update", PLUGIN_ID])?)?;
+        ok_or_bail(
+            "更新插件",
+            &claude(roots, &["plugin", "update", PLUGIN_ID])?,
+        )?;
     } else {
-        ok_or_bail("安装插件", &claude(roots, &["plugin", "install", PLUGIN_ID])?)?;
+        ok_or_bail(
+            "安装插件",
+            &claude(roots, &["plugin", "install", PLUGIN_ID])?,
+        )?;
     }
-    println!("已安装 {PLUGIN_ID}（{}）：之后启动的 claude 生效，已在运行的要重启", plugin_version());
+    println!(
+        "已安装 {PLUGIN_ID}（{}）：之后启动的 claude 生效，已在运行的要重启",
+        plugin_version()
+    );
     Ok(())
 }
 
 pub fn uninstall(roots: &Roots) -> Result<()> {
     if installed(roots) {
-        ok_or_bail("卸载插件", &claude(roots, &["plugin", "uninstall", PLUGIN_ID])?)?;
+        ok_or_bail(
+            "卸载插件",
+            &claude(roots, &["plugin", "uninstall", PLUGIN_ID])?,
+        )?;
     }
     let _ = claude(roots, &["plugin", "marketplace", "remove", MARKETPLACE]);
     println!("已卸载 {PLUGIN_ID}");
@@ -173,7 +195,11 @@ pub fn enabled(roots: &Roots) -> bool {
 
 /// The hook command of the installed copies (Claude Code caches plugins under `plugins/cache`).
 pub fn installed_commands(roots: &Roots) -> Vec<String> {
-    let base = roots.claude_config.join("plugins/cache").join(MARKETPLACE).join(PLUGIN);
+    let base = roots
+        .claude_config
+        .join("plugins/cache")
+        .join(MARKETPLACE)
+        .join(PLUGIN);
     let Ok(rd) = std::fs::read_dir(&base) else {
         return Vec::new();
     };
@@ -182,7 +208,10 @@ pub fn installed_commands(roots: &Roots) -> Vec<String> {
         let v = std::fs::read(e.path().join("hooks/hooks.json"))
             .ok()
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-        if let Some(c) = v.as_ref().and_then(|v| v["hooks"]["Stop"][0]["hooks"][0]["command"].as_str()) {
+        if let Some(c) = v
+            .as_ref()
+            .and_then(|v| v["hooks"]["Stop"][0]["hooks"][0]["command"].as_str())
+        {
             out.push(c.to_string());
         }
     }
@@ -193,7 +222,10 @@ pub fn installed_commands(roots: &Roots) -> Vec<String> {
 pub fn doctor(roots: &Roots) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     if !enabled(roots) {
-        out.push(("fail", format!("ccrpc 插件未启用（{PLUGIN_ID}）：运行 ccrpc plugin install")));
+        out.push((
+            "fail",
+            format!("ccrpc 插件未启用（{PLUGIN_ID}）：运行 ccrpc plugin install"),
+        ));
         return out;
     }
     let want = current_exe().map(|e| hook_command(&e)).unwrap_or_default();
@@ -248,8 +280,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = generate(d.path(), Path::new("/x/ccrpc")).unwrap();
         assert_eq!(p, d.path().join("ccrpc"));
-        let m: Value =
-            serde_json::from_slice(&std::fs::read(d.path().join(".claude-plugin/marketplace.json")).unwrap()).unwrap();
+        let m: Value = serde_json::from_slice(
+            &std::fs::read(d.path().join(".claude-plugin/marketplace.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(m["plugins"][0]["source"], "./ccrpc");
         assert!(p.join(".claude-plugin/plugin.json").is_file());
         assert!(p.join("hooks/hooks.json").is_file());

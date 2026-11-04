@@ -306,7 +306,8 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
                 None | Some(Value::Null) => None,
                 Some(v) => Some(
                     v.as_u64()
-                        .ok_or("cancel_follow_up 的 index 必须是非负整数")? as usize,
+                        .ok_or("cancel_follow_up 的 index 必须是非负整数")?
+                        as usize,
                 ),
             },
         }),
@@ -717,14 +718,24 @@ mod tests {
             parse(r#"{"type":"get_messages","since":7}"#),
             Request {
                 id: None,
-                command: Command::GetMessages { since: Some(7), before: None, limit: None, subagents: false },
+                command: Command::GetMessages {
+                    since: Some(7),
+                    before: None,
+                    limit: None,
+                    subagents: false
+                },
             }
         );
         assert_eq!(
             parse(r#"{"type":"get_messages"}"#),
             Request {
                 id: None,
-                command: Command::GetMessages { since: None, before: None, limit: None, subagents: false },
+                command: Command::GetMessages {
+                    since: None,
+                    before: None,
+                    limit: None,
+                    subagents: false
+                },
             }
         );
         assert_eq!(
@@ -865,7 +876,9 @@ mod tests {
     fn schema_covers_every_command() {
         let schema: Value =
             serde_json::from_str(include_str!("../docs/protocol.schema.json")).unwrap();
-        let commands = schema["$defs"]["commands"].as_object().expect("缺少 commands 定义");
+        let commands = schema["$defs"]["commands"]
+            .as_object()
+            .expect("缺少 commands 定义");
         let declared: Vec<&str> = commands
             .values()
             .filter_map(|c| c["properties"]["type"]["const"].as_str())
@@ -896,7 +909,10 @@ mod tests {
             "answer_choice",
             "exit",
         ] {
-            assert!(declared.contains(&name), "protocol.schema.json 缺少命令 {name}");
+            assert!(
+                declared.contains(&name),
+                "protocol.schema.json 缺少命令 {name}"
+            );
         }
     }
 }

@@ -59,7 +59,11 @@ pub fn save_to(path: &Path, settings: &Settings) -> std::io::Result<()> {
     }
     let tmp = path.with_extension("json.tmp");
     let _ = std::fs::remove_file(&tmp);
-    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
     f.write_all(&serde_json::to_vec_pretty(settings)?)?;
     drop(f);
     std::fs::rename(tmp, path)
@@ -75,12 +79,19 @@ mod tests {
         let path = dir.path().join("nested").join(SETTINGS_FILE);
         let some = Settings {
             data_root: Some("/data/root".into()),
-            analyzer: AnalyzerSettings { api_key: Some("k-1".into()), base_url: None, model: Some("m".into()) },
+            analyzer: AnalyzerSettings {
+                api_key: Some("k-1".into()),
+                base_url: None,
+                model: Some("m".into()),
+            },
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         save_to(&path, &Settings::default()).unwrap();
         assert_eq!(load_from(&path).data_root, None);
         // A settings file from before the analyzer fields still loads.

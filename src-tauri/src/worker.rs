@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use codeck_core::model::{IndexStatus, SessionsChanged};
 use codeck_core::{ChangeSet, CoreError, Engine, paths};
+use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use parking_lot::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;

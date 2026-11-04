@@ -190,12 +190,23 @@ mod tests {
         // stays unread (it is re-read once complete) instead of being skipped.
         let partial = write_temp(d.path(), "partial.jsonl", &format!("{l1}{{\"type\":\"us"));
         let plen = std::fs::metadata(&partial).unwrap().len();
-        let opts = ReadOptions { max_bytes: Some(plen), normalize: true };
+        let opts = ReadOptions {
+            max_bytes: Some(plen),
+            normalize: true,
+        };
         let c = read_entries_with(&partial, 0, opts).unwrap();
         assert_eq!(c.records.len(), 1);
         assert!(!c.capped);
         assert_eq!(c.consumed_to, l1_len);
-        let c = read_entries_with(&partial, l1_len, ReadOptions { max_bytes: Some(plen - l1_len), normalize: true }).unwrap();
+        let c = read_entries_with(
+            &partial,
+            l1_len,
+            ReadOptions {
+                max_bytes: Some(plen - l1_len),
+                normalize: true,
+            },
+        )
+        .unwrap();
         assert!(c.records.is_empty() && !c.capped);
         assert_eq!(c.consumed_to, l1_len);
 

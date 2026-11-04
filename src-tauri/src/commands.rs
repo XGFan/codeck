@@ -56,7 +56,10 @@ pub async fn set_data_root(state: State<'_, AppState>, path: Option<String>) -> 
         return Err(CoreError::InvalidQuery(format!("目录不存在：{p}")).into());
     }
     // Only the data root changes: the rest of the settings (the analyzer) stays.
-    let settings = Settings { data_root: path, ..settings::load() };
+    let settings = Settings {
+        data_root: path,
+        ..settings::load()
+    };
     let engine = tauri::async_runtime::spawn_blocking(move || {
         settings::save(&settings)?;
         let engine = open_engine(&settings)?;
@@ -184,6 +187,9 @@ pub async fn get_diagnostics(state: State<'_, AppState>) -> CmdResult<Diagnostic
 /// Slash commands for completion while driving a Session started in `cwd`.
 #[tauri::command]
 #[specta::specta]
-pub async fn list_slash_commands(state: State<'_, AppState>, cwd: Option<String>) -> CmdResult<Vec<SlashCommand>> {
+pub async fn list_slash_commands(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+) -> CmdResult<Vec<SlashCommand>> {
     with_engine(&state, move |e| Ok(e.slash_commands(cwd.as_deref()))).await
 }

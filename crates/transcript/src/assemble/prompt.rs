@@ -106,7 +106,8 @@ pub struct TaskNotice {
 /// `text` (leading whitespace ignored) as a `<task-notification>`.
 pub fn task_notification(text: &str) -> Option<TaskNotice> {
     let t = text.trim_start();
-    t.starts_with("<task-notification>").then(|| notice_fields(t))
+    t.starts_with("<task-notification>")
+        .then(|| notice_fields(t))
 }
 
 fn notice_fields(t: &str) -> TaskNotice {
@@ -355,7 +356,8 @@ mod tests {
             "x"
         );
         // A paste into an empty box: Claude Code puts two line breaks before the tag.
-        let alone = "\n\n<pasted_content id=\"6999\">\n第一行\n第二行\n</pasted_content id=\"6999\">\n";
+        let alone =
+            "\n\n<pasted_content id=\"6999\">\n第一行\n第二行\n</pasted_content id=\"6999\">\n";
         assert_eq!(unwrap_pasted(alone), "第一行\n第二行\n");
         let other = "see <pasted_content id=\"zz\"> and 中文"; // 不是 Claude Code 的标签：保留
         assert_eq!(unwrap_pasted(other), other);

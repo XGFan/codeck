@@ -58,11 +58,18 @@ pub struct App {
 
 impl App {
     /// Logs under `log_root` (a global `gui.log` there), pasted images in `images`.
-    pub fn new(env: HashMap<String, String>, ccrpc: PathBuf, log_root: PathBuf, images: PathBuf) -> R<App> {
-        logs::mkdir(&log_root).map_err(|e| format!("建不了日志目录 {}：{e}", log_root.display()))?;
+    pub fn new(
+        env: HashMap<String, String>,
+        ccrpc: PathBuf,
+        log_root: PathBuf,
+        images: PathBuf,
+    ) -> R<App> {
+        logs::mkdir(&log_root)
+            .map_err(|e| format!("建不了日志目录 {}：{e}", log_root.display()))?;
         logs::prune(&log_root, chrono::Local::now().date_naive());
         logs::prune_files(&images);
-        let gui = logs::append(&log_root.join("gui.log")).map_err(|e| format!("打不开 gui.log：{e}"))?;
+        let gui =
+            logs::append(&log_root.join("gui.log")).map_err(|e| format!("打不开 gui.log：{e}"))?;
         let app = App {
             env,
             ccrpc,
@@ -113,7 +120,10 @@ impl App {
             Ok(out) => String::from_utf8_lossy(&out.stdout)
                 .lines()
                 .filter(|l| !l.trim().is_empty())
-                .map(|l| DoctorLine { level: l.split('\t').next().unwrap_or("").to_string(), text: l.to_string() })
+                .map(|l| DoctorLine {
+                    level: l.split('\t').next().unwrap_or("").to_string(),
+                    text: l.to_string(),
+                })
                 .collect(),
             Err(e) => vec![DoctorLine {
                 level: "fail".into(),
@@ -142,7 +152,11 @@ impl App {
 
     /// `ccrpc attach --co-display <holder>`.
     pub fn connect(&self, sink: Sink, holder_id: &str) -> R<String> {
-        if holder_id.is_empty() || !holder_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        if holder_id.is_empty()
+            || !holder_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
             return Err("Holder ID 不对".into());
         }
         self.spawn(sink, "attach", &[holder_id.to_string()], holder_id)
@@ -159,9 +173,14 @@ impl App {
     /// Starts ccrpc `sub` with `args` and relays it to `sink` as a new connection.
     fn spawn(&self, sink: Sink, sub: &str, args: &[String], dir_name: &str) -> R<String> {
         let id = format!("c{}", self.next());
-        let dir = logs::conn_dir(&self.log_root, dir_name).map_err(|e| format!("建不了日志目录：{e}"))?;
-        let wire = Arc::new(Mutex::new(Wire::open(dir.join("wire.jsonl")).map_err(|e| e.to_string())?));
-        let gui = Arc::new(Mutex::new(logs::append(&dir.join("gui.log")).map_err(|e| e.to_string())?));
+        let dir =
+            logs::conn_dir(&self.log_root, dir_name).map_err(|e| format!("建不了日志目录：{e}"))?;
+        let wire = Arc::new(Mutex::new(
+            Wire::open(dir.join("wire.jsonl")).map_err(|e| e.to_string())?,
+        ));
+        let gui = Arc::new(Mutex::new(
+            logs::append(&dir.join("gui.log")).map_err(|e| e.to_string())?,
+        ));
         let mut cmd = self.command();
         cmd.arg(sub)
             .arg("--co-display")
@@ -171,15 +190,29 @@ impl App {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        logs::line(&mut gui.lock(), &format!("spawn {} {sub} {}", self.ccrpc.display(), args.join(" ")));
-        let mut child = cmd.spawn().map_err(|e| format!("运行不了 {}：{e}", self.ccrpc.display()))?;
+        logs::line(
+            &mut gui.lock(),
+            &format!("spawn {} {sub} {}", self.ccrpc.display(), args.join(" ")),
+        );
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("运行不了 {}：{e}", self.ccrpc.display()))?;
         let stdout = child.stdout.take().ok_or("没有 stdout")?;
         let mut stderr = child.stderr.take().ok_or("没有 stderr")?;
-        self.gui_line(&format!("{id} {sub} {} → {}", args.join(" "), dir.display()));
+        self.gui_line(&format!(
+            "{id} {sub} {} → {}",
+            args.join(" "),
+            dir.display()
+        ));
         let dir = Arc::new(Mutex::new(dir));
         self.conns.lock().insert(
             id.clone(),
-            Conn { stdin: Arc::new(Mutex::new(child.stdin.take())), wire: wire.clone(), gui: gui.clone(), dir: dir.clone() },
+            Conn {
+                stdin: Arc::new(Mutex::new(child.stdin.take())),
+                wire: wire.clone(),
+                gui: gui.clone(),
+                dir: dir.clone(),
+            },
         );
 
         let err_tail = Arc::new(Mutex::new(None::<String>));
@@ -207,12 +240,17 @@ impl App {
                     Ok(0) | Err(_) => break,
                     Ok(_) => {}
                 }
-                let line = String::from_utf8_lossy(&buf).trim_end_matches(['\n', '\r']).to_string();
+                let line = String::from_utf8_lossy(&buf)
+                    .trim_end_matches(['\n', '\r'])
+                    .to_string();
                 wire.lock().write("recv", &line);
                 if !renamed {
                     renamed = rename_new_dir(&line, &dir, &wire);
                 }
-                sink(Out::Line { conn: conn.clone(), line });
+                sink(Out::Line {
+                    conn: conn.clone(),
+                    line,
+                });
             }
             let code = child.wait().ok().and_then(|s| s.code());
             let _ = err_thread.join();
@@ -245,7 +283,12 @@ impl App {
     /// Closes ccrpc's stdin: it detaches and exits; the Session keeps running.
     /// False when the connection is unknown (its ccrpc already exited).
     pub fn disconnect(&self, conn: &str) -> bool {
-        let Some((stdin, gui)) = self.conns.lock().get(conn).map(|c| (c.stdin.clone(), c.gui.clone())) else {
+        let Some((stdin, gui)) = self
+            .conns
+            .lock()
+            .get(conn)
+            .map(|c| (c.stdin.clone(), c.gui.clone()))
+        else {
             return false;
         };
         logs::line(&mut gui.lock(), "disconnect");
@@ -255,7 +298,12 @@ impl App {
 
     /// Closes every connection (the app is quitting).
     pub fn disconnect_all(&self) {
-        let all: Vec<_> = self.conns.lock().values().map(|c| c.stdin.clone()).collect();
+        let all: Vec<_> = self
+            .conns
+            .lock()
+            .values()
+            .map(|c| c.stdin.clone())
+            .collect();
         for s in all {
             s.lock().take();
         }
@@ -288,7 +336,9 @@ impl App {
             .decode(base64.as_bytes())
             .map_err(|e| format!("图片数据不对：{e}"))?;
         logs::mkdir(&self.images).map_err(|e| e.to_string())?;
-        let path = self.images.join(format!("{}-{}.{ext}", logs::now_ms(), self.next()));
+        let path = self
+            .images
+            .join(format!("{}-{}.{ext}", logs::now_ms(), self.next()));
         let mut f = logs::append(&path).map_err(|e| e.to_string())?;
         f.write_all(&bytes).map_err(|e| e.to_string())?;
         Ok(path.display().to_string())
@@ -298,7 +348,9 @@ impl App {
 /// A new Session's directory is named after its Holder ID once `ready` gives it. True once that
 /// is settled (renamed, or it could not be).
 fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>) -> bool {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return false };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
     if v["type"] != "ready" {
         return false;
     }
@@ -310,7 +362,9 @@ fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>
         return true;
     };
     let mut d = dir.lock();
-    let Some(name) = d.file_name().and_then(|n| n.to_str()) else { return true };
+    let Some(name) = d.file_name().and_then(|n| n.to_str()) else {
+        return true;
+    };
     let to = d.with_file_name(name.replacen("new", h, 1));
     if !to.exists() && std::fs::rename(&*d, &to).is_ok() {
         wire.lock().moved(&to);

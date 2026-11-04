@@ -6,10 +6,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{copy_dir_all, fixture_dir, ids};
 use codeck_core::model::{DataRootSource, Diagnostics, NameCount, SessionQuery};
 use codeck_core::paths::index_db_path;
 use codeck_core::{Engine, EngineConfig};
+use common::{copy_dir_all, fixture_dir, ids};
 use serde_json::Value;
 use tempfile::TempDir;
 

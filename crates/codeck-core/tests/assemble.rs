@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{fixture_dir, ids};
 use codeck_core::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, SubagentMetaFile, WorkflowFiles, assemble,
     build_skeleton, content, summarize, transcript,
@@ -17,6 +16,7 @@ use codeck_core::model::{
     TranscriptScope,
 };
 use codeck_core::parse::{parse_bytes, read_entries};
+use common::{fixture_dir, ids};
 
 // ---- loading (mirrors what the engine gathers; read-only) ----
 

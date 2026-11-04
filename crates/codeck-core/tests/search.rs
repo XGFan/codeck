@@ -8,7 +8,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use common::{copy_dir_all, fixture_dir, fixture_root, ids};
 use codeck_core::model::{
     AppError, DataRootSource, ErrorCode, FindLocation, FindRequest, JumpRequest, SearchMode,
     SearchRequest, SearchResponse, SearchRole, TranscriptRequest, TranscriptScope,
@@ -16,6 +15,7 @@ use codeck_core::model::{
 use codeck_core::search::query::{fts_phrase, is_fts_term};
 use codeck_core::search::{fts, parse_query};
 use codeck_core::{Engine, EngineConfig};
+use common::{copy_dir_all, fixture_dir, fixture_root, ids};
 use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::TempDir;

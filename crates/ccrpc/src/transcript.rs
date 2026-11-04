@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime};
 use ::transcript::assemble::{
     LoadedFile, WorkflowFiles, content, nodes, prompt, skeleton, subagent, tree, workflow,
 };
-use ::transcript::parse::{ReadOptions, read_entries_with};
 use ::transcript::model::FileRole;
+use ::transcript::parse::{ReadOptions, read_entries_with};
 use ::transcript::raw::{RawBlock, RawContent, RawEntry, decode_str};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -286,7 +286,11 @@ impl Tailer {
 
     /// A task ccrpc stopped: `stopped` until Claude Code's own notice says otherwise.
     pub fn mark_stopped(&mut self, id: &str) {
-        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id && t.status == "running") {
+        if let Some(t) = self
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == id && t.status == "running")
+        {
             t.status = "stopped".into();
         }
     }
@@ -405,7 +409,9 @@ impl Tailer {
             };
             // Long-quiet files (finished Subagent Runs) are looked at less often.
             if now.duration_since(sf.changed_at) >= COLD_AFTER
-                && sf.checked_at.is_some_and(|t| now.duration_since(t) < COLD_CHECK)
+                && sf
+                    .checked_at
+                    .is_some_and(|t| now.duration_since(t) < COLD_CHECK)
             {
                 continue;
             }
@@ -456,7 +462,10 @@ impl Tailer {
             return false;
         };
         let e = &line.entry;
-        let mut cur = e.parent_uuid.clone().or_else(|| e.logical_parent_uuid.clone());
+        let mut cur = e
+            .parent_uuid
+            .clone()
+            .or_else(|| e.logical_parent_uuid.clone());
         for _ in 0..=self.parents.len() {
             let Some(u) = cur else {
                 return true;
@@ -480,7 +489,9 @@ impl Tailer {
         };
         self.parents.insert(
             uuid.clone(),
-            e.parent_uuid.clone().or_else(|| e.logical_parent_uuid.clone()),
+            e.parent_uuid
+                .clone()
+                .or_else(|| e.logical_parent_uuid.clone()),
         );
         let mut kind = Emitted::Other;
         let mut any = false;
@@ -489,9 +500,7 @@ impl Tailer {
                 TxEvent::Block(b) if b.agent_id.is_none() => {
                     any = true;
                     if b.kind == BlockKind::User
-                        && b.text
-                            .as_deref()
-                            .is_some_and(prompt::is_interruption)
+                        && b.text.as_deref().is_some_and(prompt::is_interruption)
                     {
                         kind = Emitted::Interruption;
                     }
@@ -700,9 +709,16 @@ impl Tailer {
             if v["uuid"] != uuid || v["type"] != "user" {
                 continue;
             }
-            let img = v["message"]["content"].as_array()?.iter().filter(|b| b["type"] == "image").nth(index)?;
+            let img = v["message"]["content"]
+                .as_array()?
+                .iter()
+                .filter(|b| b["type"] == "image")
+                .nth(index)?;
             let src = &img["source"];
-            return Some((src["media_type"].as_str()?.to_string(), src["data"].as_str()?.to_string()));
+            return Some((
+                src["media_type"].as_str()?.to_string(),
+                src["data"].as_str()?.to_string(),
+            ));
         }
         None
     }
@@ -732,12 +748,14 @@ impl Tailer {
             }
             // Newer Claude Code records a local slash command (`/rename`, `/model x`) this way.
             "system" if agent.is_none() && e.subtype.as_deref() == Some("local_command") => {
-                if let Some(text) = decode_str(e.content.as_deref()).and_then(|c| command_line(&c)) {
+                if let Some(text) = decode_str(e.content.as_deref()).and_then(|c| command_line(&c))
+                {
                     out.push(TxEvent::UserPrompt { uuid, text });
                 }
             }
             "queue-operation" if agent.is_none() => {
-                let content = prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
+                let content =
+                    prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
                 let before = self.queue.len();
                 match e.operation.as_deref() {
                     Some("enqueue") => {
@@ -746,7 +764,8 @@ impl Tailer {
                     }
                     // Absorbed into the running turn (or dropped): by its text.
                     Some("remove") => {
-                        if let Some(i) = self.queue.iter().position(|q| q.trim() == content.trim()) {
+                        if let Some(i) = self.queue.iter().position(|q| q.trim() == content.trim())
+                        {
                             self.queue.remove(i);
                         }
                     }
@@ -758,7 +777,8 @@ impl Tailer {
                     Some("popAll") => self.queue.clear(),
                     _ => {}
                 }
-                let changed = self.queue.len() != before || e.operation.as_deref() == Some("enqueue");
+                let changed =
+                    self.queue.len() != before || e.operation.as_deref() == Some("enqueue");
                 if changed {
                     out.push(TxEvent::Queue(self.queue.clone()));
                 }
@@ -773,7 +793,9 @@ impl Tailer {
                 };
                 // A background task that ended while the main line was busy is told this way.
                 let kind = q.origin.as_ref().and_then(|o| o.kind.as_deref());
-                if q.command_mode.as_deref() == Some("task-notification") || kind == Some("task-notification") {
+                if q.command_mode.as_deref() == Some("task-notification")
+                    || kind == Some("task-notification")
+                {
                     if let Some((id, status)) = task_notification(&text)
                         && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
                     {
@@ -818,7 +840,10 @@ impl Tailer {
                         && self.usage_seen.insert(id.clone())
                     {
                         let n = |v: Option<f64>| v.unwrap_or(0.0);
-                        let cc_1h = u.cache_creation.as_ref().and_then(|c| c.ephemeral_1h_input_tokens);
+                        let cc_1h = u
+                            .cache_creation
+                            .as_ref()
+                            .and_then(|c| c.ephemeral_1h_input_tokens);
                         out.push(TxEvent::Usage {
                             main: agent.is_none(),
                             model: msg.model.clone(),
@@ -889,7 +914,11 @@ impl Tailer {
                             && blocks.iter().any(|b| b.block_type() == "image")
                             && !blocks.iter().any(|b| b.block_type() == "tool_result");
                         if image_prompt {
-                            let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).map(|t| prompt::unwrap_pasted(&t)).collect();
+                            let text: Vec<String> = blocks
+                                .iter()
+                                .filter_map(|b| b.text_str())
+                                .map(|t| prompt::unwrap_pasted(&t))
+                                .collect();
                             self.last_text = None;
                             out.push(TxEvent::UserPrompt {
                                 uuid: uuid.clone(),
@@ -897,7 +926,11 @@ impl Tailer {
                             });
                         }
                         let mut images: Vec<String> = if image_prompt {
-                            blocks.iter().filter(|b| b.block_type() == "image").map(image_type).collect()
+                            blocks
+                                .iter()
+                                .filter(|b| b.block_type() == "image")
+                                .map(image_type)
+                                .collect()
                         } else {
                             Vec::new()
                         };
@@ -935,7 +968,11 @@ impl Tailer {
         match rb.block_type() {
             "text" => {
                 let t = rb.text_str()?;
-                let t = if assistant { t } else { prompt::unwrap_pasted(&t) };
+                let t = if assistant {
+                    t
+                } else {
+                    prompt::unwrap_pasted(&t)
+                };
                 if assistant && agent.is_none() {
                     self.last_text = Some(t.clone());
                 }
@@ -1166,7 +1203,9 @@ fn read_capped(path: &Path) -> Option<String> {
         .open(path)
         .ok()?;
     let mut buf = Vec::new();
-    f.take(MAX_BLOCK_TEXT as u64 + 4).read_to_end(&mut buf).ok()?;
+    f.take(MAX_BLOCK_TEXT as u64 + 4)
+        .read_to_end(&mut buf)
+        .ok()?;
     Some(cap(String::from_utf8_lossy(&buf).into_owned()))
 }
 
@@ -1209,10 +1248,20 @@ fn command_line(s: &str) -> Option<String> {
 /// for the next read; lines that are not JSON objects are skipped), at most [`MAX_READ`] bytes,
 /// without rewriting `queued_command` attachments (steer needs them apart from prompts).
 fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
-    let opts = ReadOptions { max_bytes: Some(MAX_READ), normalize: false };
+    let opts = ReadOptions {
+        max_bytes: Some(MAX_READ),
+        normalize: false,
+    };
     let c = read_entries_with(path, from, opts)?;
     Ok(Chunk {
-        lines: c.records.into_iter().map(|r| Line { entry: r.entry, offset: r.offset }).collect(),
+        lines: c
+            .records
+            .into_iter()
+            .map(|r| Line {
+                entry: r.entry,
+                offset: r.offset,
+            })
+            .collect(),
         // A file that shrank: continue from its new end.
         consumed_to: c.consumed_to.min(c.file_len),
         capped: c.capped,
@@ -1277,7 +1326,10 @@ mod tests {
             prompts[0],
             "Reply with exactly the word PONG and nothing else."
         );
-        let turn_ends = evs.iter().filter(|e| matches!(e, TxEvent::TurnEnd { .. })).count();
+        let turn_ends = evs
+            .iter()
+            .filter(|e| matches!(e, TxEvent::TurnEnd { .. }))
+            .count();
         assert!(turn_ends >= 5, "{turn_ends}");
         let bs = blocks(&evs);
         assert!(
@@ -1413,15 +1465,37 @@ mod tests {
             }
             v
         };
-        write_lines(&main, &[op("enqueue", Some("a")), op("enqueue", Some("b")), op("enqueue", Some("c"))]);
+        write_lines(
+            &main,
+            &[
+                op("enqueue", Some("a")),
+                op("enqueue", Some("b")),
+                op("enqueue", Some("c")),
+            ],
+        );
         let mut t = Tailer::new(&main);
         let queues = |evs: Vec<TxEvent>| -> Vec<Vec<String>> {
-            evs.into_iter().filter_map(|e| if let TxEvent::Queue(q) = e { Some(q) } else { None }).collect()
+            evs.into_iter()
+                .filter_map(|e| {
+                    if let TxEvent::Queue(q) = e {
+                        Some(q)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
         assert_eq!(queues(t.poll()).last().unwrap(), &vec!["a", "b", "c"]);
-        let more = [op("remove", Some("b")), op("dequeue", None), op("popAll", None)];
+        let more = [
+            op("remove", Some("b")),
+            op("dequeue", None),
+            op("popAll", None),
+        ];
         let text: String = more.iter().map(|v| format!("{v}\n")).collect();
-        let mut f = std::fs::OpenOptions::new().append(true).open(&main).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&main)
+            .unwrap();
         std::io::Write::write_all(&mut f, text.as_bytes()).unwrap();
         let q = queues(t.poll());
         assert_eq!(q, vec![vec!["a", "c"], vec!["c"], vec![]]);
@@ -1454,19 +1528,31 @@ mod tests {
         ]}});
         write_lines(&main, &[line, note]);
         let t = Tailer::new(&main);
-        let evs = { let mut t = Tailer::new(&main); t.poll() };
+        let evs = {
+            let mut t = Tailer::new(&main);
+            t.poll()
+        };
         // The image note is not a block; the prompt's block names its image, fetched by uuid.
         assert_eq!(blocks(&evs).len(), 1, "{evs:?}");
         assert_eq!(blocks(&evs)[0].images, vec!["image/png".to_string()]);
-        assert_eq!(t.image("u1", 0), Some(("image/png".into(), "iVBORw0KGgo=".into())));
+        assert_eq!(
+            t.image("u1", 0),
+            Some(("image/png".into(), "iVBORw0KGgo=".into()))
+        );
         assert_eq!(t.image("u1", 1), None);
         assert_eq!(t.image("u2", 0), None);
         let prompt = evs.iter().find_map(|e| match e {
             TxEvent::UserPrompt { text, .. } => Some(text.clone()),
             _ => None,
         });
-        assert_eq!(prompt.as_deref().map(str::trim), Some("[Image #1]\n\nholder_id: m1\n\n现在有问题"));
-        assert_eq!(blocks(&evs)[0].text.as_deref().map(str::trim), Some("[Image #1]\n\nholder_id: m1\n\n现在有问题"));
+        assert_eq!(
+            prompt.as_deref().map(str::trim),
+            Some("[Image #1]\n\nholder_id: m1\n\n现在有问题")
+        );
+        assert_eq!(
+            blocks(&evs)[0].text.as_deref().map(str::trim),
+            Some("[Image #1]\n\nholder_id: m1\n\n现在有问题")
+        );
     }
 
     #[test]
@@ -1526,7 +1612,9 @@ mod tests {
     fn kinds(evs: &[TxEvent]) -> Vec<String> {
         evs.iter()
             .filter_map(|e| match e {
-                TxEvent::Branch { at_uuid } => Some(format!("branch:{}", at_uuid.as_deref().unwrap_or("-"))),
+                TxEvent::Branch { at_uuid } => {
+                    Some(format!("branch:{}", at_uuid.as_deref().unwrap_or("-")))
+                }
                 TxEvent::Block(b) => Some(format!("block:{}", b.uuid)),
                 _ => None,
             })
@@ -1552,10 +1640,17 @@ mod tests {
         let (_, evs) = tail_then(
             &main,
             &history(),
-            &[prompt("u3", Some("a1"), "other", 5), reply("a3", "u3", "three", 6)],
+            &[
+                prompt("u3", Some("a1"), "other", 5),
+                reply("a3", "u3", "three", 6),
+            ],
         );
         assert_eq!(kinds(&evs), ["branch:a1", "block:u3", "block:a3"]);
-        let texts: Vec<_> = main_blocks(&main, 0).0.into_iter().filter_map(|b| b.text).collect();
+        let texts: Vec<_> = main_blocks(&main, 0)
+            .0
+            .into_iter()
+            .filter_map(|b| b.text)
+            .collect();
         assert_eq!(texts, ["first", "one", "other", "three"]);
     }
 
@@ -1577,7 +1672,11 @@ mod tests {
         let main = dir.path().join("s.jsonl");
         let (_, evs) = tail_then(&main, &history(), &[prompt("u3", None, "fresh", 5)]);
         assert_eq!(kinds(&evs)[0], "branch:-");
-        let texts: Vec<_> = main_blocks(&main, 0).0.into_iter().filter_map(|b| b.text).collect();
+        let texts: Vec<_> = main_blocks(&main, 0)
+            .0
+            .into_iter()
+            .filter_map(|b| b.text)
+            .collect();
         assert_eq!(texts, ["fresh"]);
     }
 
@@ -1617,9 +1716,17 @@ mod tests {
             })
             .collect();
         assert_eq!(usages.len(), 1, "one message, two entries");
-        assert_eq!((usages[0].cache_write_5m, usages[0].cache_write_1h), (10.0, 30.0));
+        assert_eq!(
+            (usages[0].cache_write_5m, usages[0].cache_write_1h),
+            (10.0, 30.0)
+        );
         assert!(evs.iter().any(|e| matches!(e, TxEvent::ApiError { kind: Some(k), message } if k == "rate_limit" && message == "API Error: 429")));
-        assert!(evs.iter().any(|e| matches!(e, TxEvent::TurnEnd { duration_ms: Some(4200) })));
+        assert!(evs.iter().any(|e| matches!(
+            e,
+            TxEvent::TurnEnd {
+                duration_ms: Some(4200)
+            }
+        )));
     }
 
     #[test]
@@ -1631,14 +1738,26 @@ mod tests {
                 "content": [{"type": "tool_use", "id": id, "name": "Bash",
                     "input": {"command": cmd, "description": "wait", "run_in_background": true}}]}})
         };
-        let note = |task: &str| format!("<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n</task-notification>");
+        let note = |task: &str| {
+            format!(
+                "<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n</task-notification>"
+            )
+        };
         write_lines(
             &main,
             &[
                 call("t1", "sleep 5"),
-                tool_result_entry("t1", "Command running in background with ID: bg1. Output is being written to: /x", json!({})),
+                tool_result_entry(
+                    "t1",
+                    "Command running in background with ID: bg1. Output is being written to: /x",
+                    json!({}),
+                ),
                 call("t2", "sleep 6"),
-                tool_result_entry("t2", "Command running in background with ID: bg2. Output is being written to: /y", json!({})),
+                tool_result_entry(
+                    "t2",
+                    "Command running in background with ID: bg2. Output is being written to: /y",
+                    json!({}),
+                ),
                 // Ended while idle: a plain user message.
                 json!({"type": "user", "uuid": "n1", "message": {"role": "user", "content": note("bg1")}}),
                 // Ended while busy: a queued_command attachment.
@@ -1650,7 +1769,10 @@ mod tests {
         t.poll();
         let tasks = t.tasks();
         assert_eq!(tasks.len(), 2);
-        assert_eq!((tasks[0].kind, tasks[0].command.as_deref()), ("shell", Some("sleep 5")));
+        assert_eq!(
+            (tasks[0].kind, tasks[0].command.as_deref()),
+            ("shell", Some("sleep 5"))
+        );
         assert!(tasks.iter().all(|t| t.status == "completed"), "{tasks:?}");
     }
 
@@ -1666,7 +1788,10 @@ mod tests {
                 prompt("u3", Some("c1"), "after compact", 5),
             ],
         );
-        assert!(!evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })), "{evs:?}");
+        assert!(
+            !evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })),
+            "{evs:?}"
+        );
     }
 
     #[test]
@@ -1682,8 +1807,15 @@ mod tests {
                 system("h1", Some("a2"), "stop_hook_summary", None),
             ],
         );
-        assert!(!evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })), "{evs:?}");
-        let texts: Vec<_> = main_blocks(&main, 0).0.into_iter().filter_map(|b| b.text).collect();
+        assert!(
+            !evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })),
+            "{evs:?}"
+        );
+        let texts: Vec<_> = main_blocks(&main, 0)
+            .0
+            .into_iter()
+            .filter_map(|b| b.text)
+            .collect();
         assert_eq!(texts.last().map(String::as_str), Some("teammate says hi"));
         // Read apart: the parent is not there yet when the child is read.
         let main2 = dir.path().join("s2.jsonl");
@@ -1691,7 +1823,10 @@ mod tests {
         lines.push(prompt("t1", Some("h1"), "teammate says hi", 5));
         let (mut t, evs) = tail_then(&main2, &history(), &lines[history().len()..]);
         assert!(!evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })));
-        assert!(main_blocks(&main2, 0).0.len() >= 4, "the conversation is still there");
+        assert!(
+            main_blocks(&main2, 0).0.len() >= 4,
+            "the conversation is still there"
+        );
         lines.push(system("h1", Some("a2"), "stop_hook_summary", None));
         write_lines(&main2, &lines);
         assert!(!t.poll().iter().any(|e| matches!(e, TxEvent::Branch { .. })));
@@ -1710,8 +1845,15 @@ mod tests {
         write_lines(&main, &first);
         let (_, cursor) = main_blocks(&main, 0);
         let (_, evs) = tail_then(&main, &first, &[prompt("u3", Some("a1"), "again", 4)]);
-        assert!(!evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })), "{evs:?}");
-        let after: Vec<_> = main_blocks(&main, cursor).0.into_iter().map(|b| b.uuid).collect();
+        assert!(
+            !evs.iter().any(|e| matches!(e, TxEvent::Branch { .. })),
+            "{evs:?}"
+        );
+        let after: Vec<_> = main_blocks(&main, cursor)
+            .0
+            .into_iter()
+            .map(|b| b.uuid)
+            .collect();
         assert_eq!(after, ["u3"]);
     }
 
@@ -1734,7 +1876,10 @@ mod tests {
         let full = results.join("abc.txt");
         std::fs::write(&full, "FULL OUTPUT").unwrap();
         let preview = |p: &Path| {
-            format!("<persisted-output>\nOutput too large (42.4KB). Full output saved to: {}\n\nPreview (first 2KB):\nFULL", p.display())
+            format!(
+                "<persisted-output>\nOutput too large (42.4KB). Full output saved to: {}\n\nPreview (first 2KB):\nFULL",
+                p.display()
+            )
         };
         let outside = dir.path().join("elsewhere.txt");
         std::fs::write(&outside, "SECRET").unwrap();
@@ -1751,10 +1896,24 @@ mod tests {
         let bs = blocks(&evs);
         let p = bs[0].persisted.as_ref().unwrap();
         assert_eq!((p.path.as_str(), p.size), (full.to_str().unwrap(), 11));
-        assert!(bs[0].content.as_deref().unwrap().starts_with("<persisted-output>"));
-        assert!(bs[1].persisted.is_none(), "a path outside tool-results/ is not followed");
+        assert!(
+            bs[0]
+                .content
+                .as_deref()
+                .unwrap()
+                .starts_with("<persisted-output>")
+        );
+        assert!(
+            bs[1].persisted.is_none(),
+            "a path outside tool-results/ is not followed"
+        );
         assert_eq!(t.tool_result("t1").unwrap().0, "FULL OUTPUT");
-        assert!(t.tool_result("t2").unwrap().0.starts_with("<persisted-output>"));
+        assert!(
+            t.tool_result("t2")
+                .unwrap()
+                .0
+                .starts_with("<persisted-output>")
+        );
         assert_eq!(t.tool_result("t3").unwrap(), ("short".to_string(), None));
         assert!(t.tool_result("nope").is_none());
     }
@@ -1785,7 +1944,10 @@ mod tests {
                 json!({"toolUseResult": {"runId": "wf_1"}}),
             )],
         );
-        write_lines(&agents.join("agent-ag1.jsonl"), &[prompt("x1", None, "read it", 1)]);
+        write_lines(
+            &agents.join("agent-ag1.jsonl"),
+            &[prompt("x1", None, "read it", 1)],
+        );
         let mut t = Tailer::new(&main);
         let evs = t.poll();
         let w = evs

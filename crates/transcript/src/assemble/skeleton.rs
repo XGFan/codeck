@@ -30,11 +30,16 @@ pub fn read_title(main: &std::path::Path) -> Option<String> {
     use std::io::BufRead;
     let f = std::fs::File::open(main).ok()?;
     let (mut custom, mut ai) = (None, None);
-    for line in std::io::BufReader::new(f).split(b'\n').map_while(|l| l.ok()) {
+    for line in std::io::BufReader::new(f)
+        .split(b'\n')
+        .map_while(|l| l.ok())
+    {
         if !line.windows(7).any(|w| w == b"-title\"") {
             continue;
         }
-        let Ok(e) = serde_json::from_slice::<RawEntry>(&line) else { continue };
+        let Ok(e) = serde_json::from_slice::<RawEntry>(&line) else {
+            continue;
+        };
         let pick = |v: Option<String>| v.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
         match e.entry_type() {
             "custom-title" => custom = pick(e.custom_title).or(custom),

@@ -131,7 +131,12 @@ impl QueuedCommand {
     pub fn text(&self) -> Option<String> {
         match self.message.content.as_ref()? {
             RawContent::Text(t) => Some(t.clone()),
-            RawContent::Blocks(bs) => Some(bs.iter().filter_map(|b| b.text_str()).collect::<Vec<_>>().join("\n")),
+            RawContent::Blocks(bs) => Some(
+                bs.iter()
+                    .filter_map(|b| b.text_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
         }
     }
 }

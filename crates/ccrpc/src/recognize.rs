@@ -339,7 +339,9 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
 /// The same text once wrapping is undone: a line break in CJK text adds no space, in other text it
 /// replaces one, so every whitespace is dropped before comparing.
 pub fn same_text(a: &str, b: &str) -> bool {
-    a.chars().filter(|c| !c.is_whitespace()).eq(b.chars().filter(|c| !c.is_whitespace()))
+    a.chars()
+        .filter(|c| !c.is_whitespace())
+        .eq(b.chars().filter(|c| !c.is_whitespace()))
 }
 
 /// Whitespace runs folded to one space, trimmed (screen text wraps and pads).
@@ -406,7 +408,9 @@ pub fn input_text(s: &crate::screen::Screen) -> Option<String> {
 /// is on "Yes, I trust this folder".
 pub fn trust_folder(lines: &[String]) -> Option<bool> {
     let text = collapse_ws(&lines.join(" "));
-    if !text.contains("Is this a project you created or one you trust?") || !text.contains("Enter to confirm") {
+    if !text.contains("Is this a project you created or one you trust?")
+        || !text.contains("Enter to confirm")
+    {
         return None;
     }
     let row = |label: &str| {
@@ -453,17 +457,31 @@ pub fn spinner(lines: &[String]) -> Option<Spinner> {
         if verb.is_empty() || verb.contains(' ') {
             return None;
         }
-        let inner = rest.trim().strip_prefix('(').and_then(|r| r.strip_suffix(')')).unwrap_or("");
+        let inner = rest
+            .trim()
+            .strip_prefix('(')
+            .and_then(|r| r.strip_suffix(')'))
+            .unwrap_or("");
         let mut elapsed_s = None;
         let mut tokens = None;
         for part in inner.split('·').map(str::trim) {
             if let Some(n) = part.strip_suffix(" tokens") {
-                tokens = n.trim_start_matches(['↓', '↑']).trim().replace(',', "").parse().ok();
+                tokens = n
+                    .trim_start_matches(['↓', '↑'])
+                    .trim()
+                    .replace(',', "")
+                    .parse()
+                    .ok();
             } else if let Some(secs) = duration_secs(part) {
                 elapsed_s = Some(secs);
             }
         }
-        Some(Spinner { text: text.clone(), verb: verb.to_string(), elapsed_s, tokens })
+        Some(Spinner {
+            text: text.clone(),
+            verb: verb.to_string(),
+            elapsed_s,
+            tokens,
+        })
     })
 }
 
@@ -543,7 +561,11 @@ mod tests {
         assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
         assert_eq!(d.number_for(PermissionChoice::Deny), Some(4));
         let command = "python3 -I -c \"\nfrom PIL import Image\nim = Image.open('/private/var";
-        let needle: String = command.chars().filter(|c| !c.is_whitespace()).take(40).collect();
+        let needle: String = command
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .take(40)
+            .collect();
         assert!(permission_body(&lines).unwrap().contains(&needle));
     }
 
@@ -555,10 +577,22 @@ mod tests {
     fn permission_mode_from_the_footer() {
         use crate::rpc::PermissionMode;
         let base = |footer: &str| lines(&["❯ hello", "─────", "❯", "─────", footer]);
-        assert_eq!(permission_mode(&base("  ⏸ manual mode on · ? for shortcuts")), Some(PermissionMode::Manual));
-        assert_eq!(permission_mode(&base("  ⏵⏵ accept edits on (shift+tab to cycle)")), Some(PermissionMode::AcceptEdits));
-        assert_eq!(permission_mode(&base("  ⏸ plan mode on (shift+tab to cycle)")), Some(PermissionMode::Plan));
-        assert_eq!(permission_mode(&base("  ⏵⏵ auto mode on (shift+tab to cycle)")), Some(PermissionMode::Auto));
+        assert_eq!(
+            permission_mode(&base("  ⏸ manual mode on · ? for shortcuts")),
+            Some(PermissionMode::Manual)
+        );
+        assert_eq!(
+            permission_mode(&base("  ⏵⏵ accept edits on (shift+tab to cycle)")),
+            Some(PermissionMode::AcceptEdits)
+        );
+        assert_eq!(
+            permission_mode(&base("  ⏸ plan mode on (shift+tab to cycle)")),
+            Some(PermissionMode::Plan)
+        );
+        assert_eq!(
+            permission_mode(&base("  ⏵⏵ auto mode on (shift+tab to cycle)")),
+            Some(PermissionMode::Auto)
+        );
         assert_eq!(permission_mode(&base("  ? for shortcuts")), None);
     }
 
@@ -587,7 +621,9 @@ mod tests {
             "   Command:  sleep 25",
             "   ← to go back · Esc/Enter/Space to close · x to stop",
         ]);
-        assert!(matches!(tasks_panel(&details), Some(TasksPanel::Details(t)) if t.contains("sleep 25")));
+        assert!(
+            matches!(tasks_panel(&details), Some(TasksPanel::Details(t)) if t.contains("sleep 25"))
+        );
         // Nothing left to stop: still the panel (to be closed).
         let done = lines(&[
             "   Background",
@@ -733,11 +769,22 @@ mod tests {
         ]
         .into();
         assert_eq!(input_box(&lines).as_deref(), Some("/cost"));
-        assert_eq!(permission_mode(&lines), Some(crate::rpc::PermissionMode::Bypass));
-        assert!(!is_input_rule(&format!("{} Settings {}", "─".repeat(30), "─".repeat(30))));
+        assert_eq!(
+            permission_mode(&lines),
+            Some(crate::rpc::PermissionMode::Bypass)
+        );
+        assert!(!is_input_rule(&format!(
+            "{} Settings {}",
+            "─".repeat(30),
+            "─".repeat(30)
+        )));
         assert!(!is_input_rule("── probe-a ─"));
         // A long name on a narrow screen still leaves a short rule before it.
-        assert!(is_input_rule(&format!("{} {} ─", "─".repeat(6), "a-rather-long-session-name-for-a-narrow-pane")));
+        assert!(is_input_rule(&format!(
+            "{} {} ─",
+            "─".repeat(6),
+            "a-rather-long-session-name-for-a-narrow-pane"
+        )));
         assert!(!is_input_rule(&format!("{} a ─ b ─", "─".repeat(30))));
     }
 
@@ -749,7 +796,10 @@ mod tests {
             crate::screen::Screen::render(b.as_bytes(), 30, 3)
         };
         let s = box_("\x1b[0;2mTry \"edit <filepath> to...\"");
-        assert_eq!(input_box(&s.lines).as_deref(), Some("Try \"edit <filepath> to...\""));
+        assert_eq!(
+            input_box(&s.lines).as_deref(),
+            Some("Try \"edit <filepath> to...\"")
+        );
         assert_eq!(input_text(&s).as_deref(), Some(""));
         assert_eq!(input_text(&box_("hello")).as_deref(), Some("hello"));
     }
@@ -772,11 +822,21 @@ mod tests {
     #[test]
     fn spinner_line() {
         let s = spinner(&screen("busy_spinner.txt")).unwrap();
-        assert_eq!((s.verb.as_str(), s.elapsed_s, s.tokens), ("Deliberating", Some(4), Some(6)));
+        assert_eq!(
+            (s.verb.as_str(), s.elapsed_s, s.tokens),
+            ("Deliberating", Some(4), Some(6))
+        );
         let l = |t: &str| vec![t.to_string()];
-        let s = spinner(&l("✶ Brewing… (running PreToolUse hook · 1m 2s · ↓ 1,046 tokens)")).unwrap();
+        let s = spinner(&l(
+            "✶ Brewing… (running PreToolUse hook · 1m 2s · ↓ 1,046 tokens)",
+        ))
+        .unwrap();
         assert_eq!((s.elapsed_s, s.tokens), (Some(62), Some(1046)));
-        assert_eq!(spinner(&l("✻ Waiting for 1 background agent to finish")), None, "no …");
+        assert_eq!(
+            spinner(&l("✻ Waiting for 1 background agent to finish")),
+            None,
+            "no …"
+        );
         assert_eq!(spinner(&l("✻ Baked for 0s · done 10:35 PM")), None);
         assert_eq!(spinner(&screen("idle_prompt.txt")), None);
     }
@@ -817,9 +877,11 @@ pub enum TasksPanel {
 /// Recognizes the panel by its hint line (`… x to stop …`, or `… Esc to close` once nothing is
 /// left to stop): `↑/↓ to select` marks the list.
 pub fn tasks_panel(lines: &[String]) -> Option<TasksPanel> {
-    let hint = lines
-        .iter()
-        .rposition(|l| l.contains("x to stop") || l.contains("Esc to close") || l.contains("Esc/Enter/Space to close"))?;
+    let hint = lines.iter().rposition(|l| {
+        l.contains("x to stop")
+            || l.contains("Esc to close")
+            || l.contains("Esc/Enter/Space to close")
+    })?;
     if lines[hint].contains("to select") {
         let title = lines[..hint]
             .iter()
@@ -875,12 +937,21 @@ mod task_row_tests {
     use super::*;
 
     fn rows(v: &[&str]) -> Vec<(String, bool)> {
-        v.iter().enumerate().map(|(i, s)| (s.to_string(), i == 0)).collect()
+        v.iter()
+            .enumerate()
+            .map(|(i, s)| (s.to_string(), i == 0))
+            .collect()
     }
 
     #[test]
     fn exactly_one_running_row() {
-        let r = rows(&["Shells (2)", "⏺ npm run dev   running", "⏺ sleep 300   running", "Local agents (1)", "◯ wait for deploy   running · m"]);
+        let r = rows(&[
+            "Shells (2)",
+            "⏺ npm run dev   running",
+            "⏺ sleep 300   running",
+            "Local agents (1)",
+            "◯ wait for deploy   running · m",
+        ]);
         assert_eq!(task_row(&r, "sleep 300"), Ok(2));
         assert_eq!(task_row(&r, "wait for deploy"), Ok(4));
         // Only a whole leading match: `dev` is not `npm run dev`.
@@ -889,8 +960,11 @@ mod task_row_tests {
         let two = rows(&["⏺ npm run dev   running", "⏺ npm run dev   running"]);
         assert!(task_row(&two, "npm run dev").is_err());
         // The same command already ended: the target may be that one.
-        let ended = rows(&["⏺ sleep 300   running", "Completed (1)", "✔ sleep 300   done"]);
+        let ended = rows(&[
+            "⏺ sleep 300   running",
+            "Completed (1)",
+            "✔ sleep 300   done",
+        ]);
         assert!(task_row(&ended, "sleep 300").is_err());
     }
-
 }

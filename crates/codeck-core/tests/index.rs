@@ -7,9 +7,9 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use common::{fixture_root, ids};
 use codeck_core::model::DataRootSource;
 use codeck_core::{ChangeSet, Engine, EngineConfig};
+use common::{fixture_root, ids};
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
 

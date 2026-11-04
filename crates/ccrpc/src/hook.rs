@@ -30,7 +30,11 @@ pub const HOOK_PROTOCOL: u32 = 2;
 /// ccrpc's own state directory: `CCRPC_STATE_DIR`, else `$XDG_STATE_HOME/ccrpc`, else
 /// `~/.local/state/ccrpc`. Never inside Claude Code's or ToH's directories.
 pub fn state_dir() -> PathBuf {
-    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let env = |k: &str| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
     if let Some(d) = env("CCRPC_STATE_DIR") {
         return d;
     }
@@ -161,7 +165,10 @@ pub fn run_hook(args: &[String]) {
         _ => 1,
     };
     // Outside a clay Pane there is nothing for ccrpc to do.
-    let Some(holder_id) = std::env::var("TOH_HOLDER_ID").ok().filter(|v| !v.is_empty()) else {
+    let Some(holder_id) = std::env::var("TOH_HOLDER_ID")
+        .ok()
+        .filter(|v| !v.is_empty())
+    else {
         return;
     };
     let mut raw = String::new();
@@ -174,7 +181,10 @@ pub fn run_hook(args: &[String]) {
     // Claude Code runs the hook command as its own child.
     let claude_pid = std::os::unix::process::parent_id();
     let state = state_dir();
-    let event = input["hook_event_name"].as_str().unwrap_or_default().to_string();
+    let event = input["hook_event_name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     if event == "SessionStart" {
         let c = CheckIn {
             hook_protocol: protocol,
@@ -273,7 +283,12 @@ pub fn peer_gone(s: &UnixStream) -> bool {
     let mut b = [0u8; 1];
     // SAFETY: a one-byte non-blocking peek into a local buffer on an fd `s` owns.
     let n = unsafe {
-        libc::recv(s.as_raw_fd(), b.as_mut_ptr().cast(), 1, libc::MSG_PEEK | libc::MSG_DONTWAIT)
+        libc::recv(
+            s.as_raw_fd(),
+            b.as_mut_ptr().cast(),
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
     };
     // 0: EOF. -1 with EAGAIN: still connected, nothing to read (the hook never writes again).
     n == 0 || (n < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN))
@@ -373,19 +388,35 @@ impl HookServer {
                 // Each connection on its own: a slow one cannot hold up the others.
                 std::thread::spawn(move || {
                     let _ = s.set_read_timeout(Some(Duration::from_millis(500)));
-                    let Some(input) = read_msg(&mut s) else { return };
-                    let event = input["hook_event_name"].as_str().unwrap_or_default().to_string();
+                    let Some(input) = read_msg(&mut s) else {
+                        return;
+                    };
+                    let event = input["hook_event_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
                     let reply = (event == "PermissionRequest").then(|| {
                         let _ = s.set_read_timeout(None);
                         s
                     });
-                    if tx.send(HookMsg { event, input, reply }).is_ok() {
+                    if tx
+                        .send(HookMsg {
+                            event,
+                            input,
+                            reply,
+                        })
+                        .is_ok()
+                    {
                         wake.bump();
                     }
                 });
             }
         });
-        Ok(HookServer { path, rx, _lock: lock })
+        Ok(HookServer {
+            path,
+            rx,
+            _lock: lock,
+        })
     }
 
     pub fn try_recv(&self) -> Option<HookMsg> {
@@ -413,7 +444,9 @@ fn read_msg(s: &mut UnixStream) -> Option<Value> {
             Ok(0) => return None,
             Ok(_) if buf.ends_with(b"\n") => break,
             Ok(_) => return None,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(_) => return None,
         }
     }
@@ -457,27 +490,45 @@ mod tests {
         assert!(checkin_problem(Some(&c), Some("s1")).is_none());
         assert!(checkin_problem(Some(&c), None).is_none());
         assert!(checkin_problem(Some(&c), Some("s2")).is_some());
-        let old = CheckIn { hook_protocol: 0, ..c };
+        let old = CheckIn {
+            hook_protocol: 0,
+            ..c
+        };
         assert!(checkin_problem(Some(&old), Some("s1")).is_some());
     }
 
     #[test]
     fn only_decisions_ccrpc_sends_are_printed() {
-        let allow = allow_output(Some(json!([{"type": "addDirectories", "directories": ["/w"]},
-            {"type": "setMode", "mode": "bypassPermissions"}])), Some(json!({"answers": {}})));
+        let allow = allow_output(
+            Some(json!([{"type": "addDirectories", "directories": ["/w"]},
+            {"type": "setMode", "mode": "bypassPermissions"}])),
+            Some(json!({"answers": {}})),
+        );
         let d = checked_decision(&allow).unwrap();
         assert_eq!(
             d["hookSpecificOutput"]["decision"]["updatedPermissions"],
             json!([{"type": "addDirectories", "directories": ["/w"]}]),
             "mode switches never get through"
         );
-        assert_eq!(d["hookSpecificOutput"]["decision"]["updatedInput"], json!({"answers": {}}));
-        assert_eq!(checked_decision(&deny_output(None)).unwrap(), deny_output(None));
-        assert_eq!(checked_decision(&deny_output(Some("no"))).unwrap(), deny_output(Some("no")));
+        assert_eq!(
+            d["hookSpecificOutput"]["decision"]["updatedInput"],
+            json!({"answers": {}})
+        );
+        assert_eq!(
+            checked_decision(&deny_output(None)).unwrap(),
+            deny_output(None)
+        );
+        assert_eq!(
+            checked_decision(&deny_output(Some("no"))).unwrap(),
+            deny_output(Some("no"))
+        );
         let extra = json!({"hookSpecificOutput": {"decision": {"behavior": "allow", "extra": 1}},
             "systemMessage": "x"});
         assert_eq!(checked_decision(&extra).unwrap(), allow_output(None, None));
-        assert!(checked_decision(&json!({"hookSpecificOutput": {"decision": {"behavior": "ask"}}})).is_none());
+        assert!(
+            checked_decision(&json!({"hookSpecificOutput": {"decision": {"behavior": "ask"}}}))
+                .is_none()
+        );
         assert!(checked_decision(&json!({"continue": false})).is_none());
     }
 
@@ -503,21 +554,41 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wake = Wake::new();
         let server = HookServer::bind(dir.path(), 4242, wake.clone()).unwrap();
-        assert!(HookServer::bind(dir.path(), 4242, wake.clone()).is_err(), "one ccrpc per Session");
+        assert!(
+            HookServer::bind(dir.path(), 4242, wake.clone()).is_err(),
+            "one ccrpc per Session"
+        );
         let sock = socket_path(dir.path(), 4242);
 
-        assert_eq!(forward(&sock, "Stop", json!({"hook_event_name": "Stop", "prompt_id": "p"})), None);
+        assert_eq!(
+            forward(
+                &sock,
+                "Stop",
+                json!({"hook_event_name": "Stop", "prompt_id": "p"})
+            ),
+            None
+        );
         let m = recv(&server);
-        assert_eq!((m.event.as_str(), m.input["prompt_id"].as_str()), ("Stop", Some("p")));
+        assert_eq!(
+            (m.event.as_str(), m.input["prompt_id"].as_str()),
+            ("Stop", Some("p"))
+        );
         assert!(m.reply.is_none());
 
         let ask = |server: &HookServer, out: Option<Value>| {
             let sock = sock.clone();
             let h = std::thread::spawn(move || {
-                forward(&sock, "PermissionRequest", json!({"hook_event_name": "PermissionRequest"}))
+                forward(
+                    &sock,
+                    "PermissionRequest",
+                    json!({"hook_event_name": "PermissionRequest"}),
+                )
             });
             let m = recv(server);
-            assert!(!peer_gone(m.reply.as_ref().unwrap()), "the hook still waits");
+            assert!(
+                !peer_gone(m.reply.as_ref().unwrap()),
+                "the hook still waits"
+            );
             match out {
                 Some(o) => send_reply(m.reply.unwrap(), Some(o)).unwrap(),
                 None => drop(m.reply),
@@ -529,7 +600,8 @@ mod tests {
             let sock = sock.clone();
             std::thread::spawn(move || {
                 let mut c = UnixStream::connect(&sock).unwrap();
-                let line = json!({"v": HOOK_PROTOCOL, "input": {"hook_event_name": "PermissionRequest"}});
+                let line =
+                    json!({"v": HOOK_PROTOCOL, "input": {"hook_event_name": "PermissionRequest"}});
                 c.write_all(format!("{line}\n").as_bytes()).unwrap();
             })
         };
@@ -544,8 +616,15 @@ mod tests {
         }
         assert!(peer_gone(&r));
         let printed = ask(&server, Some(allow_output(None, None))).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&printed).unwrap(), allow_output(None, None));
-        assert_eq!(ask(&server, None), None, "EOF releases the hook with no output");
+        assert_eq!(
+            serde_json::from_str::<Value>(&printed).unwrap(),
+            allow_output(None, None)
+        );
+        assert_eq!(
+            ask(&server, None),
+            None,
+            "EOF releases the hook with no output"
+        );
 
         drop(server);
         assert!(!sock.exists());

@@ -121,11 +121,7 @@ fn setup_with(key: &str, base: &str, model: &str) -> Env {
         "projects": { work_dir.display().to_string(): { "hasTrustDialogAccepted": true } },
     });
     std::fs::write(cc_dir.join(".claude.json"), claude_json.to_string()).unwrap();
-    std::fs::write(
-        cc_dir.join("settings.json"),
-        settings_json().to_string(),
-    )
-    .unwrap();
+    std::fs::write(cc_dir.join("settings.json"), settings_json().to_string()).unwrap();
     std::fs::write(work_dir.join("a.txt"), "hello\n").unwrap();
     let layouts = tempfile::tempdir().unwrap();
     let layout_dir = layouts.path().to_path_buf();
@@ -345,7 +341,10 @@ impl Rpc {
 fn wire_file() -> Option<Arc<Mutex<std::fs::File>>> {
     let dir = PathBuf::from(std::env::var_os("CCRPC_E2E_WIRE_DIR")?);
     std::fs::create_dir_all(&dir).unwrap();
-    let test = std::thread::current().name().unwrap_or("e2e").replace("::", "-");
+    let test = std::thread::current()
+        .name()
+        .unwrap_or("e2e")
+        .replace("::", "-");
     let path = (0..)
         .map(|n| dir.join(format!("{test}-{n}.jsonl")))
         .find(|p| !p.exists())
@@ -360,7 +359,11 @@ fn wire_write(wire: &Option<Arc<Mutex<std::fs::File>>>, dir: &str, msg: &Value) 
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    let _ = writeln!(w.lock().unwrap(), "{}", json!({"t": t, "dir": dir, "msg": msg}));
+    let _ = writeln!(
+        w.lock().unwrap(),
+        "{}",
+        json!({"t": t, "dir": dir, "msg": msg})
+    );
 }
 
 impl Drop for Rpc {
@@ -431,7 +434,9 @@ fn run_turn_allowing(rpc: &mut Rpc, id: &str, text: &str) -> Vec<Value> {
     let mut n = 0;
     loop {
         let v = rpc.until("turn", Duration::from_secs(180), |v| {
-            v["type"] == "turn_end" || v["type"] == "permission_request" || v["type"] == "block"
+            v["type"] == "turn_end"
+                || v["type"] == "permission_request"
+                || v["type"] == "block"
                 || v["type"] == "workflow"
         });
         if v["type"] == "permission_request" {
@@ -486,7 +491,10 @@ fn controls_a_real_session() {
     assert!(te["error"].is_null(), "{te}");
     assert_eq!(te["aborted"], false);
     assert!(te["duration_ms"].as_u64().unwrap_or(0) > 0, "{te}");
-    assert!(te["usage"]["output_tokens"].as_u64().unwrap_or(0) > 0, "{te}");
+    assert!(
+        te["usage"]["output_tokens"].as_u64().unwrap_or(0) > 0,
+        "{te}"
+    );
 
     // Permission modes: to plan and back.
     let d = rpc.call("m1", json!({"type": "set_mode", "mode": "plan"}));
@@ -510,7 +518,10 @@ fn controls_a_real_session() {
         if v["type"] == "turn_end" {
             break;
         }
-        rpc.call("im2", json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "deny"}));
+        rpc.call(
+            "im2",
+            json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "deny"}),
+        );
     }
 
     // permission: allow
@@ -541,7 +552,8 @@ fn controls_a_real_session() {
         json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow_always"}),
     );
     rpc.event("turn_end", Duration::from_secs(60));
-    let local = std::fs::read_to_string(env.work.join(".claude/settings.local.json")).unwrap_or_default();
+    let local =
+        std::fs::read_to_string(env.work.join(".claude/settings.local.json")).unwrap_or_default();
     assert!(local.contains("Bash(python3"), "{local}");
     rpc.forget();
     rpc.call("aa3", json!({"type": "prompt", "text": cmd_text}));
@@ -611,7 +623,10 @@ fn controls_a_real_session() {
         json!({"type": "follow_up", "text": "Reply with exactly FOLLOWUP-OK."}),
     );
     // A second follow-up, dropped again.
-    rpc.call("s2b", json!({"type": "follow_up", "text": "Reply with exactly SHOULD-NOT-RUN."}));
+    rpc.call(
+        "s2b",
+        json!({"type": "follow_up", "text": "Reply with exactly SHOULD-NOT-RUN."}),
+    );
     let d = rpc.call("s2c", json!({"type": "cancel_follow_up", "index": 1}));
     assert_eq!(d["removed"], 1);
     assert_eq!(d["follow_ups"], json!(["Reply with exactly FOLLOWUP-OK."]));
@@ -689,18 +704,28 @@ fn controls_a_real_session() {
     // A background Subagent Run ends its turn at once; its result then wakes the main line for
     // another turn. Wait until the report is in.
     if !seen.iter().any(|v| {
-        v["type"] == "turn_end" && v["last_text"].as_str().unwrap_or("").contains("SUBAGENT-OK")
+        v["type"] == "turn_end"
+            && v["last_text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("SUBAGENT-OK")
     }) {
         // The background Subagent's own approval comes after that first turn: answered on the
         // screen (its hook does not wait), with agent_id.
         let (te, answered) = until_answering(&mut rpc, "subagent report", |v| {
             v["type"] == "turn_end"
-                && v["last_text"].as_str().unwrap_or("").contains("SUBAGENT-OK")
+                && v["last_text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("SUBAGENT-OK")
         });
         assert_eq!(te["trigger"], "task_notification", "{te}");
         sub_requests.extend(answered.into_iter().filter(|v| v["agent_id"].is_string()));
     }
-    assert!(!sub_requests.is_empty(), "Subagent 的 touch 没有经 permission_request（带 agent_id）作答");
+    assert!(
+        !sub_requests.is_empty(),
+        "Subagent 的 touch 没有经 permission_request（带 agent_id）作答"
+    );
     assert!(env.work.join("subagent.txt").exists());
     // The history has the Subagent Run's blocks under the Agent call.
     let msgs = rpc.call(
@@ -708,9 +733,13 @@ fn controls_a_real_session() {
         json!({"type": "get_messages", "subagents": true, "limit": 30}),
     );
     assert!(
-        msgs["subagent_blocks"].as_array().unwrap().iter().any(|b| b["agent_id"].is_string()
-            && b["parent_tool_use_id"] == agent_call["id"]),
-        "get_messages 没有 Subagent Run 的块：{}", msgs["subagent_blocks"]
+        msgs["subagent_blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["agent_id"].is_string() && b["parent_tool_use_id"] == agent_call["id"]),
+        "get_messages 没有 Subagent Run 的块：{}",
+        msgs["subagent_blocks"]
     );
 
     // Workflow Run (when the model has the Workflow tool): workflow snapshots and run_id blocks
@@ -719,7 +748,10 @@ fn controls_a_real_session() {
         "wf1",
         "Call the Workflow tool exactly once with this script and nothing else, then reply DONE:\nexport const meta = { name: 'e2e-echo', description: 'echo', phases: [{ title: 'Echo' }] }\nconst r = await agent('Reply with exactly WF-OK', { label: 'echo', phase: 'Echo' })\nreturn r",
     );
-    if seen.iter().any(|v| v["kind"] == "tool_use" && v["name"] == "Workflow") {
+    if seen
+        .iter()
+        .any(|v| v["kind"] == "tool_use" && v["name"] == "Workflow")
+    {
         let done = |v: &Value| v["type"] == "workflow" && v["status"] == "completed";
         let in_turn = seen.iter().find(|v| done(v)).cloned();
         let wf = match &in_turn {
@@ -729,8 +761,12 @@ fn controls_a_real_session() {
         assert_eq!(wf["name"], "e2e-echo");
         assert!(wf["tool_use_id"].is_string(), "{wf}");
         assert!(
-            seen.iter().any(|v| v["type"] == "block" && v["run_id"].is_string())
-                || rpc.seen.iter().any(|v| v["type"] == "block" && v["run_id"].is_string()),
+            seen.iter()
+                .any(|v| v["type"] == "block" && v["run_id"].is_string())
+                || rpc
+                    .seen
+                    .iter()
+                    .any(|v| v["type"] == "block" && v["run_id"].is_string()),
             "没有 Workflow Run 里 Subagent 的 block"
         );
         let _ = in_turn;
@@ -779,10 +815,18 @@ fn controls_a_real_session() {
     // pick the newest prompt, restore the conversation only, then ask something else there.
     rpc.forget();
     rpc.call("r1", json!({"type": "send_keys", "keys": ["esc", "esc"]}));
-    let picker = wait_screen(&mut rpc, "r2", |ls| ls.iter().any(|l| l.contains("Restore the code and/or conversation")));
-    assert!(picker.iter().any(|l| l.trim() == "❯ (current)"), "{picker:#?}");
+    let picker = wait_screen(&mut rpc, "r2", |ls| {
+        ls.iter()
+            .any(|l| l.contains("Restore the code and/or conversation"))
+    });
+    assert!(
+        picker.iter().any(|l| l.trim() == "❯ (current)"),
+        "{picker:#?}"
+    );
     rpc.call("r3", json!({"type": "send_keys", "keys": ["up", "enter"]}));
-    let confirm = wait_screen(&mut rpc, "r4", |ls| ls.iter().any(|l| l.contains("Restore conversation")));
+    let confirm = wait_screen(&mut rpc, "r4", |ls| {
+        ls.iter().any(|l| l.contains("Restore conversation"))
+    });
     let n = confirm
         .iter()
         .find_map(|l| {
@@ -793,7 +837,10 @@ fn controls_a_real_session() {
         .unwrap_or_else(|| panic!("找不到 Restore conversation：{confirm:#?}"));
     rpc.call("r5", json!({"type": "send_keys", "keys": [{"text": n}]}));
     std::thread::sleep(Duration::from_millis(800));
-    rpc.call("r6", json!({"type": "prompt", "text": "Reply with exactly REWOUND."}));
+    rpc.call(
+        "r6",
+        json!({"type": "prompt", "text": "Reply with exactly REWOUND."}),
+    );
     let b = rpc.event("branch", Duration::from_secs(30));
     assert!(b["at_uuid"].is_string(), "{b}");
     rpc.until("rewound", Duration::from_secs(60), |v| {
@@ -808,8 +855,18 @@ fn controls_a_real_session() {
         .collect();
     assert!(texts.iter().any(|t| t.contains("REWOUND")));
     // `up` picked the newest prompt before the rewind: the background shell one.
-    assert!(!texts.iter().any(|t| t.starts_with("Use the Bash tool exactly once with run_in_background")), "{texts:#?}");
-    assert!(texts.iter().any(|t| t.starts_with("Call the Workflow tool")), "{texts:#?}");
+    assert!(
+        !texts
+            .iter()
+            .any(|t| t.starts_with("Use the Bash tool exactly once with run_in_background")),
+        "{texts:#?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.starts_with("Call the Workflow tool")),
+        "{texts:#?}"
+    );
 
     // /clear changes the session id
     rpc.forget();
@@ -861,7 +918,11 @@ fn controls_a_real_session() {
 
 /// Waits for `pred`, allowing every permission request on the way; returns the match and the
 /// requests answered.
-fn until_answering(rpc: &mut Rpc, what: &str, pred: impl Fn(&Value) -> bool) -> (Value, Vec<Value>) {
+fn until_answering(
+    rpc: &mut Rpc,
+    what: &str,
+    pred: impl Fn(&Value) -> bool,
+) -> (Value, Vec<Value>) {
     let mut n = 0;
     let mut answered = Vec::new();
     loop {
@@ -914,7 +975,14 @@ fn person_takes_over(env: &Env, holder: &str) -> std::os::unix::net::UnixStream 
         ..Default::default()
     });
     s.write_all(&attach.encode()).unwrap();
-    s.write_all(&Frame::Resize { cols: 100, rows: 30 }.encode()).unwrap();
+    s.write_all(
+        &Frame::Resize {
+            cols: 100,
+            rows: 30,
+        }
+        .encode(),
+    )
+    .unwrap();
     s
 }
 
@@ -986,7 +1054,10 @@ fn yields_when_a_person_takes_over() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("已有 ccrpc 连着"), "{err}");
     let st = rpc.call("r5", json!({"type": "get_state"}));
-    assert_eq!(st["taken_over"], false, "the refused ccrpc did not touch the Pane");
+    assert_eq!(
+        st["taken_over"], false,
+        "the refused ccrpc did not touch the Pane"
+    );
 
     // Another ccrpc refuses the Session while a person holds it, unless forced.
     // (The Pane outlives this ccrpc: the forced one cleans it up.)
@@ -1015,7 +1086,11 @@ fn yields_when_a_person_takes_over() {
     let ready = co.event("ready", Duration::from_secs(20));
     assert_eq!(ready["co_display"], true);
     assert_eq!(ready["taken_over"], false);
-    assert_eq!(ready["size"], json!([160, 48]), "the PTY as the last one left it");
+    assert_eq!(
+        ready["size"],
+        json!([160, 48]),
+        "the PTY as the last one left it"
+    );
     // The person resizes: the co-displayed VT follows, and it is no takeover.
     let mut person = person;
     person
@@ -1027,13 +1102,20 @@ fn yields_when_a_person_takes_over() {
         if scr["lines"].as_array().unwrap().len() == 28 {
             break;
         }
-        assert!(Instant::now() < deadline, "共显的屏幕没有跟随 PTY 尺寸：{}", scr["lines"].as_array().unwrap().len());
+        assert!(
+            Instant::now() < deadline,
+            "共显的屏幕没有跟随 PTY 尺寸：{}",
+            scr["lines"].as_array().unwrap().len()
+        );
         std::thread::sleep(Duration::from_millis(300));
     }
     co.call("c1", json!({"type": "send_keys", "keys": [{"text": "x"}]}));
     std::thread::sleep(Duration::from_millis(500));
     let st = co.call("c2", json!({"type": "get_state"}));
-    assert_eq!(st["taken_over"], false, "a person's keys are not a takeover here");
+    assert_eq!(
+        st["taken_over"], false,
+        "a person's keys are not a takeover here"
+    );
     co.call("c3", json!({"type": "send_keys", "keys": ["backspace"]}));
     drop(co);
     drop(person);
@@ -1105,7 +1187,9 @@ fn dump(rpc: &mut Rpc, name: &str) -> Vec<String> {
 
 /// Waits for a `state` event whose state is `state` (and `waiting.kind`, if given).
 fn wait_state(rpc: &mut Rpc, state: &str, secs: u64) -> Value {
-    rpc.until(state, Duration::from_secs(secs), |v| v["type"] == "state" && v["state"] == state)
+    rpc.until(state, Duration::from_secs(secs), |v| {
+        v["type"] == "state" && v["state"] == state
+    })
 }
 
 #[test]
@@ -1122,7 +1206,10 @@ fn probe_layouts() {
 
     // Permission modes: shift+tab cycles; print the footer each time.
     for i in 0..4 {
-        rpc.call(&format!("m{i}"), json!({"type": "send_keys", "keys": ["shift+tab"]}));
+        rpc.call(
+            &format!("m{i}"),
+            json!({"type": "send_keys", "keys": ["shift+tab"]}),
+        );
         std::thread::sleep(Duration::from_millis(600));
         dump(&mut rpc, &format!("mode{i}"));
     }
@@ -1137,7 +1224,10 @@ fn probe_layouts() {
     .unwrap();
     std::fs::write(&png, bytes).unwrap();
     let paste = format!("\x1b[200~{}\x1b[201~", png.display());
-    rpc.call("i1", json!({"type": "send_keys", "keys": [{"text": paste}]}));
+    rpc.call(
+        "i1",
+        json!({"type": "send_keys", "keys": [{"text": paste}]}),
+    );
     std::thread::sleep(Duration::from_millis(1000));
     dump(&mut rpc, "image-pasted");
     rpc.call("i2", json!({"type": "send_keys", "keys": [{"text": " What color is this image? Reply with one word, without using tools."}, "enter"]}));
@@ -1184,7 +1274,10 @@ fn probe_layouts() {
     dump(&mut rpc, "background-enter");
     rpc.call("b4", json!({"type": "send_keys", "keys": ["esc"]}));
     std::thread::sleep(Duration::from_millis(500));
-    rpc.call("b5", json!({"type": "send_keys", "keys": [{"text": "/tasks"}]}));
+    rpc.call(
+        "b5",
+        json!({"type": "send_keys", "keys": [{"text": "/tasks"}]}),
+    );
     std::thread::sleep(Duration::from_millis(500));
     dump(&mut rpc, "tasks-typed");
     rpc.call("b6", json!({"type": "send_keys", "keys": ["enter"]}));
@@ -1196,7 +1289,10 @@ fn probe_layouts() {
 
     // Plan mode: the plan approval dialog.
     rpc.forget();
-    rpc.call("pl1", json!({"type": "send_keys", "keys": ["esc", "ctrl+u"]}));
+    rpc.call(
+        "pl1",
+        json!({"type": "send_keys", "keys": ["esc", "ctrl+u"]}),
+    );
     for _ in 0..2 {
         rpc.call("pl2", json!({"type": "send_keys", "keys": ["shift+tab"]}));
         std::thread::sleep(Duration::from_millis(400));
@@ -1260,7 +1356,10 @@ fn learns_an_unknown_dialog() {
                 .or_else(|| opts.first())
                 .unwrap()
                 .to_string();
-            rpc.call("c1", json!({"type": "answer_choice", "request_id": v["request_id"], "option": pick}));
+            rpc.call(
+                "c1",
+                json!({"type": "answer_choice", "request_id": v["request_id"], "option": pick}),
+            );
         }
         Some("permission_request") => {
             rpc.call("c1", json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}));
@@ -1278,7 +1377,10 @@ fn learns_an_unknown_dialog() {
         rpc.call("c2", json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}));
     }
     // The layout is in the library; copy it out for export when asked.
-    let learned: Vec<_> = std::fs::read_dir(&env.layout_dir).unwrap().flatten().collect();
+    let learned: Vec<_> = std::fs::read_dir(&env.layout_dir)
+        .unwrap()
+        .flatten()
+        .collect();
     assert!(!learned.is_empty());
     if let Ok(out) = std::env::var("CCRPC_E2E_KEEP_LAYOUTS") {
         std::fs::create_dir_all(&out).unwrap();
@@ -1320,48 +1422,94 @@ fn mock_model() -> String {
                 let req: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
                 let reply = |s: &mut std::net::TcpStream, code: &str, v: Value| {
                     let b = v.to_string();
-                    let _ = write!(s, "HTTP/1.1 {code}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{b}", b.len());
+                    let _ = write!(
+                        s,
+                        "HTTP/1.1 {code}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{b}",
+                        b.len()
+                    );
                 };
                 if path.contains("count_tokens") {
                     return reply(&mut s, "200 OK", json!({"input_tokens": 10}));
                 }
                 if !path.starts_with("/v1/messages") {
-                    return reply(&mut s, "404 Not Found", json!({"type": "error", "error": {"type": "not_found_error", "message": "no"}}));
+                    return reply(
+                        &mut s,
+                        "404 Not Found",
+                        json!({"type": "error", "error": {"type": "not_found_error", "message": "no"}}),
+                    );
                 }
                 // The newest user text (after any tool results).
-                let last = req["messages"].as_array().and_then(|m| m.iter().rev().find(|m| m["role"] == "user")).cloned();
+                let last = req["messages"]
+                    .as_array()
+                    .and_then(|m| m.iter().rev().find(|m| m["role"] == "user"))
+                    .cloned();
                 let text = match last.as_ref().map(|m| &m["content"]) {
                     Some(Value::String(t)) => t.clone(),
-                    Some(Value::Array(a)) => a.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                    Some(Value::Array(a)) => a
+                        .iter()
+                        .filter_map(|b| b["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                     _ => String::new(),
                 };
                 if text.contains("MOCK-FAIL") {
-                    return reply(&mut s, "400 Bad Request", json!({"type": "error", "error": {"type": "invalid_request_error", "message": "mock failure"}}));
+                    return reply(
+                        &mut s,
+                        "400 Bad Request",
+                        json!({"type": "error", "error": {"type": "invalid_request_error", "message": "mock failure"}}),
+                    );
                 }
-                let has_tool = |n: &str| req["tools"].as_array().is_some_and(|t| t.iter().any(|t| t["name"] == n));
-                static TOOL_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                let has_tool = |n: &str| {
+                    req["tools"]
+                        .as_array()
+                        .is_some_and(|t| t.iter().any(|t| t["name"] == n))
+                };
+                static TOOL_SEQ: std::sync::atomic::AtomicU32 =
+                    std::sync::atomic::AtomicU32::new(0);
                 // Claude Code merges and reorders consecutive messages, so which prompt a request
                 // answers is not read off the last message: a tool is called while there are more
                 // prompts asking for it than calls to it so far (a tool result gets text).
                 let msgs = req["messages"].as_array().cloned().unwrap_or_default();
                 let blocks = |role: &str| -> Vec<Value> {
-                    msgs.iter().filter(|m| m["role"] == role).flat_map(|m| match &m["content"] {
-                        Value::Array(a) => a.clone(),
-                        Value::String(t) => vec![json!({"type": "text", "text": t})],
-                        _ => vec![],
-                    }).collect()
+                    msgs.iter()
+                        .filter(|m| m["role"] == role)
+                        .flat_map(|m| match &m["content"] {
+                            Value::Array(a) => a.clone(),
+                            Value::String(t) => vec![json!({"type": "text", "text": t})],
+                            _ => vec![],
+                        })
+                        .collect()
                 };
                 let (user, assistant) = (blocks("user"), blocks("assistant"));
-                let asked = |w: &str| user.iter().filter(|b| b["text"].as_str().is_some_and(|t| t.contains(w))).count();
-                let called = |n: &str| assistant.iter().filter(|b| b["type"] == "tool_use" && b["name"] == n).count();
+                let asked = |w: &str| {
+                    user.iter()
+                        .filter(|b| b["text"].as_str().is_some_and(|t| t.contains(w)))
+                        .count()
+                };
+                let called = |n: &str| {
+                    assistant
+                        .iter()
+                        .filter(|b| b["type"] == "tool_use" && b["name"] == n)
+                        .count()
+                };
                 let tool = if asked("MOCK-TOOL") > called("Bash") && has_tool("Bash") {
-                    Some(("Bash", json!({"command": "touch mock-tool.txt", "description": "Create mock-tool.txt"})))
+                    Some((
+                        "Bash",
+                        json!({"command": "touch mock-tool.txt", "description": "Create mock-tool.txt"}),
+                    ))
                 } else if asked("MOCK-BG") > 0 && called("Bash") < 2 && has_tool("Bash") {
-                    Some(("Bash", match called("Bash") {
-                        0 => json!({"command": "sleep 2", "description": "Wait in background", "run_in_background": true}),
-                        _ => json!({"command": "sleep 1", "description": "Wait"}),
-                    }))
-                } else if asked("MOCK-ASK") > called("AskUserQuestion") && has_tool("AskUserQuestion") {
+                    Some((
+                        "Bash",
+                        match called("Bash") {
+                            0 => {
+                                json!({"command": "sleep 2", "description": "Wait in background", "run_in_background": true})
+                            }
+                            _ => json!({"command": "sleep 1", "description": "Wait"}),
+                        },
+                    ))
+                } else if asked("MOCK-ASK") > called("AskUserQuestion")
+                    && has_tool("AskUserQuestion")
+                {
                     let color = json!({"question": "Which color?", "header": "Color",
                         "options": [{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}],
                         "multiSelect": false});
@@ -1369,14 +1517,21 @@ fn mock_model() -> String {
                         "options": [{"label": "S", "description": "small"}, {"label": "M", "description": "medium"},
                             {"label": "L", "description": "large"}],
                         "multiSelect": true});
-                    let questions = if text.contains("MOCK-ASKS") { json!([color, sizes]) } else { json!([color]) };
+                    let questions = if text.contains("MOCK-ASKS") {
+                        json!([color, sizes])
+                    } else {
+                        json!([color])
+                    };
                     Some(("AskUserQuestion", json!({"questions": questions})))
                 } else {
                     None
                 };
                 // MOCK-BG's last answer (to the second tool's result, not to the task notification).
                 let bg_last = asked("MOCK-BG") > 0 && called("Bash") == 2 && text.is_empty();
-                let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW") || bg_last || text.contains("<task-notification>") {
+                let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW")
+                    || bg_last
+                    || text.contains("<task-notification>")
+                {
                     (vec!["slow "; 16], 500)
                 } else if text.contains("MOCK-STEERED") {
                     (vec!["STEER-TURN"], 0)
@@ -1391,34 +1546,64 @@ fn mock_model() -> String {
                     let n = TOOL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     (format!("toolu_mock{n:04}"), name, input)
                 });
-                let stop = if tool.is_some() { "tool_use" } else { "end_turn" };
+                let stop = if tool.is_some() {
+                    "tool_use"
+                } else {
+                    "end_turn"
+                };
                 if req["stream"] != true {
                     let mut m = msg.clone();
                     m["content"] = match &tool {
-                        Some((id, name, input)) => json!([{"type": "tool_use", "id": id, "name": name, "input": input}]),
+                        Some((id, name, input)) => {
+                            json!([{"type": "tool_use", "id": id, "name": name, "input": input}])
+                        }
                         None => json!([{"type": "text", "text": words.concat()}]),
                     };
                     m["stop_reason"] = json!(stop);
                     return reply(&mut s, "200 OK", m);
                 }
-                let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n");
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n"
+                );
                 let mut ev = |name: &str, v: Value| {
                     let _ = write!(s, "event: {name}\ndata: {v}\n\n");
                     let _ = s.flush();
                 };
-                ev("message_start", json!({"type": "message_start", "message": msg}));
+                ev(
+                    "message_start",
+                    json!({"type": "message_start", "message": msg}),
+                );
                 if let Some((id, name, input)) = &tool {
-                    ev("content_block_start", json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}}));
-                    ev("content_block_delta", json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": input.to_string()}}));
+                    ev(
+                        "content_block_start",
+                        json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}}),
+                    );
+                    ev(
+                        "content_block_delta",
+                        json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": input.to_string()}}),
+                    );
                 } else {
-                    ev("content_block_start", json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}));
+                    ev(
+                        "content_block_start",
+                        json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+                    );
                     for w in words {
                         std::thread::sleep(Duration::from_millis(gap));
-                        ev("content_block_delta", json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": w}}));
+                        ev(
+                            "content_block_delta",
+                            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": w}}),
+                        );
                     }
                 }
-                ev("content_block_stop", json!({"type": "content_block_stop", "index": 0}));
-                ev("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": null}, "usage": {"output_tokens": 3}}));
+                ev(
+                    "content_block_stop",
+                    json!({"type": "content_block_stop", "index": 0}),
+                );
+                ev(
+                    "message_delta",
+                    json!({"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": null}, "usage": {"output_tokens": 3}}),
+                );
                 ev("message_stop", json!({"type": "message_stop"}));
             });
         }
@@ -1446,14 +1631,33 @@ fn mock_model_turns() {
     assert_eq!(t1["prompt_id"], first, "{t1}");
     // Each turn's blocks come before its turn_end (the steer's Stop arrives right after this one's).
     let text_before = |rpc: &Rpc, w: &str| {
-        rpc.seen.iter().any(|v| v["type"] == "block" && v["kind"] == "text" && v["text"].as_str().is_some_and(|t| t.contains(w)))
+        rpc.seen.iter().any(|v| {
+            v["type"] == "block"
+                && v["kind"] == "text"
+                && v["text"].as_str().is_some_and(|t| t.contains(w))
+        })
     };
-    assert!(text_before(&rpc, "slow"), "第一轮的文字在它的 turn_end 之后才到");
-    assert!(!text_before(&rpc, "STEER-TURN"), "插话那一轮的文字跑到了第一轮的 turn_end 之前");
-    assert!(t1["last_text"].as_str().unwrap_or("").contains("slow"), "{t1}");
+    assert!(
+        text_before(&rpc, "slow"),
+        "第一轮的文字在它的 turn_end 之后才到"
+    );
+    assert!(
+        !text_before(&rpc, "STEER-TURN"),
+        "插话那一轮的文字跑到了第一轮的 turn_end 之前"
+    );
+    assert!(
+        t1["last_text"].as_str().unwrap_or("").contains("slow"),
+        "{t1}"
+    );
     let t2 = rpc.event("turn_end", Duration::from_secs(60));
-    assert!(t2["prompt_id"].is_string() && t2["prompt_id"] != first, "{t2}");
-    assert!(text_before(&rpc, "STEER-TURN"), "插话那一轮的文字在它的 turn_end 之后才到");
+    assert!(
+        t2["prompt_id"].is_string() && t2["prompt_id"] != first,
+        "{t2}"
+    );
+    assert!(
+        text_before(&rpc, "STEER-TURN"),
+        "插话那一轮的文字在它的 turn_end 之后才到"
+    );
     assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
     assert_eq!(t2["aborted"], false, "{t2}");
 
@@ -1461,7 +1665,13 @@ fn mock_model_turns() {
     rpc.call("f1", json!({"type": "prompt", "text": "MOCK-FAIL"}));
     let t3 = rpc.event("turn_end", Duration::from_secs(60));
     assert!(t3["error"].is_object(), "{t3}");
-    assert!(t3["error"]["message"].as_str().unwrap_or("").contains("400"), "{t3}");
+    assert!(
+        t3["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("400"),
+        "{t3}"
+    );
     assert_eq!(t3["aborted"], false);
 }
 
@@ -1479,13 +1689,17 @@ fn mock_model_send_now() {
     let first = d["prompt_id"].clone();
     std::thread::sleep(Duration::from_secs(2));
     rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
-    let q = rpc.until("queue", Duration::from_secs(10), |v| v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty()));
+    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+        v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
+    });
     assert_eq!(q["items"], json!(["MOCK-STEERED now"]), "{q}");
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["queue"], json!(["MOCK-STEERED now"]), "{st}");
 
     rpc.call("n1", json!({"type": "send_now"}));
-    rpc.until("queue", Duration::from_secs(5), |v| v["type"] == "queue" && v["items"] == json!([]));
+    rpc.until("queue", Duration::from_secs(5), |v| {
+        v["type"] == "queue" && v["items"] == json!([])
+    });
     let t1 = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t1["prompt_id"], first, "{t1}");
     assert_eq!(t1["aborted"], true, "{t1}");
@@ -1517,9 +1731,14 @@ fn mock_model_steer_image() {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
     });
     let item = q["items"][0].as_str().unwrap_or_default();
-    assert!(item.contains("[Image #1]") && item.ends_with("MOCK-STEERED with image"), "{q}");
+    assert!(
+        item.contains("[Image #1]") && item.ends_with("MOCK-STEERED with image"),
+        "{q}"
+    );
     rpc.event("turn_end", Duration::from_secs(30));
-    rpc.until("queue", Duration::from_secs(30), |v| v["type"] == "queue" && v["items"] == json!([]));
+    rpc.until("queue", Duration::from_secs(30), |v| {
+        v["type"] == "queue" && v["items"] == json!([])
+    });
 }
 
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on
@@ -1545,7 +1764,10 @@ fn mock_model_session() {
 
     // A few turns: the status line, then progress while one runs slowly.
     for i in 0..3 {
-        rpc.call(&format!("p{i}"), json!({"type": "prompt", "text": format!("hello {i}")}));
+        rpc.call(
+            &format!("p{i}"),
+            json!({"type": "prompt", "text": format!("hello {i}")}),
+        );
         rpc.event("turn_end", Duration::from_secs(30));
     }
     let st = rpc.call("g1", json!({"type": "get_state"}));
@@ -1555,37 +1777,71 @@ fn mock_model_session() {
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
     let p = rpc.event("progress", Duration::from_secs(15));
-    assert!(p["verb"].is_string() && p["text"].as_str().unwrap().contains('…'), "{p}");
+    assert!(
+        p["verb"].is_string() && p["text"].as_str().unwrap().contains('…'),
+        "{p}"
+    );
     // A follow-up queued while busy, with an image: sent as a prompt once idle.
     let img = env.work.join("dot.png");
     std::fs::write(&img, red_dot_png()).unwrap();
-    let q = rpc.call("f1", json!({"type": "follow_up", "text": "after-image", "images": [img]}));
+    let q = rpc.call(
+        "f1",
+        json!({"type": "follow_up", "text": "after-image", "images": [img]}),
+    );
     assert_eq!(q["queued"], 1, "{q}");
     rpc.event("turn_end", Duration::from_secs(30));
     let u = rpc.until("follow-up", Duration::from_secs(30), |v| {
-        v["type"] == "follow_up_failed" || (v["type"] == "block" && v["kind"] == "user" && v["text"].as_str().is_some_and(|t| t.contains("after-image")))
+        v["type"] == "follow_up_failed"
+            || (v["type"] == "block"
+                && v["kind"] == "user"
+                && v["text"]
+                    .as_str()
+                    .is_some_and(|t| t.contains("after-image")))
     });
     assert_eq!(u["type"], "block", "follow_up 没发出去：{u}");
     rpc.event("turn_end", Duration::from_secs(30));
     // Its block names the image, which comes back as sent; Claude Code's note of where it came
     // from is not a block.
     assert_eq!(u["images"], json!(["image/png"]), "{u}");
-    let im = rpc.call("i1", json!({"type": "get_image", "uuid": u["uuid"], "index": 0}));
+    let im = rpc.call(
+        "i1",
+        json!({"type": "get_image", "uuid": u["uuid"], "index": 0}),
+    );
     assert_eq!(im["media_type"], "image/png");
     use base64::Engine as _;
-    assert_eq!(base64::engine::general_purpose::STANDARD.decode(im["data"].as_str().unwrap()).unwrap(), red_dot_png());
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(im["data"].as_str().unwrap())
+            .unwrap(),
+        red_dot_png()
+    );
 
     // Paging back from the newest.
     let all = rpc.call("m0", json!({"type": "get_messages"}));
     let n = all["blocks"].as_array().unwrap().len();
     assert!(n >= 8, "{all}");
-    let notes = all["blocks"].as_array().unwrap().iter().filter(|b| b["text"].as_str().is_some_and(|t| t.starts_with("[Image: source:"))).count();
+    let notes = all["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| {
+            b["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("[Image: source:"))
+        })
+        .count();
     assert_eq!(notes, 0, "{all}");
     let last = rpc.call("m1", json!({"type": "get_messages", "limit": 3}));
     assert_eq!(last["blocks"].as_array().unwrap().len(), 3);
     assert_eq!(last["more"], true);
-    assert_eq!(last["blocks"], json!(all["blocks"].as_array().unwrap()[n - 3..]));
-    let older = rpc.call("m2", json!({"type": "get_messages", "before": last["first"], "limit": 100}));
+    assert_eq!(
+        last["blocks"],
+        json!(all["blocks"].as_array().unwrap()[n - 3..])
+    );
+    let older = rpc.call(
+        "m2",
+        json!({"type": "get_messages", "before": last["first"], "limit": 100}),
+    );
     assert_eq!(older["blocks"].as_array().unwrap().len(), n - 3);
     assert_eq!(older["more"], false);
 
@@ -1599,9 +1855,18 @@ fn mock_model_session() {
     }
     rpc.holder_pid = None;
     let text = std::fs::read_to_string(&log).unwrap();
-    assert!(text.contains("hook UserPromptSubmit") && text.contains("keys "), "日志里没有 hook 与按键");
-    assert!(text.contains(" holder=") && text.contains(" claude="), "日志开头没有版本行");
-    assert!(text.contains("recognize choice") && text.contains("  | "), "日志里没有识别决策与整屏");
+    assert!(
+        text.contains("hook UserPromptSubmit") && text.contains("keys "),
+        "日志里没有 hook 与按键"
+    );
+    assert!(
+        text.contains(" holder=") && text.contains(" claude="),
+        "日志开头没有版本行"
+    );
+    assert!(
+        text.contains("recognize choice") && text.contains("  | "),
+        "日志里没有识别决策与整屏"
+    );
 }
 
 /// Tool calls on the scripted model (no credits): a Bash approval carries the dialog's options
@@ -1619,16 +1884,28 @@ fn mock_model_tools() {
     let pr = rpc.event("permission_request", Duration::from_secs(30));
     assert_eq!(pr["tool_name"], "Bash", "{pr}");
     assert_eq!(pr["layout_source"], "builtin", "{pr}");
-    let opts = pr["options"].as_array().unwrap_or_else(|| panic!("permission_request 没带 options：{pr}"));
+    let opts = pr["options"]
+        .as_array()
+        .unwrap_or_else(|| panic!("permission_request 没带 options：{pr}"));
     let meanings: Vec<&str> = opts.iter().filter_map(|o| o["meaning"].as_str()).collect();
     assert_eq!(meanings.first(), Some(&"allow"), "{pr}");
     assert_eq!(meanings.last(), Some(&"deny"), "{pr}");
     assert!(meanings.contains(&"allow_always"), "{pr}");
-    assert!(opts.iter().all(|o| o["label"].as_str().is_some_and(|l| !l.is_empty())), "{pr}");
-    rpc.call("t2", json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}));
+    assert!(
+        opts.iter()
+            .all(|o| o["label"].as_str().is_some_and(|l| !l.is_empty())),
+        "{pr}"
+    );
+    rpc.call(
+        "t2",
+        json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}),
+    );
     let t = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t["aborted"], false, "{t}");
-    assert!(env.work.join("mock-tool.txt").exists(), "允许之后 touch 没有执行");
+    assert!(
+        env.work.join("mock-tool.txt").exists(),
+        "允许之后 touch 没有执行"
+    );
 
     rpc.forget();
     rpc.call("t3", json!({"type": "prompt", "text": "MOCK-TOOL again"}));
@@ -1683,8 +1960,11 @@ fn mock_model_ask_before_attach() {
 
     let (q, mut rpc) = ask_and_leave(rpc, "q2", "MOCK-ASKS both");
     assert_eq!(q["questions"].as_array().map(Vec::len), Some(2), "{q}");
-    rpc.call("a2", json!({"type": "answer_question", "request_id": q["request_id"],
-        "answers": [{"options": ["Red"]}, {"options": ["S", "L"]}]}));
+    rpc.call(
+        "a2",
+        json!({"type": "answer_question", "request_id": q["request_id"],
+        "answers": [{"options": ["Red"]}, {"options": ["S", "L"]}]}),
+    );
     rpc.event("turn_end", Duration::from_secs(30));
 
     let m = rpc.call("m1", json!({"type": "get_messages"}));
@@ -1695,9 +1975,15 @@ fn mock_model_ask_before_attach() {
         .filter(|b| b["kind"] == "tool_result")
         .filter_map(|b| b["content"].as_str())
         .collect();
-    assert!(results.iter().any(|c| c.contains("Blue")), "单题的结果里没有答案：{results:?}");
     assert!(
-        results.iter().any(|c| c.contains("Red") && c.contains('S') && c.contains('L') && !c.contains("\"M\"")),
+        results.iter().any(|c| c.contains("Blue")),
+        "单题的结果里没有答案：{results:?}"
+    );
+    assert!(
+        results.iter().any(|c| c.contains("Red")
+            && c.contains('S')
+            && c.contains('L')
+            && !c.contains("\"M\"")),
         "两题的结果里没有答案：{results:?}"
     );
 }
@@ -1715,7 +2001,9 @@ fn mock_model_follow_up() {
     rpc.forget();
     rpc.call("b1", json!({"type": "prompt", "text": "MOCK-BG go"}));
     // `sleep` runs without asking.
-    rpc.until("tool_use", Duration::from_secs(30), |v| v["kind"] == "tool_use");
+    rpc.until("tool_use", Duration::from_secs(30), |v| {
+        v["kind"] == "tool_use"
+    });
     let q = rpc.call("f1", json!({"type": "follow_up", "text": "AFTER-BG"}));
     assert_eq!(q["queued"], 1, "{q}");
     // The prompt's turn, the notification's, then the follow-up's.
@@ -1734,9 +2022,18 @@ fn mock_model_follow_up() {
         .filter(|b| b["kind"] == "user")
         .map(|b| b["text"].as_str().unwrap_or("").to_string())
         .collect();
-    let notified = users.iter().position(|t| t.contains("<task-notification>")).unwrap_or_else(|| panic!("没有后台任务的通知：{users:?}"));
-    let after = users.iter().position(|t| t == "AFTER-BG").unwrap_or_else(|| panic!("follow_up 没发出：{users:?}"));
-    assert!(notified < after, "follow_up 应在通知那一轮之后发出：{users:?}");
+    let notified = users
+        .iter()
+        .position(|t| t.contains("<task-notification>"))
+        .unwrap_or_else(|| panic!("没有后台任务的通知：{users:?}"));
+    let after = users
+        .iter()
+        .position(|t| t == "AFTER-BG")
+        .unwrap_or_else(|| panic!("follow_up 没发出：{users:?}"));
+    assert!(
+        notified < after,
+        "follow_up 应在通知那一轮之后发出：{users:?}"
+    );
     // Sent as a prompt of its own, not typed into the notification's turn (Claude Code's queue).
     let transcript = std::fs::read_dir(env.cc_dir.join("projects"))
         .unwrap()
@@ -1749,5 +2046,8 @@ fn mock_model_follow_up() {
         .lines()
         .filter(|l| l.contains(r#""operation":"enqueue""#) && !l.contains("task-notification"))
         .collect();
-    assert!(enqueues.is_empty(), "follow_up 进了 Claude Code 的队列：{enqueues:?}");
+    assert!(
+        enqueues.is_empty(),
+        "follow_up 进了 Claude Code 的队列：{enqueues:?}"
+    );
 }

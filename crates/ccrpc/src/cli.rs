@@ -45,7 +45,9 @@ pub fn run(args: Vec<String>) -> Result<()> {
         Some("ls") => cmd_ls(&roots, &args[1..]),
         Some("doctor") => cmd_doctor(&roots),
         Some("layouts") => cmd_layouts(&args[1..]),
-        Some("debug") if args.get(1).map(String::as_str) == Some("replay") => cmd_replay(&args[2..]),
+        Some("debug") if args.get(1).map(String::as_str) == Some("replay") => {
+            cmd_replay(&args[2..])
+        }
         Some("debug") => cmd_debug(&roots, &args[1..]),
         Some("new") => crate::session::cmd_new(&roots, &args[1..]),
         Some("attach") => crate::session::cmd_attach(&roots, &args[1..]),
@@ -81,16 +83,29 @@ fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
         };
         let checkin = crate::hook::read_checkin(&state, claude.pid);
         let plugin = checkin.as_ref().is_some_and(|c| {
-            crate::hook::checkin_problem(Some(c), pf.as_ref().and_then(|p| p.session_id.as_deref())).is_none()
+            crate::hook::checkin_problem(Some(c), pf.as_ref().and_then(|p| p.session_id.as_deref()))
+                .is_none()
         });
-        let cwd = pf.as_ref().and_then(|p| p.cwd.clone()).unwrap_or_else(|| m.cwd.clone());
+        let cwd = pf
+            .as_ref()
+            .and_then(|p| p.cwd.clone())
+            .unwrap_or_else(|| m.cwd.clone());
         if !json_out {
-            println!("{id}\t{sid}\t{status}\t{}\t{}", m.cwd, if plugin { "plugin" } else { "-" });
+            println!(
+                "{id}\t{sid}\t{status}\t{}\t{}",
+                m.cwd,
+                if plugin { "plugin" } else { "-" }
+            );
             continue;
         }
         // The plugin's check-in, else where Claude Code puts it (`<projects>/<cwd encoded>/<id>.jsonl`).
-        let guessed = (!sid.is_empty() && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).then(|| {
-            let enc: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        let guessed = (!sid.is_empty()
+            && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        .then(|| {
+            let enc: String = cwd
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                .collect();
             roots.projects_dir().join(enc).join(format!("{sid}.jsonl"))
         });
         let transcript = checkin
@@ -178,24 +193,45 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
     };
     // toh
     match std::process::Command::new("toh").arg("--version").output() {
-        Ok(o) if o.status.success() => line("ok", "toh", String::from_utf8_lossy(&o.stdout).trim().to_string()),
+        Ok(o) if o.status.success() => line(
+            "ok",
+            "toh",
+            String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        ),
         _ => line("fail", "toh", "PATH 里没有可用的 toh".into()),
     }
     // claude
-    match std::process::Command::new("claude").arg("--version").output() {
+    match std::process::Command::new("claude")
+        .arg("--version")
+        .output()
+    {
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            let ver = out.split_whitespace().next().unwrap_or_default().to_string();
+            let ver = out
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string();
             if crate::session::TESTED_CLAUDE_VERSIONS.contains(&ver.as_str()) {
                 line("ok", "claude", out);
             } else {
-                line("warn", "claude", format!("{out}：不是实测过的版本（{}），内置布局可能认不出", crate::session::TESTED_CLAUDE_VERSIONS.join(", ")));
+                line(
+                    "warn",
+                    "claude",
+                    format!(
+                        "{out}：不是实测过的版本（{}），内置布局可能认不出",
+                        crate::session::TESTED_CLAUDE_VERSIONS.join(", ")
+                    ),
+                );
             }
         }
         _ => line("fail", "claude", "PATH 里没有可用的 claude".into()),
     }
     // directories
-    for (what, dir) in [("ToH 状态目录", &roots.toh_state), ("Claude Code 配置目录", &roots.claude_config)] {
+    for (what, dir) in [
+        ("ToH 状态目录", &roots.toh_state),
+        ("Claude Code 配置目录", &roots.claude_config),
+    ] {
         if dir.is_dir() {
             line("ok", what, dir.display().to_string());
         } else {
@@ -205,8 +241,15 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
     let sessions = roots.sessions_dir();
     match std::fs::read_dir(&sessions) {
         Ok(rd) => {
-            let n = rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count();
-            line("ok", "进程文件", format!("{} 下 {n} 个", sessions.display()));
+            let n = rd
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                .count();
+            line(
+                "ok",
+                "进程文件",
+                format!("{} 下 {n} 个", sessions.display()),
+            );
         }
         Err(_) => line("warn", "进程文件", format!("读不到 {}", sessions.display())),
     }
@@ -228,14 +271,25 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
         .iter()
         .filter(|(_, m)| locate::find_claude_under(&table, m.child_pid).is_some())
         .count();
-    line("ok", "clay Holder", format!("{} 个，其中 {with_claude} 个在跑 Claude Code", holders.len()));
+    line(
+        "ok",
+        "clay Holder",
+        format!(
+            "{} 个，其中 {with_claude} 个在跑 Claude Code",
+            holders.len()
+        ),
+    );
     // layouts and analyzer
     let lib = crate::layout::Library::load(crate::layout::library_dir());
     let learned = lib.layouts.iter().filter(|l| l.source == "learned").count();
     line(
         "ok",
         "布局库",
-        format!("内置 {}、本机学到 {learned}（{}）", lib.layouts.len() - learned, lib.dir().display()),
+        format!(
+            "内置 {}、本机学到 {learned}（{}）",
+            lib.layouts.len() - learned,
+            lib.dir().display()
+        ),
     );
     match crate::analyze::Analyzer::from_env() {
         Some(a) => {
@@ -249,7 +303,11 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
             };
             line("ok", "分析器", format!("{shown} · {}", a.model))
         }
-        None => line("warn", "分析器", "没设 CCRPC_ANALYZER_API_KEY，认不出的界面只会报 unrecognized / dialog".into()),
+        None => line(
+            "warn",
+            "分析器",
+            "没设 CCRPC_ANALYZER_API_KEY，认不出的界面只会报 unrecognized / dialog".into(),
+        ),
     }
     if failed {
         bail!("有检查未通过");
@@ -264,7 +322,13 @@ fn cmd_layouts(args: &[String]) -> Result<()> {
         Some("list") => {
             for l in &lib.layouts {
                 let kind = serde_json::to_value(l.kind)?;
-                println!("{}\t{}\t{}\t{}", l.id, l.source, kind.as_str().unwrap_or(""), l.title);
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    l.id,
+                    l.source,
+                    kind.as_str().unwrap_or(""),
+                    l.title
+                );
             }
             Ok(())
         }
@@ -283,7 +347,9 @@ fn cmd_layouts(args: &[String]) -> Result<()> {
                 println!("{}", path.display());
                 n += 1;
             }
-            eprintln!("导出 {n} 个布局；重新构建后成为内置布局，单测会用它们各自的屏幕检查。布局文件里有当时的整屏文字，提交前检查有没有不该进仓库的内容");
+            eprintln!(
+                "导出 {n} 个布局；重新构建后成为内置布局，单测会用它们各自的屏幕检查。布局文件里有当时的整屏文字，提交前检查有没有不该进仓库的内容"
+            );
             Ok(())
         }
         _ => bail!("用法：ccrpc layouts list | ccrpc layouts export <仓库目录>"),
@@ -308,7 +374,10 @@ fn cmd_replay(files: &[String]) -> Result<()> {
             continue;
         };
         let p = tmp.join(format!("t{n}.jsonl"));
-        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&p)?;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)?;
         let mut t = Tailer::new(&p);
         let mut live: Vec<String> = Vec::new();
         let mut apply = |evs: Vec<TxEvent>, live: &mut Vec<String>, lineno: usize| {
@@ -325,7 +394,10 @@ fn cmd_replay(files: &[String]) -> Result<()> {
                             .as_ref()
                             .and_then(|a| live.iter().rposition(|u| u == a))
                             .map_or(0, |i| i + 1);
-                        println!("{f}\tline {lineno}\tbranch at={at_uuid:?} dropped={}", live.len() - keep);
+                        println!(
+                            "{f}\tline {lineno}\tbranch at={at_uuid:?} dropped={}",
+                            live.len() - keep
+                        );
                         live.truncate(keep);
                     }
                     _ => {}
@@ -356,12 +428,19 @@ fn cmd_replay(files: &[String]) -> Result<()> {
         }
         if gm != live {
             mismatches += 1;
-            println!("{f}\tmismatch live={} get_messages={}", live.len(), gm.len());
+            println!(
+                "{f}\tmismatch live={} get_messages={}",
+                live.len(),
+                gm.len()
+            );
         }
         let _ = std::fs::remove_file(&p);
     }
     drop(tmpdir);
-    println!("files={} branches={branches} mismatches={mismatches}", files.len());
+    println!(
+        "files={} branches={branches} mismatches={mismatches}",
+        files.len()
+    );
     if mismatches > 0 {
         bail!("{mismatches} 个文件的实时视图与 get_messages 不一致");
     }

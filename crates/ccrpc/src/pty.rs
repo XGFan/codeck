@@ -127,7 +127,9 @@ impl HolderConn {
                             };
                             // Only once ccrpc has held the size: before that the owner is whoever
                             // used the Pane last (checked by `initial_owner`).
-                            if let (Owner::Other(c), true, None) = (&s.owner, s.claimed, &s.taken_by) {
+                            if let (Owner::Other(c), true, None) =
+                                (&s.owner, s.claimed, &s.taken_by)
+                            {
                                 s.taken_by = Some(c.clone());
                             }
                             if s.owner == Owner::Me {

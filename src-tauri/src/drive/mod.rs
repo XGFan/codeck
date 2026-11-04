@@ -98,7 +98,12 @@ fn sink(handle: &AppHandle) -> Sink {
     Arc::new(move |o| {
         let _ = match o {
             Out::Line { conn, line } => DriveLineEvent { conn, line }.emit(&handle),
-            Out::Exit(e) => DriveExitEvent { conn: e.conn, code: e.code, stderr: e.stderr }.emit(&handle),
+            Out::Exit(e) => DriveExitEvent {
+                conn: e.conn,
+                code: e.code,
+                stderr: e.stderr,
+            }
+            .emit(&handle),
         };
     })
 }
@@ -133,8 +138,18 @@ pub struct AnalyzerInfo {
 
 fn analyzer_info(app: &App) -> AnalyzerInfo {
     let saved = crate::settings::load().analyzer;
-    let filled = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
-    let shell = |k: &str| app.env.get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let filled = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    let shell = |k: &str| {
+        app.env
+            .get(k)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
     let (key, key_source) = match (filled(&saved.api_key), shell("CCRPC_ANALYZER_API_KEY")) {
         (Some(k), _) => (Some(k), Some("settings".to_string())),
         (None, Some(k)) => (Some(k), Some("shell".to_string())),
@@ -142,7 +157,15 @@ fn analyzer_info(app: &App) -> AnalyzerInfo {
     };
     AnalyzerInfo {
         enabled: key.is_some(),
-        key_hint: key.map(|k| k.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()),
+        key_hint: key.map(|k| {
+            k.chars()
+                .rev()
+                .take(4)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect()
+        }),
         key_source,
         base_url: filled(&saved.base_url),
         model: filled(&saved.model),
@@ -203,14 +226,22 @@ pub async fn drive_list(state: State<'_, DriveState>) -> CmdResult<String> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_connect(handle: AppHandle, state: State<'_, DriveState>, holder_id: String) -> CmdResult<String> {
+pub async fn drive_connect(
+    handle: AppHandle,
+    state: State<'_, DriveState>,
+    holder_id: String,
+) -> CmdResult<String> {
     let sink = sink(&handle);
     with_drive(&state, move |app| app.connect(sink, &holder_id)).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_new(handle: AppHandle, state: State<'_, DriveState>, cwd: String) -> CmdResult<String> {
+pub async fn drive_new(
+    handle: AppHandle,
+    state: State<'_, DriveState>,
+    cwd: String,
+) -> CmdResult<String> {
     let sink = sink(&handle);
     with_drive(&state, move |app| app.new_session(sink, &cwd)).await
 }
@@ -224,13 +255,23 @@ pub async fn drive_send(state: State<'_, DriveState>, conn: String, line: String
 #[tauri::command]
 #[specta::specta]
 pub async fn drive_disconnect(state: State<'_, DriveState>, conn: String) -> CmdResult<()> {
-    with_drive(&state, move |app| if app.disconnect(&conn) { Ok(()) } else { Err("ccrpc 已退出".into()) })
+    with_drive(&state, move |app| {
+        if app.disconnect(&conn) {
+            Ok(())
+        } else {
+            Err("ccrpc 已退出".into())
+        }
+    })
     .await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_gui_log(state: State<'_, DriveState>, conn: Option<String>, text: String) -> CmdResult<()> {
+pub async fn drive_gui_log(
+    state: State<'_, DriveState>,
+    conn: Option<String>,
+    text: String,
+) -> CmdResult<()> {
     with_drive(&state, move |app| {
         app.gui_log(conn.as_deref(), &text);
         Ok(())
@@ -241,12 +282,22 @@ pub async fn drive_gui_log(state: State<'_, DriveState>, conn: Option<String>, t
 /// The connection's log directory, `None` once its ccrpc has exited.
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_log_dir(state: State<'_, DriveState>, conn: String) -> CmdResult<Option<String>> {
-    with_drive(&state, move |app| Ok(app.log_dir(&conn).map(|p| p.display().to_string()))).await
+pub async fn drive_log_dir(
+    state: State<'_, DriveState>,
+    conn: String,
+) -> CmdResult<Option<String>> {
+    with_drive(&state, move |app| {
+        Ok(app.log_dir(&conn).map(|p| p.display().to_string()))
+    })
+    .await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_save_image(state: State<'_, DriveState>, base64: String, ext: String) -> CmdResult<String> {
+pub async fn drive_save_image(
+    state: State<'_, DriveState>,
+    base64: String,
+    ext: String,
+) -> CmdResult<String> {
     with_drive(&state, move |app| app.save_image(&base64, &ext)).await
 }

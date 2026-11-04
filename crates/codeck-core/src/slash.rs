@@ -23,7 +23,11 @@ const BUILTIN: &[(&str, &str, bool)] = &[
     ("doctor", "检查安装与配置", true),
     ("exit", "退出 Claude Code", false),
     ("export", "导出对话", true),
-    ("fewer-permission-prompts", "按历史调用补充权限白名单", false),
+    (
+        "fewer-permission-prompts",
+        "按历史调用补充权限白名单",
+        false,
+    ),
     ("help", "帮助与命令列表", true),
     ("hooks", "管理 hooks", true),
     ("ide", "连接 IDE", true),
@@ -79,7 +83,12 @@ pub fn slash_commands(data_root: &Path, cwd: Option<&Path>) -> Vec<SlashCommand>
         collect_commands(&dot.join("commands"), None, SlashSource::Project, &mut out);
         collect_skills(&dot.join("skills"), None, SlashSource::Project, &mut out);
     }
-    collect_commands(&data_root.join("commands"), None, SlashSource::User, &mut out);
+    collect_commands(
+        &data_root.join("commands"),
+        None,
+        SlashSource::User,
+        &mut out,
+    );
     collect_skills(&data_root.join("skills"), None, SlashSource::User, &mut out);
     for p in enabled_plugins(data_root, cwd) {
         let ns = Some(p.name.as_str());
@@ -97,7 +106,13 @@ pub fn slash_commands(data_root: &Path, cwd: Option<&Path>) -> Vec<SlashCommand>
     out
 }
 
-fn push(out: &mut Vec<SlashCommand>, ns: Option<&str>, name: &str, description: Option<String>, source: SlashSource) {
+fn push(
+    out: &mut Vec<SlashCommand>,
+    ns: Option<&str>,
+    name: &str,
+    description: Option<String>,
+    source: SlashSource,
+) {
     let name = name.trim();
     if name.is_empty() || name.contains(char::is_whitespace) {
         return;
@@ -112,7 +127,12 @@ fn push(out: &mut Vec<SlashCommand>, ns: Option<&str>, name: &str, description: 
 
 /// `*.md` under `dir` (subdirectories only group them; the name is the file's stem), or `dir`
 /// itself when it is a command file (a plugin manifest may list files).
-fn collect_commands(dir: &Path, ns: Option<&str>, source: SlashSource, out: &mut Vec<SlashCommand>) {
+fn collect_commands(
+    dir: &Path,
+    ns: Option<&str>,
+    source: SlashSource,
+    out: &mut Vec<SlashCommand>,
+) {
     let mut files = Vec::new();
     if dir.is_file() {
         files.push(dir.to_path_buf());
@@ -160,7 +180,11 @@ fn collect_skills(dir: &Path, ns: Option<&str>, source: SlashSource, out: &mut V
     if dir.join("SKILL.md").is_file() {
         skills.push(dir.to_path_buf());
     } else if let Ok(rd) = fs::read_dir(dir) {
-        let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("SKILL.md").is_file()).collect();
+        let mut dirs: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join("SKILL.md").is_file())
+            .collect();
         dirs.sort();
         skills.extend(dirs.into_iter().take(MAX_FILES));
     }
@@ -174,7 +198,13 @@ fn collect_skills(dir: &Path, ns: Option<&str>, source: SlashSource, out: &mut V
         }
         let dir_name = d.file_name().and_then(|s| s.to_str()).unwrap_or_default();
         let name = fm.get("name").map_or(dir_name, String::as_str);
-        push(out, ns, name, fm.get("description").cloned().map(cut), source);
+        push(
+            out,
+            ns,
+            name,
+            fm.get("description").cloned().map(cut),
+            source,
+        );
     }
 }
 
@@ -196,7 +226,9 @@ fn enabled_plugins(data_root: &Path, cwd: Option<&Path>) -> Vec<Plugin> {
         settings.push(cwd.join(".claude/settings.local.json"));
     }
     for f in settings {
-        if let Some(map) = read_json(&f).and_then(|v| v.get("enabledPlugins").and_then(|m| m.as_object()).cloned()) {
+        if let Some(map) =
+            read_json(&f).and_then(|v| v.get("enabledPlugins").and_then(|m| m.as_object()).cloned())
+        {
             for (k, v) in map {
                 if let Some(b) = v.as_bool() {
                     enabled.insert(k, b);
@@ -223,7 +255,11 @@ fn enabled_plugins(data_root: &Path, cwd: Option<&Path>) -> Vec<Plugin> {
             let project = i.get("projectPath").and_then(|s| s.as_str());
             scope == "user" || project.is_some_and(|p| cwd.is_some_and(|c| Path::new(p) == c))
         });
-        let Some(root) = install.and_then(|i| i.get("installPath")).and_then(|p| p.as_str()).map(PathBuf::from) else {
+        let Some(root) = install
+            .and_then(|i| i.get("installPath"))
+            .and_then(|p| p.as_str())
+            .map(PathBuf::from)
+        else {
             continue;
         };
         let manifest = read_json(&root.join(".claude-plugin/plugin.json"));
@@ -240,7 +276,10 @@ fn enabled_plugins(data_root: &Path, cwd: Option<&Path>) -> Vec<Plugin> {
                 Some(serde_json::Value::Array(a)) => a.iter().filter_map(|x| x.as_str()).collect(),
                 _ => Vec::new(),
             };
-            list.into_iter().map(|p| root.join(p)).filter(|p| p.starts_with(&root)).collect()
+            list.into_iter()
+                .map(|p| root.join(p))
+                .filter(|p| p.starts_with(&root))
+                .collect()
         };
         out.push(Plugin {
             commands: paths("commands"),
@@ -259,7 +298,11 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 
 fn read_head(path: &Path) -> Option<String> {
     let mut buf = Vec::new();
-    fs::File::open(path).ok()?.take(HEAD_BYTES).read_to_end(&mut buf).ok()?;
+    fs::File::open(path)
+        .ok()?
+        .take(HEAD_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
@@ -268,7 +311,10 @@ fn read_head(path: &Path) -> Option<String> {
 fn frontmatter(text: &str) -> (HashMap<String, String>, &str) {
     let mut map = HashMap::new();
     let rest = text.trim_start_matches('\u{feff}');
-    let Some(after) = rest.strip_prefix("---").filter(|r| r.starts_with(['\n', '\r'])) else {
+    let Some(after) = rest
+        .strip_prefix("---")
+        .filter(|r| r.starts_with(['\n', '\r']))
+    else {
         return (map, text);
     };
     let Some(end) = after.find("\n---") else {
@@ -290,15 +336,28 @@ fn frontmatter(text: &str) -> (HashMap<String, String>, &str) {
         let mut v = v.trim().to_owned();
         if matches!(v.as_str(), ">" | "|" | ">-" | "|-" | ">+" | "|+") {
             let mut parts = Vec::new();
-            while i < lines.len() && (lines[i].starts_with([' ', '\t']) || lines[i].trim().is_empty()) {
+            while i < lines.len()
+                && (lines[i].starts_with([' ', '\t']) || lines[i].trim().is_empty())
+            {
                 parts.push(lines[i].trim());
                 i += 1;
             }
-            v = parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ");
-        } else if v.len() >= 2 && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\''))) {
+            v = parts
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+        } else if v.len() >= 2
+            && ((v.starts_with('"') && v.ends_with('"'))
+                || (v.starts_with('\'') && v.ends_with('\'')))
+        {
             let q = v.chars().next().unwrap();
             v = v[1..v.len() - 1].to_owned();
-            v = if q == '"' { v.replace("\\\"", "\"").replace("\\\\", "\\") } else { v.replace("''", "'") };
+            v = if q == '"' {
+                v.replace("\\\"", "\"").replace("\\\\", "\\")
+            } else {
+                v.replace("''", "'")
+            };
         }
         if !v.is_empty() {
             map.insert(k.trim().to_owned(), v);
@@ -346,47 +405,95 @@ mod tests {
         let off = root.join("plugins/cache/m/off/1.0.0");
         let other = root.join("plugins/cache/m/elsewhere/1.0.0");
 
-        write(&root.join("commands/ship.md"), "---\ndescription: \"Ship it: build, tag\"\n---\nbody\n");
-        write(&root.join("commands/group/note.md"), "# Write a note\n\nmore\n");
-        write(&root.join("skills/tidy/SKILL.md"), "---\nname: tidy\ndescription: >\n  Tidy the\n  workspace\n---\n");
-        write(&root.join("skills/hidden/SKILL.md"), "---\nname: hidden\nuser-invocable: false\n---\n");
+        write(
+            &root.join("commands/ship.md"),
+            "---\ndescription: \"Ship it: build, tag\"\n---\nbody\n",
+        );
+        write(
+            &root.join("commands/group/note.md"),
+            "# Write a note\n\nmore\n",
+        );
+        write(
+            &root.join("skills/tidy/SKILL.md"),
+            "---\nname: tidy\ndescription: >\n  Tidy the\n  workspace\n---\n",
+        );
+        write(
+            &root.join("skills/hidden/SKILL.md"),
+            "---\nname: hidden\nuser-invocable: false\n---\n",
+        );
         // The project's command of the same name wins over the user's.
-        write(&cwd.join(".claude/commands/ship.md"), "---\ndescription: project ship\n---\n");
-        write(&plugin.join(".claude-plugin/plugin.json"), r#"{"name": "kit", "skills": ["./extra/solo/"]}"#);
-        write(&plugin.join("commands/go.md"), "---\ndescription: 'it''s go'\n---\n");
-        write(&plugin.join("skills/lint/SKILL.md"), "---\nname: lint\ndescription: Lint\n---\n");
-        write(&plugin.join("extra/solo/SKILL.md"), "---\nname: solo\n---\n");
+        write(
+            &cwd.join(".claude/commands/ship.md"),
+            "---\ndescription: project ship\n---\n",
+        );
+        write(
+            &plugin.join(".claude-plugin/plugin.json"),
+            r#"{"name": "kit", "skills": ["./extra/solo/"]}"#,
+        );
+        write(
+            &plugin.join("commands/go.md"),
+            "---\ndescription: 'it''s go'\n---\n",
+        );
+        write(
+            &plugin.join("skills/lint/SKILL.md"),
+            "---\nname: lint\ndescription: Lint\n---\n",
+        );
+        write(
+            &plugin.join("extra/solo/SKILL.md"),
+            "---\nname: solo\n---\n",
+        );
         write(&off.join("commands/nope.md"), "x\n");
         write(&other.join("commands/there.md"), "x\n");
-        write(&root.join("settings.json"), r#"{"enabledPlugins": {"kit@m": true, "off@m": true, "elsewhere@m": true}}"#);
+        write(
+            &root.join("settings.json"),
+            r#"{"enabledPlugins": {"kit@m": true, "off@m": true, "elsewhere@m": true}}"#,
+        );
         // The project turns one plugin off.
-        write(&cwd.join(".claude/settings.local.json"), r#"{"enabledPlugins": {"off@m": false}}"#);
+        write(
+            &cwd.join(".claude/settings.local.json"),
+            r#"{"enabledPlugins": {"off@m": false}}"#,
+        );
         let installed = serde_json::json!({"version": 2, "plugins": {
             "kit@m": [{"scope": "user", "installPath": plugin}],
             "off@m": [{"scope": "user", "installPath": off}],
             "elsewhere@m": [{"scope": "project", "projectPath": "/other/project", "installPath": other}],
         }});
-        write(&root.join("plugins/installed_plugins.json"), &installed.to_string());
+        write(
+            &root.join("plugins/installed_plugins.json"),
+            &installed.to_string(),
+        );
 
         let list = slash_commands(&root, Some(&cwd));
         let desc = |n: &str| find(&list, n).and_then(|c| c.description.clone());
-        assert_eq!(find(&list, "ship").map(|c| c.source), Some(SlashSource::Project));
+        assert_eq!(
+            find(&list, "ship").map(|c| c.source),
+            Some(SlashSource::Project)
+        );
         assert_eq!(desc("ship").as_deref(), Some("project ship"));
         assert_eq!(desc("note").as_deref(), Some("Write a note"));
         assert_eq!(desc("tidy").as_deref(), Some("Tidy the workspace"));
         assert!(find(&list, "hidden").is_none());
         assert_eq!(desc("kit:go").as_deref(), Some("it's go"));
-        assert_eq!(find(&list, "kit:lint").map(|c| c.source), Some(SlashSource::Plugin));
+        assert_eq!(
+            find(&list, "kit:lint").map(|c| c.source),
+            Some(SlashSource::Plugin)
+        );
         assert!(find(&list, "kit:solo").is_some());
         assert!(find(&list, "off:nope").is_none());
         assert!(find(&list, "elsewhere:there").is_none());
         let model = find(&list, "model").unwrap();
-        assert_eq!((model.source, model.interactive), (SlashSource::Builtin, true));
+        assert_eq!(
+            (model.source, model.interactive),
+            (SlashSource::Builtin, true)
+        );
         assert_eq!(list.iter().filter(|c| c.name == "ship").count(), 1);
 
         // Without a cwd: no project commands; the user's `ship` shows.
         let list = slash_commands(&root, None);
-        assert_eq!(find(&list, "ship").map(|c| c.source), Some(SlashSource::User));
+        assert_eq!(
+            find(&list, "ship").map(|c| c.source),
+            Some(SlashSource::User)
+        );
         assert!(find(&list, "off:nope").is_some());
     }
 
@@ -402,7 +509,10 @@ mod tests {
 
     #[test]
     fn missing_data_root_gives_the_built_in_commands() {
-        let list = slash_commands(Path::new("/nonexistent/claude"), Some(Path::new("/nonexistent/cwd")));
+        let list = slash_commands(
+            Path::new("/nonexistent/claude"),
+            Some(Path::new("/nonexistent/cwd")),
+        );
         assert_eq!(list.len(), BUILTIN.len());
     }
 }

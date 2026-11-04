@@ -8,9 +8,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
-use common::{fixture_root, ids};
 use codeck_core::model::{DataRootSource, SessionQuery, SessionSort, StatsRequest};
 use codeck_core::{Engine, EngineConfig};
+use common::{fixture_root, ids};
 use tempfile::TempDir;
 
 fn open(root: &Path, cache: &Path) -> Engine {
