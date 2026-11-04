@@ -1,0 +1,31 @@
+{"dir":"recv","msg":{"claude_version":null,"co_display":false,"context_tokens":null,"cwd":null,"holder_id":"m496f0d30b152","mode":null,"model":null,"protocol":2,"session_id":null,"size":[160,48],"state":"starting","taken_over":false,"type":"ready","warnings":[]},"t":1793726671408}
+{"dir":"recv","msg":{"state":"idle","type":"state"},"t":1793726671469}
+{"dir":"recv","msg":{"context_tokens":null,"mode":"manual","model":null,"type":"session_info"},"t":1793726671749}
+{"dir":"send","msg":{"id":"s1","text":"MOCK-SLOW please","type":"prompt"},"t":1793726674612}
+{"dir":"recv","msg":{"state":"busy","type":"state"},"t":1793726674697}
+{"dir":"recv","msg":{"index":0,"kind":"user","text":"MOCK-SLOW please","type":"block","uuid":"8a6cf36c-b995-4174-9b21-030225477bbe"},"t":1793726674813}
+{"dir":"recv","msg":{"command":"prompt","data":{"prompt_id":"8a83a193-1d6b-4eaa-a507-8ca2fde4e5e4","uuid":"8a6cf36c-b995-4174-9b21-030225477bbe"},"id":"s1","success":true,"type":"response"},"t":1793726674813}
+{"dir":"recv","msg":{"elapsed_s":null,"text":"Whirring…","tokens":null,"type":"progress","verb":"Whirring"},"t":1793726674971}
+{"dir":"recv","msg":{"elapsed_s":1,"text":"Whirring… (1s · ↓ 3 tokens)","tokens":3,"type":"progress","verb":"Whirring"},"t":1793726675972}
+{"dir":"send","msg":{"id":"s2","text":"MOCK-STEERED now","type":"steer"},"t":1793726676818}
+{"dir":"recv","msg":{"command":"steer","data":{"delivered_as":"queued"},"id":"s2","success":true,"type":"response"},"t":1793726676971}
+{"dir":"recv","msg":{"elapsed_s":2,"text":"Whirring… (2s · ↓ 5 tokens)","tokens":5,"type":"progress","verb":"Whirring"},"t":1793726677087}
+{"dir":"recv","msg":{"elapsed_s":3,"text":"Whirring… (3s · ↓ 8 tokens)","tokens":8,"type":"progress","verb":"Whirring"},"t":1793726678205}
+{"dir":"recv","msg":{"elapsed_s":4,"text":"Whirring… (4s · ↓ 10 tokens)","tokens":10,"type":"progress","verb":"Whirring"},"t":1793726679223}
+{"dir":"recv","msg":{"elapsed_s":5,"text":"Whirring… (5s · ↓ 13 tokens)","tokens":13,"type":"progress","verb":"Whirring"},"t":1793726680232}
+{"dir":"recv","msg":{"elapsed_s":6,"text":"Whirring… (6s · ↓ 16 tokens)","tokens":16,"type":"progress","verb":"Whirring"},"t":1793726681346}
+{"dir":"recv","msg":{"elapsed_s":7,"text":"Whirring… (7s · ↓ 19 tokens)","tokens":19,"type":"progress","verb":"Whirring"},"t":1793726682353}
+{"dir":"recv","msg":{"state":"idle","type":"state"},"t":1793726682819}
+{"dir":"recv","msg":{"state":"busy","type":"state"},"t":1793726682826}
+{"dir":"recv","msg":{"aborted":false,"api_cost":0.0,"background_tasks":[],"duration_ms":8135,"error":null,"last_text":"slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow","prompt_id":"8a83a193-1d6b-4eaa-a507-8ca2fde4e5e4","trigger":"prompt","type":"turn_end","usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":0,"output_tokens":0}},"t":1793726682833}
+{"dir":"recv","msg":{"state":"idle","type":"state"},"t":1793726682845}
+{"dir":"recv","msg":{"index":0,"kind":"text","text":"slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow ","type":"block","uuid":"91977052-271e-4295-9b7a-fe72c669ef69"},"t":1793726682898}
+{"dir":"recv","msg":{"index":0,"kind":"user","text":"MOCK-STEERED now","type":"block","uuid":"6817a2e4-a7ff-4e37-b94d-7b743da9d9c7"},"t":1793726682899}
+{"dir":"recv","msg":{"index":0,"kind":"text","text":"STEER-TURN","type":"block","uuid":"4ed056f2-c0b9-4890-b3a9-ab95428221b3"},"t":1793726682899}
+{"dir":"recv","msg":{"aborted":false,"api_cost":0.000075,"background_tasks":[],"duration_ms":8149,"error":null,"last_text":"STEER-TURN","prompt_id":"34c2056c-105a-4907-aabf-cf808b9a176f","trigger":"prompt","type":"turn_end","usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":10,"output_tokens":3}},"t":1793726682899}
+{"dir":"recv","msg":{"context_tokens":10,"mode":"manual","model":"claude-sonnet-4-5","type":"session_info"},"t":1793726682899}
+{"dir":"send","msg":{"id":"f1","text":"MOCK-FAIL","type":"prompt"},"t":1793726682899}
+{"dir":"recv","msg":{"index":0,"kind":"user","text":"MOCK-FAIL","type":"block","uuid":"9dabd57a-6749-4f0c-82a5-9698b9be9119"},"t":1793726683042}
+{"dir":"recv","msg":{"index":0,"kind":"text","text":"API Error: 400 mock failure","type":"block","uuid":"8f973842-b084-421d-83bd-3f4fb4eb85b3"},"t":1793726683042}
+{"dir":"recv","msg":{"aborted":false,"api_cost":0.0,"background_tasks":[],"duration_ms":46,"error":{"kind":"unknown","message":"API Error: 400 mock failure"},"last_text":null,"prompt_id":"a7145051-ea24-47e4-b6a9-9a14f0167043","trigger":"prompt","type":"turn_end","usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":0,"output_tokens":0}},"t":1793726683043}
+{"dir":"recv","msg":{"command":"prompt","data":{"prompt_id":"a7145051-ea24-47e4-b6a9-9a14f0167043","uuid":"9dabd57a-6749-4f0c-82a5-9698b9be9119"},"id":"f1","success":true,"type":"response"},"t":1793726683043}

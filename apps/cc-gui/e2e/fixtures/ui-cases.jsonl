@@ -1,0 +1,51 @@
+{"t": 1793700000010, "dir": "meta", "ls": {"title": "界面用例", "cwd": "/work/demo"}}
+{"t": 1793700000020, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mui0000000001", "session_id": "s-ui", "cwd": "/work/demo", "claude_version": "2.1.317", "state": "idle", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": "claude-opus-5-5", "context_tokens": 15200, "warnings": []}}
+{"t": 1793700000030, "dir": "send", "msg": {"id": "p1", "type": "prompt", "text": "改一下 README"}}
+{"t": 1793700000040, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700000050, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u1", "index": 0, "text": "[Image #1] 改一下 README", "images": ["image/png"]}}
+{"t": 1793700000060, "dir": "recv", "msg": {"type": "response", "id": "p1", "command": "prompt", "success": true, "data": {"uuid": "u1", "prompt_id": "P1"}}}
+{"t": 1793700000070, "dir": "recv", "msg": {"type": "block", "kind": "text", "uuid": "a1", "index": 0, "text": "我先看看 **README**。"}}
+{"t": 1793700000080, "dir": "recv", "msg": {"type": "progress", "text": "Thinking… (3s · ↓ 120 tokens)", "verb": "Thinking", "elapsed_s": 3, "tokens": 120}}
+{"t": 1793700000090, "dir": "send", "msg": {"id": "f1", "type": "follow_up", "text": "做完再跑一下测试"}}
+{"t": 1793700000100, "dir": "recv", "msg": {"type": "response", "id": "f1", "command": "follow_up", "success": true, "data": {"queued": 1}}}
+{"t": 1793700000110, "dir": "send", "msg": {"id": "s1", "type": "steer", "text": "顺便把标题也改了"}}
+{"t": 1793700000120, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u2", "index": 0, "text": "顺便把标题也改了", "queued": true}}
+{"t": 1793700000121, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u2n", "index": 0, "queued": true, "text": "<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n<summary>Background command \"Run tests\" completed (exit code 0)</summary>\n</task-notification>"}}
+{"t": 1793700000130, "dir": "recv", "msg": {"type": "response", "id": "s1", "command": "steer", "success": true, "data": {"delivered_as": "queued"}}}
+{"t": 1793700000140, "dir": "recv", "msg": {"type": "block", "kind": "tool_use", "uuid": "a2", "index": 0, "id": "toolu_edit1", "name": "Edit", "input": {"file_path": "/work/demo/README.md", "old_string": "旧的一行", "new_string": "新的一行"}}}
+{"t": 1793700000150, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "permission", "waiting_for": "permission prompt"}}}
+{"t": 1793700000160, "dir": "recv", "msg": {"type": "permission_request", "request_id": "toolu_edit1", "tool_name": "Edit", "input": {"file_path": "/work/demo/README.md", "old_string": "旧的一行", "new_string": "新的一行"}, "agent_id": null, "options": [{"label": "Yes", "meaning": "allow"}, {"label": "Yes, allow all edits during this session (shift+tab)", "meaning": "allow_always"}, {"label": "No", "meaning": "deny"}], "layout_source": "builtin"}}
+{"t": 1793700000170, "dir": "send", "msg": {"id": "x1", "type": "answer_permission", "request_id": "toolu_edit1", "decision": "allow"}}
+{"t": 1793700000180, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700000190, "dir": "recv", "msg": {"type": "response", "id": "x1", "command": "answer_permission", "success": true, "data": {"state": "busy"}}}
+{"t": 1793700000200, "dir": "recv", "msg": {"type": "block", "kind": "tool_result", "uuid": "r1", "index": 0, "tool_use_id": "toolu_edit1", "content": "The file /work/demo/README.md has been updated.", "is_error": false}}
+{"t": 1793700000210, "dir": "recv", "msg": {"type": "block", "kind": "tool_use", "uuid": "a3", "index": 0, "id": "toolu_agent1", "name": "Agent", "input": {"description": "查找用法", "prompt": "找出所有引用 README 的地方", "subagent_type": "Explore"}}}
+{"t": 1793700000220, "dir": "recv", "msg": {"type": "block", "kind": "text", "uuid": "sa1", "index": 0, "text": "在 docs/ 下找到 2 处引用。", "agent_id": "ag1", "parent_tool_use_id": "toolu_agent1"}}
+{"t": 1793700000230, "dir": "recv", "msg": {"type": "block", "kind": "tool_use", "uuid": "sa2", "index": 0, "id": "toolu_sub_grep", "name": "Grep", "input": {"pattern": "README"}, "agent_id": "ag1", "parent_tool_use_id": "toolu_agent1"}}
+{"t": 1793700000240, "dir": "recv", "msg": {"type": "block", "kind": "tool_result", "uuid": "r2", "index": 0, "tool_use_id": "toolu_agent1", "content": "docs/a.md, docs/b.md", "is_error": false}}
+{"t": 1793700000250, "dir": "recv", "msg": {"type": "block", "kind": "text", "uuid": "a4", "index": 0, "text": "改好了。"}}
+{"t": 1793700000260, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700000270, "dir": "recv", "msg": {"type": "turn_end", "prompt_id": "P1", "trigger": "prompt", "last_text": "", "error": null, "aborted": false, "background_tasks": [], "duration_ms": 4200, "usage": {"input_tokens": 1200, "output_tokens": 340, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}, "api_cost": 0.0123}}
+{"t": 1793700000280, "dir": "send", "msg": {"id": "p2", "type": "prompt", "text": "按计划来"}}
+{"t": 1793700000290, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700000300, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u3", "index": 0, "text": "按计划来"}}
+{"t": 1793700000310, "dir": "recv", "msg": {"type": "response", "id": "p2", "command": "prompt", "success": true, "data": {"uuid": "u3", "prompt_id": "P2"}}}
+{"t": 1793700000320, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "input needed"}}}
+{"t": 1793700000330, "dir": "recv", "msg": {"type": "choice", "request_id": "choice:1", "title": "Would you like to proceed?", "options": [{"label": "Yes, and auto-accept edits", "meaning": "allow", "description": null}, {"label": "Yes, manually approve edits", "meaning": "allow", "description": null}, {"label": "No, keep planning", "meaning": "deny", "description": null}], "tool_use_id": null, "layout": "abc123", "layout_source": "learned"}}
+{"t": 1793700000340, "dir": "send", "msg": {"id": "c1", "type": "answer_choice", "request_id": "choice:1", "option": "Yes, manually approve edits"}}
+{"t": 1793700000350, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700000360, "dir": "recv", "msg": {"type": "response", "id": "c1", "command": "answer_choice", "success": true, "data": {"state": "busy"}}}
+{"t": 1793700000370, "dir": "recv", "msg": {"type": "block", "kind": "text", "uuid": "a5", "index": 0, "text": "开始执行计划。"}}
+{"t": 1793700000380, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700000390, "dir": "recv", "msg": {"type": "turn_end", "prompt_id": "P2", "trigger": "prompt", "last_text": "", "error": null, "aborted": false, "background_tasks": [], "duration_ms": 4200, "usage": {"input_tokens": 1200, "output_tokens": 340, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}, "api_cost": 0.0123}}
+{"t": 1793700000400, "dir": "send", "msg": {"id": "p3", "type": "prompt", "text": "重写第一条"}}
+{"t": 1793700000410, "dir": "recv", "msg": {"type": "branch", "at_uuid": "u1"}}
+{"t": 1793700000420, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700000430, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u4", "index": 0, "text": "重写第一条"}}
+{"t": 1793700000440, "dir": "recv", "msg": {"type": "response", "id": "p3", "command": "prompt", "success": true, "data": {"uuid": "u4", "prompt_id": "P3"}}}
+{"t": 1793700000450, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "input needed"}}}
+{"t": 1793700000460, "dir": "recv", "msg": {"type": "dialog", "waiting_for": "input needed", "lines": ["", "  ╭──────────────╮", "  │ Something new │", "  ╰──────────────╯", "  1. Continue", "  2. Cancel", ""]}}
+{"t": 1793700000470, "dir": "send", "msg": {"id": "ab", "type": "abort"}}
+{"t": 1793700000480, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700000490, "dir": "recv", "msg": {"type": "response", "id": "ab", "command": "abort", "success": true, "data": {"state": "idle"}}}
+{"t": 1793700000500, "dir": "exit", "code": 1, "stderr": "ccrpc: Holder 断开了"}
