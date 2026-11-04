@@ -105,6 +105,10 @@ interface ConnectStore {
   saveAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<void>;
   /** Saves the launch rules (see `ccrpcSetLaunchRules`); rejects with the reason. */
   saveLaunchRules(rules: LaunchRule[]): Promise<void>;
+  /** Saves 「新开的 Pane」 (see `ccrpcSetHideNewPanes`); rejects with the reason. */
+  saveHideNewPanes(hide: boolean): Promise<void>;
+  /** Hides the Pane of the Session `sessionId` on the ToH Mac Client, or shows it (errors are shown on that Session). */
+  setPaneHidden(holderId: string, sessionId: string, hidden: boolean): Promise<void>;
   /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
   connect(holderId: string, sessionId: string): Promise<void>;
   newSession(): Promise<void>;
@@ -442,6 +446,22 @@ export const useConnect = create<ConnectStore>((set, get) => {
     async saveLaunchRules(rules) {
       const launchRules = await api.ccrpcSetLaunchRules(rules);
       set((s) => (s.info ? { info: { ...s.info, launchRules } } : {}));
+    },
+
+    async saveHideNewPanes(hide) {
+      const hideNewPanes = await api.ccrpcSetHideNewPanes(hide);
+      set((s) => (s.info ? { info: { ...s.info, hideNewPanes } } : {}));
+    },
+
+    async setPaneHidden(holderId, sessionId, hidden) {
+      setErr(sessionId, null);
+      try {
+        await api.ccrpcSetPaneHidden(holderId, hidden);
+        // Shown at once; the next `ccrpc ls` says the same.
+        set((s) => ({ ls: s.ls.map((e) => (e.holder_id === holderId ? { ...e, hidden } : e)) }));
+      } catch (e) {
+        setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errText(e)}`);
+      }
     },
 
     async loadInfo() {

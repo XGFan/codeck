@@ -1,4 +1,4 @@
-import { ChevronDown, Power, RotateCcw, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Power, RotateCcw, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -111,6 +111,37 @@ export function ConnectButton({ sessionId, resume }: { sessionId: string; resume
         Connect
       </button>
     </>
+  );
+}
+
+/**
+ * 「隐藏 Pane」/「显示 Pane」 in the header's title row, for any Session running in a clay Pane (`ccrpc ls`), connected
+ * or not: hides the Pane on the ToH Mac Client (its hidden window) or shows it again; iOS and web list it either way.
+ * Not shown when ccrpc is too old to say whether the Pane is hidden.
+ */
+export function PaneButton({ sessionId }: { sessionId: string }) {
+  const entry = useConnect((s) => lsEntryFor(s, sessionId));
+  const setPaneHidden = useConnect((s) => s.setPaneHidden);
+  const [busy, setBusy] = useState(false);
+  if (!entry || entry.hidden == null) return null;
+  const hidden = entry.hidden;
+  return (
+    <button
+      type="button"
+      data-testid="pane-visibility"
+      data-hidden={hidden}
+      disabled={busy}
+      title={hidden ? "Pane 在 ToH Mac 的隐藏窗口里，点击放回普通窗口" : "把 Pane 收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示"}
+      onClick={async () => {
+        setBusy(true);
+        await setPaneHidden(entry.holder_id, sessionId, !hidden);
+        setBusy(false);
+      }}
+      className={pill}
+    >
+      {hidden ? <Eye size={13} strokeWidth={1.6} aria-hidden /> : <EyeOff size={13} strokeWidth={1.6} aria-hidden />}
+      {hidden ? "显示 Pane" : "隐藏 Pane"}
+    </button>
   );
 }
 

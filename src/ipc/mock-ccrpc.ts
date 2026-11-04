@@ -54,6 +54,7 @@ function parse(name: string, text: string): Fixture {
     status: "idle",
     cwd: (ready.cwd as string | null) ?? `/mock/${name}`,
     plugin: true,
+    hidden: false,
     claude_pid: null,
     version: (ready.claude_version as string | null) ?? null,
     title: name,
@@ -91,6 +92,8 @@ const exitCbs = new Set<ExitCb>();
 const conns = new Map<string, Conn>();
 /** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
 const closedPanes = new Set<string>();
+/** Holders hidden or shown with `ccrpcSetPaneHidden` (over the recording's `hidden`). */
+const paneHidden = new Map<string, boolean>();
 let seq = 0;
 
 /** What the E2E tests look at. */
@@ -103,10 +106,14 @@ export interface CcrpcProbe {
   images: number;
   /** `ccrpcSetAnalyzer` calls. */
   analyzerSaves: number;
+  /** `ccrpcSetPaneHidden` calls, in order. */
+  paneHides: { holderId: string; hidden: boolean }[];
+  /** 「新开的 Pane」 as last saved (`ccrpcSetHideNewPanes`). */
+  hideNewPanes: boolean;
   /** Set by a test: the next Resume's `ready` names the Session already (the plugin checked in first). */
   resumeNamedInReady?: boolean;
 }
-const probe: CcrpcProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0 };
+const probe: CcrpcProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0, paneHides: [], hideNewPanes: false };
 
 declare global {
   interface Window {
@@ -229,6 +236,8 @@ type CcrpcApi = Pick<
   | "ccrpcInfo"
   | "ccrpcSetAnalyzer"
   | "ccrpcSetLaunchRules"
+  | "ccrpcSetHideNewPanes"
+  | "ccrpcSetPaneHidden"
   | "ccrpcList"
   | "ccrpcConnect"
   | "ccrpcNew"
@@ -277,9 +286,16 @@ export function createMockCcrpc(): CcrpcApi {
       ],
       analyzer: analyzerInfo(),
       launchRules,
+      hideNewPanes: probe.hideNewPanes,
       logRoot: "/mock/Logs/dev.joy.codeck/ccrpc",
     }),
-    ccrpcList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !f.name.startsWith("resume-") && f.name !== "resume" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
+    ccrpcList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !f.name.startsWith("resume-") && f.name !== "resume" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls, hidden: paneHidden.get(f.ls.holder_id) ?? f.ls.hidden }))),
+    ccrpcSetHideNewPanes: async (hide) => (probe.hideNewPanes = hide),
+    ccrpcSetPaneHidden: async (holderId, hidden) => {
+      probe.paneHides.push({ holderId, hidden });
+      if (!fixtures.some((f) => f.ls.holder_id === holderId)) throw new Error(`没有会话 ${holderId}`);
+      paneHidden.set(holderId, hidden);
+    },
     ccrpcSetAnalyzer: async (apiKey, baseUrl, model) => {
       probe.analyzerSaves++;
       const blank = (v: string | null) => (v?.trim() ? v.trim() : null);

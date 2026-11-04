@@ -74,6 +74,9 @@ export function CcrpcSettings() {
       <Row label="界面分析器" testId="set-analyzer">
         {info ? <AnalyzerForm a={info.analyzer} /> : "…"}
       </Row>
+      <Row label="新开的 Pane" testId="set-hide-new-panes">
+        {info ? <HideNewPanes saved={info.hideNewPanes} /> : "…"}
+      </Row>
       <Row label="启动参数" testId="set-launch-rules">
         {info ? <LaunchRulesForm saved={info.launchRules} /> : "…"}
       </Row>
@@ -163,6 +166,45 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
         Anthropic Messages 协议（POST Endpoint/v1/messages），留空的项用登录 shell 的 CCRPC_ANALYZER_* 或 ccrpc 的默认值。Key 存在本机设置文件，仅本人可读。
       </div>
     </form>
+  );
+}
+
+/** 「新开的 Pane」: show or hide the Panes of Sessions CoDeck starts (new and Resume) on the ToH Mac Client; saved at once. */
+function HideNewPanes({ saved }: { saved: boolean }) {
+  const save = useConnect((s) => s.saveHideNewPanes);
+  const [error, setError] = useState<string | null>(null);
+  const choose = async (hide: boolean) => {
+    if (hide === saved) return;
+    setError(null);
+    try {
+      await save(hide);
+    } catch (e) {
+      setError(`保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`);
+    }
+  };
+  const opt = (hide: boolean, label: string) => (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={saved === hide}
+      data-testid={hide ? "hide-new-panes-hide" : "hide-new-panes-show"}
+      onClick={() => void choose(hide)}
+      className={cn("h-7 rounded-md px-3 text-[13px]", saved === hide ? "bg-selection font-semibold text-text" : "text-secondary hover:bg-selection/60")}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex flex-col gap-2 text-[13px]">
+      <div role="radiogroup" aria-label="新开的 Pane" className="flex w-fit gap-1 rounded-lg border border-border p-0.5">
+        {opt(false, "显示")}
+        {opt(true, "隐藏")}
+      </div>
+      {error && <span className="text-[12px] text-error">{error}</span>}
+      <div className="text-[12px] text-secondary">
+        新建与 Resume 的 Session 在 clay 里新开一个 Pane。选「隐藏」时它收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示；之后可在标题栏切换。
+      </div>
+    </div>
   );
 }
 

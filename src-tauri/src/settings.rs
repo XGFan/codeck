@@ -17,6 +17,10 @@ pub struct Settings {
     /// Extra claude arguments by directory for Sessions CoDeck starts (see `ccrpc::launch`).
     #[serde(default)]
     pub launch_rules: Vec<LaunchRule>,
+    /// 「设置 › ccrpc › 新开的 Pane」: Sessions CoDeck starts (new and Resume) open in the ToH Mac Client's hidden
+    /// window (`ccrpc new --hidden`, ToH ADR-0050).
+    #[serde(default)]
+    pub hide_new_panes: bool,
 }
 
 /// 「设置 › ccrpc › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below.
@@ -99,6 +103,7 @@ mod tests {
                 dir: "/a".into(),
                 args: "--add-dir=/b".into(),
             }],
+            hide_new_panes: true,
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);

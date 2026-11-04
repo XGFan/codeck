@@ -117,6 +117,8 @@ pub struct CcrpcInfo {
     pub doctor: Vec<relay::DoctorLine>,
     pub analyzer: AnalyzerInfo,
     pub launch_rules: Vec<crate::settings::LaunchRule>,
+    /// Sessions CoDeck starts open hidden on the ToH Mac Client.
+    pub hide_new_panes: bool,
     pub log_root: String,
 }
 
@@ -220,6 +222,31 @@ pub async fn ccrpc_set_launch_rules(
     .await
 }
 
+/// Saves 「新开的 Pane」: whether the Sessions CoDeck starts from now on open hidden on the ToH Mac Client.
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_set_hide_new_panes(state: State<'_, CcrpcState>, hide: bool) -> CmdResult<bool> {
+    with_ccrpc(&state, move |app| {
+        let mut s = crate::settings::load();
+        s.hide_new_panes = hide;
+        crate::settings::save(&s).map_err(|e| format!("保存设置失败：{e}"))?;
+        app.gui_line(&format!("hide new panes: {hide}"));
+        Ok(hide)
+    })
+    .await
+}
+
+/// Hides a clay Session's Pane on the ToH Mac Client, or shows it again (`ccrpc hide|show`).
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_set_pane_hidden(
+    state: State<'_, CcrpcState>,
+    holder_id: String,
+    hidden: bool,
+) -> CmdResult<()> {
+    with_ccrpc(&state, move |app| app.set_pane_hidden(&holder_id, hidden)).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn ccrpc_info(state: State<'_, CcrpcState>) -> CmdResult<CcrpcInfo> {
@@ -229,6 +256,7 @@ pub async fn ccrpc_info(state: State<'_, CcrpcState>) -> CmdResult<CcrpcInfo> {
             doctor: app.refresh_doctor(),
             analyzer: analyzer_info(app),
             launch_rules: crate::settings::load().launch_rules,
+            hide_new_panes: crate::settings::load().hide_new_panes,
             log_root: app.log_root.display().to_string(),
         })
     })
@@ -266,7 +294,8 @@ pub async fn ccrpc_new(
 ) -> CmdResult<String> {
     let sink = sink(&handle);
     with_ccrpc(&state, move |app| {
-        app.new_session(sink, &cwd, &crate::settings::load().launch_rules)
+        let s = crate::settings::load();
+        app.new_session(sink, &cwd, &s.launch_rules, s.hide_new_panes)
     })
     .await
 }
@@ -287,12 +316,8 @@ pub async fn ccrpc_resume(
     }
     let sink = sink(&handle);
     with_ccrpc(&state, move |app| {
-        app.resume_session(
-            sink,
-            &session_id,
-            &cwd,
-            &crate::settings::load().launch_rules,
-        )
+        let s = crate::settings::load();
+        app.resume_session(sink, &session_id, &cwd, &s.launch_rules, s.hide_new_panes)
     })
     .await
 }

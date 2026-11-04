@@ -7,7 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { connFor, ConnectButton, lsEntryFor, STATE_WORD, useConnect, useConnectDebugInfo, useUnindexed } from "@/features/connect";
+import { connFor, ConnectButton, lsEntryFor, PaneButton, STATE_WORD, useConnect, useConnectDebugInfo, useUnindexed } from "@/features/connect";
 import { useLeadingInset } from "@/features/layout";
 import { api } from "@/ipc";
 import type { LiveState, ModelCost } from "@/ipc/bindings";
@@ -39,6 +39,7 @@ export function SessionHeader() {
       <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">新 Session</h1>
+          <PaneButton sessionId={sessionId} />
           <ConnectButton sessionId={sessionId} />
         </div>
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
@@ -57,6 +58,7 @@ export function SessionHeader() {
     <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
+        <PaneButton sessionId={sessionId} />
         <ConnectButton sessionId={sessionId} resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }} />
         <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} />
       </div>

@@ -36,6 +36,10 @@ export const commands = {
 	ccrpcSetAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerInfo>("ccrpc_set_analyzer", { apiKey, baseUrl, model }),
 	/**  Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved. */
 	ccrpcSetLaunchRules: (rules: LaunchRule[]) => __TAURI_INVOKE<LaunchRule[]>("ccrpc_set_launch_rules", { rules }),
+	/**  Saves 「新开的 Pane」: whether the Sessions CoDeck starts from now on open hidden on the ToH Mac Client. */
+	ccrpcSetHideNewPanes: (hide: boolean) => __TAURI_INVOKE<boolean>("ccrpc_set_hide_new_panes", { hide }),
+	/**  Hides a clay Session's Pane on the ToH Mac Client, or shows it again (`ccrpc hide|show`). */
+	ccrpcSetPaneHidden: (holderId: string, hidden: boolean) => __TAURI_INVOKE<null>("ccrpc_set_pane_hidden", { holderId, hidden }),
 	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
 	ccrpcList: () => __TAURI_INVOKE<string>("ccrpc_list"),
 	ccrpcConnect: (holderId: string) => __TAURI_INVOKE<string>("ccrpc_connect", { holderId }),
@@ -153,6 +157,8 @@ export type CcrpcInfo = {
 	doctor: DoctorLine[],
 	analyzer: AnalyzerInfo,
 	launchRules: LaunchRule[],
+	/**  Sessions CoDeck starts open hidden on the ToH Mac Client. */
+	hideNewPanes: boolean,
 	logRoot: string,
 };
 

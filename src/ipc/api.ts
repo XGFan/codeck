@@ -67,6 +67,10 @@ export interface Api {
   ccrpcSetAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerInfo>;
   /** Saves the launch rules (extra claude arguments by directory for 「新建 Session」); returns what was saved. */
   ccrpcSetLaunchRules(rules: LaunchRule[]): Promise<LaunchRule[]>;
+  /** Saves 「新开的 Pane」: whether Sessions started from now on (new and Resume) open hidden on the ToH Mac Client. */
+  ccrpcSetHideNewPanes(hide: boolean): Promise<boolean>;
+  /** `ccrpc hide|show <holderId>`: hides a clay Session's Pane on the ToH Mac Client, or shows it again. */
+  ccrpcSetPaneHidden(holderId: string, hidden: boolean): Promise<void>;
   /** `ccrpc ls --json`. */
   ccrpcList(): Promise<LsEntry[]>;
   /** `ccrpc attach --co-display`; returns the connection id. */

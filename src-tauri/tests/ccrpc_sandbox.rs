@@ -1,4 +1,4 @@
-//! The relay against real ccrpc and Claude Code, in the sandbox of scripts/ccrpc-sandbox (own ToH /
+//! The relay against real ccrpc and Claude Code (in a hidden Pane), in the sandbox of scripts/ccrpc-sandbox (own ToH /
 //! claude / ccrpc directories, the local mock model; nothing of the owner's is touched):
 //!
 //! ```sh
@@ -110,7 +110,8 @@ fn relays_a_real_session_and_logs_it() {
         let _ = tx.lock().unwrap().send(o);
     });
 
-    let conn = app.new_session(sink, &work, &[]).unwrap();
+    // 「新开的 Pane：隐藏」 (ToH ADR-0050): the Pane opens in the hidden window, at ccrpc's size.
+    let conn = app.new_session(sink, &work, &[], true).unwrap();
     let mut holder = Holder {
         toh: sandbox.join("toh"),
         id: None,
@@ -119,6 +120,22 @@ fn relays_a_real_session_and_logs_it() {
     let hid = ready["holder_id"].as_str().unwrap().to_string();
     holder.id = Some(hid.clone());
     assert_eq!(ready["co_display"], true);
+    assert_eq!(ready["size"], json!([160, 48]));
+    let hidden = |app: &App| {
+        app.list_sessions()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["holder_id"] == hid.as_str())
+            .map(|e| e["hidden"].clone())
+    };
+    assert_eq!(hidden(&app), Some(json!(true)));
+    app.set_pane_hidden(&hid, false).unwrap();
+    assert_eq!(hidden(&app), Some(json!(false)));
+    app.set_pane_hidden(&hid, true).unwrap();
+    assert_eq!(hidden(&app), Some(json!(true)));
+    assert!(app.set_pane_hidden("x; rm", true).is_err());
     // A new Session's log directory is renamed after its Holder ID.
     let dir = app.log_dir(&conn).unwrap();
     assert!(

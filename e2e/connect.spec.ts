@@ -30,7 +30,15 @@ const TURNS = "迁移表单校验到 zod";
 const TRUST = "/review 订单列表页";
 const REFUSED = "Longhorn 卷扩容与备份策略";
 
-type Probe = { sent: { msg: Record<string, unknown> }[]; lists: number; guiLog: string[]; badge: number; analyzerSaves: number };
+type Probe = {
+  sent: { msg: Record<string, unknown> }[];
+  lists: number;
+  guiLog: string[];
+  badge: number;
+  analyzerSaves: number;
+  paneHides: { holderId: string; hidden: boolean }[];
+  hideNewPanes: boolean;
+};
 const probe = (page: Page) => page.evaluate(() => window.__cvCcrpc as unknown as Probe);
 const lastSent = async (page: Page, type: string) => (await probe(page)).sent.map((s) => s.msg).filter((m) => m.type === type).pop();
 
@@ -80,6 +88,28 @@ test("标题栏：ccrpc ls 里的 Live Session 可 Connect，插件未报到时�
   await open(page, NOT_LISTED);
   await expect(page.getByTestId("header-more")).toBeVisible();
   await expect(page.getByTestId("connect-button")).toHaveCount(0);
+});
+
+test("标题栏：clay 里的 Session 不论是否 Connect 都可隐藏 / 显示 Pane，不在 clay 里的没有", async ({ page }) => {
+  await page.goto("/");
+  await open(page, RICH);
+  const btn = page.getByTestId("pane-visibility");
+  await expect(btn).toHaveText("隐藏 Pane");
+  await btn.click();
+  await expect(btn).toHaveText("显示 Pane");
+  const [hide] = (await probe(page)).paneHides;
+  expect(hide.hidden).toBe(true);
+
+  await page.getByTestId("connect-button").click();
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  await expect(btn).toHaveText("显示 Pane");
+  await btn.click();
+  await expect(btn).toHaveText("隐藏 Pane");
+  expect((await probe(page)).paneHides).toEqual([hide, { holderId: hide.holderId, hidden: false }]);
+
+  await open(page, NOT_LISTED);
+  await expect(page.getByTestId("header-more")).toBeVisible();
+  await expect(page.getByTestId("pane-visibility")).toHaveCount(0);
 });
 
 test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ page }) => {
@@ -490,6 +520,18 @@ test("设置 › ccrpc › 启动参数：选目录、填参数、保存；参�
   await box.getByTestId("launch-rule-add").click();
   await box.getByTestId("launch-rule-remove").click();
   await expect(box.getByTestId("launch-rule")).toHaveCount(0);
+});
+
+test("设置 › ccrpc › 新开的 Pane：默认显示，选「隐藏」即保存", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Meta+,");
+  await page.getByRole("tab", { name: "ccrpc" }).click();
+  const box = page.getByTestId("set-hide-new-panes");
+  await expect(box.getByTestId("hide-new-panes-show")).toHaveAttribute("aria-checked", "true");
+  await box.getByTestId("hide-new-panes-hide").click();
+  await expect(box.getByTestId("hide-new-panes-hide")).toHaveAttribute("aria-checked", "true");
+  await expect(box.getByTestId("hide-new-panes-show")).toHaveAttribute("aria-checked", "false");
+  expect((await probe(page)).hideNewPanes).toBe(true);
 });
 
 test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一次", async ({ page }) => {
