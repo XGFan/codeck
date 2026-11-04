@@ -89,4 +89,6 @@ export const slashCommands: SlashCommand[] = [
   { name: "release-notes", description: "查看更新说明", source: "builtin", interactive: false },
   { name: "release", description: "按仓库的发布规则发版", source: "project", interactive: false },
   { name: "kit:review", description: "审查改动", source: "plugin", interactive: false },
+  { name: "help", description: "帮助与命令列表", source: "builtin", interactive: true },
+  { name: "vim", description: "切换 Vim 编辑模式", source: "builtin", interactive: false },
 ];

@@ -266,6 +266,13 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   const menu = page.getByTestId("slash-menu");
   const options = menu.getByTestId("slash-option");
 
+  // `/` alone lists every command; the list scrolls with the pick.
+  await input.fill("/");
+  await expect(options).toHaveCount(10);
+  await input.press("ArrowUp");
+  await expect(options.last()).toHaveAttribute("aria-selected", "true");
+  await expect(options.last()).toBeInViewport();
+
   await input.fill("/re");
   await expect(options).toHaveText([/^\/rename/, /^\/release-notes/, /^\/release/, /^\/kit:review/]);
   await expect(options.first()).toHaveAttribute("aria-selected", "true");

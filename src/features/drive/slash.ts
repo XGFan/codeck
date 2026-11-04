@@ -10,7 +10,7 @@ export function typedCommand(text: string): string | null {
  * Commands for `prefix`, best first: the name itself, names starting with it, then a namespaced name
  * whose part after `:` starts with it, then names containing it; the list's order within each.
  */
-export function matchCommands(list: SlashCommand[], prefix: string, limit = 8): SlashCommand[] {
+export function matchCommands(list: SlashCommand[], prefix: string, limit = Infinity): SlashCommand[] {
   const p = prefix.toLowerCase();
   const rank = (c: SlashCommand) => {
     const n = c.name.toLowerCase();

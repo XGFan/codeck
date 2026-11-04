@@ -1,6 +1,6 @@
 import { ArrowUp, ImageIcon, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "@/ipc";
 import type { SlashCommand, SlashSource } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
@@ -56,6 +56,8 @@ export function Composer({ c }: { c: ConnState }) {
     commands ??
     (await qc.fetchQuery({ queryKey: queryKeys.slashCommands(c.cwd), queryFn: () => api.listSlashCommands(c.cwd), staleTime: 30_000 }).catch(() => undefined));
   const [pick, setPick] = useState(0);
+  /** The pick moved by a key (not the pointer): scroll it into view. */
+  const keyMoved = useRef(false);
   const [hiddenFor, setHiddenFor] = useState<string | null>(null);
   const matches = typed != null && live && commands && hiddenFor !== text ? matchCommands(commands, typed) : [];
   const picked = matches[Math.min(pick, matches.length - 1)];
@@ -167,6 +169,15 @@ export function Composer({ c }: { c: ConnState }) {
                 role="option"
                 aria-selected={m === picked}
                 data-testid="slash-option"
+                // Arrow keys move past the visible rows: keep the picked one in view.
+                ref={
+                  m === picked
+                    ? (el) => {
+                        if (el && keyMoved.current) el.scrollIntoView({ block: "nearest" });
+                        keyMoved.current = false;
+                      }
+                    : undefined
+                }
                 onMouseDown={(e) => {
                   e.preventDefault();
                   complete(m);
@@ -218,6 +229,7 @@ export function Composer({ c }: { c: ConnState }) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
                 const n = matches.length;
+                keyMoved.current = true;
                 setPick((matches.indexOf(picked) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
                 return;
               }
