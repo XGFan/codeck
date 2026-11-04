@@ -143,7 +143,7 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
         onClick={() => toggle(key)}
         className="flex w-full items-center gap-2 text-left text-[12px] text-secondary hover:text-text"
       >
-        {open ? <ChevronDown size={12} strokeWidth={1.8} aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} aria-hidden />}
+        {open ? <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />}
         {o.color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: o.color }} />}
         <span className="shrink-0 font-medium text-text/80">Teammate · {o.teammateId ?? "未知"}</span>
         {messages.length > 1 && <span className="shrink-0 text-secondary">{messages.length} 条</span>}

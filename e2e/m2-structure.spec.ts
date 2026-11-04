@@ -162,6 +162,16 @@ test("后台命令：标「后台」、展开写完整命令与任务，和结�
   await expect(page.locator('[data-anchor="n12|tu_bg_build"][data-highlighted]')).toBeVisible();
 });
 
+test("工具组的折叠箭头大小不随摘要长短变化", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 800 });
+  await openSession(page, RICH_TITLE);
+  const groups = page.getByTestId("tool-group");
+  await expect(groups.first()).toBeVisible();
+  const widths = await groups.evaluateAll((els) => els.map((el) => el.querySelector("button > svg")!.getBoundingClientRect().width));
+  expect(widths.length).toBeGreaterThan(2);
+  for (const w of widths) expect(w).toBe(13);
+});
+
 test("工具输入是网址时（如 Artifact）可点击打开，点击不展开这次调用", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const group = page.getByTestId("tool-group").filter({ hasText: "cargo build --release > build.log" });

@@ -105,7 +105,7 @@ function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
         onClick={() => useUi.getState().setExpanded(row.key, !open)}
         className="flex min-h-7 max-w-full items-center gap-2 text-[13px] text-secondary hover:text-text"
       >
-        {open ? <ChevronDown size={13} strokeWidth={1.8} aria-hidden /> : <ChevronRight size={13} strokeWidth={1.8} aria-hidden />}
+        {open ? <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />}
         <span className="shrink-0 text-text/90">{text}</span>
         <span className="min-w-0 truncate font-mono text-[12px] text-secondary">{targets.join(" · ")}</span>
         {failed && (
