@@ -76,22 +76,19 @@ test("切换 Branch 后后续内容随之改变", async ({ page }) => {
   await expect(transcript.getByText("先只加中间件，不要动 handler。")).toBeVisible();
 });
 
-test("工具调用合并成组：组头一行写做了什么、对象和失败数，默认收起，点开看每次调用", async ({ page }) => {
+test("展开的过程里每次工具调用各占一行，不再合并成组：一行写动作和对象，不带「完成」", async ({ page }) => {
   await openSession(page, RICH_TITLE);
-  const transcript = page.getByTestId("transcript");
-  await transcript.evaluate((e) => (e.scrollTop = 0));
-  const groups = page.getByTestId("tool-group");
-  const first = groups.filter({ hasText: "读取 1 个文件、运行 1 条命令" });
-  await expect(first).toContainText("mod.rs");
-  await expect(first).not.toHaveAttribute("data-open");
-  const failed = groups.filter({ hasText: "1 失败" });
-  await expect(failed).not.toHaveAttribute("data-open");
-  await expect(failed.getByTestId("tool-call")).toHaveCount(0);
-  await first.getByRole("button", { name: /读取 1 个文件/ }).click();
-  await expect(first.getByTestId("tool-call")).toHaveCount(2);
-  // Each call is one quiet line: verb and target, no 「完成」 badge.
-  await expect(first.getByTestId("tool-call").first()).toContainText("读取");
-  await expect(first.getByTestId("tool-call").first()).not.toContainText("完成");
+  const t = page.getByTestId("transcript");
+  await t.evaluate((e) => (e.scrollTop = 0));
+  await expect(t.locator('[data-row="tool"]').first()).toBeVisible();
+  await expect(t.getByTestId("tool-group")).toHaveCount(0);
+  const read = t.locator('[data-row="tool"]').filter({ hasText: "mod.rs" }).first();
+  await expect(read).toContainText("读取");
+  await expect(read).not.toContainText("完成");
+  // A failed call stays collapsed, marked on its line.
+  const failed = t.locator('[data-row="tool"]').filter({ hasText: "cargo build" }).filter({ hasText: "退出码" });
+  await expect(failed).toHaveCount(1);
+  await expect(failed.getByTestId("tool-body")).toHaveCount(0);
 });
 
 test("打开 Subagent 面板，嵌套卡片推入面包屑，Esc 关闭", async ({ page }) => {
@@ -153,9 +150,7 @@ test("后台命令的结束通知写「后台命令」和命令本身，不当�
 test("后台命令：标「后台」、展开写完整命令与任务，和结束通知互相跳转", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const call = page.locator('[data-testid="tool-call"][data-tool="Bash"]').filter({ hasText: "cargo build --release" });
-  const group = page.getByTestId("tool-group").filter({ hasText: "cargo build --release > build.log" });
-  await reveal(page.getByTestId("transcript"), group);
-  await group.getByRole("button").first().click();
+  await reveal(page.getByTestId("transcript"), call);
   await expect(call.getByTestId("bash-background")).toHaveText("后台");
   await call.getByRole("button").first().click();
   await expect(call.getByTestId("tool-body")).toContainText("$ cargo build --release > build.log 2>&1");
@@ -179,29 +174,37 @@ test("思考：一行写「思考 · N 行」，首尾空行不计也不显示�
   expect(await size("先看一下现有中间件的组织方式。")).toBe("14px");
 });
 
-test("工具组的折叠箭头大小不随摘要长短变化", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 1400 });
-  await openSession(page, RICH_TITLE);
-  const groups = page.getByTestId("tool-group");
-  await expect(groups.first()).toBeVisible();
-  const widths = await groups.evaluateAll((els) => els.map((el) => el.querySelector("button > svg")!.getBoundingClientRect().width));
-  expect(widths.length).toBeGreaterThan(2);
+test("折叠行的箭头大小不随摘要长短变化", async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 1400 });
+  await openSession(page, RICH_TITLE, { folded: true });
+  const folds = page.getByTestId("turn-fold");
+  await expect(folds.first()).toBeVisible();
+  const widths = await folds.evaluateAll((els) => els.map((el) => el.querySelector("svg")!.getBoundingClientRect().width));
+  expect(widths.length).toBeGreaterThan(1);
   for (const w of widths) expect(w).toBe(13);
 });
 
-test("工具输入是网址时（如 Artifact）可点击打开，点击不展开这次调用", async ({ page }) => {
+test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点击不展开这次调用；摘要是别的字段时网址跟在后面", async ({ page }) => {
   await openSession(page, RICH_TITLE);
-  const group = page.getByTestId("tool-group").filter({ hasText: "cargo build --release > build.log" });
-  await reveal(page.getByTestId("transcript"), group);
-  await group.getByRole("button").first().click();
-  const call = page.locator('[data-testid="tool-call"][data-tool="Artifact"]');
-  const link = call.getByTestId("tool-link");
-  await expect(link).toHaveAttribute("href", "https://claude.ai/artifact/M0ckDesignCanvas");
-  await expect(link).toHaveAttribute("target", "_blank");
+  const calls = page.locator('[data-testid="tool-call"][data-tool="Artifact"]');
+  await reveal(page.getByTestId("transcript"), calls);
+  const [byUrl, byPath] = [calls.filter({ hasNotText: "canvas.json" }), calls.filter({ hasText: "project/canvas.json" }).filter({ hasNotText: "/private/" })];
+  for (const call of [byUrl, byPath]) {
+    await expect(call.getByTestId("tool-link")).toHaveAttribute("href", "https://claude.ai/artifact/M0ckDesignCanvas");
+    await expect(call.getByTestId("tool-link")).toHaveAttribute("target", "_blank");
+  }
   const popup = page.waitForEvent("popup");
-  await link.click();
+  await byPath.getByTestId("tool-link").click();
   await (await popup).close();
-  await expect(call.getByTestId("tool-body")).toHaveCount(0);
+  await expect(byPath.getByTestId("tool-body")).toHaveCount(0);
+  // A long summary (an absolute path) shrinks with the link and stays inside its row, clear of the time.
+  const long = calls.filter({ hasText: "/private/tmp/" });
+  const row = (await long.getByRole("button").first().boundingBox())!;
+  for (const el of [long.locator("code").first(), long.getByTestId("tool-link")]) {
+    const b = (await el.boundingBox())!;
+    expect(b.width).toBeGreaterThan(20);
+    expect(b.x + b.width).toBeLessThanOrEqual(row.x + row.width);
+  }
 });
 
 test("显示系统消息开关控制隐藏条目", async ({ page }) => {
@@ -256,13 +259,13 @@ test("pendingJump 进入嵌套 Subagent 时打开面板并高亮目标", async (
   expect(await page.evaluate(() => window.__cvStore!.getState().pendingJump)).toBeNull();
 });
 
-test("pendingJump 展开折叠的工具组并切换到被放弃的 Branch", async ({ page }) => {
+test("pendingJump 展开折叠的那一轮并切换到被放弃的 Branch", async ({ page }) => {
   const sid = await openSession(page, RICH_TITLE);
   await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n08", toolUseId: "tu_edit2", agentPath: [] });
   const hit = page.locator('[data-anchor="n08|tu_edit2"][data-highlighted]');
   await expect(hit).toBeVisible();
   await expect(hit).toBeInViewport();
-  await expect(page.getByTestId("tool-group").filter({ has: page.locator('[data-anchor="n08|tu_edit2"]') })).toHaveAttribute("data-open", "true");
+  await expect(page.locator('[data-row="tool"]').filter({ has: page.locator('[data-anchor="n08|tu_edit2"]') })).toHaveCount(1);
 
   await jump(page, {
     sessionId: sid,
@@ -318,13 +321,14 @@ test("按轮折叠：每轮的过程收成「已处理 … · N 段说明、N �
   const prompt = t.locator('[data-row="prompt"]').filter({ hasText: "接下来把限流参数" });
   const fold = t.locator('[data-row="fold"]').last();
   await expect(fold).toHaveText(/^已处理 \d+ (秒|分 \d\d 秒)\s?· .*次工具调用$/);
-  await expect(t.locator('[data-row="tool"], [data-row="group"]').filter({ hasText: "config.rs" })).toHaveCount(0);
+  await expect(t.locator('[data-row="tool"]').filter({ hasText: "config.rs" })).toHaveCount(0);
   await expect(t.getByText("默认值保持 120，未配置时沿用。")).toBeVisible();
   const actions = t.getByTestId("answer-actions").last();
   await expect(actions).toContainText("复制");
   await expect(actions).toContainText(/\d\d:\d\d/);
   await fold.getByTestId("turn-fold").click();
-  await expect(t.locator('[data-row="tool"], [data-row="group"]').filter({ hasText: "config.rs" })).toContainText("读取 1 个文件、编辑 1 个文件");
+  // Opened: each call on its own line, not grouped.
+  await expect(t.locator('[data-row="tool"]').filter({ hasText: "config.rs" })).toHaveCount(2);
   const bubble = (await prompt.getByTestId("user-bubble").boundingBox())!;
   expect((await prompt.getByTestId("prompt-meta").boundingBox())!.y).toBeGreaterThan(bubble.y + bubble.height - 1);
   await expect(t.getByText(/^Claude · \d/)).toHaveCount(0);

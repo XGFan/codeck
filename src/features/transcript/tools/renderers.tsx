@@ -416,6 +416,13 @@ export function GenericView({ nodeId, call, startMs, ctx, summary }: RenderProps
   const { input, loading, truncated } = useFullInput(call, ctx, expanded);
   const out = useOutput(call, ctx);
   const pretty = useMemo(() => (expanded ? prettyJson(JSON.stringify(input)) : ""), [expanded, input]);
+  // A web address in the input (an Artifact's `url`, …) opens on a click, also when the summary is another field.
+  const url = [summary, str(parseJson(call.inputJson)?.url)].find((u) => /^https?:\/\/\S+$/.test(u));
+  const link = url && (
+    <a href={url} target="_blank" rel="noreferrer" data-testid="tool-link" className="min-w-0 truncate font-mono text-[12px] text-accent hover:underline">
+      {url}
+    </a>
+  );
   return (
     <Shell
       nodeId={nodeId}
@@ -425,12 +432,15 @@ export function GenericView({ nodeId, call, startMs, ctx, summary }: RenderProps
       icon={<Wrench {...ip} />}
       name={call.name}
       summary={
-        /^https?:\/\/\S+$/.test(summary) ? (
-          <a href={summary} target="_blank" rel="noreferrer" data-testid="tool-link" className="min-w-0 truncate font-mono text-[12px] text-accent hover:underline">
-            {summary}
-          </a>
+        url === summary ? (
+          link
         ) : (
-          <Mono className="flex-1">{summary}</Mono>
+          <>
+            {/* With a link both shrink (ellipsis), so a long summary (a path) never runs over the row's end. */}
+            <Mono className={link ? undefined : "flex-1"}>{summary}</Mono>
+            {link && <span className="shrink-0 text-secondary/70">·</span>}
+            {link}
+          </>
         )
       }
     >

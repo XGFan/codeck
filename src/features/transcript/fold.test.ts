@@ -42,7 +42,15 @@ describe("按轮折叠", () => {
     const g = foldTurns(built, {});
     expect(g.rows[6]).toMatchObject({ key: "fold:u3", open: true });
     expect(foldTurns(built, { "fold:u3": false }).rows.map((r) => r.kind).slice(5)).toEqual(["prompt", "fold"]);
-    expect(foldTurns(built, { "fold:u1": true }).rows.map((r) => r.kind).slice(0, 5)).toEqual(["prompt", "fold", "text", "group", "text"]);
+    expect(foldTurns(built, { "fold:u1": true }).rows.map((r) => r.kind).slice(0, 6)).toEqual(["prompt", "fold", "text", "tool", "tool", "text"]);
+  });
+
+  it("opened, a run of calls is not grouped: each call has its own row, and a jump to it lands there", () => {
+    expect(built.rows.some((r) => r.kind === "group")).toBe(true);
+    const g = foldTurns(built, { "fold:u1": true });
+    expect(g.rows.some((r) => r.kind === "group")).toBe(false);
+    expect(g.rows[rowIndexOf(g, "a1", "t1")!]).toMatchObject({ kind: "tool", call: { toolUseId: "t1" } });
+    expect(g.rows[rowIndexOf(g, "a1", "t2")!]).toMatchObject({ kind: "tool", call: { toolUseId: "t2" } });
   });
 
   it("a jump into a folded process opens its fold", () => {

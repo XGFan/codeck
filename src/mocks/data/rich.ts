@@ -230,6 +230,16 @@ export const richMain: Node[] = [
       { notificationNodeId: "n-notify-bash" },
     ),
     call("tu_artifact", "Artifact", { action: "read", url: "https://claude.ai/artifact/M0ckDesignCanvas" }, { text: "[Artifact read]" }),
+    call("tu_artifact_file", "Artifact", { action: "read", url: "https://claude.ai/artifact/M0ckDesignCanvas", path: "project/canvas.json" }, { text: "{}" }),
+    call(
+      "tu_artifact_publish",
+      "Artifact",
+      {
+        url: "https://claude.ai/artifact/M0ckDesignCanvas",
+        file_path: "/private/tmp/claude-501/-Users-dev-Developer-lumen-api/2f0c1e7a-5b1d-4c2e-9a77-0d3f6b8e41aa/scratchpad/artifact-files/9c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f/project/canvas.json",
+      },
+      { text: "Updated the Artifact" },
+    ),
   ]),
   userNode(
     "n-notify",
