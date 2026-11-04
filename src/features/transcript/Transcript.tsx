@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
+import { OverlayScrollbar } from "@/components/OverlayScrollbar";
 import { ConnectTail, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
@@ -331,7 +332,7 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
           onKeyDown={onKeyDown}
           data-testid={testId}
           data-scope={scope.kind === "main" ? "main" : scope.agentId}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6"
+          className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-6"
         >
           <div className="relative mx-auto max-w-(--conv-w)" style={{ height: total + 40 }}>
             {virtualizer.getVirtualItems().map((v) => {
@@ -357,6 +358,7 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
             </div>
           )}
         </div>
+        <OverlayScrollbar scrollRef={scrollRef} onUserScroll={unlockTurn} testId={testId && `${testId}-scrollbar`} />
         {isMain && <WidthHandles />}
         {unread && (
           <button

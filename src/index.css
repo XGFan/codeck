@@ -107,6 +107,15 @@ body {
   background-color: var(--color-scroll-thumb);
 }
 
+/* For a scroller with an OverlayScrollbar: the native one would take its width out of the content. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 ::highlight(cv-find) {
   background-color: #ffd54a;
   color: #1c1c1e;

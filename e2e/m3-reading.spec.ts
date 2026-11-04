@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { composeEnd, composeStart, queriesOf } from "./ime";
+import { unfoldAll } from "./unfold";
 
 const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 
@@ -57,6 +58,40 @@ test("j/k 按轮次跳转，大纲高亮当前轮；点击大纲刻度跳转", a
   await expect(last).toHaveAttribute("data-current", "true");
   await ticks.first().hover();
   await expect(page.getByTestId("outline-tip").first()).toBeVisible();
+});
+
+test("大纲浮在对话左侧、滚动条浮在右侧，都不占对话区宽度；拖动滚动条滑块滚动", async ({ page }) => {
+  await openRich(page);
+  await unfoldAll(page);
+  const t = page.getByTestId("transcript");
+  const pane = (await page.getByTestId("pane-conversation").boundingBox())!;
+  const box = (await t.boundingBox())!;
+  expect(box.width).toBeCloseTo(pane.width, 0);
+  // No native scrollbar gutter.
+  expect(await t.evaluate((el) => (el as HTMLElement).offsetWidth - el.clientWidth)).toBe(0);
+  const outline = (await page.getByTestId("outline").boundingBox())!;
+  const column = (await page.getByTestId("conversation-column").boundingBox())!;
+  expect(outline.x + outline.width).toBeLessThanOrEqual(column.x);
+
+  const bar = page.getByTestId("transcript-scrollbar");
+  const thumb = page.getByTestId("transcript-scrollbar-thumb");
+  // Scrolling shows the thumb, which fades out after a while.
+  await t.evaluate((el) => (el.scrollTop = 100));
+  await expect(bar).toHaveAttribute("data-visible", "true");
+  await expect(bar).not.toHaveAttribute("data-visible");
+  const b = (await bar.boundingBox())!;
+  expect(b.x + b.width).toBeCloseTo(pane.x + pane.width, 0);
+  const th = (await thumb.boundingBox())!;
+  await page.mouse.move(th.x + th.width / 2, th.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(th.x + th.width / 2, th.y + 205, { steps: 5 });
+  await page.mouse.up();
+  expect(await t.evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
+  // The wheel over the strip scrolls the transcript too.
+  const before = await t.evaluate((el) => el.scrollTop);
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => t.evaluate((el) => el.scrollTop)).toBeGreaterThan(before + 100);
 });
 
 test("j 在输入框内不触发轮次跳转", async ({ page }) => {

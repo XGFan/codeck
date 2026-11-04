@@ -29,7 +29,14 @@ function useTurnKeys() {
   });
 }
 
-/** 轮次大纲: a 28px right rail with one tick per turn; the current turn is blue, hover shows the prompt. */
+/**
+ * 轮次大纲: one tick per turn, floating over the left margin of the conversation (it takes no width), centered
+ * between the header and the input area; the current turn is blue, hover lengthens a tick and shows the prompt.
+ * Rendered in the transcript's positioned parent, where `--connect-h` is the floating input area's height.
+ * Only the ticks take the pointer, each 16px wide: in a narrow pane the conversation column's left width handle
+ * (8–20px) stays draggable beside and above / below them. Many turns shrink the ticks to 2px apart; past that the
+ * list runs off the bottom (safe centering), never over the header.
+ */
 export function Outline() {
   const sessionId = useUi((s) => s.sessionId);
   const turns = useReading((s) => s.turns);
@@ -40,7 +47,8 @@ export function Outline() {
     <nav
       aria-label="轮次大纲"
       data-testid="outline"
-      className="flex w-7 shrink-0 flex-col items-center border-l border-border py-3"
+      className="pointer-events-none absolute top-0 left-0 z-20 flex w-6 flex-col justify-[safe_center] py-6"
+      style={{ bottom: "var(--connect-h, 0px)" }}
     >
       {turns.map((t) => {
         const on = t.turn === current;
@@ -54,18 +62,18 @@ export function Outline() {
             aria-label={`第 ${t.turn + 1} 轮：${t.text.slice(0, 30)}`}
             aria-current={on || undefined}
             onClick={() => goTo(t)}
-            className="group relative flex min-h-1.5 max-h-6 w-full flex-1 basis-0 items-center justify-center"
+            className="group pointer-events-auto relative flex max-h-2 min-h-0.5 w-4 flex-1 basis-0 items-center pl-1.5"
           >
             <span
               className={cn(
-                "block h-[3px] w-3 rounded-sm transition-colors",
-                on ? "bg-accent" : "bg-secondary/60 group-hover:bg-text",
+                "block h-[2px] rounded-full transition-all",
+                on ? "w-2.5 bg-accent" : "w-2 bg-secondary/50 group-hover:w-2.5 group-hover:bg-text",
               )}
             />
             <span
               role="tooltip"
               data-testid="outline-tip"
-              className="pointer-events-none absolute top-1/2 right-full z-30 mr-1.5 hidden max-w-64 -translate-y-1/2 rounded-md border border-border bg-ground px-2 py-1 text-left text-[12px] leading-snug whitespace-normal text-text shadow-lg group-hover:block group-focus-visible:block"
+              className="pointer-events-none absolute top-1/2 left-full z-30 ml-1 hidden w-max max-w-64 -translate-y-1/2 rounded-md border border-border bg-ground px-2 py-1 text-left text-[12px] leading-snug whitespace-normal text-text shadow-lg group-hover:block group-focus-visible:block"
             >
               {t.text.length > 30 ? `${t.text.slice(0, 30)}…` : t.text}
             </span>

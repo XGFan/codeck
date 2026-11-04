@@ -41,12 +41,12 @@ export default function App() {
           <ElsewhereBanner />
           <FindBar />
           <div className="flex min-h-0 flex-1">
-            {/* The input area floats over the foot of the transcript, as wide as it. */}
+            {/* The input area floats over the foot of the transcript, as wide as it; the outline over its left margin. */}
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               <TranscriptView />
               <ConnectPanel />
+              <Outline />
             </div>
-            <Outline />
             <SubagentPanel />
           </div>
         </main>
