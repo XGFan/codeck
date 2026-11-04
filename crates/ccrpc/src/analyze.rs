@@ -77,27 +77,31 @@ impl Analyzer {
         });
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         // No redirects (they would carry the key elsewhere), https except to this machine.
-        let agent = ureq::AgentBuilder::new()
-            .redirects(0)
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .max_redirects(0)
             .https_only(!is_loopback(&self.base_url))
-            .timeout(Duration::from_secs(60))
-            .build();
-        let resp = agent
+            .timeout_global(Some(Duration::from_secs(60)))
+            .build()
+            .into();
+        let mut resp = agent
             .post(&url)
-            .set("x-api-key", &self.key)
-            .set("authorization", &format!("Bearer {}", self.key))
-            .set("anthropic-version", "2023-06-01")
-            .set("content-type", "application/json")
-            .send_json(body)
+            .header("x-api-key", &self.key)
+            .header("authorization", &format!("Bearer {}", self.key))
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .send(serde_json::to_vec(&body)?)
             .map_err(|e| anyhow!("分析器请求失败：{e}"))?;
-        let mut buf = Vec::new();
-        {
-            use std::io::Read;
-            resp.into_reader()
-                .take(MAX_RESPONSE)
-                .read_to_end(&mut buf)
-                .context("读不完分析器的响应")?;
+        // 4xx / 5xx are already errors; a redirect is returned as is (max_redirects 0) and refused here.
+        if !resp.status().is_success() {
+            bail!("分析器请求失败：HTTP {}", resp.status());
         }
+        // A body over MAX_RESPONSE is an error rather than a truncated read.
+        let buf = resp
+            .body_mut()
+            .with_config()
+            .limit(MAX_RESPONSE)
+            .read_to_vec()
+            .context("读不完分析器的响应")?;
         let v: Value = serde_json::from_slice(&buf).context("分析器的响应不是 JSON")?;
         let text: String = v["content"]
             .as_array()
@@ -257,5 +261,38 @@ mod tests {
         assert!(parse_answer("{\"kind\":\"none\",\"options\":[]}").is_err());
         assert!(parse_answer("{\"kind\":\"menu\",\"options\":[]}").is_err());
         assert!(parse_answer("no json here").is_err());
+    }
+
+    #[test]
+    fn refuses_a_redirect_and_sends_the_key_headers() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut head = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                    break;
+                }
+                head.push(line.trim_end().to_ascii_lowercase());
+            }
+            let mut stream = stream;
+            stream
+                .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            head
+        });
+        let a = Analyzer { base_url, model: "m".into(), key: "k-123".into() };
+        let lines = vec!["Do you want to proceed?".to_string()];
+        let req = Request { lines: &lines, waiting_for: "approve", pending: Vec::new(), claude_version: None };
+        let err = a.analyze(&req).unwrap_err().to_string();
+        assert!(err.starts_with("分析器请求失败"), "{err}");
+        let head = server.join().unwrap();
+        assert_eq!(head[0], "post /v1/messages http/1.1");
+        assert!(head.contains(&"x-api-key: k-123".to_string()), "{head:?}");
+        assert!(head.contains(&"anthropic-version: 2023-06-01".to_string()), "{head:?}");
     }
 }

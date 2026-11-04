@@ -15,6 +15,5 @@ anyhow.workspace = true
 base64.workspace = true
 libc.workspace = true
 notify.workspace = true
-# ureq 2：与 workspace 的 ureq 3 并存，待统一。
-ureq = { version = "2", features = ["json"] }
+ureq.workspace = true
 tempfile.workspace = true
