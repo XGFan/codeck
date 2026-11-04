@@ -17,7 +17,7 @@ const toolsTurns = recordedTurns("tools");
 // ui-cases → the rich Live Session, tools → the Flux Session, session-changed → the auth Session
 // (its `/clear` moves to the JWT one), no-plugin → the LCP Live Session (plugin not reported),
 // turns → the zod Session, trust → the review Session, refused → the Longhorn Session (its ccrpc exits
-// before `driveConnect` returns).
+// before `driveConnect` returns), clay-new → a Session not in the mock index (opened in clay, no prompt yet).
 
 const RICH = "为 /v1/chat 接口增加令牌桶限流中间件";
 const TOOLS = "为 Flux 增加 kestrel-cli 镜像自动更新";
@@ -224,6 +224,39 @@ test("新建 Session：选目录后选中它，进索引前显示占位且可以
   expect((await probe(page)).guiLog).toContain("new /tmp/mock-new");
 });
 
+test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，可选中、驾驶，按 cwd 参与 Project 筛选", async ({ page }) => {
+  const id = "c1a70000-0000-4000-8000-0000000000c1";
+  await page.goto("/");
+  const row = page.getByTestId("session-row").first();
+  await expect(row).toHaveAttribute("data-session-id", id);
+  await expect(row).toContainText("新 Session");
+  await expect(row).toContainText("services");
+  await expect(row.getByTestId("live-dot")).toHaveAttribute("data-state", "idle");
+
+  await row.click();
+  await expect(row).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("transcript-new")).toHaveText("新 Session，发送第一条提示词后显示对话");
+  await expect(page.getByTestId("header")).toContainText("/Users/dev/Developer/lumen-api/services");
+  await page.getByTestId("drive-connect").click();
+  await expect(page.getByTestId("drive-panel")).toBeVisible();
+  await expect(state(page)).toContainText("空闲");
+  await expect(page.getByTestId("drive-input")).toBeEnabled();
+
+  const filterBy = async (name: string) => {
+    await page.keyboard.press("Meta+K");
+    await page.getByTestId("search").getByRole("combobox").fill(name);
+    await page.getByTestId("search-project").filter({ hasText: name }).click();
+    await expect(page.getByTestId("project-chip")).toContainText(name);
+  };
+  const placeholder = page.locator(`[data-testid=session-row][data-session-id="${id}"]`);
+  await filterBy("lumen-api");
+  await expect(placeholder).toBeVisible();
+  await page.getByRole("button", { name: "清除 Project 筛选" }).click();
+  await filterBy("orbit-web");
+  await expect(page.getByTestId("session-row").first()).toBeVisible();
+  await expect(placeholder).toHaveCount(0);
+});
+
 test("设置 › 驾驶：ccrpc 路径、doctor 的失败项、分析器与日志目录", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("Meta+,");
@@ -240,7 +273,10 @@ test("ccrpc ls 只在有 Live Session 或驾驶连接时轮询，恢复时立即
   await open(page, RICH);
   await expect(page.getByTestId("drive-connect")).toBeVisible();
   const ids = await page.evaluate(() =>
-    [...document.querySelectorAll("[data-testid=live-dot]")].map((d) => d.closest("[data-session-id]")!.getAttribute("data-session-id")!),
+    // Indexed rows only: the clay-new placeholder is Live through `ccrpc ls`, not the mock data.
+    [...document.querySelectorAll("[data-testid=session-row]:not([data-pending]) [data-testid=live-dot]")].map((d) =>
+      d.closest("[data-session-id]")!.getAttribute("data-session-id")!,
+    ),
   );
   expect(ids.length).toBeGreaterThan(0);
   await page.evaluate((list) => list.forEach((id) => window.__cvMock!.setLive(id, null)), ids);

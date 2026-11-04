@@ -2,12 +2,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, Folder, GitBranch, X } from "lucide-react";
 import { useMemo, useRef, type KeyboardEvent } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { NewSessionButton, NewSessionError, useUnread } from "@/features/drive";
-import type { Drill, ProjectSummary, SessionSort, SessionSummary } from "@/ipc/bindings";
+import { NewSessionButton, NewSessionError, useDrive, useUnread } from "@/features/drive";
+import type { Drill, ProjectSummary, SessionQuery, SessionSort, SessionSummary } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatCost, formatRelative, formatSpan, formatTokens } from "@/lib/format";
-import { useProjects, useSessionList } from "@/queries";
+import { useProjects, useSessionList, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
+import { pendingSessions, type PendingSession } from "./pending";
 
 const ROW_HEIGHT = 60;
 const nf = new Intl.NumberFormat("en-US");
@@ -19,6 +20,30 @@ const SORTS: { value: SessionSort; menu: string; order: string }[] = [
   { value: "tokens", menu: "Token", order: "Token" },
   { value: "cost", menu: "金额", order: "金额" },
 ];
+
+/** Every Session, unfiltered: which ones are indexed while a Project filter hides some. */
+const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
+
+/**
+ * Sessions in `ccrpc ls` that are not indexed yet (opened in clay, no prompt sent): placeholder rows at the top.
+ * Once indexed they are ordinary rows with the same id.
+ */
+function usePending(list: SessionSummary[] | undefined, projects: ProjectSummary[] | undefined): PendingSession[] {
+  const ls = useDrive((s) => s.ls);
+  const projectIds = useUi((s) => s.projectIds);
+  const drill = useUi((s) => s.statsDrill);
+  const filtered = projectIds.length > 0;
+  const wanted = !drill && ls.some((e) => e.session_id);
+  const { data: all } = useSessions(ALL_SESSIONS, filtered && wanted);
+  const source = filtered ? all : list;
+  return useMemo(() => {
+    if (!wanted) return [];
+    const indexed = source ? new Set(source.map((s) => s.id)) : null;
+    return pendingSessions(ls, indexed, { projectIds, drill: drill != null }, projects ?? []);
+  }, [wanted, source, ls, projectIds, drill, projects]);
+}
+
+type Item = { kind: "pending"; p: PendingSession } | { kind: "session"; s: SessionSummary };
 
 export function SessionList() {
   const { data } = useSessionList();
@@ -33,11 +58,17 @@ export function SessionList() {
   const setDrill = useUi((s) => s.setStatsDrill);
   const setProjectIds = useUi((s) => s.setProjectIds);
 
+  const pending = usePending(data, projects);
   const list = data ?? [];
+  const items = useMemo<Item[]>(
+    () => [...pending.map((p) => ({ kind: "pending" as const, p })), ...list.map((s) => ({ kind: "session" as const, s }))],
+    [pending, list],
+  );
+  const itemId = (i: Item) => (i.kind === "pending" ? i.p.id : i.s.id);
   const names = useMemo(() => new Map((projects ?? []).map((p: ProjectSummary) => [p.id, p.displayName])), [projects]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: list.length,
+    count: items.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
@@ -51,11 +82,11 @@ export function SessionList() {
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
-    const cur = list.findIndex((s) => s.id === sessionId);
-    const next = Math.max(0, Math.min(list.length - 1, cur < 0 ? 0 : cur + (e.key === "ArrowDown" ? 1 : -1)));
-    const target = list[next];
+    const cur = items.findIndex((i) => itemId(i) === sessionId);
+    const next = Math.max(0, Math.min(items.length - 1, cur < 0 ? 0 : cur + (e.key === "ArrowDown" ? 1 : -1)));
+    const target = items[next];
     if (!target) return;
-    open(target.id);
+    open(itemId(target));
     virtualizer.scrollToIndex(next, { align: "auto" });
   };
 
@@ -83,7 +114,7 @@ export function SessionList() {
           </span>
         )}
         <span data-testid="list-count" className="shrink-0 tabular-nums">
-          {nf.format(list.length)}
+          {nf.format(items.length)}
         </span>
         <span className="flex-1" />
         <NewSessionButton />
@@ -129,24 +160,24 @@ export function SessionList() {
       >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((v) => {
-            const s = list[v.index]!;
+            const item = items[v.index]!;
+            const id = itemId(item);
             return (
               <div
-                key={s.id}
+                key={id}
                 className="absolute top-0 left-0 w-full"
                 style={{ height: ROW_HEIGHT, transform: `translateY(${v.start}px)` }}
               >
-                <SessionRow
-                  s={s}
-                  selected={s.id === sessionId}
-                  byCreated={sort === "created"}
-                  onOpen={open}
-                />
+                {item.kind === "pending" ? (
+                  <PendingRow p={item.p} selected={id === sessionId} onOpen={open} />
+                ) : (
+                  <SessionRow s={item.s} selected={id === sessionId} byCreated={sort === "created"} onOpen={open} />
+                )}
               </div>
             );
           })}
         </div>
-        {data && list.length === 0 && <div className="p-6 text-center text-[12px] text-secondary">没有 Session</div>}
+        {data && items.length === 0 && <div className="p-6 text-center text-[12px] text-secondary">没有 Session</div>}
       </div>
     </div>
   );
@@ -184,25 +215,10 @@ function SessionRow({
       data-testid="session-row"
       data-session-id={s.id}
       onClick={() => onOpen(s.id)}
-      className={cn(
-        "flex h-full cursor-default flex-col justify-center gap-[3px] border-b border-border/70 px-3.5",
-        selected ? "bg-selection shadow-[inset_3px_0_0_var(--color-accent)]" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
-      )}
+      className={rowClass(selected)}
     >
       <div className="flex items-center gap-1.5">
-        {s.live && (
-          <span
-            data-testid="live-dot"
-            data-state={state}
-            title={state === "busy" ? "进行中 · 工作中" : state === "waiting" ? "进行中 · 等待作答" : "进行中 · 等待输入"}
-            className={cn(
-              "size-2 shrink-0 rounded-full",
-              state === "busy" && "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]",
-              state === "waiting" && "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
-              state === "idle" && "box-border border-[1.5px] border-live",
-            )}
-          />
-        )}
+        {s.live && <LiveDot state={state} />}
         <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
         {unread && <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />}
         <span className="shrink-0 text-[11px] text-secondary">{formatRelative(byCreated ? s.createdMs : s.lastActiveMs)}</span>
@@ -221,6 +237,56 @@ function SessionRow({
           {formatCost(s.cost)}
         </span>
       </div>
+    </div>
+  );
+}
+
+const rowClass = (selected: boolean) =>
+  cn(
+    "flex h-full cursor-default flex-col justify-center gap-[3px] border-b border-border/70 px-3.5",
+    selected ? "bg-selection shadow-[inset_3px_0_0_var(--color-accent)]" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
+  );
+
+function LiveDot({ state }: { state: "busy" | "waiting" | "idle" }) {
+  return (
+    <span
+      data-testid="live-dot"
+      data-state={state}
+      title={state === "busy" ? "进行中 · 工作中" : state === "waiting" ? "进行中 · 等待作答" : "进行中 · 等待输入"}
+      className={cn(
+        "size-2 shrink-0 rounded-full",
+        state === "busy" && "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]",
+        state === "waiting" && "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
+        state === "idle" && "box-border border-[1.5px] border-live",
+      )}
+    />
+  );
+}
+
+/** A Session in `ccrpc ls` before its first prompt: no transcript yet, so only its directory. */
+function PendingRow({ p, selected, onOpen }: { p: PendingSession; selected: boolean; onOpen: (id: string) => void }) {
+  const unread = useUnread(p.id);
+  return (
+    <div
+      role="option"
+      aria-selected={selected}
+      data-testid="session-row"
+      data-session-id={p.id}
+      data-pending=""
+      onClick={() => onOpen(p.id)}
+      className={rowClass(selected)}
+    >
+      <div className="flex items-center gap-1.5">
+        <LiveDot state={p.status} />
+        <span className="min-w-0 flex-1 truncate font-semibold">新 Session</span>
+        {unread && <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />}
+      </div>
+      {p.cwd && (
+        <div className="flex items-center gap-[3px] text-[11px] text-secondary" title={p.cwd}>
+          <Folder size={11} strokeWidth={1.5} className="shrink-0" aria-hidden />
+          <span className="truncate">{p.cwd.split("/").filter(Boolean).pop() ?? p.cwd}</span>
+        </div>
+      )}
     </div>
   );
 }

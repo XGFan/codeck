@@ -140,7 +140,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
   - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。
   - 数字键 1/2/3 选第一张卡片的选项，只在焦点位于驾驶区内且不在输入框里时（例如 waiting 时在输入框按 Enter，焦点移到卡片之后）；焦点在对话区、Subagent 面板等处时按数字键不作答——卡片不是主视图，读对话时误按不能批准工具调用。
-- **Session 列表**：顶部「新建 Session」（不依赖 `ccrpc ls`）：选目录 → `ccrpc new --co-display --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件，进索引前主区显示「新 Session，发送第一条提示词后显示对话」，驾驶区照常可用；进索引后自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
+- **Session 列表**：顶部「新建 Session」（不依赖 `ccrpc ls`）：选目录 → `ccrpc new --co-display --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件。`ccrpc ls` 里有、还没进索引的 Session（在 clay 里刚打开的，或刚新建的）以占位行列在列表最上方，不参与排序：标题「新 Session」、Live 点（按 `ccrpc ls` 的 status）、cwd 的最后一段；Project 筛选时按 cwd 所在的 Project（路径最深的那个）匹配，匹配不上不显示，从统计下钻时不显示。选中后标题栏显示「新 Session」、cwd 与「驾驶」，主区显示「新 Session，发送第一条提示词后显示对话」，驾驶区照常可用；进索引后占位行变成正常的行，主区自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
 - **`session_changed`**（在 TUI 里 `/clear` 等）：正在看旧 Session 时，选中切换到新 Session。
 - **别处在等**：切回窗口时，当前 Session 没有要作答的、而别的 Session 在等作答（与 Dock 角标同一口径），对话区顶部显示一行「<标题> 在等你作答，点此切过去」，点击选中那个 Session；切换 Session 后消失，可关闭。
 - **Dock 角标**：等待作答的 Session 数 = Live 状态为 waiting 的 Session（全部 Session，不限于已连接）∪ 已连接且有请求卡片的 Session，去重。

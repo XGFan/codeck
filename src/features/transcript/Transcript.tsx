@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
-import { useDrivenButUnindexed } from "@/features/drive";
+import { useUnindexed } from "@/features/drive";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
@@ -48,8 +48,8 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 export function TranscriptView() {
   const sessionId = useUi((s) => s.sessionId);
   const { data, isPlaceholderData, error } = useCurrentTranscript();
-  // A driven Session not in the index yet: its transcript file appears with the first prompt.
-  const unindexed = useDrivenButUnindexed(error);
+  // A driven or `ccrpc ls` Session not in the index yet: its transcript file appears with the first prompt.
+  const unindexed = useUnindexed(error);
   usePendingJump();
 
   if (!sessionId) {

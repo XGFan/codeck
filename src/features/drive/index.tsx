@@ -10,11 +10,11 @@ import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { TurnEndEvent } from "./protocol";
 import { Requests } from "./Requests";
-import { connFor, draftKey, errorKey, useDrive, waitingSessions } from "./store";
+import { connFor, draftKey, errorKey, lsEntryFor, useDrive, waitingSessions } from "./store";
 
 export { DriveBar, DriveConnect } from "./Header";
 export { DriveSettings } from "./Settings";
-export { connFor, useDrive } from "./store";
+export { connFor, lsEntryFor, useDrive } from "./store";
 
 /**
  * The CoDeck's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
@@ -141,11 +141,11 @@ export function useUnread(sessionId: string): boolean {
   return useDrive((s) => !!connFor(s, sessionId)?.unread);
 }
 
-/** The open Session is driven but not in the index yet (a new one, before its first prompt). */
-export function useDrivenButUnindexed(error: unknown): boolean {
+/** The open Session is driven or in `ccrpc ls` but not in the index yet (a new one, before its first prompt). */
+export function useUnindexed(error: unknown): boolean {
   const sessionId = useUi((s) => s.sessionId);
-  const driven = useDrive((s) => connFor(s, sessionId) != null);
-  return driven && !!error && typeof error === "object" && (error as { code?: unknown }).code === "notFound";
+  const known = useDrive((s) => connFor(s, sessionId) != null || lsEntryFor(s, sessionId) != null);
+  return known && !!error && typeof error === "object" && (error as { code?: unknown }).code === "notFound";
 }
 
 /** Under the transcript while the open Session is driven: banners, cards, progress, queue, input box. */
