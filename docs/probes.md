@@ -27,6 +27,7 @@
 ## 写入
 
 - bracketed paste 正文 + 单独的 `\r` 即提交；多行不会提前提交。输入框把长文本折叠成 `[Pasted text #1 +3 lines]`，提交后记录的是全文。
+- 输入框为空时可能显示暗色（SGR 2）的占位提示，如 `❯ Try "edit <filepath> to..."`：新 Session 还没发过消息、且提示词建议开着时出现（真实账号默认开着；`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1` 强制打开，`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 下没有）。Claude Code 自己画的光标是反显格，落在占位提示第一个字上（那一格不是暗色）；`ctrl+u` 清不掉它，读输入框内容时要跳过（2.1.317）。
 - `ctrl+u` 清空单行输入框。`Esc` 中止忙状态约 400ms 后回 `idle`，**被中止的提示词会放回输入框**——下一次 `prompt` 前要先清空。
 - 斜杠命令：直接写 `/clear`、`/model X` 文本再回车即可执行（`/model` 会先发一次请求校验模型，失败时屏幕显示 `model not changed`）。
 - shift+tab 依次切换权限模式：manual → accept edits → plan → auto → manual。2.1.316 新配置目录的默认是 auto（分类器自动审批，不弹审批框）。

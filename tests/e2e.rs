@@ -93,6 +93,8 @@ fn setup_with(key: &str, base: &str, model: &str) -> Env {
         ("ANTHROPIC_DEFAULT_OPUS_MODEL", model.clone()),
         ("CLAUDE_CODE_SUBAGENT_MODEL", model),
         ("DISABLE_AUTOUPDATER", "1".into()),
+        // On as for a real account: an empty input box then shows a dim `Try "…"` placeholder.
+        ("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "1".into()),
         ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1".into()),
     ];
     let env_toml: Vec<String> = env_vars

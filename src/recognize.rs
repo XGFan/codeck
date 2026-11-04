@@ -357,6 +357,16 @@ pub fn input_box(lines: &[String]) -> Option<String> {
     Some(s.trim_end().to_string())
 }
 
+/// [`input_box`] without what Claude Code draws dim in it: an empty box shows a placeholder such
+/// as `Try "edit <filepath> to..."` that ctrl+u cannot clear. The box is found on the full text.
+pub fn input_text(s: &crate::screen::Screen) -> Option<String> {
+    let full = input_box(&s.lines)?;
+    if s.undimmed.len() != s.lines.len() {
+        return Some(full);
+    }
+    Some(input_box(&s.undimmed).unwrap_or(full))
+}
+
 /// The folder trust dialog shown before a Session starts in a folder not trusted yet: an
 /// unnumbered menu (`❯` marks the selected row) confirmed with Enter. `Some(true)` when the cursor
 /// is on "Yes, I trust this folder".
@@ -659,6 +669,19 @@ mod tests {
             Some("Reply with exactly the word PONG and nothing else.")
         );
         assert_eq!(input_box(&screen("ask_single.txt")), None);
+    }
+
+    #[test]
+    fn input_text_skips_the_dim_placeholder() {
+        let box_ = |inner: &str| {
+            let rule = "─".repeat(30);
+            let b = format!("{rule}\r\n\x1b[0m❯\u{a0}{inner}\x1b[0m\r\n{rule}");
+            crate::screen::Screen::render(b.as_bytes(), 30, 3)
+        };
+        let s = box_("\x1b[0;2mTry \"edit <filepath> to...\"");
+        assert_eq!(input_box(&s.lines).as_deref(), Some("Try \"edit <filepath> to...\""));
+        assert_eq!(input_text(&s).as_deref(), Some(""));
+        assert_eq!(input_text(&box_("hello")).as_deref(), Some("hello"));
     }
     #[test]
     fn trust_folder_dialog() {

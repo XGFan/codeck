@@ -19,6 +19,9 @@ impl EventListener for Sink {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Screen {
     pub lines: Vec<String>,
+    /// `lines` with dim cells blanked: what Claude Code draws faint (the input box placeholder
+    /// `Try "…"`, autocomplete ghost text) is not typed text. Empty when not rendered by a VT.
+    pub undimmed: Vec<String>,
     /// 0-based (row, col).
     pub cursor: (u16, u16),
 }
@@ -69,26 +72,37 @@ impl Vt {
 
     pub fn screen(&self) -> Screen {
         let grid = self.term.grid();
-        let lines = (0..grid.screen_lines())
+        let (lines, undimmed) = (0..grid.screen_lines())
             .map(|l| {
                 let row = &grid[Line(l as i32)];
-                let mut s = String::new();
+                let (mut s, mut u) = (String::new(), String::new());
+                let is_dim = |c: usize| row[Column(c)].flags.contains(Flags::DIM);
                 for c in 0..grid.columns() {
                     let cell = &row[Column(c)];
                     if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                         continue;
                     }
+                    // Claude Code draws its cursor as an inverse cell: on the first cell of dim
+                    // text it belongs to that text (typed text always ends before the cursor).
+                    let next = c + if cell.flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 };
+                    let dim = cell.flags.contains(Flags::DIM)
+                        || (cell.flags.contains(Flags::INVERSE) && next < grid.columns() && is_dim(next));
                     s.push(cell.c);
+                    u.push(if dim { ' ' } else { cell.c });
                     if let Some(zw) = cell.zerowidth() {
                         s.extend(zw.iter());
+                        if !dim {
+                            u.extend(zw.iter());
+                        }
                     }
                 }
-                s.trim_end().to_string()
+                (s.trim_end().to_string(), u.trim_end().to_string())
             })
-            .collect();
+            .unzip();
         let p = grid.cursor.point;
         Screen {
             lines,
+            undimmed,
             cursor: (p.line.0.max(0) as u16, p.column.0 as u16),
         }
     }
@@ -132,6 +146,17 @@ mod tests {
         assert_eq!(vt.screen().lines[0], "snap");
         vt.feed(b"\r\nmore");
         assert_eq!(vt.screen().lines[..2], ["snap", "more"]);
+    }
+
+    #[test]
+    fn dim_cells_are_blank_in_undimmed() {
+        let s = Screen::render("❯\u{a0}\x1b[0;2mTry \"edit\"\x1b[0m ok".as_bytes(), 20, 1);
+        assert_eq!(s.lines[0], "❯\u{a0}Try \"edit\" ok");
+        assert_eq!(s.undimmed[0], "❯\u{a0}           ok");
+        // The drawn cursor on the placeholder's first cell; an inverse cell before normal text stays.
+        let s = Screen::render("❯ \x1b[7mT\x1b[0;2mry\x1b[0m a\x1b[7mb\x1b[0mc".as_bytes(), 20, 1);
+        assert_eq!(s.lines[0], "❯ Try abc");
+        assert_eq!(s.undimmed[0], "❯     abc");
     }
 
     #[test]

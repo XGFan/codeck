@@ -2145,13 +2145,13 @@ impl Engine {
     /// The prompt input box is on screen (no dialog has it): returns its text.
     fn input_box_now(&self) -> std::result::Result<String, CmdErr> {
         let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
-        recognize::input_box(&s.lines).ok_or_else(|| self.unrecognized("输入框", Some(&s)))
+        recognize::input_text(&s).ok_or_else(|| self.unrecognized("输入框", Some(&s)))
     }
 
     /// Empties the prompt input box (`ctrl+u` + backspace per line), checking the screen.
     fn clear_input(&mut self) -> std::result::Result<(), CmdErr> {
         // Just after startup the Process File says idle before the TUI is drawn.
-        self.wait_screen(Duration::from_secs(2), |_, s| recognize::input_box(&s.lines).map(|_| ()));
+        self.wait_screen(Duration::from_secs(2), |_, s| recognize::input_text(s).map(|_| ()));
         for _ in 0..3 {
             let text = self.input_box_now()?;
             if text.is_empty() {
@@ -2167,11 +2167,15 @@ impl Engine {
             }
             self.keys(&b)?;
             self.wait_screen(Duration::from_millis(500), |_, s| {
-                recognize::input_box(&s.lines).filter(|t| t.is_empty())
+                recognize::input_text(s).filter(|t| t.is_empty())
             });
         }
         if self.input_box_now()?.is_empty() {
             return Ok(());
+        }
+        if let Ok(s) = self.screen() {
+            crate::clog!("input box not cleared");
+            crate::log::screen(s.lines.iter().map(String::as_str));
         }
         err("input_not_empty", "输入框清不空")
     }
@@ -2183,7 +2187,7 @@ impl Engine {
         self.paste(clean)?;
         // Long pastes show as a `[Pasted text …]` placeholder: wait for the box to change.
         self.wait_screen(Duration::from_secs(2), |_, s| {
-            recognize::input_box(&s.lines).filter(|t| !t.is_empty() && *t != before)
+            recognize::input_text(s).filter(|t| !t.is_empty() && *t != before)
         });
         self.input_box_now()?;
         self.keys(b"\r")
@@ -2249,7 +2253,7 @@ impl Engine {
             self.paste(p)?;
             // One more `[Image #n]` placeholder, and the path itself is gone from the box.
             let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
-                recognize::input_box(&s.lines)
+                recognize::input_text(s)
                     .filter(|t| !t.contains(p.as_str()) && t.matches("[Image #").count() == had + 1)
             });
             if shown.is_none() {
@@ -2507,13 +2511,13 @@ impl Engine {
         let typed = format!("/{}", clean.trim());
         self.keys(typed.as_bytes())?;
         self.wait_screen(Duration::from_secs(1), |_, s| {
-            recognize::input_box(&s.lines).filter(|t| t.starts_with(&typed))
+            recognize::input_text(s).filter(|t| t.starts_with(&typed))
         });
         self.input_box_now()?;
         self.keys(b"\r")?;
         // Submitted once the command left the input box (or a picker replaced the box).
         self.wait_screen(Duration::from_secs(2), |_, s| {
-            match recognize::input_box(&s.lines) {
+            match recognize::input_text(s) {
                 Some(t) if t.starts_with(&typed) => None,
                 _ => Some(()),
             }
@@ -2703,7 +2707,7 @@ impl Engine {
             Some(recognize::TasksPanel::List(rows)) => recognize::task_row(&rows, &needle).is_err().then_some(()),
             Some(recognize::TasksPanel::Details(t)) => (!t.contains("running")).then_some(()),
             // The panel closed: back at the input box (not replaced by some other dialog).
-            None => recognize::input_box(&s.lines).map(|_| ()),
+            None => recognize::input_text(s).map(|_| ()),
         });
         if self.screen().ok().and_then(|s| recognize::tasks_panel(&s.lines)).is_some() {
             self.keys(b"\x1b")?;
