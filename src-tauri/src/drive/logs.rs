@@ -66,6 +66,19 @@ pub fn prune(root: &Path, today: chrono::NaiveDate) {
     }
 }
 
+/// Removes regular files directly in `dir` last modified more than `KEEP_DAYS` days ago (pasted
+/// images: a prompt's image is read when it is sent).
+pub fn prune_files(dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let keep = std::time::Duration::from_secs(KEEP_DAYS as u64 * 24 * 3600);
+    for e in rd.flatten() {
+        let Ok(m) = std::fs::symlink_metadata(e.path()) else { continue };
+        if m.is_file() && m.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > keep) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
 /// `wire.jsonl`: `{"t": <unix ms>, "dir": "send" | "recv", "msg": <the line>}` per line (a line
 /// that is not JSON is kept as a string).
 pub struct Wire {
@@ -172,5 +185,20 @@ mod tests {
         assert!(!d.path().join("2026-10-01").exists());
         assert!(d.path().join("2026-10-25").exists());
         assert!(d.path().join("notes").exists());
+    }
+
+    #[test]
+    fn prune_files_removes_only_old_regular_files() {
+        let d = tempfile::tempdir().unwrap();
+        let (old, new) = (d.path().join("1-1.png"), d.path().join("2-2.png"));
+        std::fs::write(&old, b"x").unwrap();
+        std::fs::write(&new, b"x").unwrap();
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 3600);
+        File::options().write(true).open(&old).unwrap().set_modified(long_ago).unwrap();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        prune_files(d.path());
+        assert!(!old.exists());
+        assert!(new.exists());
+        assert!(d.path().join("sub").exists());
     }
 }

@@ -99,15 +99,8 @@ fn register_cost_fn(conn: &Connection, prices: Arc<RwLock<PriceTable>>) -> CoreR
     conn.create_scalar_function("cv_cost", 8, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let model: Option<String> = ctx.get(0)?;
         let tok = |i| ctx.get::<i64>(i).map(|v| v.max(0) as f64);
-        let (cc, cc_1h) = (tok(4)?, tok(5)?);
-        let usage = Usage {
-            input: tok(1)?,
-            output: tok(2)?,
-            cache_read: tok(3)?,
-            cache_write_5m: (cc - cc_1h).max(0.0),
-            cache_write_1h: cc_1h.min(cc),
-            fast: ctx.get::<i64>(6)? != 0,
-        };
+        let fast = ctx.get::<i64>(6)? != 0;
+        let usage = Usage::from_tokens(tok(1)?, tok(2)?, tok(3)?, tok(4)?, tok(5)?, fast);
         Ok(prices.read().cost(model.as_deref(), &usage, ctx.get(7)?))
     })?;
     Ok(())

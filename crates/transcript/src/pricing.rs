@@ -68,6 +68,29 @@ pub struct Usage {
 }
 
 impl Usage {
+    /// From the token counts Claude Code records: `cache_creation` is the whole cache write, of
+    /// which `cache_1h` was written for an hour and the rest for five minutes. Negative counts are 0.
+    pub fn from_tokens(
+        input: f64,
+        output: f64,
+        cache_read: f64,
+        cache_creation: f64,
+        cache_1h: f64,
+        fast: bool,
+    ) -> Usage {
+        let n = |v: f64| v.max(0.0);
+        let cc = n(cache_creation);
+        let cc_1h = n(cache_1h).min(cc);
+        Usage {
+            input: n(input),
+            output: n(output),
+            cache_read: n(cache_read),
+            cache_write_5m: cc - cc_1h,
+            cache_write_1h: cc_1h,
+            fast,
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.input + self.output + self.cache_read + self.cache_write_5m + self.cache_write_1h
             <= 0.0

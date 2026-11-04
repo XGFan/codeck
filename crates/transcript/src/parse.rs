@@ -77,7 +77,8 @@ pub fn read_entries_with(path: &Path, from: u64, opts: ReadOptions) -> io::Resul
     file.take(want).read_to_end(&mut buf)?;
     let mut chunk = parse_bytes_with(&buf, from, opts.normalize);
     chunk.file_len = len;
-    chunk.capped = opts.max_bytes == Some(want);
+    // Bytes left unread: a read that ends exactly at the end of the file is not capped.
+    chunk.capped = want < len - from;
     if chunk.capped && chunk.consumed_to == from {
         chunk.consumed_to = from + buf.len() as u64;
     }
@@ -184,6 +185,19 @@ mod tests {
         assert!(c.capped);
         assert_eq!(c.consumed_to, 3);
         assert_eq!(c.file_len, len);
+
+        // A cap that reaches exactly the end of the file is not a capped read: a partial last line
+        // stays unread (it is re-read once complete) instead of being skipped.
+        let partial = write_temp(d.path(), "partial.jsonl", &format!("{l1}{{\"type\":\"us"));
+        let plen = std::fs::metadata(&partial).unwrap().len();
+        let opts = ReadOptions { max_bytes: Some(plen), normalize: true };
+        let c = read_entries_with(&partial, 0, opts).unwrap();
+        assert_eq!(c.records.len(), 1);
+        assert!(!c.capped);
+        assert_eq!(c.consumed_to, l1_len);
+        let c = read_entries_with(&partial, l1_len, ReadOptions { max_bytes: Some(plen - l1_len), normalize: true }).unwrap();
+        assert!(c.records.is_empty() && !c.capped);
+        assert_eq!(c.consumed_to, l1_len);
 
         // Starting past the end: nothing to read, resume where we asked to.
         let c = read_entries(&p, len + 10).unwrap();

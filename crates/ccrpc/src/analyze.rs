@@ -79,6 +79,9 @@ impl Analyzer {
         // No redirects (they would carry the key elsewhere), https except to this machine.
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .max_redirects(0)
+            // ureq 3 would otherwise pick up `https_proxy` / `all_proxy` from the environment; the
+            // key goes straight to the analyzer as before.
+            .proxy(None)
             .https_only(!is_loopback(&self.base_url))
             .timeout_global(Some(Duration::from_secs(60)))
             .build()

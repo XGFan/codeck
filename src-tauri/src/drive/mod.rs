@@ -9,6 +9,8 @@ pub mod relay;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use parking_lot::Mutex;
+
 use cv_core::model::{AppError, ErrorCode};
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -26,16 +28,38 @@ fn internal(e: impl std::fmt::Display) -> AppError {
     }
 }
 
-/// ccrpc, its logs and its pasted images, or why they could not be set up. `Arc` so a command can
-/// take it into the blocking pool.
+/// ccrpc, its logs and its pasted images, set up by the first command that needs them. A failed
+/// setup is not kept: the next command tries again (e.g. after ccrpc is installed). `Arc` so a
+/// command can take it into the blocking pool.
 #[derive(Default)]
-pub struct DriveState(Arc<OnceLock<Result<App, String>>>);
+pub struct DriveState(Arc<Cell>);
+
+#[derive(Default)]
+struct Cell {
+    app: OnceLock<App>,
+    /// One setup at a time.
+    init: Mutex<()>,
+}
+
+impl Cell {
+    fn get(&self) -> Result<&App, String> {
+        if let Some(app) = self.app.get() {
+            return Ok(app);
+        }
+        let _one = self.init.lock();
+        if let Some(app) = self.app.get() {
+            return Ok(app);
+        }
+        let app = init()?;
+        Ok(self.app.get_or_init(|| app))
+    }
+}
 
 impl DriveState {
     /// All connections' ccrpc processes are closed (the app is quitting); no-op when the state was
-    /// never initialized.
+    /// never set up.
     pub fn disconnect_all(&self) {
-        if let Some(Ok(app)) = self.0.get() {
+        if let Some(app) = self.0.app.get() {
             app.disconnect_all();
         }
     }
@@ -60,7 +84,7 @@ where
     F: FnOnce(&App) -> Result<T, String> + Send + 'static,
 {
     let cell = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || match cell.get_or_init(init) {
+    tauri::async_runtime::spawn_blocking(move || match cell.get() {
         Ok(app) => f(app).map_err(internal),
         Err(e) => Err(internal(e)),
     })
@@ -94,7 +118,7 @@ pub async fn drive_info(state: State<'_, DriveState>) -> CmdResult<DriveInfo> {
     with_drive(&state, |app| {
         Ok(DriveInfo {
             ccrpc_path: app.ccrpc.display().to_string(),
-            doctor: app.doctor(),
+            doctor: app.refresh_doctor(),
             analyzer: app.env.get("CCRPC_ANALYZER_API_KEY").is_some_and(|k| !k.is_empty()),
             log_root: app.log_root.display().to_string(),
         })
@@ -136,10 +160,7 @@ pub async fn drive_send(state: State<'_, DriveState>, conn: String, line: String
 #[tauri::command]
 #[specta::specta]
 pub async fn drive_disconnect(state: State<'_, DriveState>, conn: String) -> CmdResult<()> {
-    with_drive(&state, move |app| {
-        app.disconnect(&conn);
-        Ok(())
-    })
+    with_drive(&state, move |app| if app.disconnect(&conn) { Ok(()) } else { Err("ccrpc 已退出".into()) })
     .await
 }
 

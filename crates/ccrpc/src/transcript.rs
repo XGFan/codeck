@@ -725,48 +725,25 @@ impl Tailer {
                 }
             }
             "attachment" if agent.is_none() => {
-                let Some(att) = e.attachment.as_deref() else {
+                // Read without normalizing: a queued steer stays apart from a prompt.
+                let Some(q) = e.queued_command() else {
                     return;
                 };
-                let Ok(v) = serde_json::from_str::<Value>(att.get()) else {
+                let Some(text) = q.text().map(|t| prompt::unwrap_pasted(&t)) else {
                     return;
-                };
-                if v.get("type").and_then(Value::as_str) != Some("queued_command") {
-                    return;
-                }
-                let prompt_text = || match v.get("prompt") {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(Value::Array(a)) => a
-                        .iter()
-                        .filter_map(|b| b.get("text").and_then(Value::as_str))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    _ => String::new(),
                 };
                 // A background task that ended while the main line was busy is told this way.
-                if v.get("commandMode").and_then(Value::as_str) == Some("task-notification") {
-                    if let Some((id, status)) = task_notification(&prompt_text())
+                if q.command_mode.as_deref() == Some("task-notification") {
+                    if let Some((id, status)) = task_notification(&text)
                         && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
                     {
                         t.status = status;
                     }
                     return;
                 }
-                if v.get("commandMode")
-                    .and_then(Value::as_str)
-                    .is_some_and(|m| m != "prompt")
-                {
+                if q.command_mode.as_deref().is_some_and(|m| m != "prompt") {
                     return;
                 }
-                let text = match v.get("prompt") {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(Value::Array(a)) => a
-                        .iter()
-                        .filter_map(|b| b.get("text").and_then(Value::as_str))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    _ => return,
-                };
                 let mut b = Block::new(BlockKind::User, &uuid, 0);
                 b.text = Some(text);
                 b.queued = true;
@@ -800,25 +777,19 @@ impl Tailer {
                     } else if let (Some(id), Some(u)) = (&msg.id, &msg.usage)
                         && self.usage_seen.insert(id.clone())
                     {
-                        let n = |v: Option<f64>| v.unwrap_or(0.0).max(0.0);
-                        let cc = n(u.cache_creation_input_tokens);
-                        let cc_1h = u
-                            .cache_creation
-                            .as_ref()
-                            .map(|c| n(c.ephemeral_1h_input_tokens))
-                            .unwrap_or(0.0)
-                            .min(cc);
+                        let n = |v: Option<f64>| v.unwrap_or(0.0);
+                        let cc_1h = u.cache_creation.as_ref().and_then(|c| c.ephemeral_1h_input_tokens);
                         out.push(TxEvent::Usage {
                             main: agent.is_none(),
                             model: msg.model.clone(),
-                            usage: ::transcript::pricing::Usage {
-                                input: n(u.input_tokens),
-                                output: n(u.output_tokens),
-                                cache_read: n(u.cache_read_input_tokens),
-                                cache_write_5m: cc - cc_1h,
-                                cache_write_1h: cc_1h,
-                                fast: u.speed.as_deref() == Some("fast"),
-                            },
+                            usage: ::transcript::pricing::Usage::from_tokens(
+                                n(u.input_tokens),
+                                n(u.output_tokens),
+                                n(u.cache_read_input_tokens),
+                                n(u.cache_creation_input_tokens),
+                                n(cc_1h),
+                                u.speed.as_deref() == Some("fast"),
+                            ),
                             logged_cost: e.cost_usd,
                         });
                     }
@@ -872,16 +843,6 @@ impl Tailer {
                             && agent.is_none()
                             && blocks.iter().any(|b| b.block_type() == "image")
                             && !blocks.iter().any(|b| b.block_type() == "tool_result");
-                        // The note Claude Code adds after it, naming where each image came from.
-                        if !assistant
-                            && e.is_meta == Some(true)
-                            && !blocks.is_empty()
-                            && blocks.iter().all(|b| {
-                                b.text_str().is_some_and(|t| t.starts_with("[Image: source: "))
-                            })
-                        {
-                            return;
-                        }
                         if image_prompt {
                             let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).map(|t| prompt::unwrap_pasted(&t)).collect();
                             self.last_text = None;

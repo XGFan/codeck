@@ -114,6 +114,28 @@ struct RawQueuedCommand {
     origin: Option<RawOrigin>,
 }
 
+/// A `queued_command` attachment: a message typed (or a background task's notification delivered)
+/// while Claude was busy, recorded only as this attachment until it reaches the conversation.
+#[derive(Debug)]
+pub struct QueuedCommand {
+    /// `{"role": "user", "content": <prompt>}`.
+    pub message: RawMessage,
+    /// `prompt`, `task-notification`, …
+    pub command_mode: Option<String>,
+    pub origin: Option<RawOrigin>,
+}
+
+impl QueuedCommand {
+    /// The prompt's text: the string, or its text blocks joined by `\n`; `None` when the prompt
+    /// is neither.
+    pub fn text(&self) -> Option<String> {
+        match self.message.content.as_ref()? {
+            RawContent::Text(t) => Some(t.clone()),
+            RawContent::Blocks(bs) => Some(bs.iter().filter_map(|b| b.text_str()).collect::<Vec<_>>().join("\n")),
+        }
+    }
+}
+
 impl RawEntry {
     pub fn entry_type(&self) -> &str {
         self.entry_type.as_deref().unwrap_or("")
@@ -123,38 +145,42 @@ impl RawEntry {
     /// parent and timestamp), so it is classified, rendered, counted and indexed like any
     /// other user message. Older entries without `origin` get it from `commandMode`.
     pub fn normalize_queued_command(&mut self) {
-        if self.entry_type() != "attachment" {
-            return;
-        }
-        let Some(raw) = self.attachment.as_deref().map(RawValue::get) else {
-            return;
-        };
-        if !raw.contains("\"queued_command\"") {
-            return;
-        }
-        let Ok(q) = serde_json::from_str::<RawQueuedCommand>(raw) else {
-            return;
-        };
-        let Some(prompt) = q
-            .prompt
-            .filter(|_| q.attachment_type.as_deref() == Some("queued_command"))
-        else {
-            return;
-        };
-        let Ok(message) = serde_json::from_str::<RawMessage>(&format!(
-            r#"{{"role":"user","content":{}}}"#,
-            prompt.get()
-        )) else {
+        let Some(q) = self.queued_command() else {
             return;
         };
         self.entry_type = Some("user".to_owned());
-        self.message = Some(message);
+        self.message = Some(q.message);
         self.origin = q.origin.or_else(|| {
             (q.command_mode.as_deref() == Some("task-notification")).then(|| RawOrigin {
                 kind: Some("task-notification".to_owned()),
             })
         });
         self.attachment = None;
+    }
+
+    /// This entry as a `queued_command` attachment, if it is one.
+    pub fn queued_command(&self) -> Option<QueuedCommand> {
+        if self.entry_type() != "attachment" {
+            return None;
+        }
+        let raw = self.attachment.as_deref().map(RawValue::get)?;
+        if !raw.contains("\"queued_command\"") {
+            return None;
+        }
+        let q = serde_json::from_str::<RawQueuedCommand>(raw).ok()?;
+        let prompt = q
+            .prompt
+            .filter(|_| q.attachment_type.as_deref() == Some("queued_command"))?;
+        let message = serde_json::from_str::<RawMessage>(&format!(
+            r#"{{"role":"user","content":{}}}"#,
+            prompt.get()
+        ))
+        .ok()?;
+        Some(QueuedCommand {
+            message,
+            command_mode: q.command_mode,
+            origin: q.origin,
+        })
     }
 
     /// Turns a `system` `local_command` entry (newer Claude Code records local slash commands

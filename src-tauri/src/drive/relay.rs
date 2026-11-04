@@ -61,6 +61,7 @@ impl App {
     pub fn new(env: HashMap<String, String>, ccrpc: PathBuf, log_root: PathBuf, images: PathBuf) -> R<App> {
         logs::mkdir(&log_root).map_err(|e| format!("建不了日志目录 {}：{e}", log_root.display()))?;
         logs::prune(&log_root, chrono::Local::now().date_naive());
+        logs::prune_files(&images);
         let gui = logs::append(&log_root.join("gui.log")).map_err(|e| format!("打不开 gui.log：{e}"))?;
         let app = App {
             env,
@@ -90,6 +91,12 @@ impl App {
         let mut s = self.seq.lock();
         *s += 1;
         *s
+    }
+
+    /// `ccrpc doctor` again (after installing ccrpc or its plugin).
+    pub fn refresh_doctor(&self) -> Vec<DoctorLine> {
+        self.doctor.lock().take();
+        self.doctor()
     }
 
     pub fn doctor(&self) -> Vec<DoctorLine> {
@@ -230,12 +237,14 @@ impl App {
     }
 
     /// Closes ccrpc's stdin: it detaches and exits; the Session keeps running.
-    pub fn disconnect(&self, conn: &str) {
+    /// False when the connection is unknown (its ccrpc already exited).
+    pub fn disconnect(&self, conn: &str) -> bool {
         let Some((stdin, gui)) = self.conns.lock().get(conn).map(|c| (c.stdin.clone(), c.gui.clone())) else {
-            return;
+            return false;
         };
         logs::line(&mut gui.lock(), "disconnect");
         stdin.lock().take();
+        true
     }
 
     /// Closes every connection (the app is quitting).
@@ -262,6 +271,10 @@ impl App {
     pub fn save_image(&self, base64: &str, ext: &str) -> R<String> {
         use base64::Engine;
         let ext = ext.to_ascii_lowercase();
+        // About 20 MB once decoded.
+        if base64.len() > 28 * 1024 * 1024 {
+            return Err("图片超过 20 MB".into());
+        }
         if !["png", "jpg", "jpeg", "gif", "webp"].contains(&ext.as_str()) {
             return Err(format!("不支持的图片格式 {ext}"));
         }
