@@ -1290,7 +1290,9 @@ fn learns_an_unknown_dialog() {
 
 /// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
 /// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
-/// `MOCK-ASK` with an AskUserQuestion call; anything else (tool results too) with text `ok`.
+/// `MOCK-ASK` with an AskUserQuestion call, `MOCK-BG` with a background `sleep 2`, then `sleep 1`,
+/// then ~8 s of text (the background task ends meanwhile; its notification is answered as slowly);
+/// anything else (tool results too) with text `ok`.
 fn mock_model() -> String {
     use std::net::TcpListener;
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1354,6 +1356,11 @@ fn mock_model() -> String {
                 let called = |n: &str| assistant.iter().filter(|b| b["type"] == "tool_use" && b["name"] == n).count();
                 let tool = if asked("MOCK-TOOL") > called("Bash") && has_tool("Bash") {
                     Some(("Bash", json!({"command": "touch mock-tool.txt", "description": "Create mock-tool.txt"})))
+                } else if asked("MOCK-BG") > 0 && called("Bash") < 2 && has_tool("Bash") {
+                    Some(("Bash", match called("Bash") {
+                        0 => json!({"command": "sleep 2", "description": "Wait in background", "run_in_background": true}),
+                        _ => json!({"command": "sleep 1", "description": "Wait"}),
+                    }))
                 } else if asked("MOCK-ASK") > called("AskUserQuestion") && has_tool("AskUserQuestion") {
                     Some(("AskUserQuestion", json!({"questions": [{"question": "Which color?", "header": "Color",
                         "options": [{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}],
@@ -1361,7 +1368,9 @@ fn mock_model() -> String {
                 } else {
                     None
                 };
-                let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW") {
+                // MOCK-BG's last answer (to the second tool's result, not to the task notification).
+                let bg_last = asked("MOCK-BG") > 0 && called("Bash") == 2 && text.is_empty();
+                let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW") || bg_last || text.contains("<task-notification>") {
                     (vec!["slow "; 16], 500)
                 } else if text.contains("MOCK-STEERED") {
                     (vec!["STEER-TURN"], 0)
@@ -1567,4 +1576,54 @@ fn mock_model_tools() {
         b["kind"] == "tool_result" && b["content"].as_str().is_some_and(|c| c.contains("Blue"))
     });
     assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
+}
+
+/// A follow-up queued while a background task ends during the turn's last answer: right after
+/// Stop, Claude Code runs the task's notification as a turn of its own; the follow-up goes out
+/// after that turn instead of racing it into Claude Code's queue (and being reported failed).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_follow_up() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.call("b1", json!({"type": "prompt", "text": "MOCK-BG go"}));
+    // `sleep` runs without asking.
+    rpc.until("tool_use", Duration::from_secs(30), |v| v["kind"] == "tool_use");
+    let q = rpc.call("f1", json!({"type": "follow_up", "text": "AFTER-BG"}));
+    assert_eq!(q["queued"], 1, "{q}");
+    // The prompt's turn, the notification's, then the follow-up's.
+    let mut ends = vec![];
+    while ends.len() < 3 {
+        let v = rpc.until("turn_end", Duration::from_secs(90), |v| {
+            v["type"] == "turn_end" || v["type"] == "follow_up_failed"
+        });
+        assert_ne!(v["type"], "follow_up_failed", "{v}");
+        ends.push(v);
+    }
+    let users: Vec<String> = rpc.call("m1", json!({"type": "get_messages"}))["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["kind"] == "user")
+        .map(|b| b["text"].as_str().unwrap_or("").to_string())
+        .collect();
+    let notified = users.iter().position(|t| t.contains("<task-notification>")).unwrap_or_else(|| panic!("没有后台任务的通知：{users:?}"));
+    let after = users.iter().position(|t| t == "AFTER-BG").unwrap_or_else(|| panic!("follow_up 没发出：{users:?}"));
+    assert!(notified < after, "follow_up 应在通知那一轮之后发出：{users:?}");
+    // Sent as a prompt of its own, not typed into the notification's turn (Claude Code's queue).
+    let transcript = std::fs::read_dir(env.cc_dir.join("projects"))
+        .unwrap()
+        .flatten()
+        .flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten())
+        .find(|f| f.path().extension().is_some_and(|e| e == "jsonl"))
+        .map(|f| std::fs::read_to_string(f.path()).unwrap())
+        .unwrap();
+    let enqueues: Vec<&str> = transcript
+        .lines()
+        .filter(|l| l.contains(r#""operation":"enqueue""#) && !l.contains("task-notification"))
+        .collect();
+    assert!(enqueues.is_empty(), "follow_up 进了 Claude Code 的队列：{enqueues:?}");
 }

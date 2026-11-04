@@ -37,6 +37,10 @@ const ABORT_GRACE: Duration = Duration::from_millis(1500);
 /// After Stop, how long to wait for the transcript to catch up (the turn's last message and its
 /// `turn_duration` marker are written around the same moment) before `turn_end`.
 const STOP_CATCH_UP: Duration = Duration::from_secs(2);
+/// A follow-up goes out only after the Session has been idle this long: right after Stop, Claude
+/// Code starts a turn of its own for what it queued (a background task's notification), and a
+/// prompt typed then lands in its queue instead.
+const FOLLOW_UP_SETTLE: Duration = Duration::from_secs(1);
 /// `input needed` without an AskUserQuestion from the plugin becomes `dialog` after this long.
 const CLASSIFY_GRACE: Duration = Duration::from_millis(500);
 /// A permission prompt whose dialog matches no request is reported as `dialog` (or analyzed)
@@ -246,6 +250,19 @@ impl Marks {
         self.enqueued
             .iter()
             .any(|(s, t)| *s > after && t.trim() == text.trim())
+    }
+
+    /// A prompt that went into Claude Code's queue: its text, or (sent with images) ending with it.
+    fn prompt_enqueued_after(&self, after: u64, text: &str, images: bool) -> bool {
+        self.enqueued.iter().any(|(s, t)| {
+            *s > after && if images { t.trim().ends_with(text.trim()) } else { t.trim() == text.trim() }
+        })
+    }
+
+    /// An enqueue recorded without its text: input submitted just as a turn began, or a message
+    /// from another Claude Code session.
+    fn blank_enqueued_after(&self, after: u64) -> bool {
+        self.enqueued.iter().any(|(s, t)| *s > after && t.trim().is_empty())
     }
 }
 
@@ -1982,7 +1999,10 @@ impl Engine {
     /// Sends the next follow-up when the Session is idle with no turn open. Only called from the
     /// top-level loop.
     fn drain_follow_ups(&mut self) {
-        if self.state != State::Idle || self.turn_active {
+        if self.state != State::Idle
+            || self.turn_active
+            || self.idle_at.is_none_or(|t| t.elapsed() < FOLLOW_UP_SETTLE)
+        {
             return;
         }
         let Some((text, images)) = self.follow_ups.pop_front() else {
@@ -2272,9 +2292,31 @@ impl Engine {
                     .map(str::to_string)
             }
         };
-        let ok = self.wait_until(Duration::from_secs(30), |e| found(e).is_some());
+        // Claude Code may have started a turn just before Enter: then the prompt waits in its queue.
+        let queued = |e: &Engine| e.marks.prompt_enqueued_after(before, &clean, !images.is_empty());
+        let ok = self.wait_until(Duration::from_secs(30), |e| {
+            found(e).is_some() || queued(e) || e.marks.blank_enqueued_after(before)
+        });
         if !ok {
             return err("timeout", "30 秒内没在 transcript 里看到这条提示词");
+        }
+        if found(self).is_none() && !queued(self) {
+            // A blank enqueue may be another session's message: it is this prompt only when no
+            // user entry follows at once and the text has left the input box.
+            self.wait_until(Duration::from_secs(2), |e| found(e).is_some() || queued(e));
+            let needle: String = clean.trim().lines().next().unwrap_or("").chars().take(20).collect();
+            let still_typed = self
+                .screen()
+                .ok()
+                .and_then(|s| recognize::input_text(&s))
+                .is_some_and(|t| t.contains(&needle));
+            if found(self).is_none() && !queued(self) && still_typed {
+                return err("timeout", "回车后提示词还在输入框里");
+            }
+        }
+        if found(self).is_none() {
+            crate::clog!("prompt went into Claude Code's queue");
+            return Ok(json!({"uuid": null, "prompt_id": null, "delivered_as": "queued"}));
         }
         // The plugin saw it submitted, normally before it reached the transcript.
         let hook_prompt = |e: &Engine| {
@@ -2288,7 +2330,7 @@ impl Engine {
             self.wait_until(Duration::from_secs(1), |e| hook_prompt(e).is_some());
         }
         let prompt_id = hook_prompt(self);
-        Ok(json!({"uuid": found(self), "prompt_id": prompt_id}))
+        Ok(json!({"uuid": found(self), "prompt_id": prompt_id, "delivered_as": "prompt"}))
     }
 
     fn steer(&mut self, text: &str) -> CmdResult {
@@ -3244,6 +3286,16 @@ mod tests {
         m.enqueue("steer".into());
         assert!(m.enqueued_after(b2, "steer"));
         assert!(!m.enqueued_after(b2, "s5"));
+        // Typed just as a turn began, the enqueue is recorded without its text.
+        let b3 = m.seq;
+        assert!(!m.blank_enqueued_after(b3));
+        m.enqueue(String::new());
+        assert!(m.blank_enqueued_after(b3));
+        assert!(!m.prompt_enqueued_after(b3, "late", false));
+        // With images, the queued text carries the `[Image #n]` placeholders first.
+        m.enqueue("[Image #1] look".into());
+        assert!(m.prompt_enqueued_after(b3, "look", true));
+        assert!(!m.prompt_enqueued_after(b3, "look", false));
     }
 
     #[test]

@@ -981,20 +981,31 @@
         "type": "object",
         "properties": {
           "uuid": {
-            "type": "string",
-            "description": "transcript 里该用户消息的 uuid。"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "transcript 里该用户消息的 uuid；进了 Claude Code 的队列时为 null。"
           },
           "prompt_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "插件看到的提交（与该轮 turn_end 的 prompt_id 相同）；没看到为 null。"
+            "description": "插件看到的提交（与该轮 turn_end 的 prompt_id 相同）；没看到或进了队列为 null。"
+          },
+          "delivered_as": {
+            "enum": [
+              "prompt",
+              "queued"
+            ],
+            "description": "prompt：作为新提示词提交；queued：回车前 Claude Code 恰好自己开始了一轮（如后台任务的通知），提示词进了它的队列，之后在工具调用之间或本轮结束后送达。"
           }
         },
         "required": [
           "uuid",
-          "prompt_id"
+          "prompt_id",
+          "delivered_as"
         ]
       },
       "steer": {

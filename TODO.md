@@ -41,8 +41,6 @@ GUI 是另起的 Tauri 应用 cc-gui（`~/Developer/Joy/cc-gui`，设计见它�
 
 ## 待确认
 
-- 忙时在 TUI 里按 Enter 的输入何时送达：probes.md 记为当前工具结束即插进本轮（`absorbed_mid_turn`，即 steer），但日常使用的体感是本轮结束后才发（像 follow_up）；在当前版本重测，分清是版本变化、还是多数时候本轮已没有工具调用可夹带
-
 - ToH Client 会不会把 `ccrpc new` 刚建的 Pane 自动切到前台并抢尺寸（会的话 ccrpc 一连上就被判为接手）
 - 后台挂着的 Mac / web Client 上次操作过的 Pane 仍算“有人在用”，`attach` 要 `--force`；是否改为按最近一次输入时间判断（需要 Holder 报告）
 - 按键间隔现在常是 50ms（忙时 spinner 也算屏幕有反应），端到端都过；换慢机器或更长菜单时留意
