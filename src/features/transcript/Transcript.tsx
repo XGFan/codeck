@@ -143,6 +143,7 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
   const grouping = useMemo(() => buildRows(input), [input]);
   const rows = grouping.rows;
 
+
   const ctx = useMemo<TranscriptCtx>(() => {
     const runs = new Map<string, SubagentRun>();
     for (const r of extraRuns ?? []) runs.set(r.agentId, r);
@@ -321,7 +322,7 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
           data-scope={scope.kind === "main" ? "main" : scope.agentId}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6"
         >
-          <div className="relative mx-auto max-w-[820px]" style={{ height: total + 40 }}>
+          <div className="relative mx-auto max-w-[720px]" style={{ height: total + 40 }}>
             {virtualizer.getVirtualItems().map((v) => {
               const row = rows[v.index]!;
               return (
@@ -339,7 +340,8 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
             })}
           </div>
           {follow && (
-            <div ref={tailRef} className="mx-auto -mt-5 max-w-[820px] pb-5">
+            // Room at the end for the floating drive panel (its height, kept in `--drive-h` by the panel).
+            <div ref={tailRef} className="mx-auto -mt-5 max-w-[720px]" style={{ paddingBottom: "calc(var(--drive-h, 0px) + 20px)" }}>
               <DriveTail />
             </div>
           )}
@@ -353,7 +355,8 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
               toBottom();
               setUnread(false);
             }}
-            className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-accent px-3 py-1 text-[12px] text-white shadow-lg"
+            style={{ bottom: "calc(var(--drive-h, 0px) + 16px)" }}
+            className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full bg-accent px-3 py-1 text-[12px] text-white shadow-lg"
           >
             有新消息
             <ArrowDown size={12} strokeWidth={2} />
@@ -388,3 +391,4 @@ function settle(scroller: HTMLElement, anchor: string, nodeId: string) {
   };
   requestAnimationFrame(step);
 }
+

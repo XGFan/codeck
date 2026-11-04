@@ -71,17 +71,22 @@ test("切换 Branch 后后续内容随之改变", async ({ page }) => {
   await expect(transcript.getByText("先只加中间件，不要动 handler。")).toBeVisible();
 });
 
-test("工具调用合并成组，含失败调用的组也默认收起，组头显示失败数", async ({ page }) => {
+test("工具调用合并成组：组头一行写做了什么、对象和失败数，默认收起，点开看每次调用", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const transcript = page.getByTestId("transcript");
   await transcript.evaluate((e) => (e.scrollTop = 0));
   const groups = page.getByTestId("tool-group");
-  await expect(groups.filter({ hasText: "2 次工具调用" })).not.toHaveAttribute("data-open");
+  const first = groups.filter({ hasText: "读取 1 个文件、运行 1 条命令" });
+  await expect(first).toContainText("mod.rs");
+  await expect(first).not.toHaveAttribute("data-open");
   const failed = groups.filter({ hasText: "1 失败" });
   await expect(failed).not.toHaveAttribute("data-open");
   await expect(failed.getByTestId("tool-call")).toHaveCount(0);
-  await groups.filter({ hasText: "2 次工具调用" }).getByRole("button", { name: /2 次工具调用/ }).click();
-  await expect(groups.filter({ hasText: "2 次工具调用" }).getByTestId("tool-call")).toHaveCount(2);
+  await first.getByRole("button", { name: /读取 1 个文件/ }).click();
+  await expect(first.getByTestId("tool-call")).toHaveCount(2);
+  // Each call is one quiet line: verb and target, no 「完成」 badge.
+  await expect(first.getByTestId("tool-call").first()).toContainText("读取");
+  await expect(first.getByTestId("tool-call").first()).not.toContainText("完成");
 });
 
 test("打开 Subagent 面板，嵌套卡片推入面包屑，Esc 关闭", async ({ page }) => {
@@ -246,4 +251,21 @@ test("当前 Session 被移除后对话区回到空状态", async ({ page }) => 
   await page.evaluate((id) => window.__cvMock!.emit("sessionsChanged", { changed: [], removed: [id], projectsChanged: false }), sid);
   await expect(page.getByTestId("transcript-empty")).toBeVisible();
   expect(await page.evaluate(() => window.__cvStore!.getState().sessionId)).toBeNull();
+});
+
+test("对话不折叠：过程与回答按顺序排开；回答下方是复制与时间；你的消息时间在气泡下方；回复没有「Claude · 时间」抬头", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const t = page.getByTestId("transcript");
+  await scrollBy(t, 1e7);
+  await expect(t.getByTestId("worked")).toHaveCount(0);
+  const last = t.locator('[data-row="tool"], [data-row="group"]').filter({ hasText: "config.rs" });
+  await expect(last).toContainText("读取 1 个文件、编辑 1 个文件");
+  await expect(t.getByText("默认值保持 120，未配置时沿用。")).toBeVisible();
+  const actions = t.getByTestId("answer-actions").last();
+  await expect(actions).toContainText("复制");
+  await expect(actions).toContainText(/\d\d:\d\d/);
+  const prompt = t.locator('[data-row="prompt"]').filter({ hasText: "接下来把限流参数" });
+  const bubble = (await prompt.getByTestId("user-bubble").boundingBox())!;
+  expect((await prompt.getByTestId("prompt-meta").boundingBox())!.y).toBeGreaterThan(bubble.y + bubble.height - 1);
+  await expect(t.getByText(/^Claude · \d/)).toHaveCount(0);
 });

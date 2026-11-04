@@ -1,4 +1,4 @@
-import { ChevronDown, ShipWheel, Unlink } from "lucide-react";
+import { ChevronDown, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "@/ipc";
@@ -25,7 +25,8 @@ export const STATE_WORD: Record<string, string> = {
 
 const pill = "flex h-7 items-center gap-1.5 rounded-md border border-border bg-ground px-2.5 text-[12px] hover:bg-selection disabled:opacity-50 disabled:hover:bg-ground";
 
-const smallPill = "flex h-6 items-center gap-1 rounded-md border border-border bg-ground px-2 text-[12px] hover:bg-selection disabled:opacity-50 disabled:hover:bg-ground";
+/** A quiet button in the input box's foot. */
+export const footBtn = "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-selection/60 hover:text-text disabled:opacity-50 disabled:hover:bg-transparent";
 
 /**
  * 「驾驶」 in the header's title row, for a Session in `ccrpc ls` that is not connected (disabled until its ccrpc
@@ -73,6 +74,7 @@ export function DriveConnect({ sessionId }: { sessionId: string }) {
   );
 }
 
+/** A connect error, in the header (there is no input box yet); a click closes it. */
 function DriveError({ errKey, text }: { errKey: string; text: string }) {
   const setError = useDrive((s) => s.setError);
   return (
@@ -82,15 +84,32 @@ function DriveError({ errKey, text }: { errKey: string; text: string }) {
   );
 }
 
+/** Context window size for the ring: 1M for the `[1m]` models, else 200K. */
+const windowOf = (model: string | null) => (model && /\[1m\]|1m/i.test(model) ? 1_000_000 : 200_000);
+
+/** How full the context is, as a small ring (Codex style). */
+function ContextRing({ tokens, model }: { tokens: number; model: string | null }) {
+  const f = Math.min(1, tokens / windowOf(model));
+  const c = 2 * Math.PI * 9;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-secondary" title={`上下文 ${formatTokens(tokens)} / ${formatTokens(windowOf(model))}`} data-testid="drive-context">
+      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3" />
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 12 12)" />
+      </svg>
+      {formatTokens(tokens)}
+    </span>
+  );
+}
+
 /**
- * The drive controls at the foot of the input box (as in the terminal): permission mode (`set_mode`; idle or
- * busy), model, context tokens, then `children` (pasted images, background tasks) at the right. The connection
- * state shows in the header's status word, 「断开」 beside it ([`DriveConnect`]).
+ * The foot of the input box (Codex style): the permission mode at the left (`set_mode`; idle or busy; 自动模式
+ * stands out), then `children` (pasted images, background tasks); context use and the model at the right, before
+ * the send button. Errors show above the box, the connection state in the header.
  */
 export function DriveFooter({ c, children }: { c: ConnState; children?: React.ReactNode }) {
   const command = useDrive((s) => s.command);
   const setError = useDrive((s) => s.setError);
-  const error = useDrive((s) => s.errors[errorKey(c)]);
   const live = isLive(c);
   const mode = MODES.find((m) => m.id === c.mode);
   const setMode = async (id: string) => {
@@ -98,12 +117,18 @@ export function DriveFooter({ c, children }: { c: ConnState; children?: React.Re
     if (!r.success) setError(errorKey(c), `切换权限模式失败：${r.error?.message ?? ""}`);
   };
   return (
-    <div data-testid="drive-controls" className="flex min-w-0 flex-1 items-center gap-2.5 text-[12px] text-secondary">
+    <div data-testid="drive-controls" className="flex min-w-0 flex-1 items-center gap-1 text-[12.5px] text-secondary">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" data-testid="drive-mode" disabled={!live || !(c.state === "idle" || c.state === "busy")} className={smallPill}>
+          <button
+            type="button"
+            data-testid="drive-mode"
+            disabled={!live || !(c.state === "idle" || c.state === "busy")}
+            className={cn(footBtn, c.mode === "auto" && "text-live-waiting")}
+          >
+            <ShieldCheck size={14} strokeWidth={1.7} aria-hidden />
             {mode?.label ?? c.mode ?? "权限模式"}
-            <ChevronDown size={12} aria-hidden />
+            <ChevronDown size={11} className="opacity-60" aria-hidden />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
@@ -114,11 +139,14 @@ export function DriveFooter({ c, children }: { c: ConnState; children?: React.Re
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      {c.model && <span className="truncate">{c.model}</span>}
-      {c.contextTokens != null && <span className="shrink-0" title="上下文 token">上下文 {formatTokens(c.contextTokens)}</span>}
-      {error && <DriveError errKey={errorKey(c)} text={error} />}
-      <span className="flex-1" />
       {children}
+      <span className="flex-1" />
+      {c.contextTokens != null && <ContextRing tokens={c.contextTokens} model={c.model} />}
+      {c.model && (
+        <span data-testid="drive-model" className="ml-1.5 max-w-48 truncate text-text/90" title={c.model}>
+          {c.model}
+        </span>
+      )}
     </div>
   );
 }

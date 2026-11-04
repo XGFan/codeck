@@ -1,5 +1,6 @@
 import { Layers, Square } from "lucide-react";
 import { Popover } from "radix-ui";
+import { footBtn } from "./Header";
 import { useState } from "react";
 import type { ConnState } from "./conn";
 import { errorKey, useDrive } from "./store";
@@ -21,8 +22,8 @@ export function Tasks({ c }: { c: ConnState }) {
   const shown = showDone ? c.tasks : running;
   return (
     <Popover.Root onOpenChange={(o) => o && void refresh(c.conn)}>
-      <Popover.Trigger className="flex h-6 items-center gap-1 rounded px-2 text-[12px] text-secondary hover:bg-selection" data-testid="tasks">
-        <Layers size={12} aria-hidden /> {running.length} 个后台任务
+      <Popover.Trigger className={footBtn} data-testid="tasks">
+        <Layers size={14} strokeWidth={1.7} aria-hidden /> {running.length} 个后台任务
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content align="end" sideOffset={4} className="z-50 w-96 rounded-md border border-border bg-ground p-2 shadow-lg">

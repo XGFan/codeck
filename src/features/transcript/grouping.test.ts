@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Node, SubagentRun } from "@/ipc/bindings";
 import { asstNode, call, otherNode, text, thinking, userNode } from "@/mocks/data/builders";
 import { richMain, richSubagents, richWorkflows } from "@/mocks/data/rich";
-import { buildRows, type GroupingInput, isGroupOpen, locate, rowIndexOf, type Row } from "./grouping";
+import { buildRows, describeCalls, type GroupingInput, isGroupOpen, locate, rowIndexOf, type Row } from "./grouping";
 
 const ok = (t = "ok") => ({ text: t });
 const input = (nodes: Node[], o: Partial<GroupingInput> = {}): GroupingInput => ({
@@ -196,5 +196,37 @@ describe("branch heads", () => {
     expect(rows[0]).toMatchObject({ kind: "prompt", branch: { selectedHeadId: "u1" } });
     // An assistant head starts a new run so its role line (with the switcher) is shown.
     expect(rows[2]).toMatchObject({ kind: "text", role: { branch: { selectedHeadId: "a2" } } });
+  });
+});
+
+describe("回答与工具组的摘要", () => {
+  const { rows } = buildRows(
+    input([
+      userNode("u1", 1_000, "go"),
+      asstNode("a1", 2_000, [text("先看看"), call("t1", "Read", { file_path: "/r/src/a.rs" }, ok()), call("t2", "Edit", { file_path: "/r/src/a.rs" }, ok())]),
+      asstNode("a2", 3_000, [call("t3", "Write", { file_path: "/r/src/a.rs" }, ok()), call("t4", "Bash", { command: "cargo test\n--all" }, { text: "x", isError: true }), call("t5", "mcp__gh__list", {}, ok())]),
+      asstNode("a3", 65_000, [text("改好了。"), text("测试有一处失败。")]),
+      userNode("u2", 70_000, "thanks"),
+      asstNode("a4", 71_000, [text("不客气")]),
+    ]),
+  );
+
+  it("the text after a turn's last work is its answer: its last row carries all of it, for copying, and its time", () => {
+    expect(kinds(rows)).toEqual(["prompt", "text", "group", "text", "text", "prompt", "text"]);
+    const answers = rows.filter((r): r is Extract<Row, { kind: "text" }> => r.kind === "text" && !!r.answer);
+    expect(answers.map((r) => r.answer)).toEqual([
+      { text: "改好了。\n\n测试有一处失败。", timeMs: 65_000 },
+      { text: "不客气", timeMs: 71_000 },
+    ]);
+  });
+
+  it("a group says what its calls did and on what; edited files count once", () => {
+    const [g] = groups(rows);
+    const calls = g!.items.flatMap((it) => (it.type === "call" ? [it.call] : []));
+    expect(describeCalls(calls)).toEqual({
+      text: "读取 1 个文件、编辑 1 个文件、运行 1 条命令 等 5 次工具调用",
+      targets: ["a.rs", "cargo test", "mcp__gh__list"],
+    });
+    expect(describeCalls(calls.filter((c) => c.name === "mcp__gh__list")).text).toBe("1 次工具调用");
   });
 });

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, CircleX, Loader2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleX, Loader2, X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { ImageRef, ToolCall } from "@/ipc/bindings";
@@ -19,7 +19,28 @@ export function PendingSpinner() {
 
 const durationText = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 
-/** Collapsible frame: one-line header (summary) and an expandable body. Failed calls are red and open by default. */
+/** What a call did, as a verb (the line reads 「读取 src/config.rs」); unknown tools keep their name. */
+const VERB: Record<string, string> = {
+  Bash: "运行",
+  Read: "读取",
+  Edit: "编辑",
+  MultiEdit: "编辑",
+  Write: "写入",
+  NotebookEdit: "编辑",
+  Grep: "搜索",
+  Glob: "查找文件",
+  WebFetch: "抓取",
+  WebSearch: "搜索网页",
+  TodoWrite: "任务清单",
+  TaskCreate: "新建任务",
+  TaskUpdate: "更新任务",
+  TaskList: "任务列表",
+};
+
+/**
+ * A tool call as one quiet line — icon, what it did, on what, and only a failure or what it waits for at the
+ * right — that opens its details (output, diff) in a box below. Failed calls are red and open by default.
+ */
 export function Shell({
   nodeId,
   call,
@@ -36,10 +57,10 @@ export function Shell({
   call: ToolCall;
   startMs: number | null;
   icon: ReactNode;
-  /** Tool name label; omitted for Bash / Edit where the icon says it. */
+  /** Label for a tool without a verb of its own (MCP tools and the like). */
   name?: string;
   summary: ReactNode;
-  /** Replaces the default 完成 / 失败 badge. */
+  /** Replaces the default status (nothing when done, 失败, or what a call without a result does). */
   status?: ReactNode;
   failed: boolean;
   defaultOpen?: boolean;
@@ -53,43 +74,40 @@ export function Shell({
   const dur =
     result?.timestampMs != null && startMs != null && result.timestampMs >= startMs ? result.timestampMs - startMs : null;
   return (
-    <div
-      data-testid="tool-call"
-      data-tool={call.name}
-      data-failed={failed || undefined}
-      className={cn("overflow-hidden rounded-lg border", failed ? "border-error/30" : "border-border")}
-    >
+    <div data-testid="tool-call" data-tool={call.name} data-failed={failed || undefined} className="flex w-full flex-col gap-1">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => toggle(key, defaultOpen)}
         className={cn(
-          "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px]",
-          open && "border-b",
-          failed ? "border-error/30 bg-error-bg text-error" : "border-border bg-list text-text/80",
+          "group/tool flex min-h-7 w-full items-center gap-2 rounded-md text-left text-[13px]",
+          failed ? "text-error" : "text-secondary hover:text-text",
         )}
       >
-        {open ? <ChevronDown size={12} strokeWidth={1.8} /> : <ChevronRight size={12} strokeWidth={1.8} />}
-        {icon}
-        {name && <span className="shrink-0 font-semibold">{name}</span>}
+        <span className="flex shrink-0 items-center [&>svg]:size-[14px]">{icon}</span>
+        <span className={cn("shrink-0", failed ? "" : "text-text/90")}>{VERB[call.name] ?? name ?? call.name}</span>
         <span className="flex min-w-0 flex-1 items-center gap-2">{summary}</span>
         {status ??
           (result == null ? (
-            <span className="text-secondary">{pendingText}</span>
+            <span className="shrink-0 text-[12px] text-live-waiting">{pendingText}…</span>
           ) : failed ? (
-            <span className="flex items-center gap-1 font-semibold">
+            <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium">
               <CircleX size={13} strokeWidth={1.8} />
               失败
             </span>
-          ) : (
-            <span className="flex items-center gap-1 text-live">
-              <Check size={12} strokeWidth={2} />
-              完成
-            </span>
-          ))}
-        {dur != null && <span className="text-secondary">{durationText(dur)}</span>}
+          ) : null)}
+        {dur != null && <span className="shrink-0 text-[11.5px] text-secondary/80">{durationText(dur)}</span>}
+        {open ? (
+          <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight size={12} strokeWidth={1.8} className="shrink-0 opacity-0 group-hover/tool:opacity-100" aria-hidden />
+        )}
       </button>
-      {open && <div data-testid="tool-body">{children}</div>}
+      {open && (
+        <div data-testid="tool-body" className={cn("ml-[22px] overflow-hidden rounded-lg border", failed ? "border-error/30" : "border-border")}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

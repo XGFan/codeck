@@ -33,12 +33,20 @@ interface RowBase {
   turn: number;
 }
 
+
 export type Row = RowBase &
   (
     | { kind: "prompt"; node: Node; body: Body<"userPrompt">; branch: BranchPoint | null }
     | { kind: "taskPrompt"; node: Node; text: string }
     | { kind: "notification"; node: Node; body: Body<"userPrompt"> }
-    | { kind: "text"; node: Node; text: string; role: RoleInfo | null }
+    | {
+        kind: "text";
+        node: Node;
+        text: string;
+        role: RoleInfo | null;
+        /** The last row of a turn's answer: copy (all of the answer) and time below it. */
+        answer?: { text: string; timeMs: number | null };
+      }
     | { kind: "thinking"; node: Node; text: string; role: RoleInfo | null }
     | { kind: "tool"; node: Node; call: ToolCallBlock; role: RoleInfo | null }
     | {
@@ -360,8 +368,102 @@ export function buildRows(input: GroupingInput): Grouping {
   }
   if (agent?.finalText) push({ kind: "finalResult", key: `final:${agent.agentId}`, turn, run: agent, text: agent.finalText });
 
+  markAnswers(rows);
   return { rows, index, groupOf, toolNode, cardCalls, inheritedIds, compactKeyOf };
 }
+
+// Work in a turn; the text after the last of it is the turn's answer (a system line after the answer is not work).
+const WORK = new Set<Row["kind"]>(["thinking", "tool", "group", "subagent", "parallel", "workflow", "unknownBlock"]);
+
+/**
+ * Each turn's answer — the text rows after its last bit of work (tool call, thinking, Subagent, Workflow) — gets
+ * `answer` on its last row: copy (all of the answer) and its time go under it, as replies carry no role line.
+ */
+function markAnswers(rows: Row[]) {
+  let i = 0;
+  while (i < rows.length) {
+    if (rows[i]!.kind !== "prompt") {
+      i++;
+      continue;
+    }
+    let end = i + 1;
+    while (end < rows.length && rows[end]!.kind !== "prompt" && rows[end]!.kind !== "orphanHeader") end++;
+    let lastWork = i;
+    for (let j = i + 1; j < end; j++) if (WORK.has(rows[j]!.kind)) lastWork = j;
+    const answer: number[] = [];
+    for (let j = lastWork + 1; j < end; j++) {
+      const r = rows[j]!;
+      if (r.kind === "text" && r.text.trim()) answer.push(j);
+    }
+    const at = answer[answer.length - 1];
+    if (at !== undefined) {
+      const last = rows[at] as Extract<Row, { kind: "text" }>;
+      const text = answer.map((j) => (rows[j] as Extract<Row, { kind: "text" }>).text.trim()).join("\n\n");
+      rows[at] = { ...last, answer: { text, timeMs: last.node.timestampMs } };
+    }
+    i = end;
+  }
+}
+
+const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+const SEARCH_TOOLS = new Set(["Grep", "Glob", "WebSearch", "WebFetch", "ToolSearch"]);
+
+/**
+ * What a run of tool calls did, in words — 「读取 1 个文件、编辑 2 个文件、运行 1 条命令」 (files edited counted
+ * once per path; other tools as 「等 N 次工具调用」) — and what it touched: file names, commands, patterns.
+ */
+export function describeCalls(calls: ToolCallBlock[]): { text: string; targets: string[] } {
+  let read = 0;
+  let commands = 0;
+  let searches = 0;
+  let other = 0;
+  const edited = new Set<string>();
+  const targets: string[] = [];
+  const add = (t: string | null | undefined) => {
+    const v = t?.trim();
+    if (v && !targets.includes(v)) targets.push(v);
+  };
+  for (const c of calls) {
+    const input = parseInput(c.inputJson);
+    const file = str(input.file_path) ?? str(input.notebook_path);
+    if (c.name === "Read") {
+      read++;
+      add(baseName(file));
+    } else if (c.name === "Bash") {
+      commands++;
+      add(str(input.command)?.split("\n", 1)[0]?.slice(0, 40));
+    } else if (SEARCH_TOOLS.has(c.name)) {
+      searches++;
+      add(str(input.pattern) ?? str(input.query) ?? str(input.url));
+    } else if (EDIT_TOOLS.has(c.name)) {
+      edited.add(file ?? c.toolUseId);
+      add(baseName(file));
+    } else {
+      other++;
+      add(c.name);
+    }
+  }
+  const parts = [
+    read && `读取 ${read} 个文件`,
+    edited.size && `编辑 ${edited.size} 个文件`,
+    commands && `运行 ${commands} 条命令`,
+    searches && `搜索 ${searches} 次`,
+  ].filter(Boolean);
+  const text = parts.length ? parts.join("、") + (other ? ` 等 ${calls.length} 次工具调用` : "") : `${calls.length} 次工具调用`;
+  return { text, targets };
+}
+
+function parseInput(inputJson: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(inputJson);
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+const baseName = (p: string | null) => (p ? (p.split("/").pop() ?? p) : null);
 
 /** Linked Subagent Run of an Agent/Task call (calls without a resolvable run render as plain tool calls). */
 function agentRun(b: AssistantBlock, runs: Map<string, SubagentRun>): SubagentRun | undefined {

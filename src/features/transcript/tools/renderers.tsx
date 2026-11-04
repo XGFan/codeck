@@ -59,10 +59,7 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
       status={status}
       summary={
         <>
-          <Mono className="flex-1">
-            <span className="text-secondary select-none">$ </span>
-            {command.split("\n", 1)[0]}
-          </Mono>
+          <Mono className="flex-1">{command.split("\n", 1)[0]}</Mono>
           {desc && <span className="hidden max-w-[40%] shrink-0 truncate text-secondary sm:inline">{desc}</span>}
         </>
       }

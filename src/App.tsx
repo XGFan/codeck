@@ -41,8 +41,8 @@ export default function App() {
           <ElsewhereBanner />
           <FindBar />
           <div className="flex min-h-0 flex-1">
-            {/* The drive panel sits under the transcript, as wide as it. */}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* The drive panel floats over the foot of the transcript, as wide as it. */}
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               <TranscriptView />
               <DrivePanel />
             </div>

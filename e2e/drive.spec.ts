@@ -170,6 +170,18 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   expect((await page.getByTestId("drive-controls").boundingBox())!.y).toBeGreaterThan(box.y + box.height - 4);
   const sendButton = (await page.getByRole("button", { name: "发送" }).boundingBox())!;
   expect(box.x + box.width - (sendButton.x + sendButton.width)).toBeLessThan(4);
+  // Codex style: the permission mode at the left of the foot, the model at the right before the send button.
+  const mode = (await page.getByTestId("drive-mode").boundingBox())!;
+  const model = (await page.getByTestId("drive-model").boundingBox())!;
+  expect(mode.x - box.x).toBeLessThan(24);
+  expect(sendButton.x - (model.x + model.width)).toBeLessThan(16);
+  // The input box floats over the transcript, whose end stays clear of it.
+  const transcript = page.getByTestId("transcript");
+  await transcript.evaluate((e) => (e.scrollTop = e.scrollHeight));
+  const rows = transcript.locator("[data-row]:not([data-folded])");
+  const lastRow = (await rows.nth((await rows.count()) - 1).boundingBox())!;
+  const panelBox = (await page.getByTestId("composer").boundingBox())!;
+  expect(lastRow.y + lastRow.height).toBeLessThan(panelBox.y);
   // Background tasks: the running one only; finished ones on request.
   await expect(page.getByTestId("tasks")).toHaveText("1 个后台任务");
   await page.getByTestId("tasks").click();
@@ -189,6 +201,9 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(page.getByTestId("transcript").getByTestId("progress")).toContainText("Thinking");
 
   await expect(page.getByTestId("drive-input")).toHaveAttribute("placeholder", /^插话/);
+  // Busy with nothing typed: the send button is a stop button.
+  await expect(page.getByTestId("stop")).toBeVisible();
+  await expect(page.getByTestId("send")).toHaveCount(0);
   // An image goes along with a steer too.
   await pasteImage(page);
   await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
@@ -438,7 +453,7 @@ test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一�
 
 test("Session 在终端里退出后：驾驶区只剩一行提示，头部重新出现「驾驶」，resume 后可再次连接", async ({ page }) => {
   await drive(page, "（无标题）");
-  await expect(page.getByTestId("session-exit")).toHaveText("Session 已结束");
+  await expect(page.getByTestId("session-exit")).toContainText("Session 已结束");
   await expect(page.getByTestId("drive-input")).toHaveCount(0);
   await expect(page.getByTestId("drive-disconnect")).toHaveCount(0);
   // Still in `ccrpc ls` (resumed in the terminal): driving again replaces the ended connection.

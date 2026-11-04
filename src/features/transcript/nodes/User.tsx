@@ -26,13 +26,8 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
     );
   }
   return (
-    <Anchor nodeId={node.id} className="group/copy flex flex-col items-end gap-1.5">
-      <div className="flex items-center gap-2 text-[11px] text-secondary">
-        {branch && <BranchSwitcher point={branch} />}
-        <CopyButton text={o.kind === "command" ? `${o.name} ${o.args}`.trim() : body.text} />
-        <span>你 · {clock(node.timestampMs)}</span>
-      </div>
-      <div className="max-w-[640px] rounded-xl border border-selection bg-selection/50 px-3.5 py-2.5 break-words whitespace-pre-wrap">
+    <Anchor nodeId={node.id} className="group/copy flex flex-col items-end gap-1">
+      <div data-testid="user-bubble" className="max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 break-words whitespace-pre-wrap">
         {o.kind === "command" ? (
           <>
             {/* Like the terminal: the command token stands out, its arguments read as prose. */}
@@ -46,6 +41,12 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         )}
       </div>
       {body.images.length > 0 && <PromptImages node={node} body={body} />}
+      {/* Under the bubble, as in Codex: time, copy on hover, the branch switcher at a branch head. */}
+      <div data-testid="prompt-meta" className="flex items-center gap-1.5 text-[11.5px] text-secondary">
+        <CopyButton text={o.kind === "command" ? `${o.name} ${o.args}`.trim() : body.text} />
+        {branch && <BranchSwitcher point={branch} />}
+        <span>{clock(node.timestampMs)}</span>
+      </div>
     </Anchor>
   );
 }
@@ -67,14 +68,14 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
   return (
     <Anchor
       nodeId={node.id}
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12px] text-text/80"
+      className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-3 text-[12px] text-secondary"
     >
-      <Clock size={14} strokeWidth={1.5} className="shrink-0 text-secondary" aria-hidden />
-      <span data-testid="task-notification" className="min-w-[200px] flex-1">
+      <Clock size={13} strokeWidth={1.5} className="shrink-0" aria-hidden />
+      <span data-testid="task-notification" className="min-w-0 max-w-full text-center">
         {n.kind}{" "}
         {n.name && (
           <>
-            <strong data-testid="task-notification-name" title={n.name} className="inline-block max-w-full truncate align-bottom font-semibold">
+            <strong data-testid="task-notification-name" title={n.name} className="inline-block max-w-[40ch] truncate align-bottom font-medium text-text/80">
               {n.name}
             </strong>{" "}
           </>
@@ -88,7 +89,7 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
           type="button"
           data-testid="notification-to-card"
           onClick={() => scrollToNode({ scope, nodeId: cardNode, toolUseId: o.toolUseId })}
-          className="flex items-center gap-0.5 font-semibold text-accent hover:underline"
+          className="flex items-center gap-0.5 text-accent hover:underline"
         >
           <ArrowUp size={12} strokeWidth={2} aria-hidden />
           查看派出位置
@@ -135,16 +136,16 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
   const messages = teammateMessages(body.text);
   const preview = o.summary ?? previewOf(messages[0].body);
   return (
-    <div data-testid="teammate-message" className="overflow-hidden rounded-lg border border-border">
+    <div data-testid="teammate-message" className="flex flex-col gap-1.5">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => toggle(key)}
-        className="flex w-full items-center gap-2 bg-list px-2.5 py-1.5 text-left text-[12px] text-text/80"
+        className="flex w-full items-center gap-2 text-left text-[12px] text-secondary hover:text-text"
       >
         {open ? <ChevronDown size={12} strokeWidth={1.8} aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} aria-hidden />}
         {o.color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: o.color }} />}
-        <span className="shrink-0 font-semibold">Teammate · {o.teammateId ?? "未知"}</span>
+        <span className="shrink-0 font-medium text-text/80">Teammate · {o.teammateId ?? "未知"}</span>
         {messages.length > 1 && <span className="shrink-0 text-secondary">{messages.length} 条</span>}
         <span data-testid="teammate-preview" className="min-w-0 flex-1 truncate text-secondary">
           {preview}
@@ -152,7 +153,7 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
         <span className="shrink-0 text-secondary">{clock(node.timestampMs)}</span>
       </button>
       {open && (
-        <div data-testid="teammate-body" className="flex flex-col gap-2 border-t border-border px-3 py-2 text-[12px]">
+        <div data-testid="teammate-body" className="ml-1.5 flex flex-col gap-2 border-l-2 border-border pl-4 text-[12px]">
           {messages.map((m, i) => (
             <div key={i} className="flex flex-col gap-1">
               {messages.length > 1 && <span className="text-[11px] text-secondary">{m.id ?? "未知"}</span>}

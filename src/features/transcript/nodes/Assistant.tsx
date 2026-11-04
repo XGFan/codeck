@@ -1,10 +1,10 @@
 import { ChevronDown, ChevronRight, CircleX } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Markdown } from "@/lib/markdown";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
-import { type GroupItem, isGroupOpen, type RoleInfo, type Row, type ToolCallBlock } from "../grouping";
+import { describeCalls, type GroupItem, isGroupOpen, type RoleInfo, type Row, type ToolCallBlock } from "../grouping";
 import { ToolCallView, toolKey } from "../tools";
 import { clock } from "../util";
 import { Anchor } from "./Anchor";
@@ -14,7 +14,10 @@ import type { Node } from "@/ipc/bindings";
 
 type AssistantRowData = Extract<Row, { kind: "text" | "thinking" | "tool" | "group" | "unknownBlock" }>;
 
-/** Wraps one segment of an assistant run; the first segment carries the role line. */
+/**
+ * Wraps one segment of an assistant run. No 「Claude · time」 line (the answer's time is under it); the first
+ * segment shows only what needs saying: the branch switcher at a branch head, an API error.
+ */
 export function AssistantSegment({ role, children }: { role: RoleInfo | null; children: ReactNode }) {
   return (
     <div data-kind="assistant" className="flex flex-col items-start gap-2">
@@ -27,12 +30,21 @@ export function AssistantSegment({ role, children }: { role: RoleInfo | null; ch
 function RoleLine({ role }: { role: RoleInfo }) {
   const b = role.node.body;
   const apiError = b.kind === "assistant" && b.isApiError;
+  if (!role.branch && !apiError) return null;
   return (
-    <div className="flex items-center gap-1.5 text-[11px] text-secondary">
+    <div data-testid="role-line" className="flex items-center gap-1.5 text-[11px] text-secondary">
       {role.branch && <BranchSwitcher point={role.branch} />}
-      <span className="flex size-4 items-center justify-center rounded bg-claude text-[10px] font-bold text-white">C</span>
-      Claude · {clock(role.node.timestampMs)}
-      {apiError && <span className="ml-1 font-semibold text-error">API 错误</span>}
+      {apiError && <span className="font-semibold text-error">API 错误 · {clock(role.node.timestampMs)}</span>}
+    </div>
+  );
+}
+
+/** Under a turn's answer: copy all of it, and when it was written. */
+function AnswerActions({ text, timeMs }: { text: string; timeMs: number | null }) {
+  return (
+    <div data-testid="answer-actions" className="-mt-1 flex items-center gap-2 text-[11.5px] text-secondary">
+      <CopyButton text={text} className="opacity-100" />
+      <span>{clock(timeMs)}</span>
     </div>
   );
 }
@@ -45,10 +57,13 @@ function segmentBody(row: AssistantRowData): ReactNode {
   switch (row.kind) {
     case "text":
       return row.text.trim() ? (
-        <Anchor nodeId={row.node.id} className="group/copy relative w-full">
-          <CopyButton text={row.text} className="absolute -top-2 right-0 z-10 bg-ground/90" />
-          <Markdown text={row.text} className="w-full" />
-        </Anchor>
+        <>
+          <Anchor nodeId={row.node.id} className="group/copy relative w-full">
+            {!row.answer && <CopyButton text={row.text} className="absolute -top-2 right-0 z-10 bg-ground/90" />}
+            <Markdown text={row.text} className="w-full" />
+          </Anchor>
+          {row.answer && <AnswerActions {...row.answer} />}
+        </>
       ) : (
         <Anchor nodeId={row.node.id} className="h-px w-full">
           {null}
@@ -74,30 +89,34 @@ function Tool({ node, call }: { node: Node; call: ToolCallBlock }) {
   );
 }
 
-/** "N 次工具调用 · 3 Bash · 2 Read"; collapsed unless the user opened it; failed calls are counted in the header. */
+/**
+ * One line for a run of calls: what they did (「读取 1 个文件、编辑 2 个文件、运行 1 条命令」) and on what;
+ * collapsed unless the user opened it; failed calls are counted at the end.
+ */
 function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
   const failed = row.failedCount > 0;
   const open = useUi((s) => isGroupOpen(row, s.expanded, toolKey));
+  const { text, targets } = useMemo(() => describeCalls(row.items.flatMap((it) => (it.type === "call" ? [it.call] : []))), [row.items]);
   return (
     <div data-testid="tool-group" data-open={open || undefined} className="flex w-full flex-col items-start gap-1.5">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => useUi.getState().setExpanded(row.key, !open)}
-        className="flex max-w-full items-center gap-2 rounded-lg border border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80 hover:bg-selection/40"
+        className="flex min-h-7 max-w-full items-center gap-2 text-[13px] text-secondary hover:text-text"
       >
-        {open ? <ChevronDown size={12} strokeWidth={1.8} aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} aria-hidden />}
-        <span className="shrink-0 font-semibold">{row.callCount} 次工具调用</span>
-        <span className="min-w-0 truncate text-secondary">{row.counts.map(([name, n]) => `${n} ${name}`).join(" · ")}</span>
+        {open ? <ChevronDown size={13} strokeWidth={1.8} aria-hidden /> : <ChevronRight size={13} strokeWidth={1.8} aria-hidden />}
+        <span className="shrink-0 text-text/90">{text}</span>
+        <span className="min-w-0 truncate font-mono text-[12px] text-secondary">{targets.join(" · ")}</span>
         {failed && (
-          <span className="flex shrink-0 items-center gap-1 font-semibold text-error">
+          <span className="flex shrink-0 items-center gap-1 text-error">
             <CircleX size={12} strokeWidth={1.8} aria-hidden />
             {row.failedCount} 失败
           </span>
         )}
       </button>
       {open && (
-        <div className="flex w-full flex-col gap-1.5 border-l-2 border-border pl-3">
+        <div className="ml-1.5 flex w-full flex-col gap-0.5 border-l-2 border-border pl-4">
           {row.items.map((it) => (
             <GroupEntry key={itemKey(it)} item={it} />
           ))}

@@ -1,5 +1,5 @@
-import { Plus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Info, Plus, Unplug, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey } from "@/lib/hotkeys";
@@ -9,6 +9,7 @@ import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
+import { ErrorNotice, NoticeCard } from "./Notice";
 import { Requests } from "./Requests";
 import { connFor, draftKey, errorKey, lsEntryFor, useDrive, waitingSessions } from "./store";
 
@@ -171,6 +172,19 @@ function Panel({ c }: { c: ConnState }) {
   const dismiss = useDrive((s) => s.dismissNotice);
   const setError = useDrive((s) => s.setError);
   const live = !c.procExit && !c.sessionExited && c.ready;
+  const storeError = useDrive((s) => s.errors[errorKey(c)]);
+  const floatRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = floatRef.current;
+    const host = el?.parentElement;
+    if (!el || !host) return;
+    const ro = new ResizeObserver(() => host.style.setProperty("--drive-h", `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      host.style.removeProperty("--drive-h");
+    };
+  }, []);
 
   // Esc: leaves a card's text field; aborts while busy / waiting; otherwise keeps CoDeck's meaning.
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -192,33 +206,32 @@ function Panel({ c }: { c: ConnState }) {
   };
 
   return (
-    <div data-testid="drive-panel" onKeyDown={onKeyDown} className="flex shrink-0 flex-col gap-2 border-t border-border px-6 pt-2.5 pb-3">
-      <div className="mx-auto flex w-full max-w-[820px] flex-col gap-2">
+    // Floats over the foot of the transcript (Codex style): the transcript scrolls under it and keeps room for it
+    // at its end (`--drive-h`, set on the shared parent).
+    <div
+      ref={floatRef}
+      data-testid="drive-panel"
+      onKeyDown={onKeyDown}
+      className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
+    >
+      <div className="pointer-events-auto mx-auto flex w-full max-w-[720px] flex-col gap-2">
         {c.procExit && (
-          <div className="flex items-center gap-3 rounded-md bg-error-bg px-3 py-1.5 text-[12px] text-error" data-testid="proc-exit">
-            <span className="min-w-0 flex-1 truncate" title={c.procExit.stderr}>
-              ccrpc 已退出（{c.procExit.code == null ? "被信号终止" : `退出码 ${c.procExit.code}`}）{c.procExit.stderr ? `：${lastLine(c.procExit.stderr)}` : ""}
-            </span>
-            {c.holderId && (
-              <button type="button" className="rounded border border-error px-2 py-0.5" onClick={() => void reconnect(c.conn)} data-testid="reconnect">
-                重连
-              </button>
-            )}
-          </div>
+          <NoticeCard
+            tone="error"
+            testId="proc-exit"
+            icon={<Unplug size={18} strokeWidth={1.7} />}
+            title={`ccrpc 已退出（${c.procExit.code == null ? "被信号终止" : `退出码 ${c.procExit.code}`}）`}
+            desc={c.procExit.stderr ? lastLine(c.procExit.stderr) : undefined}
+            action={c.holderId ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" } : undefined}
+          />
         )}
         {c.sessionExited && !c.procExit && (
-          <div className="rounded-md bg-code px-3 py-1.5 text-[12px] text-secondary" data-testid="session-exit">
-            Session 已结束
-          </div>
+          <NoticeCard testId="session-exit" icon={<Unplug size={18} strokeWidth={1.7} />} title="Session 已结束" desc="在终端里 resume 后可以重新驾驶。" />
         )}
         {c.notices.map((n) => (
-          <div key={n.id} className="flex items-center gap-2 rounded-md bg-code px-3 py-1 text-[12px] text-secondary" data-testid="notice">
-            <span className="min-w-0 flex-1 truncate">{n.text}</span>
-            <button type="button" aria-label="关闭" onClick={() => dismiss(c.conn, n.id)}>
-              <X size={12} aria-hidden />
-            </button>
-          </div>
+          <NoticeCard key={n.id} testId="notice" icon={<Info size={18} strokeWidth={1.7} />} title={n.text} onClose={() => dismiss(c.conn, n.id)} />
         ))}
+        {storeError && <ErrorNotice text={storeError} onClose={() => setError(errorKey(c), null)} />}
         {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
         {!c.procExit && !c.sessionExited && (
           <>

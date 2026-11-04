@@ -251,6 +251,13 @@ export const richMain: Node[] = [
   }),
   userNode("n16", ts(), "接下来把限流参数接到 config.toml，键名用 `[rate_limit] per_minute`。"),
   asstNode("n17", ts(), [
+    call("tu_cfg_read", "Read", { file_path: "/Users/dev/Developer/lumen-api/src/config.rs" }, { text: "     1\tpub struct Config {\n     2\t    pub listen: String,\n     3\t}" }),
+    call(
+      "tu_cfg_edit",
+      "Edit",
+      { file_path: "/Users/dev/Developer/lumen-api/src/config.rs", old_string: "    pub listen: String,", new_string: "    pub listen: String,\n    pub rate_limit: RateLimitConfig," },
+      { text: "The file /Users/dev/Developer/lumen-api/src/config.rs has been updated." },
+    ),
     text(
       "已接入配置，改动如下：\n\n| 文件 | 变更 |\n| --- | --- |\n| `src/config.rs` | 新增 `RateLimitConfig` |\n| `config.toml` | 新增 `[rate_limit]` 段 |\n\n```toml\n[rate_limit]\nper_minute = 120\n```\n\n默认值保持 120，未配置时沿用。",
     ),

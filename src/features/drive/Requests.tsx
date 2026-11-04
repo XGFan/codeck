@@ -1,4 +1,4 @@
-import { Check, MessageCircleQuestionMark, Sparkles } from "lucide-react";
+import { Check, MessageCircleQuestionMark, ScanSearch, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
@@ -10,6 +10,7 @@ import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
 import type { ConnState, Request } from "./conn";
 import type { AskQuestion, ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
+import { NoticeCard } from "./Notice";
 import { useDrive } from "./store";
 
 /** Cards for what the Session waits on, main line first. */
@@ -18,11 +19,7 @@ export function Requests({ c }: { c: ConnState }) {
   if (reqs.length === 0) {
     // Waiting with nothing to show yet: the analyzer may be looking at the screen.
     if (c.state === "waiting" && c.waiting?.kind !== "question")
-      return (
-        <div className="rounded-lg border border-border px-3 py-2 text-[12px] text-secondary" data-testid="analyzing">
-          正在识别界面…
-        </div>
-      );
+      return <NoticeCard testId="analyzing" tone="wait" icon={<ScanSearch size={18} strokeWidth={1.7} />} title="正在识别界面…" desc="Claude Code 弹出了认不出的对话框，分析器在看屏幕。" />;
     return null;
   }
   return (
@@ -259,21 +256,20 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
 function QuestionHint({ r }: { r: QuestionEvent }) {
   const { data } = useCurrentTranscript();
   const node = data?.scope.kind === "main" ? data.nodes.find((n) => n.body.kind === "assistant" && n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.request_id)) : undefined;
+  const qs = Array.isArray(r.questions) ? r.questions : [];
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-live-waiting/60 px-3 py-2 text-[12px]" data-testid="question-hint">
-      <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="shrink-0 text-accent" aria-hidden />
-      <span className="min-w-0 flex-1 truncate">Claude 在对话里向你提问，在那张卡片上作答</span>
-      {node && (
-        <button
-          type="button"
-          onClick={() => scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.request_id, flashMs: 2000 })}
-          className="shrink-0 text-accent hover:underline"
-          data-testid="question-jump"
-        >
-          跳到提问
-        </button>
-      )}
-    </div>
+    <NoticeCard
+      testId="question-hint"
+      tone="wait"
+      icon={<MessageCircleQuestionMark size={18} strokeWidth={1.7} />}
+      title="Claude 在问你"
+      desc={qs.length ? `${qs[0]!.question}${qs.length > 1 ? ` 等 ${qs.length} 个问题` : ""} · 在对话里那张卡片上作答` : "在对话里那张卡片上作答"}
+      action={
+        node
+          ? { label: "跳到提问", primary: true, testId: "question-jump", onClick: () => scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.request_id, flashMs: 2000 }) }
+          : undefined
+      }
+    />
   );
 }
 

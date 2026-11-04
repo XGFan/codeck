@@ -1,4 +1,4 @@
-import { ArrowUp, ImageIcon, X } from "lucide-react";
+import { ArrowUp, Clock, ImageIcon, Square, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { api } from "@/ipc";
@@ -10,6 +10,7 @@ import type { ConnState } from "./conn";
 import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
 import { DriveFooter } from "./Header";
 import { draftKey, EMPTY_DRAFT, useDrive, type Draft } from "./store";
+import { ErrorNotice, NoticeCard } from "./Notice";
 import { Tasks } from "./Tasks";
 
 const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
@@ -69,6 +70,11 @@ export function Composer({ c }: { c: ConnState }) {
   const complete = (cmd: SlashCommand) => {
     setText(`/${cmd.name} `);
     setPick(0);
+  };
+
+  const abort = async () => {
+    const r = await command(c.conn, { type: "abort" });
+    if (!r.success) setError(`中止失败：${r.error?.message ?? r.error?.code ?? ""}`);
   };
 
   const sendNow = async () => {
@@ -144,34 +150,35 @@ export function Composer({ c }: { c: ConnState }) {
 
   return (
     <div className="shrink-0" data-testid="composer">
-      {c.queue.length > 0 && (
-        <div className="mb-1.5 flex items-start gap-2 rounded-md border border-dashed border-border px-2 py-1 text-[12px]" data-testid="queue">
-          <span className="shrink-0 text-secondary">排队</span>
-          <ul className="min-w-0 flex-1 space-y-0.5">
-            {c.queue.map((q, i) => (
-              <li key={`${i}:${q}`} className="truncate" title={q} data-testid="queue-item">
+      <div className="mb-2 flex flex-col gap-2 empty:hidden">
+        {c.queue.length > 0 && (
+          <NoticeCard
+            testId="queue"
+            icon={<Clock size={18} strokeWidth={1.7} />}
+            title={`排队 ${c.queue.length} 条`}
+            desc={c.queue.map((q, i) => (
+              <span key={`${i}:${q}`} data-testid="queue-item" title={q}>
+                {i > 0 && "；"}
                 {q}
-              </li>
+              </span>
             ))}
-          </ul>
-          <button
-            type="button"
-            disabled={!live || state !== "busy" || sending}
-            onClick={() => void sendNow()}
-            title="中断本轮，立即发出排队的消息（终端里的 ctrl+enter）"
-            className="shrink-0 text-accent hover:underline disabled:opacity-40 disabled:hover:no-underline"
-            data-testid="send-now"
-          >
-            立即发送
-          </button>
-        </div>
-      )}
-      {error && (
-        <div className="mb-1.5 truncate text-[12px] text-error" data-testid="drive-error" title={error}>
-          {error}
-        </div>
-      )}
-      <div className={cn("relative rounded-xl border border-border bg-ground px-3 pt-2 pb-1.5", live ? "focus-within:border-accent" : "opacity-60")}>
+            action={{
+              label: "立即发送",
+              onClick: () => void sendNow(),
+              disabled: !live || state !== "busy" || sending,
+              title: "中断本轮，立即发出排队的消息（终端里的 ctrl+enter）",
+              testId: "send-now",
+            }}
+          />
+        )}
+        {error && <ErrorNotice text={error} onClose={() => setError(null)} />}
+      </div>
+      <div
+        className={cn(
+          "relative rounded-[18px] border border-border bg-ground pt-3 pr-2.5 pb-2 pl-4 shadow-[0_4px_16px_rgba(0,0,0,0.06)]",
+          live ? "focus-within:border-text/25" : "opacity-60",
+        )}
+      >
         {matches.length > 0 && (
           <div data-testid="slash-menu" className="absolute right-0 bottom-full left-0 mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-ground shadow-lg">
           <ul role="listbox" aria-label="斜杠命令" className="max-h-72 overflow-y-auto py-1">
@@ -266,28 +273,42 @@ export function Composer({ c }: { c: ConnState }) {
           }}
           placeholder={placeholder}
           aria-label="给 Claude 发消息"
-          className="block w-full resize-none bg-transparent text-[14px] leading-[1.5] outline-none placeholder:text-secondary"
+          className="block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary"
           data-testid="drive-input"
         />
-        <div className="flex items-center gap-2 pt-1">
+        <div className="-ml-2 flex items-center gap-1 pt-1.5">
           <DriveFooter c={c}>
             {images.length > 0 && (
-              <span className="flex items-center gap-1 text-[11px] text-secondary">
-                <ImageIcon size={11} aria-hidden /> {images.length}
+              <span className="flex h-7 items-center gap-1.5 px-2" title="粘贴的图片">
+                <ImageIcon size={14} strokeWidth={1.7} aria-hidden /> {images.length}
               </span>
             )}
             <Tasks c={c} />
           </DriveFooter>
-          <button
-            type="button"
-            aria-label="发送"
-            disabled={!live || !text.trim() || sending || state === "waiting" || state === "starting"}
-            onClick={() => void submit()}
-            className="flex size-6 items-center justify-center rounded-full bg-accent text-white disabled:opacity-30"
-            data-testid="send"
-          >
-            <ArrowUp size={14} aria-hidden />
-          </button>
+          {/* Busy with nothing typed: stop (Esc in the terminal) instead of send. */}
+          {live && !text.trim() && (state === "busy" || state === "waiting") ? (
+            <button
+              type="button"
+              aria-label="中止"
+              title="中止本轮（Esc）"
+              onClick={() => void abort()}
+              className="ml-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-text text-ground hover:opacity-85"
+              data-testid="stop"
+            >
+              <Square size={11} fill="currentColor" aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label="发送"
+              disabled={!live || !text.trim() || sending || state === "waiting" || state === "starting"}
+              onClick={() => void submit()}
+              className="ml-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:bg-border disabled:text-ground"
+              data-testid="send"
+            >
+              <ArrowUp size={16} strokeWidth={2.2} aria-hidden />
+            </button>
+          )}
         </div>
       </div>
     </div>
