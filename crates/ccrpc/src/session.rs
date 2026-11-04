@@ -252,12 +252,6 @@ impl Marks {
             .map(|(_, u, _)| u.as_str())
     }
 
-    fn enqueued_after(&self, after: u64, text: &str) -> bool {
-        self.enqueued
-            .iter()
-            .any(|(s, t)| *s > after && t.trim() == text.trim())
-    }
-
     /// A prompt that went into Claude Code's queue: its text, or (sent with images) ending with it.
     fn prompt_enqueued_after(&self, after: u64, text: &str, images: bool) -> bool {
         self.enqueued.iter().any(|(s, t)| {
@@ -2288,19 +2282,7 @@ impl Engine {
         let paths = Self::image_paths(images)?;
         let images = &paths;
         self.clear_input()?;
-        // Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
-        for p in images {
-            let had = self.input_box_now()?.matches("[Image #").count();
-            self.paste(p)?;
-            // One more `[Image #n]` placeholder, and the path itself is gone from the box.
-            let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
-                recognize::input_text(s)
-                    .filter(|t| !t.contains(p.as_str()) && t.matches("[Image #").count() == had + 1)
-            });
-            if shown.is_none() {
-                return err("bad_request", format!("Claude Code 没有把 {p} 当成图片"));
-            }
-        }
+        self.paste_images(images)?;
         let before = self.marks.seq;
         let hook_before = self.hook_seq;
         self.paste_and_submit(&clean)?;
@@ -2354,17 +2336,43 @@ impl Engine {
         Ok(json!({"uuid": found(self), "prompt_id": prompt_id, "delivered_as": "prompt"}))
     }
 
-    fn steer(&mut self, text: &str) -> CmdResult {
+    /// Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
+    fn paste_images(&mut self, paths: &[String]) -> std::result::Result<(), CmdErr> {
+        for p in paths {
+            let had = self.input_box_now()?.matches("[Image #").count();
+            self.paste(p)?;
+            // One more `[Image #n]` placeholder, and the path itself is gone from the box.
+            let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
+                recognize::input_text(s)
+                    .filter(|t| !t.contains(p.as_str()) && t.matches("[Image #").count() == had + 1)
+            });
+            if shown.is_none() {
+                return Err(("bad_request", format!("Claude Code 没有把 {p} 当成图片")));
+            }
+        }
+        Ok(())
+    }
+
+    fn steer(&mut self, text: &str, images: &[String]) -> CmdResult {
         self.require(matches!(self.state, State::Busy), "not_busy")?;
         let clean = Self::clean_text(text)?;
+        let paths = Self::image_paths(images)?;
         self.clear_input()?;
+        self.paste_images(&paths)?;
+        let with_images = !paths.is_empty();
         let before = self.marks.seq;
         self.paste_and_submit(&clean)?;
         let mut how = None;
         self.wait_until(Duration::from_secs(10), |e| {
-            if e.marks.enqueued_after(before, &clean) {
+            // With images, the recorded text starts with their `[Image #n]` placeholders.
+            let prompt = if with_images {
+                e.marks.prompt_with_images_after(before, &clean)
+            } else {
+                e.marks.prompt_after(before, &clean)
+            };
+            if e.marks.prompt_enqueued_after(before, &clean, with_images) {
                 how = Some("queued");
-            } else if e.marks.prompt_after(before, &clean).is_some() {
+            } else if prompt.is_some() {
                 how = Some("prompt");
             }
             how.is_some()
@@ -3075,7 +3083,7 @@ impl Engine {
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
             Command::StopTask { task_id } => self.stop_task(task_id),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
-            Command::Steer { text } => self.steer(text),
+            Command::Steer { text, images } => self.steer(text, images),
             Command::FollowUp { text, images } => {
                 self.require(true, "")?;
                 Self::clean_text(text)?;
@@ -3493,8 +3501,8 @@ mod tests {
         }
         let b2 = m.seq;
         m.enqueue("steer".into());
-        assert!(m.enqueued_after(b2, "steer"));
-        assert!(!m.enqueued_after(b2, "s5"));
+        assert!(m.prompt_enqueued_after(b2, "steer", false));
+        assert!(!m.prompt_enqueued_after(b2, "s5", false));
         // Typed just as a turn began, the enqueue is recorded without its text.
         let b3 = m.seq;
         assert!(!m.blank_enqueued_after(b3));

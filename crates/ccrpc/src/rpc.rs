@@ -39,6 +39,8 @@ pub enum Command {
     },
     Steer {
         text: String,
+        /// As `prompt`'s: pasted by path before the text.
+        images: Vec<String>,
     },
     FollowUp {
         text: String,
@@ -331,6 +333,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         }),
         "steer" => Ok(Command::Steer {
             text: req_text(obj, kind, "text")?,
+            images: opt_strings(obj, kind, "images")?,
         }),
         "follow_up" => Ok(Command::FollowUp {
             text: req_text(obj, kind, "text")?,
@@ -588,7 +591,8 @@ mod tests {
             Request {
                 id: None,
                 command: Command::Steer {
-                    text: "stop".into()
+                    text: "stop".into(),
+                    images: vec![],
                 },
             }
         );

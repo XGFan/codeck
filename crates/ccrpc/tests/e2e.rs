@@ -1494,6 +1494,34 @@ fn mock_model_send_now() {
     assert_eq!(t2["aborted"], false, "{t2}");
 }
 
+/// A steer with an image while busy: pasted by path like a prompt's, it waits in Claude Code's
+/// queue with its `[Image #1]` placeholder, on the scripted model (no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_steer_image() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let img = env.work.join("dot.png");
+    std::fs::write(&img, red_dot_png()).unwrap();
+
+    rpc.forget();
+    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    std::thread::sleep(Duration::from_secs(2));
+    let d = rpc.call(
+        "s2",
+        json!({"type": "steer", "text": "MOCK-STEERED with image", "images": [img]}),
+    );
+    assert_eq!(d["delivered_as"], "queued", "{d}");
+    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+        v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
+    });
+    let item = q["items"][0].as_str().unwrap_or_default();
+    assert!(item.contains("[Image #1]") && item.ends_with("MOCK-STEERED with image"), "{q}");
+    rpc.event("turn_end", Duration::from_secs(30));
+    rpc.until("queue", Duration::from_secs(30), |v| v["type"] == "queue" && v["items"] == json!([]));
+}
+
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on
 /// the scripted model (no credits).
 #[test]
