@@ -3690,12 +3690,34 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     run_engine(Engine::open(roots.clone(), &holder, Out::stdout(), &opts)?)
 }
 
+/// `toh` against ccrpc's ToH state directory, without the caller's terminal and session variables.
+pub(crate) fn toh_command(roots: &Roots) -> std::process::Command {
+    let mut cmd = std::process::Command::new("toh");
+    cmd.env("TOH_STATE_DIR", &roots.toh_state);
+    for k in [
+        "TOH_CONFIG",
+        "KITTY_WINDOW_ID",
+        "KITTY_LISTEN_ON",
+        "WEZTERM_PANE",
+        "WEZTERM_UNIX_SOCKET",
+        "KAKU_UNIX_SOCKET",
+        "ITERM_SESSION_ID",
+        "TOH_HOLDER_ID",
+        "CLAUDECODE",
+        "CCRPC_ANALYZER_API_KEY",
+    ] {
+        cmd.env_remove(k);
+    }
+    cmd
+}
+
 pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     let (opts, claude_args) = match args.iter().position(|a| a == "--") {
         Some(i) => (&args[..i], &args[i + 1..]),
         None => (args, &[][..]),
     };
     let mut cwd = None;
+    let mut hidden = false;
     // A Pane ccrpc just started is not in anyone's use, whoever shows it.
     let mut eng = Opts {
         size: DEFAULT_SIZE,
@@ -3707,6 +3729,7 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
         match a.as_str() {
             "--cwd" => cwd = Some(it.next().context("--cwd 需要目录")?.clone()),
             "--co-display" => eng.co_display = true,
+            "--hidden" => hidden = true,
             "--log" => crate::log::open(Path::new(it.next().context("--log 需要文件")?))?,
             "--size" => eng.size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
             other => bail!("new：不认识的参数 {other}；claude 的参数放在 -- 之后"),
@@ -3716,10 +3739,16 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     if !claude_args.iter().any(|a| a == "--plugin-dir") && !crate::plugin::enabled(roots) {
         bail!("ccrpc 插件未启用：先运行 ccrpc plugin install");
     }
-    let mut cmd = std::process::Command::new("toh");
+    let mut cmd = toh_command(roots);
     cmd.arg("new");
     if let Some(d) = &cwd {
         cmd.args(["--cwd", d]);
+    }
+    // Hidden: nobody shows the Pane on the Mac, so its PTY keeps the size it starts with; start at ccrpc's size,
+    // big enough to recognize dialogs (co-display then follows whoever shows it).
+    if hidden {
+        let (c, r) = eng.size;
+        cmd.args(["--window", "hidden", "--size", &format!("{c}x{r}")]);
     }
     cmd.arg("--");
     // `toh new` passes only a few variables to the Pane: carry a non-default config dir explicitly
@@ -3739,21 +3768,6 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
         cmd.arg("env").args(env);
     }
     cmd.arg("claude").args(claude_args);
-    cmd.env("TOH_STATE_DIR", &roots.toh_state);
-    for k in [
-        "TOH_CONFIG",
-        "KITTY_WINDOW_ID",
-        "KITTY_LISTEN_ON",
-        "WEZTERM_PANE",
-        "WEZTERM_UNIX_SOCKET",
-        "KAKU_UNIX_SOCKET",
-        "ITERM_SESSION_ID",
-        "TOH_HOLDER_ID",
-        "CLAUDECODE",
-        "CCRPC_ANALYZER_API_KEY",
-    ] {
-        cmd.env_remove(k);
-    }
     let out = cmd
         .output()
         .context("运行 toh new 失败（toh 在 PATH 里吗？）")?;

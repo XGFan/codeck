@@ -46,13 +46,14 @@ ccrpc attach <Holder ID | sessionId>
 
 ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxROWS` 可改）；有人正在 ToH 上用这个 Pane（持有 PTY 尺寸）时 `attach` 报错，`--force` 强制连接；连着时有人接手，ccrpc 发 `taken_over` 并转为只读，调用方重新 `attach` 才能再写入。
 
-列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔；`--json` 输出数组，另带 claude pid、版本与会话标题）：
+列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔；`--json` 输出数组，另带 Pane 是否隐藏、claude pid、版本与会话标题）：
 
 ```sh
 ccrpc ls [--json]
+ccrpc hide | show <Holder ID>   # 在 Mac 上隐藏 / 显示这个 Pane（toh hide / toh show）
 ```
 
-`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`--log FILE` 把版本、状态判定、识别决策与当时的整屏、hook 事件、响应与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
+`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`new --hidden` 把 Pane 开在 ToH Mac Client 的隐藏窗口里（iOS 与 web 照常列出），PTY 初始尺寸取 `--size`；`--log FILE` 把版本、状态判定、识别决策与当时的整屏、hook 事件、响应与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
 
 检查依赖与配置（toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器），每行 `ok` / `warn` / `fail`：
 

@@ -2005,6 +2005,57 @@ fn mock_model_tools() {
     assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
 }
 
+/// A hidden Pane (`new --hidden`, ToH ADR-0050), co-displayed as CoDeck starts it: nobody shows it, so its PTY
+/// keeps the size it starts with, ccrpc's 160×48, and an approval dialog is recognized there; `ls --json` reports
+/// `hidden`, which `hide` / `show` toggle (on the scripted model, no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_hidden() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start_in(&env, &env.work, &["--hidden", "--co-display"]);
+    let ready = start_session(&mut rpc, &env);
+    assert_eq!(ready["size"], json!([160, 48]), "{ready}");
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+    let hidden = || {
+        let out = ccrpc_cmd(&env).args(["ls", "--json"]).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["holder_id"] == holder.as_str())
+            .map(|r| r["hidden"].clone())
+    };
+    assert_eq!(hidden(), Some(json!(true)));
+
+    rpc.forget();
+    rpc.call("t1", json!({"type": "prompt", "text": "MOCK-TOOL please"}));
+    let pr = rpc.event("permission_request", Duration::from_secs(30));
+    assert_eq!(pr["tool_name"], "Bash", "{pr}");
+    rpc.call(
+        "t2",
+        json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}),
+    );
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["aborted"], false, "{t}");
+    assert!(
+        env.work.join("mock-tool.txt").exists(),
+        "允许之后 touch 没有执行"
+    );
+
+    let place = |verb: &str| {
+        let out = ccrpc_cmd(&env)
+            .args([verb, holder.as_str()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{verb}: {out:?}");
+    };
+    place("show");
+    assert_eq!(hidden(), Some(json!(false)));
+    place("hide");
+    assert_eq!(hidden(), Some(json!(true)));
+}
+
 /// An AskUserQuestion asked while no ccrpc holds its hook (the ccrpc that sent the prompt left):
 /// the next ccrpc reads it from the transcript and answers it with keys on the dialog, for one
 /// question and for two (tabbed, the second multi-select, submitted on the Review tab).

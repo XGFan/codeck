@@ -7,9 +7,10 @@ use crate::pty::{self, HolderConn};
 use crate::screen::Screen;
 
 const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir DIR] <命令>
-  ccrpc new [--cwd DIR] [--size COLSxROWS] [--co-display] [--log FILE] [-- claude 参数…]
+  ccrpc new [--cwd DIR] [--size COLSxROWS] [--co-display] [--hidden] [--log FILE] [-- claude 参数…]
   ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>
   ccrpc ls [--json]
+  ccrpc hide | show <Holder ID>
   ccrpc plugin install | uninstall | generate <目录>
   ccrpc doctor
   ccrpc layouts list
@@ -43,6 +44,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
         }
         Some("plugin") => crate::plugin::cmd(&roots, &args[1..]),
         Some("ls") => cmd_ls(&roots, &args[1..]),
+        Some(c @ ("hide" | "show")) => cmd_place(&roots, c, &args[1..]),
         Some("doctor") => cmd_doctor(&roots),
         Some("layouts") => cmd_layouts(&args[1..]),
         Some("debug") if args.get(1).map(String::as_str) == Some("replay") => {
@@ -120,6 +122,7 @@ fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
             "status": status,
             "cwd": cwd,
             "plugin": plugin,
+            "hidden": m.hidden(),
             "claude_pid": claude.pid,
             "version": pf.as_ref().and_then(|p| p.version.clone()),
             "title": transcript.as_deref().and_then(::transcript::assemble::skeleton::read_title),
@@ -127,6 +130,27 @@ fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
     }
     if json_out {
         println!("{}", serde_json::Value::Array(rows));
+    }
+    Ok(())
+}
+
+/// `ccrpc hide|show <Holder ID>`: `toh hide|show`, hiding the Pane on the Mac or showing it again (ToH ADR-0050).
+fn cmd_place(roots: &Roots, verb: &str, args: &[String]) -> Result<()> {
+    let [id] = args else {
+        bail!("用法：ccrpc {verb} <Holder ID>");
+    };
+    if !locate::valid_holder_id(id) {
+        bail!("不是 Holder ID：{id}");
+    }
+    let out = crate::session::toh_command(roots)
+        .args([verb, id.as_str()])
+        .output()
+        .context("运行 toh 失败（toh 在 PATH 里吗？）")?;
+    if !out.status.success() {
+        bail!(
+            "toh {verb} 失败：{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(())
 }

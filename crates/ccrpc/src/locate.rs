@@ -62,6 +62,16 @@ pub struct HolderMeta {
     pub cwd: String,
     #[serde(default)]
     pub backend: Option<String>,
+    /// clay's Window; `hidden` is a hidden Pane (ToH ADR-0050).
+    #[serde(default)]
+    pub window_id: Option<String>,
+}
+
+impl HolderMeta {
+    /// The Pane is hidden: in clay's `hidden` Window (the Mac Client keeps it in its hidden window).
+    pub fn hidden(&self) -> bool {
+        self.window_id.as_deref() == Some("hidden")
+    }
 }
 
 pub fn valid_holder_id(id: &str) -> bool {
@@ -265,6 +275,7 @@ mod tests {
                 child_pid: 11,
                 cwd: String::new(),
                 backend: None,
+                window_id: None,
             },
         )];
         assert_eq!(
