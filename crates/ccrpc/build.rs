@@ -3,7 +3,9 @@
 use std::fmt::Write;
 
 fn main() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("layouts");
+    // Read when the script runs, not baked in when it was compiled: a moved checkout reuses the
+    // compiled script, and the old path would embed no layouts at all.
+    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("layouts");
     println!("cargo:rerun-if-changed={}", dir.display());
     let mut files: Vec<_> = std::fs::read_dir(&dir)
         .map(|rd| {
