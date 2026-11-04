@@ -27,7 +27,7 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
   }
   return (
     <Anchor nodeId={node.id} className="group/copy flex flex-col items-end gap-1">
-      <div data-testid="user-bubble" className="max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 break-words whitespace-pre-wrap">
+      <div data-testid="user-bubble" className="max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap">
         {o.kind === "command" ? (
           <>
             {/* Like the terminal: the command token stands out, its arguments read as prose. */}

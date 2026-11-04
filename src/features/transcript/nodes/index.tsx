@@ -1,5 +1,8 @@
 import type { Node } from "@/ipc/bindings";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useUi } from "@/state/ui";
+import { elapsed } from "../util";
 import type { Row } from "../grouping";
 import { FinalResultCard, OrphanHeader, ParallelAgents, SubagentCard, TaskPromptCard, WorkflowCard } from "./Agents";
 import { Anchor } from "./Anchor";
@@ -67,7 +70,28 @@ export function RowView({ row }: { row: Row }) {
       return <SubagentCard run={row.run} />;
     case "finalResult":
       return <FinalResultCard text={row.text} />;
+    case "fold":
+      return <FoldRow row={row} />;
   }
+}
+
+/** A turn's folded process (Codex style): how long it took and what it holds, 「已处理 1 分 50 秒 · …」; a click opens it. */
+function FoldRow({ row }: { row: Extract<Row, { kind: "fold" }> }) {
+  const parts = [row.texts && `${row.texts} 段说明`, row.calls && `${row.calls} 次工具调用`].filter(Boolean).join("、");
+  return (
+    <button
+      type="button"
+      data-testid="turn-fold"
+      aria-expanded={row.open}
+      onClick={() => useUi.getState().setExpanded(row.key, !row.open)}
+      className="flex min-h-7 w-full items-center gap-2 text-[13px] text-secondary hover:text-text"
+    >
+      {row.open ? <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />}
+      <span className="shrink-0">{row.ms != null ? `已处理 ${elapsed(row.ms)}` : "过程"}</span>
+      {parts && <span className="shrink-0 text-secondary/80">· {parts}</span>}
+      <span className="h-px flex-1 bg-border" />
+    </button>
+  );
 }
 
 /** System / attachment / unknown entries, non-turn prompts and standalone compact summaries. */

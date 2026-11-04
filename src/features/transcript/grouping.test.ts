@@ -185,7 +185,8 @@ describe("fork-inherited prefix", () => {
 
   it("locate returns the keys that reveal a call inside the collapsed prefix", () => {
     const full = buildRows(input(nodes, { inherited: range, inheritedExpanded: true }));
-    expect(locate(full, "i2", "ti2")?.expand).toEqual(["inherited", "group:i2|ti1", "tool:i2|ti2"]);
+    // The call is in that turn's process: its fold opens too.
+    expect(locate(full, "i2", "ti2")?.expand).toEqual(["inherited", "fold:i1", "group:i2|ti1", "tool:i2|ti2"]);
     expect(locate(full, "nope")).toBeNull();
   });
 });

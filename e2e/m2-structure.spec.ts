@@ -1,14 +1,17 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { unfoldAll } from "./unfold";
 import type { JumpTarget } from "../src/ipc/bindings";
 
 const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 const FORK_TITLE = "认证模块重构（改用 JWT 轮换）";
 
-async function openSession(page: Page, title: string) {
+/** Opens a Session with every turn's process unfolded (most tests look inside it); `folded` leaves it as it opens. */
+async function openSession(page: Page, title: string, { folded = false } = {}) {
   await page.goto("/");
   const row = page.getByTestId("session-row").filter({ hasText: title });
   await row.click();
   await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
+  if (!folded) await unfoldAll(page);
   return (await row.getAttribute("data-session-id"))!;
 }
 
@@ -63,6 +66,8 @@ test("切换 Branch 后后续内容随之改变", async ({ page }) => {
   await switcher.getByRole("button", { name: "下一个分支" }).click();
   await expect(switcher.getByTestId("branch-index")).toHaveText("2 / 2");
   await expect(transcript.getByText("顺便把 handler 里重复的鉴权逻辑也一起收敛掉。")).toBeVisible();
+  // That branch's turn is a fold of its own, closed as it opens.
+  await transcript.locator('[data-testid="turn-fold"][aria-expanded="false"]').first().click();
   await expect(transcript.getByText("这会改动 handler 的签名，影响面较大。")).toBeVisible();
   await expect(transcript.getByText("先只加中间件，不要动 handler。")).toHaveCount(0);
 
@@ -162,7 +167,7 @@ test("后台命令：标「后台」、展开写完整命令与任务，和结�
   await expect(page.locator('[data-anchor="n12|tu_bg_build"][data-highlighted]')).toBeVisible();
 });
 
-test("思考：一行写「思考 · N 行」，首尾空行不计也不显示；过程文字比回答小一号、灰色", async ({ page }) => {
+test("思考：一行写「思考 · N 行」，首尾空行不计也不显示；正文与输入框同为 14px", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const t = page.getByTestId("transcript");
   const lines = t.getByTestId("thinking-lines").first();
@@ -171,7 +176,7 @@ test("思考：一行写「思考 · N 行」，首尾空行不计也不显示�
   await t.getByRole("button", { name: /思考/ }).first().click();
   await expect(t.getByTestId("thinking-text").first()).toHaveText("需要先看现有中间件的注册方式，\n再决定是 tower Layer 还是 axum from_fn。");
   const size = (text: string) => t.getByText(text, { exact: true }).evaluate((el) => getComputedStyle(el.closest(".min-w-0")!).fontSize);
-  expect(await size("先看一下现有中间件的组织方式。")).toBe("13px");
+  expect(await size("先看一下现有中间件的组织方式。")).toBe("14px");
 });
 
 test("工具组的折叠箭头大小不随摘要长短变化", async ({ page }) => {
@@ -306,21 +311,30 @@ test("当前 Session 被移除后对话区回到空状态", async ({ page }) => 
   expect(await page.evaluate(() => window.__cvStore!.getState().sessionId)).toBeNull();
 });
 
-test("对话不折叠：过程与回答按顺序排开；回答下方是复制与时间；你的消息时间在气泡下方；回复没有「Claude · 时间」抬头", async ({ page }) => {
-  await openSession(page, RICH_TITLE);
+test("按轮折叠：每轮的过程收成「已处理 … · N 段说明、N 次工具调用」，点开按顺序排开；回答在外面，下方是复制与时间；你的消息时间在气泡下方", async ({ page }) => {
+  await openSession(page, RICH_TITLE, { folded: true });
   const t = page.getByTestId("transcript");
   await scrollBy(t, 1e7);
-  await expect(t.getByTestId("worked")).toHaveCount(0);
-  const last = t.locator('[data-row="tool"], [data-row="group"]').filter({ hasText: "config.rs" });
-  await expect(last).toContainText("读取 1 个文件、编辑 1 个文件");
+  const prompt = t.locator('[data-row="prompt"]').filter({ hasText: "接下来把限流参数" });
+  const fold = t.locator('[data-row="fold"]').last();
+  await expect(fold).toHaveText(/^已处理 \d+ (秒|分 \d\d 秒)\s?· .*次工具调用$/);
+  await expect(t.locator('[data-row="tool"], [data-row="group"]').filter({ hasText: "config.rs" })).toHaveCount(0);
   await expect(t.getByText("默认值保持 120，未配置时沿用。")).toBeVisible();
   const actions = t.getByTestId("answer-actions").last();
   await expect(actions).toContainText("复制");
   await expect(actions).toContainText(/\d\d:\d\d/);
-  const prompt = t.locator('[data-row="prompt"]').filter({ hasText: "接下来把限流参数" });
+  await fold.getByTestId("turn-fold").click();
+  await expect(t.locator('[data-row="tool"], [data-row="group"]').filter({ hasText: "config.rs" })).toContainText("读取 1 个文件、编辑 1 个文件");
   const bubble = (await prompt.getByTestId("user-bubble").boundingBox())!;
   expect((await prompt.getByTestId("prompt-meta").boundingBox())!.y).toBeGreaterThan(bubble.y + bubble.height - 1);
   await expect(t.getByText(/^Claude · \d/)).toHaveCount(0);
+});
+
+test("搜索命中折叠里的内容：自动展开那一轮并定位", async ({ page }) => {
+  await openSession(page, RICH_TITLE, { folded: true });
+  await page.keyboard.press("Meta+f");
+  await page.keyboard.type("DefaultClock");
+  await expect(page.locator('[data-row="text"]').filter({ hasText: "DefaultClock 在 governor 0.8" })).toBeVisible();
 });
 
 test("提问卡片：题目很长折行时，第二行从标签下方的最左边开始", async ({ page }) => {

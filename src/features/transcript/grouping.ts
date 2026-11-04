@@ -31,6 +31,8 @@ interface RowBase {
   key: string;
   /** Index of the turn (Human/Command prompt) the row belongs to; -1 before the first prompt. */
   turn: number;
+  /** Expansion key of the turn's folded process (`fold:<prompt id>`) the row is part of; see `fold.ts`. */
+  fold?: string;
 }
 
 
@@ -70,6 +72,8 @@ export type Row = RowBase &
     | { kind: "inheritedBanner"; range: InheritedRange | null; count: number; expanded: boolean; lastTimestampMs: number | null }
     | { kind: "inheritedDivider" }
     | { kind: "orphanHeader"; count: number }
+    /** A turn's process folded into one line (`fold.ts`); `key` is its expansion key. */
+    | { kind: "fold"; open: boolean; ms: number | null; texts: number; calls: number }
     | { kind: "orphan"; run: SubagentRun }
     | { kind: "finalResult"; run: SubagentRun; text: string }
   );
@@ -101,6 +105,8 @@ export interface Grouping {
   cardCalls: Set<string>;
   /** Fork-inherited node ids. */
   inheritedIds: Set<string>;
+  /** Fold key of the last turn when it has no answer yet (still running): open unless closed by hand. */
+  liveFold: string | null;
   /** CompactSummary node id → its expansion key. */
   compactKeyOf: Map<string, string>;
 }
@@ -370,8 +376,8 @@ export function buildRows(input: GroupingInput): Grouping {
   }
   if (agent?.finalText) push({ kind: "finalResult", key: `final:${agent.agentId}`, turn, run: agent, text: agent.finalText });
 
-  markAnswers(rows);
-  return { rows, index, groupOf, toolNode, cardCalls, inheritedIds, compactKeyOf };
+  const liveFold = markAnswers(rows);
+  return { rows, index, groupOf, toolNode, cardCalls, inheritedIds, compactKeyOf, liveFold };
 }
 
 // Work in a turn; the text after the last of it is the turn's answer (a system line after the answer is not work).
@@ -380,9 +386,11 @@ const WORK = new Set<Row["kind"]>(["thinking", "tool", "group", "subagent", "par
 /**
  * Each turn's answer — the text rows after its last bit of work (tool call, thinking, Subagent, Workflow) — gets
  * `answer` on its last row: copy (all of the answer) and its time go under it, as replies carry no role line.
- * Text rows get their `layer`: the answer's are shown larger, the process text before it smaller and grey.
+ * Text rows get their `layer`. The rows before the answer, when they hold any work, are the turn's process and
+ * get its `fold` key (folded into one line, `fold.ts`). Returns the fold key of a last turn with no answer yet.
  */
-function markAnswers(rows: Row[]) {
+function markAnswers(rows: Row[]): string | null {
+  let live: string | null = null;
   let i = 0;
   while (i < rows.length) {
     if (rows[i]!.kind !== "prompt") {
@@ -405,12 +413,16 @@ function markAnswers(rows: Row[]) {
       rows[at] = { ...last, answer: { text, timeMs: last.node.timestampMs } };
     }
     for (const j of answer) rows[j] = { ...(rows[j] as Extract<Row, { kind: "text" }>), layer: "answer" };
-    for (let j = i + 1; j < (answer[0] ?? end); j++) {
+    const procEnd = answer[0] ?? end;
+    const key = lastWork > i ? `fold:${(rows[i] as Extract<Row, { kind: "prompt" }>).node.id}` : undefined;
+    for (let j = i + 1; j < procEnd; j++) {
       const r = rows[j]!;
-      if (r.kind === "text") rows[j] = { ...r, layer: "process" };
+      rows[j] = { ...r, ...(r.kind === "text" ? { layer: "process" as const } : {}), ...(key ? { fold: key } : {}) };
     }
+    if (key && at === undefined && end === rows.length) live = key;
     i = end;
   }
+  return live;
 }
 
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
@@ -530,6 +542,10 @@ export function locate(
   if (!grouping.index.has(nodeId)) return null;
   const expand: string[] = [];
   if (grouping.inheritedIds.has(nodeId)) expand.push(INHERITED_KEY);
+  // In a folded turn: its fold opens first.
+  const row = grouping.rows[rowIndexOf(grouping, nodeId, toolUseId) ?? -1];
+  const fold = row?.kind === "fold" ? row.key : row?.fold;
+  if (fold) expand.push(fold);
   const compact = grouping.compactKeyOf.get(nodeId);
   if (compact) expand.push(compact);
   if (opts.thinking) {

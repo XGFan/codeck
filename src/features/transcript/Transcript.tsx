@@ -6,6 +6,7 @@ import { DriveTail, useUnindexed } from "@/features/drive";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
+import { foldTurns } from "./fold";
 import { anchorKey, buildRows, type GroupingInput, INHERITED_KEY, locate, rowIndexOf } from "./grouping";
 import { isContinuation, RowView } from "./nodes";
 import { clearScroll, type PendingScroll, scrollToNode, TranscriptContext, type TranscriptCtx, usePendingScroll } from "./nodes/scroll";
@@ -44,6 +45,13 @@ const SCROLL_RETRY_MS = 5000;
 const SCROLL_RETRY_REVISIONS = 2;
 /** Keys that scroll the focused list; they end the outline jump lock like a wheel or drag does. */
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+/** The fold keys' state in `expanded`, as a string (stable while only other keys change). */
+const foldState = (expanded: Record<string, boolean>) =>
+  Object.keys(expanded)
+    .filter((k) => k.startsWith("fold:"))
+    .map((k) => `${k}=${expanded[k] ? 1 : 0}`)
+    .join(",");
 
 export function TranscriptView() {
   const sessionId = useUi((s) => s.sessionId);
@@ -140,7 +148,10 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
     }),
     [transcript, showHidden, inheritedExpanded, agent],
   );
-  const grouping = useMemo(() => buildRows(input), [input]);
+  const built = useMemo(() => buildRows(input), [input]);
+  // Only the fold keys' state: expanding a tool call or a group does not fold the rows again.
+  const folds = useUi((s) => foldState(s.expanded));
+  const grouping = useMemo(() => foldTurns(built, useUi.getState().expanded), [built, folds]);
   const rows = grouping.rows;
 
 

@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { unfoldAll } from "./unfold";
 
 const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 
@@ -6,6 +7,7 @@ async function openRich(page: Page) {
   await page.goto("/");
   await page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).click();
   await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
+  await unfoldAll(page);
 }
 
 /** Scrolls `scroller` by `dy` and resolves after the scroll event (and the virtualizer's re-render); false at the end. */

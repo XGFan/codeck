@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { unfoldAll } from "./unfold";
 
 const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 
@@ -7,6 +8,7 @@ async function openRich(page: Page) {
   const row = page.getByTestId("session-row").filter({ hasText: RICH_TITLE });
   await row.click();
   await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
+  await unfoldAll(page);
   return (await row.getAttribute("data-session-id"))!;
 }
 

@@ -2,7 +2,6 @@ import { ChevronDown, ChevronRight, CircleX, Lightbulb } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Markdown } from "@/lib/markdown";
-import { cn } from "@/lib/cn";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeCalls, type GroupItem, isGroupOpen, type RoleInfo, type Row, type ToolCallBlock } from "../grouping";
@@ -54,12 +53,6 @@ export function AssistantRow({ row }: { row: AssistantRowData }) {
   return <AssistantSegment role={row.role}>{segmentBody(row)}</AssistantSegment>;
 }
 
-/** Process text smaller and grey, the answer larger, so a turn's answer stands out from its process. */
-const LAYER_TEXT: Record<string, string> = {
-  process: "text-[13px] leading-[1.6] text-secondary",
-  answer: "text-[14px] leading-[1.7]",
-};
-
 function segmentBody(row: AssistantRowData): ReactNode {
   switch (row.kind) {
     case "text":
@@ -67,7 +60,8 @@ function segmentBody(row: AssistantRowData): ReactNode {
         <>
           <Anchor nodeId={row.node.id} className="group/copy relative w-full">
             {!row.answer && <CopyButton text={row.text} className="absolute -top-2 right-0 z-10 bg-ground/90" />}
-            <Markdown text={row.text} className={cn("w-full", LAYER_TEXT[row.layer ?? ""])} />
+            {/* The size of the input box's text. */}
+            <Markdown text={row.text} className="w-full text-[14px] leading-[1.7]" />
           </Anchor>
           {row.answer && <AnswerActions {...row.answer} />}
         </>
