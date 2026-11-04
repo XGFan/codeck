@@ -691,7 +691,7 @@ impl Tailer {
             }
             "queue-operation" if agent.is_none() => {
                 if line.operation.as_deref() == Some("enqueue") {
-                    let content = decode_str(e.content.as_deref()).unwrap_or_default();
+                    let content = unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
                     out.push(TxEvent::Enqueued { content });
                 }
             }
@@ -799,6 +799,7 @@ impl Tailer {
                         if is_command_record(s) {
                             return;
                         }
+                        let s = &unwrap_pasted(s);
                         if agent.is_none()
                             && let Some((id, status)) = task_notification(s)
                             && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
@@ -843,7 +844,7 @@ impl Tailer {
                             && blocks.iter().any(|b| b.block_type() == "image")
                             && !blocks.iter().any(|b| b.block_type() == "tool_result")
                         {
-                            let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).collect();
+                            let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).map(|t| unwrap_pasted(&t)).collect();
                             self.last_text = None;
                             out.push(TxEvent::UserPrompt {
                                 uuid: uuid.clone(),
@@ -874,6 +875,7 @@ impl Tailer {
         match rb.block_type() {
             "text" => {
                 let t = rb.text_str()?;
+                let t = if assistant { t } else { unwrap_pasted(&t) };
                 if assistant && agent.is_none() {
                     self.last_text = Some(t.clone());
                 }
@@ -1059,6 +1061,46 @@ pub fn off_main_uuids(main: &Path, leaf: &str, upto: u64) -> Option<HashSet<Stri
     )
 }
 
+/// A prompt without the `<pasted_content id="xxxx">` … `</pasted_content id="xxxx">` tags Claude
+/// Code may put around a long paste (an account-level switch): the text as it was sent. Each tag
+/// goes with the line break or space it adds on its inner side.
+pub fn unwrap_pasted(s: &str) -> String {
+    const OPEN: &str = "<pasted_content id=\"";
+    const CLOSE: &str = "</pasted_content id=\"";
+    if !s.contains("pasted_content id=\"") {
+        return s.to_string();
+    }
+    // `<tag id="` + 4 hex digits + `">` at the start of `rest`: its length.
+    let tag_len = |rest: &str, head: &str| -> Option<usize> {
+        let id = rest.strip_prefix(head)?.get(..4)?;
+        (id.bytes().all(|b| b.is_ascii_hexdigit()) && rest[head.len() + 4..].starts_with("\">"))
+            .then_some(head.len() + 6)
+    };
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        let rest = &s[i..];
+        if let Some(n) = tag_len(rest, OPEN) {
+            i += n;
+            if s[i..].starts_with(['\n', ' ']) {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(n) = tag_len(rest, CLOSE) {
+            if out.ends_with(['\n', ' ']) {
+                out.pop();
+            }
+            i += n;
+            continue;
+        }
+        let c = rest.chars().next().unwrap();
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out
+}
+
 /// The prompt text of a main-file user prompt entry.
 fn prompt_text(l: &Line) -> Option<String> {
     let e = &l.entry;
@@ -1067,7 +1109,7 @@ fn prompt_text(l: &Line) -> Option<String> {
     }
     match e.message.as_ref()?.content.as_ref()? {
         RawContent::Text(t) if !is_command_record(t) && !t.starts_with("[Request interrupted") => {
-            Some(t.clone())
+            Some(unwrap_pasted(t))
         }
         _ => None,
     }
@@ -1472,6 +1514,26 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_paste_with_an_image_reads_as_sent() {
+        // A long paste after an image, as a real account records it (2.1.317).
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let text = "[Image #1]\n\n<pasted_content id=\"1b44\">\nholder_id: m1\n\n现在有问题\n</pasted_content id=\"1b44\">\n";
+        let line = json!({"type": "user", "uuid": "u1", "message": {"role": "user", "content": [
+            {"type": "text", "text": text},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+        ]}});
+        write_lines(&main, &[line]);
+        let evs = Tailer::new(&main).poll();
+        let prompt = evs.iter().find_map(|e| match e {
+            TxEvent::UserPrompt { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+        assert_eq!(prompt.as_deref().map(str::trim), Some("[Image #1]\n\nholder_id: m1\n\n现在有问题"));
+        assert_eq!(blocks(&evs)[0].text.as_deref().map(str::trim), Some("[Image #1]\n\nholder_id: m1\n\n现在有问题"));
+    }
+
+    #[test]
     fn main_blocks_reads_whole_file() {
         let path = fixture("steer_ask_permission.jsonl");
         let (bs, cursor) = main_blocks(&path, 0);
@@ -1602,6 +1664,21 @@ mod tests {
         assert_eq!(session_title(&p).as_deref(), Some("better guess"));
         std::fs::write(&p, body + &json!({"type": "custom-title", "customTitle": "Mine"}).to_string()).unwrap();
         assert_eq!(session_title(&p).as_deref(), Some("Mine"));
+    }
+
+    #[test]
+    fn pasted_content_tags_are_taken_off() {
+        // As recorded for a long paste after an image (2.1.317).
+        let rec = "[Image #1]\n\n<pasted_content id=\"1b44\">\nline one\nline two\n</pasted_content id=\"1b44\">\n";
+        assert_eq!(unwrap_pasted(rec), "[Image #1]\n\nline one\nline two\n");
+        assert_eq!(
+            unwrap_pasted("<pasted_content id=\"a0f9\"> x </pasted_content id=\"a0f9\">").trim(),
+            "x"
+        );
+        // Not a tag of Claude Code's: kept.
+        let other = "see <pasted_content id=\"zz\"> and 中文";
+        assert_eq!(unwrap_pasted(other), other);
+        assert_eq!(unwrap_pasted("plain"), "plain");
     }
 
     #[test]
