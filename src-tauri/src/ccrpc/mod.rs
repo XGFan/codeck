@@ -19,6 +19,7 @@ use tauri_specta::Event;
 
 use self::relay::{App, Out, Sink};
 use crate::events::{CcrpcExitEvent, CcrpcLineEvent};
+use crate::state::AppState;
 
 type CmdResult<T> = Result<T, AppError>;
 
@@ -276,9 +277,14 @@ pub async fn ccrpc_new(
 pub async fn ccrpc_resume(
     handle: AppHandle,
     state: State<'_, CcrpcState>,
+    app_state: State<'_, AppState>,
     session_id: String,
     cwd: String,
 ) -> CmdResult<String> {
+    // Checked again here, not from the last poll: two claude processes would write one transcript.
+    if app_state.engine().is_live(&session_id) {
+        return Err(internal("Session 仍在运行"));
+    }
     let sink = sink(&handle);
     with_ccrpc(&state, move |app| {
         app.resume_session(

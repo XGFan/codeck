@@ -63,15 +63,6 @@ pub enum LiveStatus {
     Unknown,
 }
 
-#[derive(Serialize, Deserialize, Type, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum LiveSource {
-    /// `~/.claude/sessions/<pid>.json` with a live pid and matching procStart.
-    ProcessFile,
-    /// Fallback: the main file was written within the last few minutes.
-    RecentWrite,
-}
-
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveState {
@@ -80,7 +71,6 @@ pub struct LiveState {
     /// Only set while Waiting (`permission prompt`, `input needed`, ...).
     pub waiting_for: Option<String>,
     pub pid: Option<u32>,
-    pub source: LiveSource,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Copy, Debug, PartialEq, Eq)]

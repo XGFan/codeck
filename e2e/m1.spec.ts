@@ -105,7 +105,7 @@ test("setLive 切换进行中标记", async ({ page }) => {
   const id = await openRich(page);
   const dot = page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).getByTestId("live-dot");
   await expect(dot).toHaveAttribute("data-state", "busy");
-  await page.evaluate((sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: null, source: "recentWrite" }), id);
+  await page.evaluate((sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 4242 }), id);
   await expect(dot).toHaveAttribute("data-state", "idle");
   await expect(page.getByTestId("live-state")).toHaveText("空闲");
   await page.evaluate((sid) => window.__cvMock!.setLive(sid, null), id);

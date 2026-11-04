@@ -1,21 +1,19 @@
-//! Live Sessions: `<root>/sessions/*.json` + `kill(pid, 0)` + procStart check, with the
-//! recent-write fallback (F13).
+//! Live Sessions: `<root>/sessions/*.json` + `kill(pid, 0)` + procStart check.
 //!
 //! A process file is live when its pid exists and the process started within ±2 s of `procStart`
 //! (`ps -o lstart` format; a mismatch means the pid was reused). `status: "busy"` is
-//! Busy, `"waiting"` Waiting (with `waitingFor`), any other value Idle with the raw value kept. Sessions named by no process file count as
-//! live (Idle, `RecentWrite`) when their main file was written in the last 5 minutes.
+//! Busy, `"waiting"` Waiting (with `waitingFor`), any other value Idle with the raw value kept. A Session named by no live process file has
+//! ended, however recently its transcript was written: Claude Code removes the file when it exits, so a
+//! write time cannot tell a running Session from one that just ended.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::Deserialize;
 
-use crate::model::{LiveSource, LiveState, LiveStatus};
+use crate::model::{LiveState, LiveStatus};
 
-/// Recent-write fallback window.
-pub const RECENT_WRITE_MS: f64 = 5.0 * 60.0 * 1000.0;
 /// Allowed difference between `procStart` and the real process start.
 const START_TOLERANCE_SECS: i64 = 2;
 
@@ -143,20 +141,13 @@ pub fn is_alive(pf: &ProcessFile) -> bool {
     }
 }
 
-/// Live state from process files plus the recent-write fallback.
-/// `main_mtimes` yields (session id, newest main-file mtime in ms); `now_ms` is the current time.
-pub fn detect(
-    process_files: &[ProcessFile],
-    main_mtimes: impl IntoIterator<Item = (String, f64)>,
-    now_ms: f64,
-) -> BTreeMap<String, LiveState> {
+/// Live state from process files.
+pub fn detect(process_files: &[ProcessFile]) -> BTreeMap<String, LiveState> {
     let mut out: BTreeMap<String, LiveState> = BTreeMap::new();
-    let mut named: HashSet<&str> = HashSet::new();
     for pf in process_files {
         let Some(sid) = pf.session_id.as_deref() else {
             continue;
         };
-        named.insert(sid);
         if !is_alive(pf) {
             continue;
         }
@@ -172,7 +163,6 @@ pub fn detect(
                 .then(|| pf.waiting_for.clone())
                 .flatten(),
             pid: pf.pid,
-            source: LiveSource::ProcessFile,
         };
         // Several live processes on one session: Busy wins.
         match out.get(sid) {
@@ -180,23 +170,6 @@ pub fn detect(
             _ => {
                 out.insert(sid.to_owned(), state);
             }
-        }
-    }
-    for (sid, mtime_ms) in main_mtimes {
-        if named.contains(sid.as_str()) || out.contains_key(&sid) {
-            continue;
-        }
-        if now_ms - mtime_ms < RECENT_WRITE_MS {
-            out.insert(
-                sid,
-                LiveState {
-                    status: LiveStatus::Idle,
-                    raw_status: None,
-                    waiting_for: None,
-                    pid: None,
-                    source: LiveSource::RecentWrite,
-                },
-            );
         }
     }
     out
@@ -222,7 +195,7 @@ mod tests {
         let busy = own_process_file(
             r#"{"sessionId":"s2","status":"busy","waitingFor":"permission prompt"}"#,
         );
-        let out = detect(&[waiting, busy], [], 0.0);
+        let out = detect(&[waiting, busy]);
         assert_eq!(out["s1"].status, LiveStatus::Waiting);
         assert_eq!(out["s1"].raw_status.as_deref(), Some("waiting"));
         assert_eq!(out["s1"].waiting_for.as_deref(), Some("permission prompt"));

@@ -341,19 +341,12 @@ export type LiveEntry = {
 	state: LiveState,
 };
 
-export type LiveSource = 
-/**  `~/.claude/sessions/<pid>.json` with a live pid and matching procStart. */
-"processFile" | 
-/**  Fallback: the main file was written within the last few minutes. */
-"recentWrite";
-
 export type LiveState = {
 	status: LiveStatus,
 	rawStatus: string | null,
 	/**  Only set while Waiting (`permission prompt`, `input needed`, ...). */
 	waitingFor: string | null,
 	pid: number | null,
-	source: LiveSource,
 };
 
 export type LiveStatus = "busy" | "waiting" | "idle" | "unknown";

@@ -513,7 +513,7 @@ test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一
   // 「新建 Session」 works without an `ccrpc ls` answer.
   await expect(page.getByTestId("new-session")).toBeVisible();
 
-  await page.evaluate((id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1, source: "processFile" }), ids[0]!);
+  await page.evaluate((id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1 }), ids[0]!);
   await expect.poll(async () => (await probe(page)).lists, { timeout: 1500 }).toBe(before + 1);
   await expect(page.getByTestId("connect-button")).toBeVisible();
 });

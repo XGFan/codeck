@@ -74,19 +74,6 @@ pub fn session_files(conn: &Connection, session_id: &str) -> CoreResult<Vec<File
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// (session id, newest main-file mtime in ms) for the recent-write fallback.
-pub fn main_mtimes(conn: &Connection, since_ms: f64) -> CoreResult<Vec<(String, f64)>> {
-    let mut st = conn.prepare_cached(
-        "SELECT session_id, max(mtime_ns) FROM files WHERE role=0 GROUP BY session_id
-         HAVING max(mtime_ns) >= ?1",
-    )?;
-    let since_ns = (since_ms as i64).saturating_mul(1_000_000);
-    let rows = st.query_map([since_ns], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as f64 / 1e6))
-    })?;
-    Ok(rows.collect::<Result<_, _>>()?)
-}
-
 /// Projects with at least one non-empty session started in or editing them, most recently active
 /// first.
 pub fn list_projects(conn: &Connection) -> CoreResult<Vec<ProjectSummary>> {

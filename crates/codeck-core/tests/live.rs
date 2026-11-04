@@ -1,11 +1,11 @@
-//! Live Sessions (T2.1): process files with pid + procStart checks, and the recent-write fallback.
+//! Live Sessions (T2.1): process files with pid + procStart checks; nothing else makes a Session live.
 mod common;
 
 use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use codeck_core::model::{DataRootSource, LiveChanged, LiveSource, LiveState, LiveStatus};
+use codeck_core::model::{DataRootSource, LiveChanged, LiveState, LiveStatus};
 use codeck_core::{Engine, EngineConfig};
 use common::{fixture_root, fixture_root_with_pids, ids, proc_start};
 use tempfile::TempDir;
@@ -63,8 +63,8 @@ fn alive_pid_with_matching_proc_start_is_live() {
         .expect("first poll reports the live set");
     let busy = state(&live, ids::LIVE_BUSY).expect("busy session is live");
     assert_eq!(busy.status, LiveStatus::Busy);
-    assert_eq!(busy.source, LiveSource::ProcessFile);
     assert_eq!(busy.pid, Some(pids.pid));
+    assert!(e.is_live(ids::LIVE_BUSY));
     assert_eq!(busy.raw_status.as_deref(), Some("busy"));
 
     let shell = state(&live, ids::LIVE_SHELL).expect("shell session is live");
@@ -106,8 +106,9 @@ fn stale_proc_start_is_not_live() {
     assert!(state(&live, ids::LIVE_SHELL).is_some());
 }
 
+/// A Session that just ended (its process file gone) has ended, however recently it was written.
 #[test]
-fn recent_write_fallback() {
+fn recent_write_without_process_file_is_not_live() {
     let root = fixture_root("basic");
     age_all(root.path());
     let main = root
@@ -115,21 +116,10 @@ fn recent_write_fallback() {
         .join("projects")
         .join(ids::BASIC_DIR)
         .join(format!("{}.jsonl", ids::BASIC));
-    set_mtime(&main, Duration::from_secs(30));
+    set_mtime(&main, Duration::ZERO);
     let cache = tempfile::tempdir().unwrap();
     let e = engine(root.path(), &cache);
 
-    let live = e
-        .poll_live()
-        .unwrap()
-        .expect("recently written session is live");
-    let s = state(&live, ids::BASIC).unwrap();
-    assert_eq!(s.source, LiveSource::RecentWrite);
-    assert_eq!(s.status, LiveStatus::Idle);
-    assert_eq!(s.pid, None);
-
-    set_mtime(&main, Duration::from_secs(10 * 60));
-    e.apply_changes(std::slice::from_ref(&main)).unwrap();
-    let live = e.poll_live().unwrap().expect("fallback expired");
-    assert!(live.live.is_empty());
+    assert!(e.poll_live().unwrap().is_none());
+    assert!(!e.is_live(ids::BASIC));
 }

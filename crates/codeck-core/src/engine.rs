@@ -412,11 +412,13 @@ impl Engine {
 
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {
         let pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
-        let now = chrono::Utc::now().timestamp_millis() as f64;
-        let mtimes = self
-            .index
-            .read(|c| reader::main_mtimes(c, now - live::RECENT_WRITE_MS))?;
-        Ok(live::detect(&pfs, mtimes, now))
+        Ok(live::detect(&pfs))
+    }
+
+    /// Whether a Claude Code process is running `session_id` now (read afresh, not the last poll).
+    pub fn is_live(&self, session_id: &str) -> bool {
+        let pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
+        live::detect(&pfs).contains_key(session_id)
     }
 
     // ---------------------------------------------------------------- status

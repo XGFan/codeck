@@ -46,12 +46,11 @@ interface Def {
   forkOf?: { id: string; forkTurns: number };
 }
 
-const live = (status: LiveState["status"], pid: number | null, source: LiveState["source"], waitingFor: string | null = null): LiveState => ({
+const live = (status: LiveState["status"], pid: number | null, waitingFor: string | null = null): LiveState => ({
   status,
   rawStatus: status === "unknown" ? null : status,
   waitingFor,
   pid,
-  source,
 });
 
 const authTurns: Turn[] = [
@@ -64,7 +63,7 @@ const authTurns: Turn[] = [
 const defs: Def[] = [
   {
     id: IDS.rich, projectId: LUMEN, title: "为 /v1/chat 接口增加令牌桶限流中间件", titleSource: "ai", createdAgo: 3 * HOUR, lastActiveAgo: 2 * MIN,
-    gitBranch: "feat/rate-limit", live: live("busy", 48211, "processFile"), model: "claude-sonnet-5-5",
+    gitBranch: "feat/rate-limit", live: live("busy", 48211), model: "claude-sonnet-5-5",
     tokens: tok(0, 0), turns: [],
   },
   {
@@ -91,7 +90,7 @@ const defs: Def[] = [
   },
   {
     id: IDS.orbitLive, projectId: ORBIT, title: "优化首页首屏加载（LCP 3.2s → 1.8s）", titleSource: "ai", createdAgo: 5 * HOUR, lastActiveAgo: 8 * MIN,
-    gitBranch: "perf/lcp", live: live("waiting", null, "processFile", "permission prompt"), model: "claude-sonnet-5-5", tokens: tok(22_000, 18_600, 1_900_000, 45_000),
+    gitBranch: "perf/lcp", live: live("waiting", null, "permission prompt"), model: "claude-sonnet-5-5", tokens: tok(22_000, 18_600, 1_900_000, 45_000),
     turns: [
       { u: "首页 LCP 3.2s，帮我定位瓶颈并优化到 2s 以内。", a: "LCP 元素是首屏轮播图，未设置 `fetchpriority`，且被 3 个同步脚本阻塞。", bash: { command: "pnpm lighthouse --only-categories=performance", out: "LCP: 3.2 s\nTBT: 410 ms" } },
       { u: "先把轮播首图预加载，再把脚本改成 defer。", a: "已为首图添加 `<link rel=\"preload\" as=\"image\" fetchpriority=\"high\">`，三处脚本改为 `defer`。LCP 降至 1.8 s。", bash: { command: "pnpm lighthouse --only-categories=performance", out: "LCP: 1.8 s\nTBT: 120 ms" } },
