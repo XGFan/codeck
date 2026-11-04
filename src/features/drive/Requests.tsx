@@ -43,15 +43,40 @@ function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
     case "choice":
       return <ChoiceCard r={r} c={c} focus={focus} />;
     default:
-      return (
-        <Shell title={r.type === "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : `认不出的屏幕（${r.context}）`} testid="screen-card">
-          <pre className="max-h-64 overflow-auto rounded bg-terminal p-2 font-mono text-[11px] leading-[1.45] text-[#e4e4e6]">
-            {trimLines(r.lines).join("\n")}
-          </pre>
-          <p className="mt-2 text-[12px] text-secondary">需在 Mac Client 的终端里处理。</p>
-        </Shell>
-      );
+      return <ScreenCard r={r} c={c} />;
   }
+}
+
+/**
+ * A screen ccrpc cannot read (a panel such as `/cost`'s, an unknown dialog): shown as is; Esc closes it
+ * (`abort` while busy / waiting; otherwise ccrpc refuses it, so the key itself).
+ */
+function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecognized" }>; c: ConnState }) {
+  const command = useDrive((s) => s.command);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const close = async () => {
+    setBusy(true);
+    setError(null);
+    const esc = c.state === "busy" || c.state === "waiting" ? { type: "abort" } : { type: "send_keys", keys: ["esc"] };
+    const r = await command(c.conn, esc);
+    setBusy(false);
+    if (!r.success) setError(`关闭失败：${r.error?.message ?? r.error?.code ?? ""}`);
+  };
+  return (
+    <Shell title={r.type === "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : `认不出的屏幕（${r.context}）`} testid="screen-card">
+      <pre className="max-h-64 overflow-auto rounded bg-terminal p-2 font-mono text-[11px] leading-[1.45] text-[#e4e4e6]">
+        {trimLines(r.lines).join("\n")}
+      </pre>
+      <div className="mt-2 flex items-center gap-2">
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => void close()} data-testid="screen-close">
+          关闭（Esc）
+        </Button>
+        <span className="text-[12px] text-secondary">其他操作需在 Mac Client 的终端里处理。</span>
+        {error && <span className="text-[12px] text-error">{error}</span>}
+      </div>
+    </Shell>
+  );
 }
 
 function trimLines(lines: string[]): string[] {

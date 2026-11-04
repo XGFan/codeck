@@ -147,6 +147,9 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
     }
     case "get_tasks":
       return respond(id, msg, { tasks: [] });
+    // Typed into the TUI; what it does shows on the screen, not in a reply.
+    case "slash":
+      return c.state && (c.state as { state?: string }).state !== "idle" ? respond(id, msg, null, "not_idle") : respond(id, msg, {});
     case "cancel_follow_up": {
       const i = msg.index as number | undefined;
       const removed = i == null ? c.followUps.length : 1;

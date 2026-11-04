@@ -9,6 +9,7 @@ pub mod paths;
 pub mod project;
 pub mod scan;
 pub mod search;
+pub mod slash;
 pub mod stats;
 
 // The parsing layer lives in the `transcript` crate; re-exported under its old paths.

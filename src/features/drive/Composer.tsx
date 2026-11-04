@@ -1,11 +1,17 @@
 import { ArrowUp, ImageIcon, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/ipc";
+import type { SlashCommand, SlashSource } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
+import { queryKeys, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
+import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
 import { draftKey, EMPTY_DRAFT, useDrive, type Draft } from "./store";
 import { Tasks } from "./Tasks";
+
+const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
 
 const extOf = (type: string) => ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" })[type];
 
@@ -25,9 +31,10 @@ function focusFirstCard() {
 }
 
 /**
- * The input box: idle → `prompt`; busy → `follow_up` (⌘Enter `steer`); waiting → not sent, focus
- * goes to the card. Esc is handled by the drive panel. What is typed lives in the drive store, so
- * switching Sessions keeps it.
+ * The input box: idle → `prompt` (a built-in slash command → `slash`); busy → `follow_up` (⌘Enter
+ * `steer`); waiting → not sent, focus goes to the card. Esc is handled by the drive panel. What is
+ * typed lives in the drive store, so switching Sessions keeps it. Typing `/name` lists matching
+ * commands: ↑↓ pick, Tab (or Enter on a different one) completes, Esc hides the list.
  */
 export function Composer({ c }: { c: ConnState }) {
   const command = useDrive((s) => s.command);
@@ -41,6 +48,21 @@ export function Composer({ c }: { c: ConnState }) {
   const [sending, setSending] = useState(false);
   const live = !c.procExit && !c.sessionExited && c.ready;
   const { state } = c;
+  const typed = typedCommand(text);
+  const { data: commands } = useSlashCommands(c.cwd, live && text.startsWith("/"));
+  const qc = useQueryClient();
+  // Sent before the list arrived (pasted and Enter at once): wait for it; without it, a `prompt`.
+  const commandList = async () =>
+    commands ??
+    (await qc.fetchQuery({ queryKey: queryKeys.slashCommands(c.cwd), queryFn: () => api.listSlashCommands(c.cwd), staleTime: 30_000 }).catch(() => undefined));
+  const [pick, setPick] = useState(0);
+  const [hiddenFor, setHiddenFor] = useState<string | null>(null);
+  const matches = typed != null && live && commands && hiddenFor !== text ? matchCommands(commands, typed) : [];
+  const picked = matches[Math.min(pick, matches.length - 1)];
+  const complete = (cmd: SlashCommand) => {
+    setText(`/${cmd.name} `);
+    setPick(0);
+  };
 
   const submit = async (steer: boolean) => {
     const body = text.trim();
@@ -48,12 +70,24 @@ export function Composer({ c }: { c: ConnState }) {
     if (!body || sending || !live) return;
     let msg: Record<string, unknown>;
     const withImages = images.length ? { images: images.map((i) => i.path) } : {};
-    if (state === "idle") msg = { type: "prompt", text: body, ...withImages };
-    else if (state === "busy" && steer) {
+    let list: SlashCommand[] | undefined;
+    if (body.startsWith("/")) {
+      setSending(true);
+      list = await commandList();
+      setSending(false);
+    }
+    if (state === "idle") {
+      const command = slashCommand(body, images.length > 0, list);
+      msg = command != null ? { type: "slash", command } : { type: "prompt", text: body, ...withImages };
+    } else if (state === "busy" && steer) {
       if (images.length) return setError("插话不能带图片");
       msg = { type: "steer", text: body };
-    } else if (state === "busy") msg = { type: "follow_up", text: body, ...withImages };
-    else return setError("Session 还没准备好");
+    } else if (state === "busy") {
+      // Queued, it would go as a `prompt` waiting 30 s for a record a panel never leaves.
+      const panel = commandOf(body, list);
+      if (panel?.source === "builtin" && panel.interactive) return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
+      msg = { type: "follow_up", text: body, ...withImages };
+    } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);
     const r = await command(c.conn, msg);
@@ -88,7 +122,9 @@ export function Composer({ c }: { c: ConnState }) {
     }
   };
 
-  const hint = !live
+  const hint = matches.length
+    ? "↑↓ 选择 · Tab 补全 · Esc 收起"
+    : !live
     ? c.procExit
       ? "ccrpc 已退出"
       : c.sessionExited
@@ -117,7 +153,39 @@ export function Composer({ c }: { c: ConnState }) {
           ))}
         </ul>
       )}
-      <div className={cn("rounded-xl border border-border bg-ground px-3 pt-2 pb-1.5", live ? "focus-within:border-accent" : "opacity-60")}>
+      <div className={cn("relative rounded-xl border border-border bg-ground px-3 pt-2 pb-1.5", live ? "focus-within:border-accent" : "opacity-60")}>
+        {matches.length > 0 && (
+          <ul
+            role="listbox"
+            aria-label="斜杠命令"
+            data-testid="slash-menu"
+            className="absolute right-0 bottom-full left-0 mb-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-ground py-1 shadow-lg"
+          >
+            {matches.map((m) => (
+              <li
+                key={m.name}
+                role="option"
+                aria-selected={m === picked}
+                data-testid="slash-option"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  complete(m);
+                }}
+                onMouseEnter={() => setPick(matches.indexOf(m))}
+                className={cn("flex cursor-default items-baseline gap-2 px-3 py-1 text-[12px]", m === picked && "bg-selection")}
+              >
+                <span className="shrink-0 font-mono text-accent">/{m.name}</span>
+                <span className="min-w-0 flex-1 truncate text-secondary">{m.description}</span>
+                {m.interactive && (
+                  <span className="shrink-0 text-[11px] text-secondary" title="会在终端里打开界面；可在请求卡片上按「关闭」退出">
+                    打开界面
+                  </span>
+                )}
+                <span className="shrink-0 text-[11px] text-secondary">{SOURCE_LABEL[m.source]}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         {images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="images">
             {images.map((img, i) => (
@@ -139,10 +207,34 @@ export function Composer({ c }: { c: ConnState }) {
           value={text}
           rows={Math.min(10, Math.max(2, text.split("\n").length))}
           disabled={!live}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setPick(0);
+          }}
           onPaste={(e) => void onPaste(e)}
           onKeyDown={(e) => {
-            if (e.key !== "Enter" || e.shiftKey || isComposingKey(e.nativeEvent)) return;
+            if (isComposingKey(e.nativeEvent)) return;
+            if (picked) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const n = matches.length;
+                setPick((matches.indexOf(picked) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && picked.name !== typed)) {
+                e.preventDefault();
+                complete(picked);
+                return;
+              }
+              if (e.key === "Escape") {
+                // Only the list: not an abort, not closing a panel.
+                e.preventDefault();
+                e.stopPropagation();
+                setHiddenFor(text);
+                return;
+              }
+            }
+            if (e.key !== "Enter" || e.shiftKey) return;
             e.preventDefault();
             void submit(e.metaKey || e.ctrlKey);
           }}

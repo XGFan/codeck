@@ -1,4 +1,4 @@
-import type { AppInfo, Diagnostics, IndexStatus, Stats } from "@/ipc/bindings";
+import type { AppInfo, Diagnostics, IndexStatus, SlashCommand, Stats } from "@/ipc/bindings";
 import { DAY, NOW } from "./builders";
 
 export const appInfo = {
@@ -78,3 +78,15 @@ export const stats = {
   // Filled from the mock sessions by `getStats`.
   sessions: [],
 } satisfies Stats;
+
+/** Completion while driving (`listSlashCommands`): a few built-in commands, a project command, a plugin skill. */
+export const slashCommands: SlashCommand[] = [
+  { name: "clear", description: "清空对话，开始新的 Session", source: "builtin", interactive: false },
+  { name: "compact", description: "压缩对话上下文（可附压缩说明）", source: "builtin", interactive: false },
+  { name: "cost", description: "查看用量与花费", source: "builtin", interactive: true },
+  { name: "model", description: "切换模型（带模型名时直接切换）", source: "builtin", interactive: true },
+  { name: "rename", description: "重命名 Session", source: "builtin", interactive: false },
+  { name: "release-notes", description: "查看更新说明", source: "builtin", interactive: false },
+  { name: "release", description: "按仓库的发布规则发版", source: "project", interactive: false },
+  { name: "kit:review", description: "审查改动", source: "plugin", interactive: false },
+];

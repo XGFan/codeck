@@ -402,6 +402,11 @@ impl Engine {
             .ok_or_else(|| CoreError::NotFound("该 Session 的文件".into()))
     }
 
+    /// Slash commands for completion while driving a Session started in `cwd`.
+    pub fn slash_commands(&self, cwd: Option<&str>) -> Vec<crate::model::SlashCommand> {
+        crate::slash::slash_commands(&self.cfg.data_root, cwd.map(Path::new))
+    }
+
     // ---------------------------------------------------------------- live
 
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {

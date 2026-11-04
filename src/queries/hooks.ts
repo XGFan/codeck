@@ -25,6 +25,7 @@ export const queryKeys = {
   find: (req: FindRequest) => ["find", req.sessionId, req] as const,
   stats: (req: StatsRequest) => ["stats", req] as const,
   diagnostics: ["diagnostics"] as const,
+  slashCommands: (cwd: string | null) => ["slashCommands", cwd] as const,
 };
 
 export const useAppInfo = () => useQuery({ queryKey: queryKeys.appInfo, queryFn: () => api.getAppInfo() });
@@ -100,3 +101,7 @@ export const useStats = (req: StatsRequest) =>
   useQuery({ queryKey: queryKeys.stats(req), queryFn: () => api.getStats(req), placeholderData: keepPreviousData });
 
 export const useDiagnostics = () => useQuery({ queryKey: queryKeys.diagnostics, queryFn: () => api.getDiagnostics() });
+
+/** Slash commands for a driven Session started in `cwd`; asked again when stale (commands are files that change). */
+export const useSlashCommands = (cwd: string | null, enabled = true) =>
+  useQuery({ queryKey: queryKeys.slashCommands(cwd), queryFn: () => api.listSlashCommands(cwd), staleTime: 30_000, enabled });

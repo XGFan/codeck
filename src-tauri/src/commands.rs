@@ -6,7 +6,7 @@ use std::sync::Arc;
 use codeck_core::model::{
     AppError, AppInfo, Diagnostics, ErrorCode, FindRequest, FindResult, ImageData, ImageRequest,
     IndexStatus, JumpRequest, JumpTarget, ProjectSummary, SearchRequest, SearchResponse,
-    SessionDetail, SessionQuery, SessionSummary, Stats, StatsRequest, ToolDetail,
+    SessionDetail, SessionQuery, SessionSummary, SlashCommand, Stats, StatsRequest, ToolDetail,
     ToolDetailRequest, Transcript, TranscriptRequest,
 };
 use codeck_core::{CoreError, CoreResult, Engine};
@@ -178,4 +178,11 @@ pub async fn get_stats(state: State<'_, AppState>, req: StatsRequest) -> CmdResu
 #[specta::specta]
 pub async fn get_diagnostics(state: State<'_, AppState>) -> CmdResult<Diagnostics> {
     with_engine(&state, |e| e.diagnostics()).await
+}
+
+/// Slash commands for completion while driving a Session started in `cwd`.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_slash_commands(state: State<'_, AppState>, cwd: Option<String>) -> CmdResult<Vec<SlashCommand>> {
+    with_engine(&state, move |e| Ok(e.slash_commands(cwd.as_deref()))).await
 }

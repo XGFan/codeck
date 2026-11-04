@@ -38,6 +38,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::reveal_session_file,
             commands::get_stats,
             commands::get_diagnostics,
+            commands::list_slash_commands,
             drive::drive_info,
             drive::drive_list,
             drive::drive_connect,

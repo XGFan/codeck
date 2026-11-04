@@ -49,3 +49,29 @@ pub struct IndexStatus {
     pub text_ready: bool,
     pub error: Option<String>,
 }
+
+/// Where a slash command comes from.
+#[derive(Serialize, Deserialize, Type, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SlashSource {
+    /// Claude Code's own command (a static list, see `codeck_core::slash`).
+    Builtin,
+    /// `<data root>/commands/*.md` or `<data root>/skills/*/SKILL.md`.
+    User,
+    /// `<cwd>/.claude/commands` or `<cwd>/.claude/skills`.
+    Project,
+    /// A command or skill of an enabled plugin.
+    Plugin,
+}
+
+/// A slash command offered for completion while driving.
+#[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SlashCommand {
+    /// As typed, without the slash: `compact`, `review`, `oh-my-claudecode:ask`.
+    pub name: String,
+    pub description: Option<String>,
+    pub source: SlashSource,
+    /// Opens a panel or picker in the terminal rather than running (built-in commands only).
+    pub interactive: bool,
+}

@@ -1,6 +1,6 @@
 {"t": 1793700000700, "dir": "meta", "ls": {"title": "换 Session", "cwd": "/work/lumen", "session_id": "2b8d41e5-0002-4000-8000-000000000002"}}
 {"t": 1793700000710, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mclear0000001", "session_id": "2b8d41e5-0002-4000-8000-000000000002", "cwd": "/work/lumen", "claude_version": "2.1.317", "state": "idle", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": "claude-opus-4-7", "context_tokens": 64000, "warnings": []}}
-{"t": 1793700000720, "dir": "send", "msg": {"id": "p1", "type": "prompt", "text": "/clear"}}
+{"t": 1793700000720, "dir": "send", "msg": {"id": "p1", "type": "slash", "command": "clear"}}
 {"t": 1793700000730, "dir": "recv", "msg": {"type": "session_changed", "session_id": "c04e77a2-0003-4000-8000-000000000003", "previous": "2b8d41e5-0002-4000-8000-000000000002"}}
 {"t": 1793700000740, "dir": "recv", "msg": {"type": "session_info", "mode": "manual", "model": "claude-opus-4-7", "context_tokens": null}}
-{"t": 1793700000750, "dir": "recv", "msg": {"type": "response", "id": "p1", "command": "prompt", "success": true, "data": {"uuid": null, "prompt_id": null, "delivered_as": "prompt"}}}
+{"t": 1793700000750, "dir": "recv", "msg": {"type": "response", "id": "p1", "command": "slash", "success": true, "data": {}}}

@@ -257,6 +257,54 @@ test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，
   await expect(placeholder).toHaveCount(0);
 });
 
+test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash，自定义命令走 prompt，打开的面板可关闭", async ({ page }) => {
+  await page.goto("/");
+  await page.locator('[data-testid=session-row][data-session-id="c1a70000-0000-4000-8000-0000000000c1"]').click();
+  await page.getByTestId("drive-connect").click();
+  await expect(state(page)).toContainText("空闲");
+  const input = page.getByTestId("drive-input");
+  const menu = page.getByTestId("slash-menu");
+  const options = menu.getByTestId("slash-option");
+
+  await input.fill("/re");
+  await expect(options).toHaveText([/^\/rename/, /^\/release-notes/, /^\/release/, /^\/kit:review/]);
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+  await input.press("ArrowDown");
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  await input.press("Tab");
+  await expect(input).toHaveValue("/release-notes ");
+  await expect(menu).toHaveCount(0);
+  await input.press("Enter");
+  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "release-notes" });
+  await expect(input).toHaveValue("");
+
+  // Esc only hides the list.
+  await input.fill("/co");
+  await expect(options.first()).toContainText("/compact");
+  await expect(menu.getByTestId("slash-option").filter({ hasText: "/cost" })).toContainText("打开界面");
+  await input.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(input).toHaveValue("/co");
+
+  // A project command waits for its record in the transcript: `prompt`.
+  await input.fill("/release v1");
+  await input.press("Enter");
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "/release v1" });
+  await expect(input).toHaveValue("");
+
+  // `/cost` opens a panel ccrpc cannot read: shown as is, closed from the card.
+  await expect(state(page)).toContainText("空闲");
+  await input.fill("/cost");
+  await input.press("Enter");
+  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "cost" });
+  const screen = page.getByTestId("screen-card");
+  await expect(screen).toContainText("Total cost");
+  await screen.getByTestId("screen-close").click();
+  expect(await lastSent(page, "abort")).toBeTruthy();
+  await expect(screen).toHaveCount(0);
+  await expect(state(page)).toContainText("空闲");
+});
+
 test("设置 › 驾驶：ccrpc 路径、doctor 的失败项、分析器与日志目录", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("Meta+,");

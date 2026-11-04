@@ -26,6 +26,8 @@ export const commands = {
 	revealSessionFile: (sessionId: string, agentId: string | null) => __TAURI_INVOKE<null>("reveal_session_file", { sessionId, agentId }),
 	getStats: (req: StatsRequest) => __TAURI_INVOKE<Stats>("get_stats", { req }),
 	getDiagnostics: () => __TAURI_INVOKE<Diagnostics>("get_diagnostics"),
+	/**  Slash commands for completion while driving a Session started in `cwd`. */
+	listSlashCommands: (cwd: string | null) => __TAURI_INVOKE<SlashCommand[]>("list_slash_commands", { cwd }),
 	driveInfo: () => __TAURI_INVOKE<DriveInfo>("drive_info"),
 	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
 	driveList: () => __TAURI_INVOKE<string>("drive_list"),
@@ -494,6 +496,27 @@ export type SessionsChanged = {
 
 /**  After each debounced filesystem batch. */
 export type SessionsChangedEvent = SessionsChanged;
+
+/**  A slash command offered for completion while driving. */
+export type SlashCommand = {
+	/**  As typed, without the slash: `compact`, `review`, `oh-my-claudecode:ask`. */
+	name: string,
+	description: string | null,
+	source: SlashSource,
+	/**  Opens a panel or picker in the terminal rather than running (built-in commands only). */
+	interactive: boolean,
+};
+
+/**  Where a slash command comes from. */
+export type SlashSource = 
+/**  Claude Code's own command (a static list, see `codeck_core::slash`). */
+"builtin" | 
+/**  `<data root>/commands/*.md` or `<data root>/skills/*\/SKILL.md`. */
+"user" | 
+/**  `<cwd>/.claude/commands` or `<cwd>/.claude/skills`. */
+"project" | 
+/**  A command or skill of an enabled plugin. */
+"plugin";
 
 export type SnippetPart = {
 	text: string,

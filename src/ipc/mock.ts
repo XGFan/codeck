@@ -35,7 +35,7 @@ import type {
 import type { Api, Unlisten } from "./api";
 import { createMockDrive } from "./mock-drive";
 import { DAY, NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
-import { appInfo, diagnostics, indexStatus as indexStatusSeed, stats as statsSeed } from "@/mocks/data/misc";
+import { appInfo, diagnostics, indexStatus as indexStatusSeed, slashCommands, stats as statsSeed } from "@/mocks/data/misc";
 import { parseQuery } from "@/features/search/match";
 import { projectBase } from "@/mocks/data/projects";
 import {
@@ -613,6 +613,7 @@ export function createMockApi(): Api {
       }),
     getStats: (req) => later(() => getStats(req)),
     getDiagnostics: () => later(() => diagnostics),
+    listSlashCommands: () => later(() => slashCommands),
     onIndexStatus: (cb) => subscribe("indexStatus", cb),
     onSessionsChanged: (cb) => subscribe<SessionsChanged>("sessionsChanged", cb),
     onLiveChanged: (cb) => subscribe("liveChanged", cb),

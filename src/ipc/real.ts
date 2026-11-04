@@ -23,6 +23,7 @@ export function createRealApi(): Api {
     revealSessionFile: commands.revealSessionFile,
     getStats: commands.getStats,
     getDiagnostics: commands.getDiagnostics,
+    listSlashCommands: commands.listSlashCommands,
     onIndexStatus: (cb) => events.indexStatusEvent.listen((e) => cb(e.payload)),
     onSessionsChanged: (cb) => events.sessionsChangedEvent.listen((e) => cb(e.payload)),
     onLiveChanged: (cb) => events.liveChangedEvent.listen((e) => cb(e.payload)),

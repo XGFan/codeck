@@ -125,7 +125,9 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   | busy / waiting | | Esc `abort`（焦点在驾驶区时） |
 
   - 粘贴的图片存到 `~/Library/Caches/dev.joy.codeck/images/`，输入框上方以 `data:` 地址预览，路径作为 `images` 传给 `prompt` / `follow_up`；`steer` 不带图片。
-  - `/` 开头照常走 `prompt`（没有补全）。共显时写入会清空 TUI 输入框里没发的内容（ccrpc 的已知限制）。
+  - 斜杠命令：idle 时内置命令（以及补全清单里没有、形如命令名的名字）走 `slash`——本地命令和打开面板的命令在 transcript 里不留可等的记录；自定义命令、skill、`/Users/…` 这类路径、多行或带图片的，以及取不到补全清单时，走 `prompt`。忙时照常 `follow_up`，但会打开界面的内置命令不发送，提示等空闲时再发（排队后会以 `prompt` 发出，等满 30 秒）。
+  - 补全：输入框只有 `/名字`（还没有空格、换行）时，上方列出匹配的命令（名字完全相同 > 前缀 > 命名空间 `:` 之后的前缀 > 包含），最多 8 条，显示描述、来源（内置 / 用户 / 项目 / 插件），会在终端里打开界面的内置命令标「打开界面」；↑↓ 选择，Tab 补全，Enter 在选中项与输入不同时补全、相同时发送，Esc 只收起列表。清单来自内置命令表、数据根下的 `commands/`、`skills/`，Session cwd 下的 `.claude/commands`、`.claude/skills`，以及用户和项目设置里启用的插件的 commands / skills（插件的以 `插件名:` 为前缀）；只读，同名时前者优先。
+  - 共显时写入会清空 TUI 输入框里没发的内容（ccrpc 的已知限制）。
   - 没发出的输入按 Session 保留，切换 Session、重连后仍在。
   - 输入框聚焦时 `j` / `k` 等单键快捷键不响应；Esc 在卡片里的输入框中只离开输入框，在驾驶区以外或 idle 时保持原有含义（关闭 Subagent 面板等）。
 - **请求卡片**：
@@ -135,7 +137,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   | `permission_request` | 工具名 + 工具输入（用对话区的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
   | `question` | 题目、单选 / 多选、「其他」文本框 | `answer_question` |
   | `choice` | 标题 + 选项按钮 | `answer_choice`（按 label） |
-  | `dialog` / `unrecognized` | 只读等宽显示屏幕原文，注明需在 Mac Client 的终端里处理 | 无按键；状态离开 waiting 即消失 |
+  | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
 
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
   - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。

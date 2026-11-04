@@ -18,6 +18,7 @@ import type {
   SessionQuery,
   SessionsChanged,
   SessionSummary,
+  SlashCommand,
   Stats,
   StatsRequest,
   ToolDetail,
@@ -47,6 +48,8 @@ export interface Api {
   revealSessionFile(sessionId: string, agentId: string | null): Promise<null>;
   getStats(req: StatsRequest): Promise<Stats>;
   getDiagnostics(): Promise<Diagnostics>;
+  /** Slash commands for completion while driving a Session started in `cwd`. */
+  listSlashCommands(cwd: string | null): Promise<SlashCommand[]>;
 
   onIndexStatus(cb: (payload: IndexStatusEvent) => void): Promise<Unlisten>;
   onSessionsChanged(cb: (payload: SessionsChanged) => void): Promise<Unlisten>;
