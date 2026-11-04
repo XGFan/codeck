@@ -222,6 +222,16 @@ describe("回答与工具组的摘要", () => {
     ]);
   });
 
+  it("text before or between a turn's work is process text; the answer's rows are the answer", () => {
+    const texts = rows.filter((r): r is Extract<Row, { kind: "text" }> => r.kind === "text");
+    expect(texts.map((r) => [r.text, r.layer])).toEqual([
+      ["先看看", "process"],
+      ["改好了。", "answer"],
+      ["测试有一处失败。", "answer"],
+      ["不客气", "answer"],
+    ]);
+  });
+
   it("a group says what its calls did and on what; edited files count once", () => {
     const [g] = groups(rows);
     const calls = g!.items.flatMap((it) => (it.type === "call" ? [it.call] : []));

@@ -162,8 +162,20 @@ test("后台命令：标「后台」、展开写完整命令与任务，和结�
   await expect(page.locator('[data-anchor="n12|tu_bg_build"][data-highlighted]')).toBeVisible();
 });
 
+test("思考：一行写「思考 · N 行」，首尾空行不计也不显示；过程文字比回答小一号、灰色", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const t = page.getByTestId("transcript");
+  const lines = t.getByTestId("thinking-lines").first();
+  await reveal(t, lines);
+  await expect(lines).toHaveText("2 行");
+  await t.getByRole("button", { name: /思考/ }).first().click();
+  await expect(t.getByTestId("thinking-text").first()).toHaveText("需要先看现有中间件的注册方式，\n再决定是 tower Layer 还是 axum from_fn。");
+  const size = (text: string) => t.getByText(text, { exact: true }).evaluate((el) => getComputedStyle(el.closest(".min-w-0")!).fontSize);
+  expect(await size("先看一下现有中间件的组织方式。")).toBe("13px");
+});
+
 test("工具组的折叠箭头大小不随摘要长短变化", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 800 });
+  await page.setViewportSize({ width: 900, height: 1400 });
   await openSession(page, RICH_TITLE);
   const groups = page.getByTestId("tool-group");
   await expect(groups.first()).toBeVisible();

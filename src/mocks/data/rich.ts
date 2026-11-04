@@ -88,7 +88,7 @@ export const richMain: Node[] = [
   otherNode("n02", ts(), { kind: "attachment", attachmentType: "skill_listing", text: "可用技能：review、simplify、security-review（共 3 项）" }, { hidden: true }),
   otherNode("n03", ts(), { kind: "attachment", attachmentType: "todo_reminder", text: "提醒：当前没有进行中的任务列表。" }, { hidden: true }),
   asstNode("n04", ts(), [
-    thinking("需要先看现有中间件的注册方式，再决定是 tower Layer 还是 axum from_fn。"),
+    thinking("\n需要先看现有中间件的注册方式，\n再决定是 tower Layer 还是 axum from_fn。\n\n"),
     text("先看一下现有中间件的组织方式。"),
     call("tu_read1", "Read", { file_path: "/Users/dev/Developer/lumen-api/src/middleware/mod.rs" }, {
       text: "     1\tpub mod auth;\n     2\tpub mod trace;\n     3\t\n     4\tpub fn stack() -> tower::ServiceBuilder<...> {\n     5\t    ServiceBuilder::new().layer(trace::layer()).layer(auth::layer())\n     6\t}",

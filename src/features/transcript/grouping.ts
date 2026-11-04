@@ -46,6 +46,8 @@ export type Row = RowBase &
         role: RoleInfo | null;
         /** The last row of a turn's answer: copy (all of the answer) and time below it. */
         answer?: { text: string; timeMs: number | null };
+        /** In a turn: text after its last work is the `answer`, text before or between its work is `process`. */
+        layer?: "process" | "answer";
       }
     | { kind: "thinking"; node: Node; text: string; role: RoleInfo | null }
     | { kind: "tool"; node: Node; call: ToolCallBlock; role: RoleInfo | null }
@@ -378,6 +380,7 @@ const WORK = new Set<Row["kind"]>(["thinking", "tool", "group", "subagent", "par
 /**
  * Each turn's answer — the text rows after its last bit of work (tool call, thinking, Subagent, Workflow) — gets
  * `answer` on its last row: copy (all of the answer) and its time go under it, as replies carry no role line.
+ * Text rows get their `layer`: the answer's are shown larger, the process text before it smaller and grey.
  */
 function markAnswers(rows: Row[]) {
   let i = 0;
@@ -400,6 +403,11 @@ function markAnswers(rows: Row[]) {
       const last = rows[at] as Extract<Row, { kind: "text" }>;
       const text = answer.map((j) => (rows[j] as Extract<Row, { kind: "text" }>).text.trim()).join("\n\n");
       rows[at] = { ...last, answer: { text, timeMs: last.node.timestampMs } };
+    }
+    for (const j of answer) rows[j] = { ...(rows[j] as Extract<Row, { kind: "text" }>), layer: "answer" };
+    for (let j = i + 1; j < (answer[0] ?? end); j++) {
+      const r = rows[j]!;
+      if (r.kind === "text") rows[j] = { ...r, layer: "process" };
     }
     i = end;
   }

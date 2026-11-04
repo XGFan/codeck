@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronRight, CircleX } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleX, Lightbulb } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Markdown } from "@/lib/markdown";
+import { cn } from "@/lib/cn";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeCalls, type GroupItem, isGroupOpen, type RoleInfo, type Row, type ToolCallBlock } from "../grouping";
@@ -53,6 +54,12 @@ export function AssistantRow({ row }: { row: AssistantRowData }) {
   return <AssistantSegment role={row.role}>{segmentBody(row)}</AssistantSegment>;
 }
 
+/** Process text smaller and grey, the answer larger, so a turn's answer stands out from its process. */
+const LAYER_TEXT: Record<string, string> = {
+  process: "text-[13px] leading-[1.6] text-secondary",
+  answer: "text-[14px] leading-[1.7]",
+};
+
 function segmentBody(row: AssistantRowData): ReactNode {
   switch (row.kind) {
     case "text":
@@ -60,7 +67,7 @@ function segmentBody(row: AssistantRowData): ReactNode {
         <>
           <Anchor nodeId={row.node.id} className="group/copy relative w-full">
             {!row.answer && <CopyButton text={row.text} className="absolute -top-2 right-0 z-10 bg-ground/90" />}
-            <Markdown text={row.text} className="w-full" />
+            <Markdown text={row.text} className={cn("w-full", LAYER_TEXT[row.layer ?? ""])} />
           </Anchor>
           {row.answer && <AnswerActions {...row.answer} />}
         </>
@@ -133,24 +140,35 @@ function GroupEntry({ item }: { item: GroupItem }) {
   return <Tool node={item.node} call={item.call} />;
 }
 
+/**
+ * A thinking block, collapsed to a light bulb and its line count; opened, a light block (not a rule, which is a
+ * tool group's). Blank lines around the text are not shown or counted.
+ */
 function Thinking({ nodeId, text }: { nodeId: string; text: string }) {
   const key = `thinking:${nodeId}`;
   const open = useUi((s) => s.expanded[key] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
-  const lines = text.split("\n").length;
+  const body = text.trim();
+  const lines = body.split("\n").length;
   return (
     <Anchor nodeId={nodeId} className="w-full">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => toggle(key)}
-        className="flex items-center gap-2 rounded px-1 py-1 text-[12px] text-secondary hover:text-text"
+        className="flex min-h-7 items-center gap-2 text-[13px] text-secondary hover:text-text"
       >
-        {open ? <ChevronDown size={12} strokeWidth={1.8} /> : <ChevronRight size={12} strokeWidth={1.8} />}
-        <span className="italic">思考 · {lines} 行</span>
+        <Lightbulb size={14} strokeWidth={1.6} className="shrink-0" aria-hidden />
+        <span>思考</span>
+        <span data-testid="thinking-lines" className="text-[12px]">
+          {lines} 行
+        </span>
+        {open ? <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />}
       </button>
       {open && (
-        <div className="mt-1 ml-1 border-l-2 border-border pl-3 text-[12px] whitespace-pre-wrap text-secondary">{text}</div>
+        <div data-testid="thinking-text" className="mt-0.5 mb-1 ml-[22px] rounded-lg bg-list px-3 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap text-secondary">
+          {body}
+        </div>
       )}
     </Anchor>
   );
