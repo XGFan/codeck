@@ -1831,6 +1831,14 @@ fn mock_model_session() {
     let d = rpc.call("t1", json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, I trust this folder"}));
     assert!(d["state"].is_string(), "{d}");
     wait_state(&mut rpc, "idle", 30);
+    // `ready` came before the plugin checked in: the sessionId is announced once known.
+    assert!(ready["session_id"].is_null(), "{ready}");
+    let ch = rpc.event("session_changed", Duration::from_secs(15));
+    assert!(ch["previous"].is_null(), "{ch}");
+    assert!(
+        ch["session_id"].as_str().is_some_and(|s| s.len() == 36),
+        "{ch}"
+    );
 
     // A few turns: the status line, then progress while one runs slowly.
     for i in 0..3 {

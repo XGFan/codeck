@@ -155,6 +155,8 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "analysis_failed":
       return notice(s, `界面识别失败：${m.error}`);
     case "session_changed":
+      // The first sessionId after `ready` (`new`): the same Session, nothing to reset.
+      if (m.previous == null) return { ...s, sessionId: m.session_id };
       return {
         ...initial(s.conn, s.holderId),
         ready: true,

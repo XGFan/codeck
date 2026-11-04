@@ -450,6 +450,8 @@ pub struct Engine {
     last_locate: Option<Instant>,
     pf: Option<ProcessFile>,
     session_id: Option<String>,
+    /// `ready` went out: a sessionId learned from now on is announced (`session_changed`).
+    ready_sent: bool,
     tailer: Option<Tailer>,
     state: State,
     /// Raw `(status, waitingFor)` last read, with when it was first seen.
@@ -570,6 +572,7 @@ impl Engine {
             last_locate: None,
             pf: None,
             session_id: None,
+            ready_sent: false,
             tailer: None,
             state: State::Starting,
             raw_since: None,
@@ -708,9 +711,8 @@ impl Engine {
             return;
         }
         let prev = self.session_id.replace(sid.clone());
-        if let Some(prev) = prev
-            && prev != sid
-        {
+        // Also the first one after `ready` (`new`: the plugin checks in after the startup screens).
+        if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
             self.emit(json!({"type": "session_changed", "session_id": sid, "previous": prev}));
         }
         let mut t = Tailer::new(path);
@@ -3432,7 +3434,8 @@ impl Engine {
         }
     }
 
-    fn ready(&self) {
+    fn ready(&mut self) {
+        self.ready_sent = true;
         let version = self.pf.as_ref().and_then(|p| p.version.clone());
         crate::clog!(
             "ccrpc {} holder={} session={} claude={} co_display={}",

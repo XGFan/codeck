@@ -81,5 +81,11 @@ describe("conn reducer", () => {
     expect(s.mode).toBe("manual");
     expect(s.requests).toEqual([]);
     expect(s.lastTurn).toBeNull();
+
+    // `new`: `ready` before the plugin checked in; the first sessionId only fills it in.
+    let n = fold([{ ...ready, session_id: null }, perm("t1")]);
+    n = apply(n, { type: "session_changed", session_id: "first", previous: null });
+    expect(n.sessionId).toBe("first");
+    expect(n.requests.map((r) => r.request_id)).toEqual(["t1"]);
   });
 });

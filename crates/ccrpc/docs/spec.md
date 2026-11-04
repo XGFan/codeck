@@ -46,7 +46,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - **插件的 hook**：SessionStart、UserPromptSubmit、PreToolUse、PermissionRequest（超时 86400s）、PostToolUse、PostToolUseFailure、PermissionDenied、Stop、StopFailure、SubagentStart、SubagentStop。SubagentStart / SubagentStop 让 ccrpc 立即去找新的 Subagent Run 文件。插件协议版本（写在 hooks.json 的命令里：`<ccrpc> hook --protocol 2`，报到里的 `hook_protocol` 取自它，当前 2）与 ccrpc 不一致时不能 attach，要重新 `ccrpc plugin install` 并重启 claude。
 - **报到**：插件的 SessionStart hook（`startup`、`resume`、`clear`、`compact`、`fork`）把 claude pid、`session_id`、`transcript_path`、hook 协议版本写进报到（ccrpc 自己的目录，0600）。`attach` 要求报到存在、hook 协议一致、`session_id` 与进程文件一致；只经 `/reload-plugins` 加载的插件不会报到。
 - **hook 通道**：ccrpc 找到 claude 后监听 `<ccrpc 状态目录>/s/<claude pid>.sock`（先监听再读报到）；hook 按父进程（claude）pid 连接，连不上就无输出退出。
-- **sessionId 会变**：`/clear`、`/resume` 等触发 SessionStart，ccrpc 按它给的 `session_id` 与 `transcript_path` 切到新 transcript 并发 `session_changed`。
+- **sessionId 会变**：`/clear`、`/resume` 等触发 SessionStart，ccrpc 按它给的 `session_id` 与 `transcript_path` 切到新 transcript 并发 `session_changed`。`new` 的 `ready` 往往在插件报到之前（启动界面期间没有报到），`session_id` 为 null，得知后发 `session_changed`（`previous` 为 null）。
 - 连接时（`ready` 之前）以及切换 Session 时，已存在的 transcript 当作历史读到文件末尾：不发 `block`，但记下挂起的工具调用和已出现的提示词（用于确认命令）。之后才出现的 transcript（新 Session 的第一条提示词、`/clear` 之后）按实时读。
 
 ## 4. 状态
@@ -125,7 +125,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `analysis_failed` | 分析器没给出可用的布局：`error`；结果与屏幕对不上时另有 `title` |
 | `session_info` | `mode`、`model`、`effort`、`context_tokens`（同 `get_state`）：其中任一项变了时发。`model`：`/model` 的输出（`Set model to …`，此处或 TUI 里执行）一出现即为其显示名（如 `Sonnet 4.5`），之后的 assistant 消息给出模型 id；`effort`：输入框右上方的 `◉ xhigh · /effort`、`/effort` 的输出（`Set effort level to …`）或 assistant 消息记下的 `effort`，换了模型先清空，模型没有思考等级时为 null |
 | `progress` | busy 时屏幕上的进度行：`text`（去掉符号的整行）、`verb`、`elapsed_s`、`tokens`（没有为 null）；文字变了时发，至多每秒一次（动词变了立即发） |
-| `session_changed` | `session_id`、`previous` |
+| `session_changed` | `session_id`、`previous`（`ready` 时还不知道 sessionId 的为 null） |
 | `session_exit` | — |
 
 - 不发 slash 命令的本地记录（`<command-name>` 等）与 `isMeta` 条目。
