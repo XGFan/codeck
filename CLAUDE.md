@@ -44,6 +44,16 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test assemble -- --ignored --nocapture`、`CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`。
 
+## 设计稿
+
+界面设计统一放在 Claude Design 画布「CoDeck 设计」：https://claude.ai/artifact/M5J8o7P5DFasg3dYsi2dxs ，不另开画布。
+
+- **现状页**（「现状 · 主界面 / 驾驶 / 搜索与统计 / 设置」）：当前代码在 mock 模式下的截图，亮 / 暗并排，不在画布里改。改了 UI 后同步：
+  1. `pnpm design:shots`（`scripts/design-shots/shots.spec.ts`，新界面在这里加截图），产出 `target/design-shots/*.png` 与 `manifest.json`。
+  2. 用 Artifact 工具把 PNG 上传为画布素材（`asset: true`），把 `<shot id>-light|dark` → 素材 id 写进 `target/design-shots/blobs.json`；被替换的旧素材随后删除。
+  3. 读画布的 `project/canvas.json`，`python3 scripts/design-shots/build-canvas.py target/design-shots/manifest.json target/design-shots/blobs.json <读到的 canvas.json> <输出目录>`，再以 `root` = 输出目录把 `project/canvas.json` 和 `project/now-*.dc.html` 发布到画布。
+- **方案页**：新设计先在画布上出 2–3 个可编辑画板（按主题建页），选定的标题前标「✓ 采用」，再实现；实现后删掉没采用的方案，并重跑上面的同步。
+
 ## 架构
 
 三层，数据单向流动：`crates/transcript`（解析）→ `crates/codeck-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `src-tauri`（外壳）→ `src`（React）。ccrpc 也依赖 `crates/transcript`，不依赖 codeck-core。
