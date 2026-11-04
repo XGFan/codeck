@@ -23,8 +23,8 @@ export function RowList({ conn, rows, userLabel = "你" }: { conn: string; rows:
     <>
       {rows.map((row, i) => {
         const prev = rows[i - 1];
-        const assistant = row.kind !== "user" && row.kind !== "turn_end";
-        const role = assistant && (!prev || prev.kind === "user");
+        const assistant = row.kind !== "user" && row.kind !== "turn_end" && row.kind !== "task_note";
+        const role = assistant && (!prev || prev.kind === "user" || prev.kind === "task_note");
         return (
           <div key={row.key} data-row={row.kind} data-row-key={row.key} className="flex w-full flex-col items-start gap-2">
             {role && <RoleLine />}
@@ -73,6 +73,8 @@ function RowView({ conn, row, userLabel }: { conn: string; row: Row; userLabel: 
       return <AgentCard conn={conn} call={row.call} />;
     case "result":
       return <OrphanResult result={row.result} />;
+    case "task_note":
+      return <TaskNote status={row.status} summary={row.summary} />;
     case "turn_end":
       return <TurnEnd ev={row.ev} />;
   }
@@ -285,6 +287,21 @@ export function durationText(ms: number): string {
   if (m < 60) return `${m} 分 ${String(sec % 60).padStart(2, "0")} 秒`;
   const h = Math.floor(m / 60);
   return m % 60 ? `${h} 小时 ${m % 60} 分` : `${h} 小时`;
+}
+
+const TASK_STATUS: Record<string, string> = { completed: "完成", failed: "失败", killed: "已停止" };
+
+/** "后台任务完成：Agent "…" finished" */
+function TaskNote({ status, summary }: { status: string; summary: string }) {
+  return (
+    <div className="flex w-full items-center gap-1.5 text-[12px] text-secondary" data-testid="task-note">
+      <Network size={12} strokeWidth={1.8} aria-hidden />
+      <span className="min-w-0 truncate" title={summary}>
+        后台任务{TASK_STATUS[status] ?? status}
+        {summary ? `：${summary}` : ""}
+      </span>
+    </div>
+  );
 }
 
 function TurnEnd({ ev }: { ev: TurnEndEvent }) {

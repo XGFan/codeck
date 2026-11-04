@@ -27,6 +27,16 @@ const items = (...xs: (Block | TurnEndEvent)[]): Item[] =>
   xs.map((x, i) => (x.type === "turn_end" ? { kind: "turn_end", key: `turn:${i}`, ev: x } : { kind: "block", key: `${x.uuid}:${x.index}`, block: x }));
 
 describe("buildRows", () => {
+  it("shows a background task's end as a note, not the user's bubble", () => {
+    const n = user(
+      '<task-notification>\n<task-id>a69</task-id>\n<status>completed</status>\n<summary>Agent "Review fix" finished</summary>\n<note>A task-notification fires…</note>\n</task-notification>',
+    );
+    const rows = buildRows([n, text("看了一下结果")]);
+    expect(rows[0]).toMatchObject({ kind: "task_note", status: "completed", summary: 'Agent "Review fix" finished' });
+    expect(rows[1]).toMatchObject({ kind: "text" });
+    expect(buildRows([user("我说的 <task-notification> 是什么")])[0]).toMatchObject({ kind: "user" });
+  });
+
   it("pairs each tool_use with its tool_result and drops the result row", () => {
     const rows = buildRows([use("a", "Bash", { command: "ls" }), result("a", "file", false)]);
     expect(rows).toHaveLength(1);

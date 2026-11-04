@@ -10,6 +10,7 @@
 {"t": 1793700000100, "dir": "recv", "msg": {"type": "response", "id": "f1", "command": "follow_up", "success": true, "data": {"queued": 1}}}
 {"t": 1793700000110, "dir": "send", "msg": {"id": "s1", "type": "steer", "text": "顺便把标题也改了"}}
 {"t": 1793700000120, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u2", "index": 0, "text": "顺便把标题也改了", "queued": true}}
+{"t": 1793700000121, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "u2n", "index": 0, "queued": true, "text": "<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n<summary>Background command \"Run tests\" completed (exit code 0)</summary>\n</task-notification>"}}
 {"t": 1793700000130, "dir": "recv", "msg": {"type": "response", "id": "s1", "command": "steer", "success": true, "data": {"delivered_as": "queued"}}}
 {"t": 1793700000140, "dir": "recv", "msg": {"type": "block", "kind": "tool_use", "uuid": "a2", "index": 0, "id": "toolu_edit1", "name": "Edit", "input": {"file_path": "/work/demo/README.md", "old_string": "旧的一行", "new_string": "新的一行"}}}
 {"t": 1793700000150, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "permission", "waiting_for": "permission prompt"}}}

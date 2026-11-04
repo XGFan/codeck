@@ -35,6 +35,7 @@ cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机�
 
 - 截断或落盘的工具结果展开时取 `get_tool_result`。
 - 带图的提示词（user block 带 `images`）在气泡里显示缩略图，内容用 `get_image` 取。
+- 后台任务的结束通知（以 `<task-notification>` 开头的 user block）显示为一行“后台任务完成：<summary>”，不作为用户气泡。
 - `session_changed`：清空，按新 Session 重新 `get_messages`。`session_exit`：输入框禁用，消息保留。
 - ccrpc 意外退出：顶部横幅（退出码）+“重连”按钮，不自动重连。
 

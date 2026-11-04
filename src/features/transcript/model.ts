@@ -27,6 +27,16 @@ export interface ToolCall {
 /** claude's record of an interruption (Esc, a denial that stops the turn): part of that turn. */
 export const isInterruption = (text: string) => text.startsWith("[Request interrupted by user");
 
+/**
+ * claude's note that a background task (shell, Subagent) ended, recorded as a user message:
+ * `<task-notification>…<status>completed</status><summary>…</summary>…`.
+ */
+export function taskNotification(text: string): { status: string; summary: string } | null {
+  if (!text.trimStart().startsWith("<task-notification>")) return null;
+  const tag = (t: string) => text.match(new RegExp(`<${t}>([\\s\\S]*?)</${t}>`))?.[1]?.trim() ?? "";
+  return { status: tag("status"), summary: tag("summary") };
+}
+
 /** Calls rendered as a card that opens the Subagent / Workflow panel. */
 export const isAgentCall = (name: string) => name === "Agent" || name === "Task" || name === "Workflow";
 
@@ -34,6 +44,8 @@ export type GroupItem = { type: "call"; call: ToolCall } | { type: "thinking"; k
 
 export type Row =
   | { kind: "user"; key: string; text: string; queued: boolean; uuid: string; images: string[] }
+  /** A background task's end, noted by claude as a user message: shown as a line, not the user's bubble. */
+  | { kind: "task_note"; key: string; status: string; summary: string }
   | { kind: "text"; key: string; text: string }
   | { kind: "thinking"; key: string; text: string }
   | { kind: "tool"; key: string; call: ToolCall }
@@ -115,10 +127,16 @@ export function buildRows(blocks: Block[], results: Map<string, ToolResult> = re
 
   for (const b of blocks) {
     switch (b.kind) {
-      case "user":
+      case "user": {
         flush();
+        const note = taskNotification(b.text);
+        if (note) {
+          rows.push({ kind: "task_note", key: keyOf(b), ...note });
+          break;
+        }
         rows.push({ kind: "user", key: keyOf(b), text: b.text, queued: b.queued === true, uuid: b.uuid, images: b.images ?? [] });
         break;
+      }
       case "text":
         if (!b.text.trim()) break;
         flush();

@@ -122,6 +122,9 @@ test("a learned choice is marked, a branch drops what it replaced, an unknown di
   await send(page, "顺便把标题也改了", "Meta");
   await page.getByTestId("permission-card").getByTestId("allow").click();
   await expect(page.getByTestId("turn-end")).toHaveCount(1);
+  // A background task's end is a note, not the user's bubble.
+  await expect(page.getByTestId("task-note")).toHaveText('后台任务完成：Background command "Run tests" completed (exit code 0)');
+  await expect(page.getByTestId("user-block").filter({ hasText: "task-notification" })).toHaveCount(0);
   // The prompt's image, fetched from ccrpc.
   await expect(page.getByTestId("prompt-image")).toHaveCount(1);
   await expect.poll(() => page.getByTestId("prompt-image").evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
