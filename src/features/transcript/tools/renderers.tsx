@@ -9,7 +9,7 @@ import { langFromPath } from "@/lib/shiki";
 import { cn } from "@/lib/cn";
 import { prettyJson } from "../util";
 import { parseJson, useFullInput, useOutput, type ToolCtx } from "./data";
-import { CodeView, ImageRefs, Label, LoadBar, Mono, OutputView, Shell, Spinner, Terminal } from "./parts";
+import { CodeView, ImageRefs, Label, LoadBar, Mono, OutputView, PendingSpinner, Shell, Spinner, Terminal } from "./parts";
 
 export interface RenderProps {
   nodeId: string;
@@ -76,7 +76,7 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
         </pre>
       )}
       {r == null ? (
-        <Spinner text="执行中" />
+        <PendingSpinner />
       ) : (
         <div data-testid="tool-output">
           <Terminal text={out.text} stderr={stderr} />
@@ -374,7 +374,7 @@ export function CompactView({ nodeId, call, startMs, ctx }: RenderProps) {
           ))}
         </div>
       )}
-      {call.result ? <OutputView out={out} /> : <Spinner text="执行中" />}
+      {call.result ? <OutputView out={out} /> : <PendingSpinner />}
     </Shell>
   );
 }

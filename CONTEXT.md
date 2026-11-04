@@ -16,6 +16,10 @@ _Avoid_: 项目目录, workspace, folder
 仍有 Claude Code 进程在运行、可能继续追加内容的 Session；其余 Session 视为已结束。
 _Avoid_: 活跃会话, active session, 进行中的会话
 
+**驾驶**:
+经 ccrpc 连接一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，在应用里发提示词、作答审批与提问；被驾驶的 Session 即 ccrpc 的受控 Session。对话内容仍来自索引与实时追随。
+_Avoid_: 接管（ccrpc 的「接手」指人在 Client 上操作 Pane）, 控制模式, attach（文案中）
+
 **Subagent Run**:
 Session 内由一次 Task/Agent 工具调用派生出的子对话；它属于该 Session，不是独立的 Session。
 _Avoid_: sidechain, 子会话, agent session

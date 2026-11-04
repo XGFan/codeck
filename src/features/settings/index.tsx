@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DiagnosticsContent } from "@/features/diagnostics";
+import { DriveSettings } from "@/features/drive";
 import { useHotkey } from "@/lib/hotkeys";
 import { api } from "@/ipc";
 import type { AppError, DataRootSource } from "@/ipc/bindings";
@@ -23,6 +24,7 @@ const errText = (e: unknown) => (e && typeof e === "object" && "message" in e ? 
 const TABS = [
   { id: "general", label: "通用" },
   { id: "data", label: "数据" },
+  { id: "drive", label: "驾驶" },
   { id: "compat", label: "格式兼容性" },
 ] as const;
 
@@ -234,6 +236,9 @@ export function SettingsDialog() {
             </Tabs.Content>
             <Tabs.Content value="data">
               <DataTab />
+            </Tabs.Content>
+            <Tabs.Content value="drive">
+              <DriveSettings />
             </Tabs.Content>
             <Tabs.Content value="compat">
               <DiagnosticsContent />

@@ -33,6 +33,7 @@ import type {
   TranscriptScope,
 } from "./bindings";
 import type { Api, Unlisten } from "./api";
+import { createMockDrive } from "./mock-drive";
 import { DAY, NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
 import { appInfo, diagnostics, indexStatus as indexStatusSeed, stats as statsSeed } from "@/mocks/data/misc";
 import { parseQuery } from "@/features/search/match";
@@ -624,5 +625,6 @@ export function createMockApi(): Api {
         /* clipboard unavailable in headless browsers */
       }
     },
+    ...createMockDrive(),
   };
 }

@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
+import { useDrivenButUnindexed } from "@/features/drive";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
@@ -47,12 +48,21 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 export function TranscriptView() {
   const sessionId = useUi((s) => s.sessionId);
   const { data, isPlaceholderData, error } = useCurrentTranscript();
+  // A driven Session not in the index yet: its transcript file appears with the first prompt.
+  const unindexed = useDrivenButUnindexed(error);
   usePendingJump();
 
   if (!sessionId) {
     return (
       <div data-testid="transcript-empty" className="flex flex-1 items-center justify-center text-[13px] text-secondary">
         选择一个 Session 查看对话
+      </div>
+    );
+  }
+  if (unindexed && data?.sessionId !== sessionId) {
+    return (
+      <div data-testid="transcript-new" className="flex flex-1 items-center justify-center text-[13px] text-secondary">
+        新 Session，发送第一条提示词后显示对话
       </div>
     );
   }

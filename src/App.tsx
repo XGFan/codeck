@@ -1,4 +1,5 @@
 import { useUi } from "@/state/ui";
+import { DrivePanel, DriveRoot } from "@/features/drive";
 import { FindBar } from "@/features/find";
 import { Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
@@ -37,7 +38,11 @@ export default function App() {
           <SessionHeader />
           <FindBar />
           <div className="flex min-h-0 flex-1">
-            <TranscriptView />
+            {/* The drive panel sits under the transcript, as wide as it. */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <TranscriptView />
+              <DrivePanel />
+            </div>
             <Outline />
             <SubagentPanel />
           </div>
@@ -45,6 +50,7 @@ export default function App() {
       </div>
       <StatusBar />
       <Toolbar />
+      <DriveRoot />
       {/* Overlays: portal/fixed based; wrapped so placeholder stubs stay out of the layout. */}
       <div className="fixed right-0 bottom-0 size-0 overflow-hidden">
         <SearchOverlay />

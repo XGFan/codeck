@@ -6,6 +6,7 @@
 - **读得舒服**：工具调用折叠成摘要，Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话区。
 - **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。
 - **API 金额**：参照 ccusage 的算法按 API 价格估算每个 Session 的花费（含 Subagent，resume / Fork 复制的历史不重复计算），Session 列表可按金额排序，统计页汇总总额与 Session 排行。
+- **驾驶**：ToH clay 里装了 ccrpc 插件的 Session，在标题栏点「驾驶」后可以直接发提示词（可粘贴截图）、忙时排队或插话、作答审批 / 提问 / 选择、切换权限模式、停止后台任务；也可以选目录新建 Session。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：可按自定义每周重置时间统计本周期用量；输入、输出 token 与缓存命中率，每日 token（全部 / 输入 / 输出，后两者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
 
 ## 快捷键
@@ -18,20 +19,25 @@
 | ⌘↑ / ⌘↓ | 跳到对话顶部 / 底部 |
 | ↑ / ↓ | 在 Session 列表中切换（列表获得焦点时） |
 | ⌃⌘L | 收起 / 展开 Session 列表 |
-| ⌘, | 设置（数据目录、格式兼容性诊断、重建索引） |
+| ⌘, | 设置（数据目录、驾驶、格式兼容性诊断、重建索引） |
 | Esc | 关闭搜索、查找或 Subagent 面板 |
+| Enter / ⌘Enter | 驾驶时：空闲发送；忙时排到本轮之后 / 立即插话；等待作答时把焦点移到请求卡片 |
+| Esc（焦点在驾驶区） | 驾驶时：忙或等待作答时中止本轮；卡片里的输入框中只离开输入框 |
+| 1 / 2 / 3 | 驾驶时：选第一张请求卡片的选项（焦点不在输入框时） |
 
 术语见 [CONTEXT.md](CONTEXT.md)，完整规格见 [docs/spec.md](docs/spec.md)，关键取舍见 [docs/adr/](docs/adr/)。
 
 ## 只读保证
 
-应用从不写入、移动或删除数据目录（默认 `~/.claude`）下的任何文件（[ADR-0002](docs/adr/0002-read-only.md)）。应用自己的状态只放在：
+应用从不写入、移动或删除数据目录（默认 `~/.claude`）下的任何文件（[ADR-0002](docs/adr/0002-read-only.md)）。驾驶时对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
 
 | 内容 | 位置 |
 |---|---|
 | 索引（可丢弃，随时重建） | `~/Library/Caches/dev.joy.claude-viewer/index.sqlite` |
 | 价格表缓存 | `~/Library/Caches/dev.joy.claude-viewer/pricing.json` |
 | 设置（数据目录覆盖） | `~/Library/Application Support/dev.joy.claude-viewer/settings.json` |
+| 驾驶日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.claude-viewer/drive/` |
+| 驾驶时粘贴的图片 | `~/Library/Caches/dev.joy.claude-viewer/images/` |
 
 应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 API 金额；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）。
 

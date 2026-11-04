@@ -1,6 +1,7 @@
 import { Copy, Ellipsis, FolderOpen } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { connFor, DriveBar, DriveConnect, useDrive, useDrivenButUnindexed } from "@/features/drive";
 import { useLeadingInset } from "@/features/layout";
 import { api } from "@/ipc";
 import type { ModelCost } from "@/ipc/bindings";
@@ -21,8 +22,23 @@ export function SessionHeader() {
   const showHidden = useUi((s) => s.showHidden);
   const setShowHidden = useUi((s) => s.setShowHidden);
   const inset = useLeadingInset();
-  const { data: d } = useSession(sessionId);
-  if (!sessionId || !d) return null;
+  const { data: d, error } = useSession(sessionId);
+  const driven = useDrive((s) => connFor(s, sessionId));
+  // A driven Session not in the index yet (a new one, before its first prompt).
+  const unindexed = useDrivenButUnindexed(error);
+  if (!sessionId) return null;
+  if (!d) {
+    if (!unindexed || !driven) return null;
+    return (
+      <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">新 Session</h1>
+        </div>
+        {driven.cwd && <div className="truncate text-[12px] text-secondary">{driven.cwd}</div>}
+        <DriveBar sessionId={sessionId} />
+      </header>
+    );
+  }
 
   const s = d.summary;
   const live = s.live;
@@ -36,6 +52,7 @@ export function SessionHeader() {
     <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
+        <DriveConnect sessionId={sessionId} />
         <label className="flex items-center gap-1.5 text-[12px] text-text/80">
           <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
           显示系统消息
@@ -91,6 +108,7 @@ export function SessionHeader() {
         <span>{s.toolCallCount} 次工具调用</span>
         {s.subagentCount > 0 && <span>{s.subagentCount} 个 Subagent</span>}
       </div>
+      <DriveBar sessionId={sessionId} />
     </header>
   );
 }

@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, CircleX, Loader2, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { ImageRef, ToolCall } from "@/ipc/bindings";
 import { parseAnsi, stripAnsi } from "@/lib/ansi";
@@ -8,6 +8,14 @@ import { TokenSpans, useHighlight } from "@/lib/shiki";
 import { useImage } from "@/queries/hooks";
 import { useUi } from "@/state/ui";
 import { formatBytes, toolKey, type OutputState, type ToolCtx } from "./data";
+
+/** What a call without a result is doing; a permission card says it waits for approval instead. */
+export const PendingText = createContext("执行中");
+
+/** The spinner of a call without a result. */
+export function PendingSpinner() {
+  return <Spinner text={useContext(PendingText)} />;
+}
 
 const durationText = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 
@@ -40,6 +48,7 @@ export function Shell({
   const key = toolKey(nodeId, call.toolUseId);
   const open = useUi((s) => s.expanded[key] ?? defaultOpen);
   const toggle = useUi((s) => s.toggleExpanded);
+  const pendingText = useContext(PendingText);
   const result = call.result;
   const dur =
     result?.timestampMs != null && startMs != null && result.timestampMs >= startMs ? result.timestampMs - startMs : null;
@@ -66,7 +75,7 @@ export function Shell({
         <span className="flex min-w-0 flex-1 items-center gap-2">{summary}</span>
         {status ??
           (result == null ? (
-            <span className="text-secondary">执行中</span>
+            <span className="text-secondary">{pendingText}</span>
           ) : failed ? (
             <span className="flex items-center gap-1 font-semibold">
               <CircleX size={13} strokeWidth={1.8} />

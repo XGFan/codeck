@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, Folder, GitBranch, X } from "lucide-react";
 import { useMemo, useRef, type KeyboardEvent } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { NewSessionButton, NewSessionError, useUnread } from "@/features/drive";
 import type { Drill, ProjectSummary, SessionSort, SessionSummary } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatCost, formatRelative, formatSpan, formatTokens } from "@/lib/format";
@@ -85,6 +86,7 @@ export function SessionList() {
           {nf.format(list.length)}
         </span>
         <span className="flex-1" />
+        <NewSessionButton />
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="排序方式"
@@ -108,6 +110,7 @@ export function SessionList() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <NewSessionError />
       {drill && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3.5 py-1.5 text-[12px]">
           <span className="text-secondary">筛选</span>
@@ -173,6 +176,7 @@ function SessionRow({
   onOpen: (id: string) => void;
 }) {
   const state = s.live?.status === "busy" ? "busy" : s.live?.status === "waiting" ? "waiting" : "idle";
+  const unread = useUnread(s.id);
   return (
     <div
       role="option"
@@ -200,6 +204,7 @@ function SessionRow({
           />
         )}
         <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
+        {unread && <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />}
         <span className="shrink-0 text-[11px] text-secondary">{formatRelative(byCreated ? s.createdMs : s.lastActiveMs)}</span>
       </div>
       <div className="flex items-center gap-2.5 text-[11px] text-secondary">

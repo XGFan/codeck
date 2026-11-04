@@ -2,7 +2,7 @@ import type { ToolCall, TranscriptScope } from "@/ipc/bindings";
 import { BashView, CompactView, EditView, GenericView, ReadView, TaskView, WriteView } from "./renderers";
 import { useToolCtx } from "./data";
 
-export { ImageRefs, ImageThumb } from "./parts";
+export { ImageRefs, ImageThumb, PendingText } from "./parts";
 export { requestFullOutput, toolKey } from "./data";
 
 const SUMMARY_KEYS = ["command", "file_path", "path", "pattern", "url", "query", "description", "prompt"];
