@@ -6,7 +6,7 @@
 # Used by `cargo test --test sandbox -- --ignored` and by scripts/sandbox/run-app.sh.
 set -eu
 B=${CC_GUI_SANDBOX:-/tmp/ccgui-sandbox}; PORT=${PORT:-18765}
-REAL=${CCRPC_BIN:-$(cd "$(dirname "$0")/../../../ccrpc" && pwd)/target/release/ccrpc}
+REAL=${CCRPC_BIN:-$(cd "$(dirname "$0")/../../../.." && pwd)/target/release/ccrpc}
 rm -rf "$B"; mkdir -p "$B/toh" "$B/cc" "$B/st" "$B/work" "$B/layouts"
 chmod 700 "$B/toh" "$B/st"
 W=$(cd "$B/work" && pwd -P)

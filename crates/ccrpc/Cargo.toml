@@ -1,27 +1,20 @@
 [package]
 name = "ccrpc"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.91"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
 
 [dependencies]
-toh-proto = { git = "ssh://git@github.com/XGFan/toh.git", branch = "master" }
-cv-core = { git = "ssh://git@github.com/XGFan/claude-code-viewer.git", branch = "main" }
-alacritty_terminal = "0.26"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-base64 = "0.22"
-libc = "0.2"
-notify = "8.2.0"
+toh-proto.workspace = true
+cv-core.workspace = true
+alacritty_terminal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+libc.workspace = true
+notify.workspace = true
+# ureq 2：与 workspace 的 ureq 3 并存，待统一。
 ureq = { version = "2", features = ["json"] }
-tempfile = "3"
-
-[dev-dependencies]
-
-# 本地联调期：toh 与 claude-viewer 跟 ccrpc 一起改，指向本地仓库；稳定后推 GitHub 再去掉这段。
-[patch."ssh://git@github.com/XGFan/toh.git"]
-toh-proto = { path = "../toh/crates/proto" }
-
-[patch."ssh://git@github.com/XGFan/claude-code-viewer.git"]
-cv-core = { path = "../claude-viewer/crates/cv-core" }
+tempfile.workspace = true

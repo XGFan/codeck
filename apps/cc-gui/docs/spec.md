@@ -1,6 +1,6 @@
 # cc-gui 规格（v0）
 
-cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机用。目的是验证 ccrpc 能否支撑日常开发：在日常使用里暴露 ccrpc 的缺口，据此改进它的稳定性与适用性。术语沿用 ccrpc 的 [CONTEXT.md](../../ccrpc/CONTEXT.md)。
+cc-gui 是基于 [ccrpc](../../../crates/ccrpc) 的 Claude Code 桌面 GUI，只在本机用。目的是验证 ccrpc 能否支撑日常开发：在日常使用里暴露 ccrpc 的缺口，据此改进它的稳定性与适用性。术语沿用 ccrpc 的 [CONTEXT.md](../../../crates/ccrpc/CONTEXT.md)。
 
 ## 1. 边界
 
@@ -83,7 +83,7 @@ cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机�
 ## 8. 测试
 
 - E2E：Playwright 跑 Vite 页面，mock Tauri IPC，mock 后端按 wire.jsonl 回放（收到命令回录下的响应，事件按录下的顺序推）。覆盖：首屏与翻页；prompt → block → turn_end；审批（三个选项、带 message 的拒绝）、question、choice（含 AI 识别标签）；busy 时 follow_up / steer 与撤销；`branch`、`session_changed`；ccrpc 退出横幅与重连。
-- fixture 来自 ccrpc 的 mock 端到端录下的 wire（脚本在 `../ccrpc` 跑 `cargo test --test e2e mock_ -- --ignored` 并拷入）；日常遇到的问题也截取 wire.jsonl 片段（脱敏）补进来。
+- fixture 来自 ccrpc 的 mock 端到端录下的 wire（脚本在 `crates/ccrpc` 跑 `cargo test --test e2e mock_ -- --ignored` 并拷入）；日常遇到的问题也截取 wire.jsonl 片段（脱敏）补进来。
 - Rust 后端单测 wire 日志的写入、轮转与过期清理；`src-tauri/tests/sandbox.rs`（`--ignored`）在 `scripts/sandbox` 的沙盒里（独立的 ToH / claude / ccrpc 目录、本地 mock 模型）经真实 ccrpc 与 claude 跑一轮审批、`get_messages` 与退出，检查三份日志。
 
 ## 9. 顺序

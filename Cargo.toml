@@ -1,11 +1,11 @@
 [workspace]
-members = ["crates/cv-core", "src-tauri"]
+members = ["crates/cv-core", "crates/ccrpc", "src-tauri", "apps/cc-gui/src-tauri"]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
@@ -27,13 +27,18 @@ parking_lot = "0.12.5"
 crossbeam-channel = "0.5.17"
 dirs = "7.0"
 tempfile = "3.27"
+anyhow = "1"
+base64 = "0.22"
+alacritty_terminal = "0.26"
+toh-proto = { git = "ssh://git@github.com/XGFan/toh.git", branch = "master" }
 
 tauri = { version = "2.12.1", features = ["specta"] }
 tauri-build = { version = "2.7.1", features = [] }
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 specta-typescript = "=0.0.12"
 tauri-plugin-opener = "2.7.0"
-tauri-plugin-clipboard-manager = "2.4.1"
+tauri-plugin-clipboard-manager = "2.5.0"
+tauri-plugin-dialog = "2.8.4"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 tracing-subscriber = "0.3.23"

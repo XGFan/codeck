@@ -41,6 +41,6 @@ cargo test --test e2e mock_ -- --ignored --test-threads=1                 # 端�
 - `transcript`：主线、Subagent Run 与 Workflow Run 的增量尾随（cv-core `raw`、`assemble`），产出内容块、Branch 与 Workflow 事件。
 - `session`：把以上合成状态机，执行命令、发事件；轮次以插件的 UserPromptSubmit / Stop / StopFailure 为准，审批与提问经 PermissionRequest 代答。
 
-依赖：cv-core（git，claude-viewer）、toh-proto（git，toh）。
+依赖：cv-core（同仓库 `crates/cv-core`）、toh-proto（git，toh；toh 是 ssh 依赖，根目录 `.cargo/config.toml` 让 cargo 用 git 命令行拉取。要与本地 toh 联调时在自己的 `.cargo/config.toml` 里加 `[patch]`，不要提交）。
 
 Commit message 风格：`feat|fix|docs|test|refactor: <中文描述>`，常用「——」补充原因或做法。

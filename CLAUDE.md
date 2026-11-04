@@ -4,6 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claude Viewer：只读的 macOS 桌面应用（Tauri 2 + React 19），用来搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session。
 
+## 仓库布局（monorepo）
+
+| 目录 | 内容 | 说明 |
+|---|---|---|
+| `crates/cv-core`、`src-tauri`、`src` | Claude Viewer 本体 | 本文件 |
+| `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
+| `apps/cc-gui` | cc-gui（过渡期，驾驶功能并入 viewer 后删除） | 见 [apps/cc-gui/CLAUDE.md](apps/cc-gui/CLAUDE.md) |
+
+一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）、一个 pnpm workspace（根包是 viewer，`apps/*` 是其他前端）。
+
 - 术语以 [CONTEXT.md](CONTEXT.md) 为准（Session / Project / Live Session / Subagent Run / Workflow Run / Branch / Main Line / Fork / Teammate Message），代码、注释、文案都用这些词，避开其中列出的 _Avoid_ 词。
 - 行为规格见 [docs/spec.md](docs/spec.md)（计数口径、用户输入判定、Main Line 规则等都在这里），关键取舍见 [docs/adr/](docs/adr/)。改动对外行为时同步更新 spec / README / CONTEXT。
 

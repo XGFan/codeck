@@ -1,10 +1,10 @@
 # cc-gui
 
-基于 [ccrpc](../ccrpc) 的 Claude Code 桌面 GUI（macOS，只在本机用）：在一个窗口里看本机 ToH clay 里所有 Claude Code Session，发提示词、插话、排队、答审批和提问、看 Subagent 过程。TUI 同时在 ToH Mac Client 里显示（共显），GUI 处理不了的界面回 TUI 处理。目的是在日常开发里验证 ccrpc，规格见 [docs/spec.md](docs/spec.md)。
+基于 [ccrpc](../../crates/ccrpc) 的 Claude Code 桌面 GUI（macOS，只在本机用）：在一个窗口里看本机 ToH clay 里所有 Claude Code Session，发提示词、插话、排队、答审批和提问、看 Subagent 过程。TUI 同时在 ToH Mac Client 里显示（共显），GUI 处理不了的界面回 TUI 处理。目的是在日常开发里验证 ccrpc，规格见 [docs/spec.md](docs/spec.md)。
 
 ## 前提
 
-- ccrpc：`cd ../ccrpc && cargo build --release && cp target/release/ccrpc ~/.local/bin/`，再 `ccrpc plugin install`（已在运行的 claude 要重启才加载插件，没加载的 Session 在侧栏里是灰的）。
+- ccrpc：在仓库根目录 `cargo build --release -p ccrpc && cp target/release/ccrpc ~/.local/bin/`，再 `ccrpc plugin install`（已在运行的 claude 要重启才加载插件，没加载的 Session 在侧栏里是灰的）。
 - PATH 里有 `toh`、`claude`（取自登录 shell：GUI 启动时跑一次 `$SHELL -l -c env`，从 Dock 启动也一样）。
 - 想让认不出的界面先经 AI 分析：在 shell 环境里设 `CCRPC_ANALYZER_API_KEY`（可选 `CCRPC_ANALYZER_BASE_URL`、`CCRPC_ANALYZER_MODEL`）。
 - 用哪个 ccrpc：环境变量 `CC_GUI_CCRPC`，否则 `~/.local/bin/ccrpc`，否则 PATH 里的。换了 ccrpc 的二进制后，在 Session 菜单里点“重连 ccrpc”。

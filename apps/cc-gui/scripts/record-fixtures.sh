@@ -3,7 +3,7 @@
 # no credits): every ccrpc's stdin / stdout, as cc-gui's wire.jsonl.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
-ccrpc=${CCRPC_DIR:-$here/../ccrpc}
+ccrpc=${CCRPC_DIR:-$here/../../crates/ccrpc}
 out=$(mktemp -d)
 (cd "$ccrpc" && CCRPC_E2E_WIRE_DIR="$out" cargo test --test e2e mock_ -- --ignored --test-threads=1)
 for name in tools session turns; do

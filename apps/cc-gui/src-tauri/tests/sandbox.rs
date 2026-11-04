@@ -2,7 +2,7 @@
 //! claude / ccrpc directories, the local mock model; nothing of the owner's is touched):
 //!
 //! ```sh
-//! (cd ../ccrpc && cargo build --release)
+//! (cargo build --release -p ccrpc)
 //! python3 -I scripts/sandbox/mock_model.py 18765 &
 //! cd src-tauri && cargo test --test sandbox -- --ignored --nocapture
 //! ```
@@ -72,7 +72,7 @@ fn relays_a_real_session_and_logs_it() {
     env.insert("CLAUDE_CONFIG_DIR".into(), s("cc"));
     env.insert("CCRPC_STATE_DIR".into(), s("st"));
     env.insert("CCRPC_LAYOUT_DIR".into(), s("layouts"));
-    if let Ok(toh) = root.join("../toh/target/debug").canonicalize() {
+    if let Ok(toh) = root.join("../../../toh/target/debug").canonicalize() {
         let path = env.get("PATH").cloned().unwrap_or_default();
         env.insert("PATH".into(), format!("{}:{path}", toh.display()));
     }
