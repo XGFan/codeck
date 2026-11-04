@@ -94,7 +94,10 @@ export interface TurnEndEvent {
 
 export interface SessionInfo {
   mode: string | null;
+  /** A model id (`claude-opus-4-7`), or a display name right after `/model` (`Sonnet 4.5`). */
   model: string | null;
+  /** low / medium / high / xhigh / max (or auto); null for a model without effort levels. */
+  effort?: string | null;
   context_tokens: number | null;
 }
 

@@ -69,8 +69,19 @@ interface Conn {
   fx: Fixture;
   cursor: number;
   state: unknown;
+  /** The last `session_info` (or `ready`): what a synthesized one changes. */
+  info: Record<string, unknown>;
   closed: boolean;
 }
+
+/** What `/model <alias>` sets in the mock: the display name ccrpc reports at once, and its effort mark. */
+const MOCK_MODELS: Record<string, { model: string; effort: string | null }> = {
+  default: { model: "Opus 4.7", effort: "xhigh" },
+  opus: { model: "Opus 4.7", effort: "xhigh" },
+  fable: { model: "Fable 5.1", effort: "high" },
+  sonnet: { model: "Sonnet 4.5", effort: null },
+  haiku: { model: "Haiku 4.5", effort: null },
+};
 
 type LineCb = (conn: string, msg: InMsg) => void;
 type ExitCb = (conn: string, code: number | null, stderr: string) => void;
@@ -105,6 +116,10 @@ function emit(id: string, msg: InMsg) {
   const c = conns.get(id);
   if (!c || c.closed) return;
   if (msg.type === "state") c.state = msg;
+  if (msg.type === "session_info" || msg.type === "ready") {
+    const { mode, model, effort, context_tokens } = msg as unknown as Record<string, unknown>;
+    c.info = { mode, model, effort: effort ?? null, context_tokens };
+  }
   for (const cb of lineCbs) cb(id, msg);
 }
 
@@ -154,6 +169,18 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
     case "send_now":
       later(() => emit(id, { type: "queue", items: [] }));
       return respond(id, msg, {});
+    // `/model X`, `/effort X`: ccrpc says what was set at once (the command's output, the TUI's mark).
+    case "set_model":
+    case "set_effort": {
+      if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
+      const next =
+        msg.type === "set_model"
+          ? (MOCK_MODELS[String(msg.model)] ?? { model: String(msg.model), effort: null })
+          : { model: c.info.model, effort: String(msg.level) };
+      respond(id, msg, {});
+      later(() => emit(id, { type: "session_info", ...c.info, ...next } as unknown as InMsg));
+      return;
+    }
     // Typed into the TUI; what it does shows on the screen, not in a reply.
     case "slash":
       return c.state && (c.state as { state?: string }).state !== "idle" ? respond(id, msg, null, "not_idle") : respond(id, msg, {});
@@ -164,7 +191,7 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
 
 function open(fx: Fixture): string {
   const id = `mock${++seq}`;
-  conns.set(id, { fx, cursor: 0, state: null, closed: false });
+  conns.set(id, { fx, cursor: 0, state: null, info: {}, closed: false });
   replay(id);
   return id;
 }

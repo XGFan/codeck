@@ -5,6 +5,7 @@ import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
 import type { ConnState } from "./conn";
+import { ModelPicker } from "./Model";
 import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useDrive } from "./store";
 
 const MODES: { id: string; label: string }[] = [
@@ -142,11 +143,7 @@ export function DriveFooter({ c, children }: { c: ConnState; children?: React.Re
       {children}
       <span className="flex-1" />
       {c.contextTokens != null && <ContextRing tokens={c.contextTokens} model={c.model} />}
-      {c.model && (
-        <span data-testid="drive-model" className="ml-1.5 max-w-48 truncate text-text/90" title={c.model}>
-          {c.model}
-        </span>
-      )}
+      <ModelPicker c={c} />
     </div>
   );
 }

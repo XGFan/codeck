@@ -34,6 +34,7 @@ export interface ConnState {
   waiting: Waiting | null;
   mode: string | null;
   model: string | null;
+  effort: string | null;
   contextTokens: number | null;
   requests: Request[];
   progress: ProgressEvent | null;
@@ -63,6 +64,7 @@ export function initial(conn: string, holderId: string | null): ConnState {
     waiting: null,
     mode: null,
     model: null,
+    effort: null,
     contextTokens: null,
     requests: [],
     progress: null,
@@ -110,6 +112,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         waiting: m.waiting ?? null,
         mode: m.mode ?? null,
         model: m.model ?? null,
+        effort: m.effort ?? null,
         contextTokens: m.context_tokens ?? null,
         queue: m.queue ?? [],
       };
@@ -142,7 +145,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "unrecognized":
       return upsertRequest(s, { ...m, request_id: `unrecognized:${m.context}` });
     case "session_info":
-      return { ...s, mode: m.mode, model: m.model, contextTokens: m.context_tokens };
+      return { ...s, mode: m.mode, model: m.model, effort: m.effort ?? null, contextTokens: m.context_tokens };
     case "progress":
       return s.state === "busy" ? { ...s, progress: m } : s;
     case "follow_up_failed":
@@ -162,6 +165,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         waiting: s.waiting,
         mode: s.mode,
         model: s.model,
+        effort: s.effort,
       };
     case "session_exit":
       return { ...s, sessionExited: true, state: "exited", requests: [], progress: null };

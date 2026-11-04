@@ -555,3 +555,43 @@ test("Project 筛选不影响 Dock 角标：筛掉的 Project 里等待作答的
   await page.waitForTimeout(500);
   expect((await probe(page)).badge).toBe(1);
 });
+
+test("模型与思考等级：底栏右侧的选择器（照 Claude Code Desktop），空闲时可切换，切换后立即显示", async ({ page }) => {
+  await drive(page, RICH);
+  await expect(state(page)).toContainText("空闲");
+  const trigger = page.getByTestId("drive-model");
+  await expect(trigger).toBeEnabled();
+  await expect(trigger).toHaveText(/^Opus 5\.5/);
+  // The recording has no effort mark: no Effort entry.
+  await trigger.click();
+  const menu = page.getByTestId("model-menu");
+  await expect(menu.getByRole("menuitemcheckbox", { name: "Opus" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("effort-trigger")).toHaveCount(0);
+  await menu.getByRole("menuitemcheckbox", { name: "Fable" }).click();
+  await expect.poll(() => lastSent(page, "set_model")).toMatchObject({ model: "fable" });
+  await expect(trigger).toHaveText(/^Fable 5\.1\s*High/);
+
+  // Effort in its submenu; xhigh reads Extra.
+  await trigger.click();
+  await page.getByTestId("effort-trigger").hover();
+  const effort = page.getByTestId("effort-menu");
+  await expect(effort.getByRole("menuitemcheckbox", { name: "High" })).toHaveAttribute("aria-checked", "true");
+  // By keyboard: the test's pointer jumps (a real one stays inside the submenu's grace area).
+  await effort.getByRole("menuitemcheckbox", { name: "Extra" }).focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => lastSent(page, "set_effort")).toMatchObject({ level: "xhigh" });
+  await expect(page.getByTestId("drive-effort")).toHaveText("Extra");
+
+  // Any other model by name.
+  await trigger.click();
+  await page.getByTestId("other-model-trigger").hover();
+  await page.getByTestId("other-model").fill("claude-opus-4-6");
+  await page.getByTestId("other-model").press("Enter");
+  await expect.poll(() => lastSent(page, "set_model")).toMatchObject({ model: "claude-opus-4-6" });
+  await expect(trigger).toHaveText(/^Opus 4\.6/);
+
+  // Busy: Claude Code takes /model only when idle.
+  await send(page, "改一下 README");
+  await expect(state(page)).toContainText("工作中");
+  await expect(trigger).toBeDisabled();
+});

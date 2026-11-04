@@ -6,7 +6,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 - **读得舒服**：参考 Codex 的排版，工具调用是一行字，连续的合成「读取 1 个文件、编辑 2 个文件、运行 1 条命令」一行，Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话区。
 - **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。
 - **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork 复制的历史不重复计算），Session 列表可按 Cost 排序，统计页汇总总额与 Session 排行。
-- **驾驶**：ToH clay 里装了 ccrpc 插件的 Session，在标题栏点「驾驶」后可以直接发提示词（可粘贴截图）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill）、忙时插话（和终端里一样进 Claude Code 的队列）、作答审批 / 提问 / 选择、切换权限模式、停止后台任务；也可以选目录新建 Session。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
+- **驾驶**：ToH clay 里装了 ccrpc 插件的 Session，在标题栏点「驾驶」后可以直接发提示词（可粘贴截图）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill）、忙时插话（和终端里一样进 Claude Code 的队列）、作答审批 / 提问 / 选择、切换权限模式、模型与思考等级、停止后台任务；也可以选目录新建 Session。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：默认看本周期（自定义每周重置时间）的用量，可切到月份或最近 7 / 30 / 90 天，周期和月份可前后翻；输入、输出 token 与缓存命中率，每日 token（全部 / 输入 / 输出，后两者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
 
 ## 快捷键

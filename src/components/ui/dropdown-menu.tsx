@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/cn";
@@ -62,6 +62,44 @@ export function DropdownMenuCheckboxItem({
       {children}
     </DropdownMenuPrimitive.CheckboxItem>
   );
+}
+
+export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
+
+/** An item that opens a submenu (hover or →), with a value and an arrow at the right. */
+export function DropdownMenuSubTrigger({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.SubTrigger>) {
+  return (
+    <DropdownMenuPrimitive.SubTrigger
+      className={cn(
+        "flex cursor-default items-center gap-2 rounded px-2 py-1 text-[13px] outline-none data-[highlighted]:bg-selection data-[state=open]:bg-selection",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <ChevronRight size={13} className="ml-auto text-secondary" aria-hidden />
+    </DropdownMenuPrimitive.SubTrigger>
+  );
+}
+
+export function DropdownMenuSubContent({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        className={cn("z-50 min-w-36 rounded-md border border-border bg-ground p-1 shadow-lg", className)}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  );
+}
+
+/** A small grey heading inside a menu. */
+export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Label>) {
+  return <DropdownMenuPrimitive.Label className={cn("px-2 pt-1 pb-0.5 text-[11.5px] text-secondary", className)} {...props} />;
 }
 
 export function DropdownMenuSeparator({
