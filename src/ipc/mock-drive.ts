@@ -88,6 +88,8 @@ type ExitCb = (conn: string, code: number | null, stderr: string) => void;
 const lineCbs = new Set<LineCb>();
 const exitCbs = new Set<ExitCb>();
 const conns = new Map<string, Conn>();
+/** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
+const closedPanes = new Set<string>();
 let seq = 0;
 
 /** What the E2E tests look at. */
@@ -181,6 +183,18 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       later(() => emit(id, { type: "session_info", ...c.info, ...next } as unknown as InMsg));
       return;
     }
+    // Esc; like ccrpc, the state changes before the reply.
+    case "abort":
+      later(() => emit(id, { type: "state", state: "idle" } as InMsg));
+      return respond(id, msg, { state: "idle" });
+    // `/exit`; with `close_pane` the Pane ends too and leaves `ccrpc ls`.
+    case "exit":
+      if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
+      if (msg.close_pane) closedPanes.add(c.fx.ls.holder_id);
+      respond(id, msg, {});
+      later(() => emit(id, { type: "state", state: "exited" } as InMsg));
+      later(() => emit(id, { type: "session_exit" } as InMsg));
+      return;
     // Typed into the TUI; what it does shows on the screen, not in a reply.
     case "slash":
       return c.state && (c.state as { state?: string }).state !== "idle" ? respond(id, msg, null, "not_idle") : respond(id, msg, {});
@@ -247,7 +261,7 @@ export function createMockDrive(): DriveApi {
       analyzer: analyzerInfo(),
       logRoot: "/mock/Logs/dev.joy.codeck/drive",
     }),
-    driveList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session").map((f) => ({ ...f.ls }))),
+    driveList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
     driveSetAnalyzer: async (apiKey, baseUrl, model) => {
       probe.analyzerSaves++;
       const blank = (v: string | null) => (v?.trim() ? v.trim() : null);

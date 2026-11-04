@@ -288,6 +288,48 @@ test("Pane 里换了 Session（/clear）时选中跟着切换；复制排查信�
   await expect(page.getByTestId("drive-controls")).toHaveCount(0);
 });
 
+test("关闭：空闲且没有后台任务时直接结束 Session 与 Pane，并断开", async ({ page }) => {
+  await drive(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("drive-close").click();
+  await expect(page.getByTestId("drive-close-confirm")).toHaveCount(0);
+  await expect(page.getByTestId("drive-panel")).toHaveCount(0);
+  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true, stop_tasks: true });
+  expect((await probe(page)).sent.some((s) => s.msg.type === "abort")).toBe(false);
+  // The Pane is gone from `ccrpc ls`: nothing to drive.
+  await expect(page.getByTestId("drive-connect")).toHaveCount(0);
+  await expect(page.getByTestId("drive-disconnect")).toHaveCount(0);
+});
+
+test("关闭：还有后台任务时先确认，取消则什么也不发", async ({ page }) => {
+  await drive(page, RICH);
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("drive-close").click();
+  const confirm = page.getByTestId("drive-close-confirm");
+  await expect(confirm).toContainText("停掉 1 个后台任务");
+  await confirm.getByRole("button", { name: "取消" }).click();
+  await expect(confirm).toHaveCount(0);
+  expect(await lastSent(page, "exit")).toBeUndefined();
+  await expect(page.getByTestId("drive-panel")).toBeVisible();
+
+  await page.getByTestId("drive-close").click();
+  await page.getByTestId("drive-close-ok").click();
+  await expect(page.getByTestId("drive-panel")).toHaveCount(0);
+  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true, stop_tasks: true });
+});
+
+test("关闭：忙时确认后先中止本轮再结束", async ({ page }) => {
+  await drive(page, RICH);
+  await send(page, "改一下 README");
+  await expect(state(page)).toContainText("工作中");
+  await page.getByTestId("drive-close").click();
+  await expect(page.getByTestId("drive-close-confirm")).toContainText("中止本轮、停掉 1 个后台任务");
+  await page.getByTestId("drive-close-ok").click();
+  await expect(page.getByTestId("drive-panel")).toHaveCount(0);
+  const types = (await probe(page)).sent.map((s) => s.msg.type);
+  expect(types.slice(types.indexOf("abort"))).toEqual(["abort", "exit"]);
+});
+
 test("新建 Session：选目录后选中它，进索引前显示占位且可以发送", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("new-session").click();

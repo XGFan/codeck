@@ -1,5 +1,7 @@
-import { ChevronDown, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
+import { ChevronDown, Power, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
@@ -31,8 +33,8 @@ export const footBtn = "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-s
 
 /**
  * 「驾驶」 in the header's title row, for a Session in `ccrpc ls` that is not connected (disabled until its ccrpc
- * plugin has reported), or whose connection ended with the Session (connecting again replaces it). 「断开」 in its
- * place while connected; the other controls are at the foot of the input box ([`DriveFooter`]).
+ * plugin has reported), or whose connection ended with the Session (connecting again replaces it). 「断开」 and
+ * 「关闭」 in its place while connected; the other controls are at the foot of the input box ([`DriveFooter`]).
  */
 export function DriveConnect({ sessionId }: { sessionId: string }) {
   const entry = useDrive((s) => lsEntryFor(s, sessionId));
@@ -43,13 +45,16 @@ export function DriveConnect({ sessionId }: { sessionId: string }) {
   const error = useDrive((s) => s.errors[sessionId]);
   const [connecting, setConnecting] = useState(false);
 
-  // Driving: 「断开」 in the same place (closes ccrpc's stdin; the Session keeps running).
+  // Driving: 「断开」 in the same place (closes ccrpc's stdin; the Session keeps running), and 「关闭」 beside it.
   if (c && isLive(c))
     return (
-      <button type="button" data-testid="drive-disconnect" onClick={() => void disconnect(c.conn)} className={pill} title="断开驾驶，Session 照常运行">
-        <Unlink size={13} strokeWidth={1.6} aria-hidden />
-        断开
-      </button>
+      <>
+        <button type="button" data-testid="drive-disconnect" onClick={() => void disconnect(c.conn)} className={pill} title="断开驾驶，Session 照常运行">
+          <Unlink size={13} strokeWidth={1.6} aria-hidden />
+          断开
+        </button>
+        <DriveClose c={c} />
+      </>
     );
   // Not driving, or the driven Session ended (it may be back: `claude --resume` in the terminal).
   if (!entry || taken) return error ? <DriveError errKey={sessionId} text={error} /> : null;
@@ -71,6 +76,54 @@ export function DriveConnect({ sessionId }: { sessionId: string }) {
         <ShipWheel size={13} strokeWidth={1.6} aria-hidden />
         驾驶
       </button>
+    </>
+  );
+}
+
+/**
+ * 「关闭」: disconnects and ends the Session with its Pane (ccrpc `exit`, aborting a running turn first). A running
+ * turn or background task is ended only after a confirmation.
+ */
+function DriveClose({ c }: { c: ConnState }) {
+  const close = useDrive((s) => s.close);
+  const [confirming, setConfirming] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const busy = c.state === "busy" || c.state === "waiting";
+  const running = c.tasks.filter((t) => t.status === "running").length;
+  const go = async () => {
+    setConfirming(false);
+    setClosing(true);
+    await close(c.conn);
+    setClosing(false);
+  };
+  const ends = [busy && "中止本轮", running > 0 && `停掉 ${running} 个后台任务`].filter(Boolean).join("、");
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="drive-close"
+        disabled={closing || !(busy || c.state === "idle")}
+        onClick={() => (busy || running > 0 ? setConfirming(true) : void go())}
+        className={pill}
+        title="断开驾驶，结束 Session 并关闭它的 Pane"
+      >
+        <Power size={13} strokeWidth={1.6} aria-hidden />
+        {closing ? "关闭中…" : "关闭"}
+      </button>
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent data-testid="drive-close-confirm" className="w-[400px]">
+          <DialogTitle>关闭 Session？</DialogTitle>
+          <DialogDescription className="text-[13px] text-secondary">将{ends}，结束 Session 并关闭它的 Pane。</DialogDescription>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirming(false)}>
+              取消
+            </Button>
+            <Button data-testid="drive-close-ok" onClick={() => void go()}>
+              关闭
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

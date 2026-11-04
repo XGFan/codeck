@@ -103,6 +103,8 @@ interface DriveStore {
   /** Sends a command and waits for its response (never rejects: failures are responses). */
   command(conn: string, msg: Record<string, unknown>): Promise<ResponseMsg>;
   disconnect(conn: string): Promise<void>;
+  /** 「关闭」: aborts a running turn, ends claude (stopping background tasks) and its Pane, then disconnects. */
+  close(conn: string): Promise<void>;
   reconnect(conn: string): Promise<void>;
   refreshTasks(conn: string): Promise<void>;
   dropRequest(conn: string, requestId: string): void;
@@ -440,6 +442,25 @@ export const useDrive = create<DriveStore>((set, get) => {
       closing.add(conn);
       // The backend no longer knows it (its ccrpc already exited): nothing is left to wait for.
       await api.driveDisconnect(conn).catch(() => removeConn(conn));
+    },
+
+    async close(conn) {
+      const c = get().conns[conn];
+      if (!c || !isLive(c)) return;
+      void api.driveGuiLog(conn, "close");
+      const fail = (r: ResponseMsg) => {
+        closing.delete(conn);
+        setErr(errorKey(c), `关闭失败：${r.error?.message ?? r.error?.code ?? ""}`);
+      };
+      if (c.state === "busy" || c.state === "waiting") {
+        const r = await get().command(conn, { type: "abort" });
+        if (!r.success) return fail(r);
+      }
+      // Its ccrpc may exit once the Pane is gone: that exit is not a failure.
+      closing.add(conn);
+      const r = await get().command(conn, { type: "exit", close_pane: true, stop_tasks: true });
+      if (!r.success) return fail(r);
+      await get().disconnect(conn);
     },
 
     async reconnect(conn) {
