@@ -733,7 +733,8 @@ impl Tailer {
                     return;
                 };
                 // A background task that ended while the main line was busy is told this way.
-                if q.command_mode.as_deref() == Some("task-notification") {
+                let kind = q.origin.as_ref().and_then(|o| o.kind.as_deref());
+                if q.command_mode.as_deref() == Some("task-notification") || kind == Some("task-notification") {
                     if let Some((id, status)) = task_notification(&text)
                         && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
                     {

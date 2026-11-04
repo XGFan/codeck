@@ -169,11 +169,7 @@ export const useDrive = create<DriveStore>((set, get) => {
     }
     exitWaiters.get(conn)?.();
     exitWaiters.delete(conn);
-    for (const [id, p] of pending) {
-      if (p.conn !== conn) continue;
-      pending.delete(id);
-      p.resolve({ type: "response", id, command: "", success: false, error: { code: "exited", message: "ccrpc 已退出" } });
-    }
+    failPending(conn);
     selectOnReady.delete(conn);
     if (closing.delete(conn)) return removeConn(conn);
     update(conn, (c) => ({ ...c, procExit: { code, stderr }, requests: [], progress: null }));
@@ -187,7 +183,17 @@ export const useDrive = create<DriveStore>((set, get) => {
       else onExit(conn, e.code, e.stderr);
     }
   };
+  /** Commands still waiting on `conn` get a failure (its ccrpc exited or is no longer followed). */
+  const failPending = (conn: string) => {
+    for (const [id, p] of pending) {
+      if (p.conn !== conn) continue;
+      pending.delete(id);
+      p.resolve({ type: "response", id, command: "", success: false, error: { code: "exited", message: "ccrpc 已退出" } });
+    }
+  };
   const removeConn = (conn: string) => {
+    // Its exit may still come and is then dropped: nothing would answer what waits on it.
+    failPending(conn);
     removed.add(conn);
     closing.delete(conn);
     exitWaiters.get(conn)?.();

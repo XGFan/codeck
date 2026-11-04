@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey } from "@/lib/hotkeys";
-import { useSessionList } from "@/queries";
+import type { SessionQuery } from "@/ipc/bindings";
+import { useSessionList, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
@@ -19,9 +20,13 @@ export { connFor, useDrive } from "./store";
  * The Viewer's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
  * arrives, from the Session list it already loaded (unfiltered at startup) — no query of its own.
  */
+/** Every Session, unfiltered: the Live set until the first `LiveChanged` snapshot arrives. */
+const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
+
 function useLive(): { id: string; waiting: boolean }[] {
   const live = useDrive((s) => s.live);
-  const { data: list } = useSessionList();
+  // Not the list on screen: its project / time filter would hide Live Sessions elsewhere.
+  const { data: list } = useSessions(ALL_SESSIONS, live == null);
   return useMemo(
     () =>
       live

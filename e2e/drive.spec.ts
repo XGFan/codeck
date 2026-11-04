@@ -322,3 +322,16 @@ test("切回窗口时当前 Session 无事而别处在等作答：顶部一行�
   await expect(page.getByTestId("header").getByRole("heading", { name: NO_PLUGIN })).toBeVisible();
   await expect(page.getByTestId("elsewhere")).toHaveCount(0);
 });
+
+test("Project 筛选不影响 Dock 角标：筛掉的 Project 里等待作答的 Session 仍计入", async ({ page }) => {
+  await page.goto("/");
+  // The LCP Live Session (orbit-web) waits.
+  await expect.poll(async () => (await probe(page)).badge).toBe(1);
+  await page.keyboard.press("Meta+K");
+  await page.getByTestId("search").getByRole("combobox").fill("homelab");
+  await page.getByTestId("search-project").filter({ hasText: "homelab" }).click();
+  await expect(page.getByTestId("project-chip")).toContainText("homelab");
+  await expect(page.getByTestId("session-row").filter({ hasText: NO_PLUGIN })).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect((await probe(page)).badge).toBe(1);
+});
