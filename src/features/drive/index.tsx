@@ -219,8 +219,13 @@ function Panel({ c }: { c: ConnState }) {
             </button>
           </div>
         ))}
-        <Requests c={c} />
-        <Composer c={c} />
+        {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
+        {!c.procExit && !c.sessionExited && (
+          <>
+            <Requests c={c} />
+            <Composer c={c} />
+          </>
+        )}
       </div>
     </div>
   );

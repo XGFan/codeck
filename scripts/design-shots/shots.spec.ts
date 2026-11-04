@@ -186,6 +186,12 @@ test("驾驶 · 选择卡片与面板", async ({ page }) => {
   await send(page, "/cost");
   await expect(page.getByTestId("screen-card")).toBeVisible();
   await shot(page, "now-drive", "drive-screen", "认不出的界面（/cost 面板）可关闭");
+
+  // Ends right after connecting (as if `/exit` in the terminal): one line, 「驾驶」 back in the header.
+  await drive(page, "（无标题）");
+  await expect(page.getByTestId("session-exit")).toBeVisible();
+  await expect(page.getByTestId("drive-connect")).toBeVisible();
+  await shot(page, "now-drive", "drive-session-exit", "Session 在终端里退出后（可再次驾驶）");
 });
 
 test("搜索与统计", async ({ page }) => {

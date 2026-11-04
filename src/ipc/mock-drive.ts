@@ -8,7 +8,7 @@
 // get_tasks) are answered from what was replayed. `new-session` is not listed:
 // `driveNew` opens it.
 
-import type { InMsg, LsEntry } from "@/features/drive/protocol";
+import type { InMsg, LsEntry, Task } from "@/features/drive/protocol";
 import type { Api, Unlisten } from "./api";
 
 interface WireLine {
@@ -20,6 +20,8 @@ interface WireLine {
   ls?: Partial<LsEntry>;
   /** On the meta line: `driveConnect` returns this long after the replay starts (events before the id). */
   connect_delay_ms?: number;
+  /** On the meta line: what `get_tasks` answers (the recording's background tasks). */
+  tasks?: Task[];
 }
 
 interface Fixture {
@@ -27,6 +29,7 @@ interface Fixture {
   lines: WireLine[];
   ls: LsEntry;
   connectDelayMs: number;
+  tasks: Task[];
 }
 
 const raw = import.meta.glob("/src/mocks/data/drive/*.jsonl", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
@@ -54,7 +57,7 @@ function parse(name: string, text: string): Fixture {
     title: name,
     ...meta,
   };
-  return { name, lines: lines.filter((l) => l.dir !== "meta"), ls, connectDelayMs: metaLine?.connect_delay_ms ?? 0 };
+  return { name, lines: lines.filter((l) => l.dir !== "meta"), ls, connectDelayMs: metaLine?.connect_delay_ms ?? 0, tasks: metaLine?.tasks ?? [] };
 }
 
 const fixtures: Fixture[] = Object.entries(raw)
@@ -143,7 +146,7 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       return respond(id, msg, s);
     }
     case "get_tasks":
-      return respond(id, msg, { tasks: [] });
+      return respond(id, msg, { tasks: c.fx.tasks });
     // ctrl+enter: the TUI's queue goes out at once.
     case "send_now":
       later(() => emit(id, { type: "queue", items: [] }));

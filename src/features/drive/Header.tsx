@@ -5,7 +5,7 @@ import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
 import type { ConnState } from "./conn";
-import { connFor, errorKey, holderConnected, lsEntryFor, useDrive } from "./store";
+import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useDrive } from "./store";
 
 const MODES: { id: string; label: string }[] = [
   { id: "manual", label: "手动审批" },
@@ -29,18 +29,28 @@ const smallPill = "flex h-6 items-center gap-1 rounded-md border border-border b
 
 /**
  * 「驾驶」 in the header's title row, for a Session in `ccrpc ls` that is not connected (disabled until its ccrpc
- * plugin has reported). Nothing once connected: the controls are at the foot of the input box ([`DriveFooter`]).
+ * plugin has reported), or whose connection ended with the Session (connecting again replaces it). 「断开」 in its
+ * place while connected; the other controls are at the foot of the input box ([`DriveFooter`]).
  */
 export function DriveConnect({ sessionId }: { sessionId: string }) {
   const entry = useDrive((s) => lsEntryFor(s, sessionId));
   const c = useDrive((s) => connFor(s, sessionId));
   const taken = useDrive((s) => (entry ? holderConnected(s, entry.holder_id) : false));
   const connect = useDrive((s) => s.connect);
+  const disconnect = useDrive((s) => s.disconnect);
   const error = useDrive((s) => s.errors[sessionId]);
   const [connecting, setConnecting] = useState(false);
 
-  if (c && !c.procExit) return null;
-  if (!entry || (taken && !c)) return error ? <DriveError errKey={sessionId} text={error} /> : null;
+  // Driving: 「断开」 in the same place (closes ccrpc's stdin; the Session keeps running).
+  if (c && isLive(c))
+    return (
+      <button type="button" data-testid="drive-disconnect" onClick={() => void disconnect(c.conn)} className={pill} title="断开驾驶，Session 照常运行">
+        <Unlink size={13} strokeWidth={1.6} aria-hidden />
+        断开
+      </button>
+    );
+  // Not driving, or the driven Session ended (it may be back: `claude --resume` in the terminal).
+  if (!entry || taken) return error ? <DriveError errKey={sessionId} text={error} /> : null;
   return (
     <>
       {error && <DriveError errKey={sessionId} text={error} />}
@@ -74,22 +84,21 @@ function DriveError({ errKey, text }: { errKey: string; text: string }) {
 
 /**
  * The drive controls at the foot of the input box (as in the terminal): permission mode (`set_mode`; idle or
- * busy), model, context tokens, then `children` (pasted images, background tasks) and 「断开」. The connection
- * state shows in the header's status word.
+ * busy), model, context tokens, then `children` (pasted images, background tasks) at the right. The connection
+ * state shows in the header's status word, 「断开」 beside it ([`DriveConnect`]).
  */
 export function DriveFooter({ c, children }: { c: ConnState; children?: React.ReactNode }) {
   const command = useDrive((s) => s.command);
-  const disconnect = useDrive((s) => s.disconnect);
   const setError = useDrive((s) => s.setError);
   const error = useDrive((s) => s.errors[errorKey(c)]);
-  const live = !c.sessionExited && !c.procExit;
+  const live = isLive(c);
   const mode = MODES.find((m) => m.id === c.mode);
   const setMode = async (id: string) => {
     const r = await command(c.conn, { type: "set_mode", mode: id });
     if (!r.success) setError(errorKey(c), `切换权限模式失败：${r.error?.message ?? ""}`);
   };
   return (
-    <div data-testid="drive-controls" className="flex min-w-0 items-center gap-2.5 text-[12px] text-secondary">
+    <div data-testid="drive-controls" className="flex min-w-0 flex-1 items-center gap-2.5 text-[12px] text-secondary">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button type="button" data-testid="drive-mode" disabled={!live || !(c.state === "idle" || c.state === "busy")} className={smallPill}>
@@ -110,12 +119,6 @@ export function DriveFooter({ c, children }: { c: ConnState; children?: React.Re
       {error && <DriveError errKey={errorKey(c)} text={error} />}
       <span className="flex-1" />
       {children}
-      {live && (
-        <button type="button" data-testid="drive-disconnect" onClick={() => void disconnect(c.conn)} className={smallPill} title="断开驾驶，Session 照常运行">
-          <Unlink size={12} strokeWidth={1.6} aria-hidden />
-          断开
-        </button>
-      )}
     </div>
   );
 }

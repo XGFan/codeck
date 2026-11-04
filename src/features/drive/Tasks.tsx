@@ -1,26 +1,33 @@
 import { Layers, Square } from "lucide-react";
 import { Popover } from "radix-ui";
+import { useState } from "react";
 import type { ConnState } from "./conn";
 import { errorKey, useDrive } from "./store";
 
 const KIND: Record<string, string> = { agent: "Subagent", shell: "Shell", workflow: "Workflow" };
 
-/** Background tasks: a count beside the input box, the list (with stop) in a popover. */
+/**
+ * Background tasks: the running ones' count beside the input box (nothing when none runs), the list (with stop)
+ * in a popover; finished ones only on request.
+ */
 export function Tasks({ c }: { c: ConnState }) {
   const command = useDrive((s) => s.command);
   const refresh = useDrive((s) => s.refreshTasks);
   const setError = useDrive((s) => s.setError);
+  const [showDone, setShowDone] = useState(false);
   const running = c.tasks.filter((t) => t.status === "running");
-  if (c.tasks.length === 0) return null;
+  const done = c.tasks.length - running.length;
+  if (running.length === 0) return null;
+  const shown = showDone ? c.tasks : running;
   return (
     <Popover.Root onOpenChange={(o) => o && void refresh(c.conn)}>
       <Popover.Trigger className="flex h-6 items-center gap-1 rounded px-2 text-[12px] text-secondary hover:bg-selection" data-testid="tasks">
-        <Layers size={12} aria-hidden /> {running.length > 0 ? `${running.length} 个后台任务` : "后台任务"}
+        <Layers size={12} aria-hidden /> {running.length} 个后台任务
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content align="end" sideOffset={4} className="z-50 w-96 rounded-md border border-border bg-ground p-2 shadow-lg">
-          <ul className="max-h-80 space-y-1 overflow-y-auto">
-            {c.tasks.map((t) => (
+          <ul className="max-h-80 space-y-1 overflow-y-auto" data-testid="tasks-list">
+            {shown.map((t) => (
               <li key={t.id} className="flex items-center gap-2 rounded px-2 py-1 text-[12px]">
                 <span className="shrink-0 text-secondary">{KIND[t.kind] ?? t.kind}</span>
                 <span className="min-w-0 flex-1 truncate" title={t.command ?? t.description ?? ""}>
@@ -46,6 +53,11 @@ export function Tasks({ c }: { c: ConnState }) {
               </li>
             ))}
           </ul>
+          {done > 0 && (
+            <button type="button" onClick={() => setShowDone((v) => !v)} className="mt-1 px-2 text-[11px] text-secondary hover:text-text" data-testid="tasks-done">
+              {showDone ? "隐藏已结束的" : `显示已结束的（${done}）`}
+            </button>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

@@ -105,7 +105,13 @@ export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
 
 /** A Holder already has a live connection (possibly to another Session after `session_changed`). */
 export const holderConnected = (s: Pick<Lookup, "conns">, holderId: string) =>
-  Object.values(s.conns).some((c) => c.holderId === holderId && !c.procExit);
+  Object.values(s.conns).some((c) => c.holderId === holderId && isLive(c));
+
+/**
+ * A connection that still drives its Session. After `session_exit` ccrpc keeps running but drives nothing: the
+ * Session may come back (`claude --resume` in the terminal) under a new process, which needs a new attach.
+ */
+export const isLive = (c: ConnState) => !c.procExit && !c.sessionExited;
 
 export const draftKey = (c: ConnState) => c.sessionId ?? c.conn;
 /** Where a connection's errors are shown: its Session (the connection before it has one). */
@@ -195,6 +201,22 @@ export const useDrive = create<DriveStore>((set, get) => {
       delete conns[conn];
       return { conns };
     });
+  };
+  /** Closes a connection's ccrpc (if still running), waits for it to exit (≤5 s), and drops the connection. */
+  const closeAndWait = async (conn: string) => {
+    const c = get().conns[conn];
+    void api.driveGuiLog(conn, "close (replaced)");
+    if (c && !c.procExit) {
+      const gone = new Promise<void>((resolve) => {
+        exitWaiters.set(conn, resolve);
+        window.setTimeout(resolve, 5000);
+      });
+      closing.add(conn);
+      await api.driveDisconnect(conn).catch(() => removeConn(conn));
+      await gone;
+      exitWaiters.delete(conn);
+    }
+    removeConn(conn);
   };
   const setErr = (key: string, e: string | null) =>
     set((s) => {
@@ -310,8 +332,10 @@ export const useDrive = create<DriveStore>((set, get) => {
     async connect(holderId, sessionId) {
       setErr(sessionId, null);
       void api.driveGuiLog(null, `connect ${holderId}`);
-      // A connection that exited is replaced.
-      set((s) => ({ conns: Object.fromEntries(Object.entries(s.conns).filter(([, c]) => c.holderId !== holderId || !c.procExit)) }));
+      // Connections that drive nothing any more (ccrpc exited, or the Session ended and was resumed since) are
+      // replaced; a ccrpc still attached must be gone first, a second attach to the Session is refused.
+      const stale = Object.values(get().conns).filter((c) => (c.holderId === holderId || c.sessionId === sessionId) && !isLive(c));
+      await Promise.all(stale.map((c) => closeAndWait(c.conn)));
       try {
         addConn(await api.driveConnect(holderId), holderId);
       } catch (e) {
@@ -366,18 +390,7 @@ export const useDrive = create<DriveStore>((set, get) => {
       const c = get().conns[conn];
       if (!c?.holderId) return;
       void api.driveGuiLog(conn, `reconnect ${c.holderId}`);
-      if (!c.procExit) {
-        // The old ccrpc must be gone first: a second attach to the Session is refused.
-        const gone = new Promise<void>((resolve) => {
-          exitWaiters.set(conn, resolve);
-          window.setTimeout(resolve, 5000);
-        });
-        closing.add(conn);
-        await api.driveDisconnect(conn).catch(() => removeConn(conn));
-        await gone;
-        exitWaiters.delete(conn);
-      }
-      removeConn(conn);
+      await closeAndWait(conn);
       try {
         addConn(await api.driveConnect(c.holderId), c.holderId);
       } catch (e) {

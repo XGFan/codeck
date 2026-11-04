@@ -134,11 +134,7 @@ export function Composer({ c }: { c: ConnState }) {
 
   // What Enter does now, said in the empty box (no hint line of its own).
   const placeholder = !live
-    ? c.procExit
-      ? "ccrpc 已退出"
-      : c.sessionExited
-        ? "Session 已结束"
-        : "连接中…"
+    ? "连接中…"
     : state === "busy"
       ? "插话，当前工具调用结束后送达（⌘Enter 中断本轮、立即发送，Esc 中止）"
       : state === "waiting"

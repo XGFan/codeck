@@ -17,7 +17,8 @@ const toolsTurns = recordedTurns("tools");
 // ui-cases → the rich Live Session, tools → the Flux Session, session-changed → the auth Session
 // (its `/clear` moves to the JWT one), no-plugin → the LCP Live Session (plugin not reported),
 // turns → the zod Session, trust → the review Session, refused → the Longhorn Session (its ccrpc exits
-// before `driveConnect` returns), clay-new → a Session not in the mock index (opened in clay, no prompt yet).
+// before `driveConnect` returns), clay-new → a Session not in the mock index (opened in clay, no prompt yet),
+// resumed → the untitled Session (it ends right after connecting, as if `/exit` in the terminal).
 
 const RICH = "为 /v1/chat 接口增加令牌桶限流中间件";
 const TOOLS = "为 Flux 增加 kestrel-cli 镜像自动更新";
@@ -149,12 +150,26 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
 test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({ page }) => {
   await drive(page, RICH);
   await expect(state(page)).toContainText("空闲");
-  // The header says the state once, in one word; the drive controls sit at the foot of the input box.
+  // The header says the state once, in one word, with 「断开」 where 「驾驶」 was; the other drive controls sit at
+  // the foot of the input box, the send button at its right end.
   const header = page.getByTestId("header");
   await expect(header.getByTestId("live-state")).toHaveText("空闲");
+  await expect(header.getByTestId("drive-disconnect")).toBeVisible();
   await expect(header.getByTestId("drive-controls")).toHaveCount(0);
   const box = (await page.getByTestId("drive-input").boundingBox())!;
   expect((await page.getByTestId("drive-controls").boundingBox())!.y).toBeGreaterThan(box.y + box.height - 4);
+  const sendButton = (await page.getByRole("button", { name: "发送" }).boundingBox())!;
+  expect(box.x + box.width - (sendButton.x + sendButton.width)).toBeLessThan(4);
+  // Background tasks: the running one only; finished ones on request.
+  await expect(page.getByTestId("tasks")).toHaveText("1 个后台任务");
+  await page.getByTestId("tasks").click();
+  const tasks = page.getByTestId("tasks-list").locator("li");
+  await expect(tasks).toHaveCount(1);
+  await expect(tasks).toContainText("pnpm test:e2e --watch");
+  await page.getByTestId("tasks-done").click();
+  await expect(tasks).toHaveCount(2);
+  await expect(tasks.nth(1)).toContainText("为限流中间件补集成测试");
+  await page.keyboard.press("Escape");
   // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);
 
@@ -217,7 +232,7 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await page.getByTestId("drive-input").press("Escape");
   expect(await lastSent(page, "abort")).toBeTruthy();
   await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
-  await expect(page.getByTestId("drive-input")).toBeDisabled();
+  await expect(page.getByTestId("drive-input")).toHaveCount(0);
 
   await page.getByTestId("reconnect").click();
   await expect(page.getByTestId("proc-exit")).toHaveCount(0);
@@ -382,8 +397,21 @@ test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一�
   await drive(page, REFUSED);
   await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
   await expect(page.getByTestId("proc-exit")).toContainText("正被 mac 使用");
-  await expect(page.getByTestId("drive-input")).toHaveAttribute("placeholder", "ccrpc 已退出");
+  // Only the banner says it: no input box under it.
+  await expect(page.getByTestId("drive-input")).toHaveCount(0);
   await expect(page.getByTestId("reconnect")).toBeVisible();
+});
+
+test("Session 在终端里退出后：驾驶区只剩一行提示，头部重新出现「驾驶」，resume 后可再次连接", async ({ page }) => {
+  await drive(page, "（无标题）");
+  await expect(page.getByTestId("session-exit")).toHaveText("Session 已结束");
+  await expect(page.getByTestId("drive-input")).toHaveCount(0);
+  await expect(page.getByTestId("drive-disconnect")).toHaveCount(0);
+  // Still in `ccrpc ls` (resumed in the terminal): driving again replaces the ended connection.
+  await page.getByTestId("drive-connect").click();
+  await expect.poll(async () => (await probe(page)).guiLog.filter((l) => l === "connect mresumed00001").length).toBe(2);
+  expect((await probe(page)).guiLog).toContain("close (replaced)");
+  await expect(page.getByTestId("session-exit")).toHaveCount(1);
 });
 
 test("目录信任框是选择卡片", async ({ page }) => {
