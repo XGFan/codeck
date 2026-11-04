@@ -954,6 +954,48 @@ fn images_are_references_fetched_on_demand() {
     assert!(!serde_json::to_string(&t).unwrap().contains("iVBORw0KGgo"));
 }
 
+#[test]
+fn slash_command_images_show_on_the_command() {
+    // The command line is text only; its pasted image comes in the meta entry after it, with the skill text.
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let meta = format!(
+        r#"{{"type":"user","uuid":"m1","parentUuid":"u1","isMeta":true,"message":{{"role":"user","content":[{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{png}"}}}},{{"type":"text","text":"Base directory for this skill: /x"}}]}}}}"#
+    );
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>看图 [Image #1]</command-args>"}}"#,
+        &meta,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"m1","message":{"id":"x1","content":[{"type":"text","text":"好"}]}}"#,
+    ]);
+    let s = assemble(
+        "sid",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    let t = main_t(&s, false);
+    let images = t
+        .nodes
+        .iter()
+        .find_map(|n| match &n.body {
+            NodeBody::UserPrompt { images, .. } if n.id == "u1" => Some(images.clone()),
+            _ => None,
+        })
+        .expect("command prompt");
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].node_id, "m1");
+    let data = content::image(
+        &s,
+        &ImageRequest {
+            session_id: "s".into(),
+            scope: TranscriptScope::Main,
+            image: images[0].clone(),
+        },
+        None,
+    )
+    .unwrap();
+    assert!(data.data_base64.starts_with("iVBORw0KGgo"));
+}
+
 // ---- real data (read-only, opt-in) ----
 
 /// Assembles every main session under `$CODECK_REAL_ROOT/projects` (read-only) and reports timings.

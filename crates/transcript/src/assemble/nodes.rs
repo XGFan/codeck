@@ -110,8 +110,19 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 let text = prompt::user_text(e);
                 let origin = prompt::classify(e, &text);
                 hidden = n.is_meta;
+                let mut images = prompt_images(e, &n.uuid);
+                if !n.is_meta {
+                    // A slash command's pasted images arrive in the meta entry after it (with the
+                    // skill text), which is hidden: show them on the command.
+                    for &c in &s.children[i] {
+                        let child = &s.nodes[c];
+                        if child.entry_type == "user" && child.is_meta {
+                            images.extend(prompt_images(s.entry(ctx.files, c), &child.uuid));
+                        }
+                    }
+                }
                 NodeBody::UserPrompt {
-                    images: prompt_images(e, &n.uuid),
+                    images,
                     text,
                     origin,
                 }
