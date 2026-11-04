@@ -457,8 +457,13 @@ export const useConnect = create<ConnectStore>((set, get) => {
       setErr(sessionId, null);
       try {
         await api.ccrpcSetPaneHidden(holderId, hidden);
-        // Shown at once; the next `ccrpc ls` says the same.
+        // Shown at once; a `ccrpc ls` already under way may have read the old state, so its answer is dropped and
+        // the next one asked at once.
         set((s) => ({ ls: s.ls.map((e) => (e.holder_id === holderId ? { ...e, hidden } : e)) }));
+        if (polling) {
+          stopPolling();
+          sync();
+        }
       } catch (e) {
         setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errText(e)}`);
       }

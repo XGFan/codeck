@@ -68,9 +68,13 @@ pub struct HolderMeta {
 }
 
 impl HolderMeta {
-    /// The Pane is hidden: in clay's `hidden` Window (the Mac Client keeps it in its hidden window).
-    pub fn hidden(&self) -> bool {
-        self.window_id.as_deref() == Some("hidden")
+    /// Whether the Pane is hidden: in clay's `hidden` Window (the Mac Client keeps it in its hidden window). `None`
+    /// outside clay (kitty and the like), where a Pane cannot be hidden.
+    pub fn hidden(&self) -> Option<bool> {
+        if self.backend.as_deref() != Some("clay") {
+            return None;
+        }
+        self.window_id.as_deref().map(|w| w == "hidden")
     }
 }
 
@@ -283,6 +287,21 @@ mod tests {
             Some("abc")
         );
         assert!(holder_of_pid(&table, &holders, 10).is_none());
+    }
+
+    #[test]
+    fn only_clay_panes_can_be_hidden() {
+        let meta = |backend: Option<&str>, window: Option<&str>| HolderMeta {
+            holder_pid: 1,
+            child_pid: 2,
+            cwd: String::new(),
+            backend: backend.map(String::from),
+            window_id: window.map(String::from),
+        };
+        assert_eq!(meta(Some("clay"), Some("hidden")).hidden(), Some(true));
+        assert_eq!(meta(Some("clay"), Some("0a1b")).hidden(), Some(false));
+        assert_eq!(meta(Some("kitty"), None).hidden(), None);
+        assert_eq!(meta(None, None).hidden(), None);
     }
 
     #[test]

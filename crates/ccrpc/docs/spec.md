@@ -34,7 +34,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - `debug` 子命令只看、只写，不改 PTY 尺寸。
 - `--co-display`（共显）：不发 Resize、不判接手，VT 跟随 PTY 尺寸（谁设的都行），人在 Client 上的按键不算接手，`attach` 时有人在用也照连；写入照常（输入框照旧先清空）。`ready` 与 `get_state` 带 `co_display`。
 - `--log FILE`：追加写日志（0600）：开头一行 ccrpc 与 Claude Code 的版本、Holder、sessionId；发出的事件与响应（block 只记 kind 与 uuid，带屏幕的事件另记整屏）、状态判定、识别决策（审批框用了哪种布局、choice 的布局及其来源，并记当时的整屏）、收到的命令、插件的 hook 事件、写入的按键与粘贴（粘贴只记长度与前 60 字，即提示词的开头也会进日志）。
-- `--hidden`：Pane 开在 clay 的隐藏窗口里（`toh new --window hidden`，ToH ADR-0050），Mac Client 不显示它，iOS 与 web 照常列出；PTY 初始尺寸取 `--size`（缺省 160×48）——没人显示时尺寸就停在这里，ToH 缺省的 80×24 放不下审批框等对话框。`ls --json` 的 `hidden` 即 Pane 在不在隐藏窗口里。
+- `--hidden`：Pane 开在 clay 的隐藏窗口里（`toh new --window hidden`，ToH ADR-0050），Mac Client 不显示它，iOS 与 web 照常列出；PTY 初始尺寸取 `--size`（缺省 160×48）——没人显示时尺寸就停在这里，ToH 缺省的 80×24 放不下审批框等对话框。`ls --json` 的 `hidden` 即 Pane 在不在隐藏窗口里，不在 clay 里的 Pane（kitty 等）为 `null`。
 - `ls --json` 的 `title`：transcript 里最后一条 `custom-title`，没有则最后一条 `ai-title`（transcript 取报到里的，没有报到时按 cwd 推算 `<projects>/<cwd 编码>/<sessionId>.jsonl`）。
 - 插件：`new` 在插件未启用（用户 settings 的 `enabledPlugins` 里没有 `ccrpc@ccrpc`）且 claude 参数里没有 `--plugin-dir` 时报错；claude 的进程文件出现 5 秒仍没有报到也报错退出。`attach` 要求该 claude 已报到（见 3 节），否则报错并提示重启 claude。
 - `ccrpc plugin install`：在 `$XDG_DATA_HOME/ccrpc/plugin`（缺省 `~/.local/share/ccrpc/plugin`）生成本地 marketplace `ccrpc` 与插件 `ccrpc`（hooks 调用当前 ccrpc 可执行文件的绝对路径），再经 `claude plugin marketplace add|update`、`claude plugin install|update` 装成用户级插件。换了 ccrpc 的位置要重新 install。

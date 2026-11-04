@@ -173,20 +173,24 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
 function HideNewPanes({ saved }: { saved: boolean }) {
   const save = useConnect((s) => s.saveHideNewPanes);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const choose = async (hide: boolean) => {
-    if (hide === saved) return;
+    if (hide === saved || busy) return;
+    setBusy(true);
     setError(null);
     try {
       await save(hide);
     } catch (e) {
       setError(`保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`);
     }
+    setBusy(false);
   };
   const opt = (hide: boolean, label: string) => (
     <button
       type="button"
       role="radio"
       aria-checked={saved === hide}
+      disabled={busy}
       data-testid={hide ? "hide-new-panes-hide" : "hide-new-panes-show"}
       onClick={() => void choose(hide)}
       className={cn("h-7 rounded-md px-3 text-[13px]", saved === hide ? "bg-selection font-semibold text-text" : "text-secondary hover:bg-selection/60")}

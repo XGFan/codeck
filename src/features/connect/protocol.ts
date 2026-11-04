@@ -175,8 +175,8 @@ export interface LsEntry {
   status: string | null;
   cwd: string | null;
   plugin: boolean;
-  /** The Pane is hidden on the ToH Mac Client (in its hidden window); missing from a ccrpc too old to say. */
-  hidden?: boolean;
+  /** The Pane is hidden on the ToH Mac Client (in its hidden window); null outside clay, missing from a ccrpc too old to say. */
+  hidden?: boolean | null;
   claude_pid: number | null;
   version: string | null;
   title: string | null;
