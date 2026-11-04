@@ -15,8 +15,6 @@ import { cn } from "@/lib/cn";
 
 export default function App() {
   const sessionId = useUi((s) => s.sessionId);
-  // Besides the user's toggle, the Subagent panel takes the session list's width so the conversation keeps
-  // a readable column.
   const hideList = useSessionsHidden().hidden;
   // The conversation column's width, for the transcript and the input area under it.
   const convWidth = useUi((s) => s.convWidth);

@@ -100,6 +100,9 @@ test("打开 Subagent 面板，嵌套卡片推入面包屑，Esc 关闭", async 
 
   const panel = page.getByTestId("subagent-panel");
   await expect(panel).toBeVisible();
+  // The panel leaves the Session list and the toolbar as they were.
+  await expect(page.getByTestId("pane-sessions")).toBeVisible();
+  await expect(page.getByRole("button", { name: "隐藏 Session 列表" })).toBeEnabled();
   const crumbs = panel.getByTestId("panel-breadcrumb");
   await expect(crumbs).toContainText("主对话");
   await expect(crumbs.getByTestId("crumb")).toHaveText(["Explore · 梳理现有中间件注册方式"]);

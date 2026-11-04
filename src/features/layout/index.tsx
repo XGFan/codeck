@@ -41,11 +41,9 @@ function useFullScreen(): boolean {
   return useSyncExternalStore(subscribeFullScreen, () => fullScreen);
 }
 
-/** The session list column is hidden by the user, or because the Subagent panel takes its place. */
-export function useSessionsHidden(): { hidden: boolean; forced: boolean } {
-  const collapsed = useUi((s) => s.collapsed.sessions);
-  const forced = useUi((s) => s.sessionId != null && s.panelStack.length > 0);
-  return { hidden: forced || collapsed, forced };
+/** The session list column is hidden by the user (the Subagent panel leaves it as it is). */
+export function useSessionsHidden(): { hidden: boolean } {
+  return { hidden: useUi((s) => s.collapsed.sessions) };
 }
 
 /**
@@ -63,12 +61,12 @@ export function useLeadingInset(): string | undefined {
 const TOOL_CLASS =
   "flex size-7 items-center justify-center rounded-md text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:hover:bg-transparent aria-pressed:bg-selection aria-pressed:text-accent";
 
-function Toggle({ pane, label, keys, icon, disabled }: { pane: CollapsiblePane; label: string; keys: string; icon: React.ReactNode; disabled?: boolean }) {
+function Toggle({ pane, label, keys, icon }: { pane: CollapsiblePane; label: string; keys: string; icon: React.ReactNode }) {
   const collapsed = useUi((s) => s.collapsed[pane]);
   const toggle = useUi((s) => s.toggleCollapsed);
   const action = `${collapsed ? "显示" : "隐藏"} ${label}`;
   return (
-    <button type="button" aria-label={action} title={`${action}（${keys}）`} disabled={disabled} onClick={() => toggle(pane)} className={TOOL_CLASS}>
+    <button type="button" aria-label={action} title={`${action}（${keys}）`} onClick={() => toggle(pane)} className={TOOL_CLASS}>
       {icon}
     </button>
   );
@@ -99,13 +97,12 @@ export function StatsToggle({ className }: { className?: string }) {
  */
 export function Toolbar({ children }: { children?: React.ReactNode }) {
   const toggle = useUi((s) => s.toggleCollapsed);
-  const { forced } = useSessionsHidden();
   const fullScreen = useFullScreen();
-  useHotkey("Ctrl+Meta+L", () => !forced && toggle("sessions"), { enableInInputs: true });
+  useHotkey("Ctrl+Meta+L", () => toggle("sessions"), { enableInInputs: true });
 
   return (
     <div data-testid="toolbar" className={cn("fixed top-[4px] z-10 flex gap-0.5", fullScreen ? "left-3" : "left-[78px]")}>
-      <Toggle pane="sessions" label="Session 列表" keys="⌃⌘L" icon={<List size={16} strokeWidth={1.6} aria-hidden />} disabled={forced} />
+      <Toggle pane="sessions" label="Session 列表" keys="⌃⌘L" icon={<List size={16} strokeWidth={1.6} aria-hidden />} />
       <button
         type="button"
         data-testid="search-button"
