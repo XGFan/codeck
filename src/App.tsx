@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Composer } from "@/features/composer";
+import { Composer, draftKey } from "@/features/composer";
 import { Header } from "@/features/header";
 import { Requests } from "@/features/requests";
 import { Sidebar } from "@/features/sidebar";
@@ -136,7 +136,7 @@ function Main() {
         <Transcript conn={c.conn} />
       </div>
       <Requests c={c} />
-      <Composer c={c} />
+      <Composer key={draftKey(c)} c={c} />
     </>
   );
 }

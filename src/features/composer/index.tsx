@@ -5,11 +5,7 @@ import { isComposingKey } from "@/lib/hotkeys";
 import { cn } from "@/lib/cn";
 import type { ConnState } from "@/state/conn";
 import { useStore } from "@/state/store";
-
-interface Img {
-  path: string;
-  url: string;
-}
+import { EMPTY_DRAFT, useUi, type Draft } from "@/state/ui";
 
 const extOf = (type: string) => ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" })[type];
 
@@ -24,23 +20,25 @@ function toBase64(f: Blob): Promise<string> {
 
 /**
  * The input box (docs/spec.md §5): idle → `prompt`; busy → `follow_up` (⌘Enter `steer`);
- * waiting → not sent. Esc aborts while busy / waiting.
+ * waiting → not sent. Esc aborts while busy / waiting. Mounted once per Session (keyed by
+ * [`draftKey`]); what is typed lives in the UI store, so switching Sessions keeps it.
  */
+/** The Session a draft belongs to: its Holder ID, or the connection id before `ready`. */
+export const draftKey = (c: ConnState) => c.holderId ?? c.conn;
+
 export function Composer({ c }: { c: ConnState }) {
   const command = useStore((s) => s.command);
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<Img[]>([]);
+  const key = draftKey(c);
+  const { text, images } = useUi((s) => s.drafts[key]) ?? EMPTY_DRAFT;
+  const setDraft = useUi((s) => s.setDraft);
+  const setText = (f: string | ((t: string) => string)) =>
+    setDraft(key, (d) => ({ ...d, text: typeof f === "function" ? f(d.text) : f }));
+  const setImages = (f: (x: Draft["images"]) => Draft["images"]) => setDraft(key, (d) => ({ ...d, images: f(d.images) }));
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const live = !c.procExit && !c.sessionExited && c.ready;
   const { state } = c;
-
-  useEffect(() => {
-    setText("");
-    setImages([]);
-    setError(null);
-  }, [c.conn]);
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {

@@ -20,6 +20,19 @@ async function send(page: Page, text: string, mod?: "Meta") {
   await input.press(mod ? `${mod}+Enter` : "Enter");
 }
 
+/** Pastes a 1×1 PNG into the input box. */
+async function pasteImage(page: Page) {
+  await page.getByTestId("input").focus();
+  await page.evaluate(async () => {
+    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([png], "dot.png", { type: "image/png" }));
+    const ev = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: DataTransfer };
+    Object.defineProperty(ev, "clipboardData", { value: dt });
+    document.querySelector("[data-testid=input]")!.dispatchEvent(ev);
+  });
+}
+
 test("lists Sessions, the waiting one first, and counts it on the Dock badge", async ({ page }) => {
   await page.goto("/");
   const rows = page.getByTestId("session-row");
@@ -141,20 +154,27 @@ test("a new Session is started in the picked folder", async ({ page }) => {
 
 test("a pasted image goes with the prompt", async ({ page }) => {
   await open(page, "turns");
-  await page.getByTestId("input").focus();
-  await page.evaluate(async () => {
-    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
-    const dt = new DataTransfer();
-    dt.items.add(new File([png], "dot.png", { type: "image/png" }));
-    const ev = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: DataTransfer };
-    Object.defineProperty(ev, "clipboardData", { value: dt });
-    document.querySelector("[data-testid=input]")!.dispatchEvent(ev);
-  });
+  await pasteImage(page);
   await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
   await send(page, "MOCK-SLOW please");
   const p = await lastSent(page, "prompt");
   expect(p?.images).toEqual(["/tmp/cc-gui-mock-1.png"]);
   await expect(page.getByTestId("images")).toHaveCount(0);
+});
+
+test("unsent input stays with its Session across switches", async ({ page }) => {
+  await open(page, "turns");
+  await page.getByTestId("input").fill("还没写完的草稿");
+  await pasteImage(page);
+  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  const row = (title: string) => page.getByTestId("session-row").filter({ hasText: title });
+  await row("tools").click();
+  await expect(page.getByTestId("state")).toHaveText("空闲");
+  await expect(page.getByTestId("input")).toHaveValue("");
+  await expect(page.getByTestId("images")).toHaveCount(0);
+  await row("turns").click();
+  await expect(page.getByTestId("input")).toHaveValue("还没写完的草稿");
+  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
 });
 
 test("a long stream scrolls inside its area, following the newest turn", async ({ page }) => {
