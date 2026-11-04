@@ -1,0 +1,48 @@
+
+
+⏺ Agent(Run echo command)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+⏺ The subagent is running in the background; I'll report its output once it completes.
+
+✻ Waiting for 1 background agent to finish
+
+⏺ Agent "Run echo command" finished · 1s
+
+  Thought for 1s
+
+⏺ The command echo SUBAGENT-OK produced this exact output:
+
+  SUBAGENT-OK
+
+  (No leading or trailing spaces; the output was followed by the usual newline.)
+
+✻ Cooked for 3s · done 12:43 AM
+
+❯ Call the Workflow tool exactly once with this script and nothing else, then reply DONE:
+  export const meta = { name: 'e2e-echo', description: 'echo', phases: [{ title: 'Echo' }] }
+  const r = await agent('Reply with exactly WF-OK', { label: 'echo', phase: 'Echo' })
+  return r
+
+  Thought for 1s
+
+⏺ Workflow(echo)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Run a dynamic workflow?
+
+  echo
+
+  This dynamic workflow will spin up multiple subagents across the following phases:
+    1. Echo
+       · "Reply with exactly WF-OK"
+
+  Dynamic workflows can use a lot of tokens quickly by running many subagents in parallel — which counts against your usage limit. Stop a running workflow at
+  any time with /workflows, or disable dynamic workflows in /config.
+
+  ❯ 1. Yes, run it
+    2. View raw script
+    3. No
+
+  Esc to cancel · Tab to amend
+  ctrl+g to edit script in $EDITOR

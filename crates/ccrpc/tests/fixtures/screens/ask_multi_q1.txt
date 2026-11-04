@@ -1,0 +1,19 @@
+❯ Use the AskUserQuestion tool once with exactly two questions: (1)
+  single-choice 'Indent style?' with options Tabs and Spaces; (2) multi-select
+  'Which linters?' with options eslint, prettier, biome. Do nothing else.
+
+  Thought for 1s
+────────────────────────────────────────────────────────────────────────────────
+←  ☐ Indent  ☐ Linters  ✔ Submit  →
+
+Indent style?
+
+❯ 1. Tabs
+     Indent with tab characters.
+  2. Spaces
+     Indent with space characters.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
