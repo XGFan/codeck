@@ -144,6 +144,10 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
     }
     case "get_tasks":
       return respond(id, msg, { tasks: [] });
+    // ctrl+enter: the TUI's queue goes out at once.
+    case "send_now":
+      later(() => emit(id, { type: "queue", items: [] }));
+      return respond(id, msg, {});
     // Typed into the TUI; what it does shows on the screen, not in a reply.
     case "slash":
       return c.state && (c.state as { state?: string }).state !== "idle" ? respond(id, msg, null, "not_idle") : respond(id, msg, {});

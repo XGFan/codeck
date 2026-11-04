@@ -114,13 +114,13 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **环境**：第一次用到驾驶时读一次登录 shell 的环境（`$SHELL -l -c env`），作为所有 ccrpc 子进程的环境，不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
 - **可驾驶的 Session**：窗口可见、且至少有一个 Live Session 或驾驶连接时运行 `ccrpc ls --json`，上一次返回后隔 2 秒再运行下一次；条件不满足时停止（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时立即查一次再继续；停止前发出、停止后才返回的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 或读取 ccrpc 信息失败时停止轮询，错误显示在「设置 › 驾驶」，可重试。
 - **标题栏**：选中的 Session 在 `ccrpc ls` 里且插件已报到时显示「驾驶」（`ccrpc attach --co-display`）；插件未报到时按钮禁用，悬停提示「ccrpc 插件未加载，重启 claude 后可驾驶」；不在列表里（不在 clay 里，或 ccrpc 不可用）时不显示。已连接时「驾驶」按钮消失，标题栏在元信息行下方另起一行，显示状态、模型、权限模式（可点，`set_mode`；空闲或忙时可切换）、上下文 token、悬停出现的「复制排查信息」（holder_id、session_id、cwd 与这个连接的日志目录）和「断开」（关闭 ccrpc 的 stdin，Session 照常运行）。连接保持到断开、Session 或 ccrpc 退出、应用退出。
-- **驾驶区**：在对话区下方、与对话区同宽，只在当前 Session 已连接时出现。自上而下：ccrpc 意外退出的横幅（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束、通知（学会新界面、界面识别失败、被接手 / 取回，可关）、请求卡片、忙时的进度行（否则为上一轮的用时、token、API 金额、错误、已中止）、输入框（粘贴的图片、后台任务角标，点开可停止）。
+- **驾驶区**：在对话区下方、与对话区同宽，只在当前 Session 已连接时出现。自上而下：ccrpc 意外退出的横幅（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束、通知（学会新界面、界面识别失败、被接手 / 取回，可关）、请求卡片、忙时的进度行（否则为上一轮的用时、token、API 金额、错误、已中止）、Claude Code 自己的排队（ccrpc 的 `queue`：插话和人在终端里忙时输入的，与 TUI 一致；「立即发送」= `send_now`，即终端里的 ctrl+enter，中断本轮立即发出）、输入框（粘贴的图片、后台任务角标，点开可停止）。
 - **输入框**：
 
   | 状态 | Enter | 其他 |
   |---|---|---|
   | idle | `prompt` | |
-  | busy | `steer`（与终端里忙时按 Enter 一样：进 Claude Code 的队列，TUI 里可见，当前工具调用结束后送达；没有工具调用可夹带时排到本轮之后） | |
+  | busy | `steer`（与终端里忙时按 Enter 一样：进 Claude Code 的队列，TUI 里可见，当前工具调用结束后送达；没有工具调用可夹带时排到本轮之后） | ⌘Enter：`steer` 后 `send_now`（输入框为空时只 `send_now`），同终端里的 ctrl+enter |
   | waiting | 不发送，焦点移到第一张请求卡片 | |
   | busy / waiting | | Esc `abort`（焦点在驾驶区时） |
 

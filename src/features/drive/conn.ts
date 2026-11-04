@@ -37,6 +37,8 @@ export interface ConnState {
   contextTokens: number | null;
   requests: Request[];
   progress: ProgressEvent | null;
+  /** What waits in the TUI's own queue (sent when the current tool call ends, or at once with `send_now`). */
+  queue: string[];
   tasks: Task[];
   /** The last turn's end (duration, usage, cost, error, aborted). */
   lastTurn: TurnEndEvent | null;
@@ -64,6 +66,7 @@ export function initial(conn: string, holderId: string | null): ConnState {
     contextTokens: null,
     requests: [],
     progress: null,
+    queue: [],
     tasks: [],
     lastTurn: null,
     procExit: null,
@@ -108,7 +111,10 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         mode: m.mode ?? null,
         model: m.model ?? null,
         contextTokens: m.context_tokens ?? null,
+        queue: m.queue ?? [],
       };
+    case "queue":
+      return { ...s, queue: m.items };
     case "state": {
       const waiting = m.state === "waiting" ? (m.waiting ?? null) : null;
       const requests = m.state === "waiting" ? s.requests : dropMainRequests(s);

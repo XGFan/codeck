@@ -111,6 +111,8 @@ export interface ReadyEvent extends SessionInfo {
   taken_over: boolean;
   co_display: boolean;
   warnings: string[];
+  /** What waits in the TUI's own queue (older ccrpc: absent). */
+  queue?: string[];
 }
 
 export interface ProgressEvent {
@@ -150,6 +152,8 @@ export type EventMsg =
   | DialogEvent
   | UnrecognizedEvent
   | { type: "follow_up_failed"; text: string; error: { code: string; message: string } }
+  /** The TUI's own input queue changed: steers and what the person typed while busy, oldest first. */
+  | { type: "queue"; items: string[] }
   | { type: "taken_over"; client: string | null }
   | { type: "reclaimed" }
   | { type: "layout_learned"; layout: string; kind: string; title: string; path: string }

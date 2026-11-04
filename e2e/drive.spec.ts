@@ -144,9 +144,16 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await send(page, "做完再跑一下测试");
   await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "做完再跑一下测试" });
   await expect(page.getByTestId("drive-input")).toHaveValue("");
+  // The TUI's own queue, as the terminal shows it; sent at once on request (ctrl+enter there).
+  await expect(page.getByTestId("queue-item")).toHaveText(["做完再跑一下测试"]);
+  await page.getByTestId("send-now").click();
+  await expect.poll(async () => (await probe(page)).sent.filter((s) => s.msg.type === "send_now").length).toBe(1);
+  await expect(page.getByTestId("queue")).toHaveCount(0);
 
+  // ⌘Enter: queued, then sent at once.
   await send(page, "顺便把标题也改了", "Meta");
   await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "顺便把标题也改了" });
+  await expect.poll(async () => (await probe(page)).sent.filter((s) => s.msg.type === "send_now").length).toBe(2);
   expect(await lastSent(page, "follow_up")).toBeUndefined();
 
   const card = page.getByTestId("permission-card");

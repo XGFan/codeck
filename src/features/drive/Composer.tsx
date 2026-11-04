@@ -32,8 +32,9 @@ function focusFirstCard() {
 
 /**
  * The input box: idle → `prompt` (a built-in slash command → `slash`); busy → `steer`, as Enter in
- * the terminal (Claude Code's own queue, shown in the TUI, delivered when the current tool call
- * ends); waiting → not sent, focus goes to the card. Esc is handled by the drive panel. What is
+ * the terminal (Claude Code's own queue, shown in the TUI and above the box, delivered when the
+ * current tool call ends); ⌘Enter while busy also sends the queue at once (`send_now`, ctrl+enter in
+ * the terminal: the turn is interrupted); waiting → not sent, focus goes to the card. Esc is handled by the drive panel. What is
  * typed lives in the drive store, so switching Sessions keeps it. Typing `/name` lists matching
  * commands: ↑↓ pick, Tab (or Enter on a different one) completes, Esc hides the list.
  */
@@ -66,9 +67,18 @@ export function Composer({ c }: { c: ConnState }) {
     setPick(0);
   };
 
-  const submit = async () => {
+  const sendNow = async () => {
+    setSending(true);
+    setError(null);
+    const r = await command(c.conn, { type: "send_now" });
+    setSending(false);
+    if (!r.success) setError(`立即发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
+  };
+
+  const submit = async (now = false) => {
     const body = text.trim();
     if (live && state === "waiting") return focusFirstCard();
+    if (live && now && state === "busy" && !body && c.queue.length > 0 && !sending) return sendNow();
     if (!body || sending || !live) return;
     let msg: Record<string, unknown>;
     const withImages = images.length ? { images: images.map((i) => i.path) } : {};
@@ -93,6 +103,8 @@ export function Composer({ c }: { c: ConnState }) {
     const r = await command(c.conn, msg);
     setSending(false);
     if (!r.success) return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
+    // ⌘Enter: what was just queued goes out now, with anything queued before it.
+    if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
     // Keep what was typed while it was being sent.
     setText((t) => (t.trim() === body ? "" : t));
     // Only the images that went with it: one pasted meanwhile stays.
@@ -125,7 +137,7 @@ export function Composer({ c }: { c: ConnState }) {
         ? "Session 已结束"
         : "连接中…"
     : state === "busy"
-      ? "Enter 插话，当前工具调用结束后送达 · Esc 中止"
+      ? "Enter 插话，当前工具调用结束后送达 · ⌘Enter 中断本轮、立即发送 · Esc 中止"
       : state === "waiting"
         ? "先回答上面的请求 · Esc 中止"
         : state === "idle"
@@ -134,6 +146,28 @@ export function Composer({ c }: { c: ConnState }) {
 
   return (
     <div className="shrink-0" data-testid="composer">
+      {c.queue.length > 0 && (
+        <div className="mb-1.5 flex items-start gap-2 rounded-md border border-dashed border-border px-2 py-1 text-[12px]" data-testid="queue">
+          <span className="shrink-0 text-secondary">排队</span>
+          <ul className="min-w-0 flex-1 space-y-0.5">
+            {c.queue.map((q, i) => (
+              <li key={`${i}:${q}`} className="truncate" title={q} data-testid="queue-item">
+                {q}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            disabled={!live || state !== "busy" || sending}
+            onClick={() => void sendNow()}
+            title="中断本轮，立即发出排队的消息（终端里的 ctrl+enter）"
+            className="shrink-0 text-accent hover:underline disabled:opacity-40 disabled:hover:no-underline"
+            data-testid="send-now"
+          >
+            立即发送
+          </button>
+        </div>
+      )}
       <div className={cn("relative rounded-xl border border-border bg-ground px-3 pt-2 pb-1.5", live ? "focus-within:border-accent" : "opacity-60")}>
         {matches.length > 0 && (
           <ul
@@ -227,7 +261,7 @@ export function Composer({ c }: { c: ConnState }) {
             }
             if (e.key !== "Enter" || e.shiftKey) return;
             e.preventDefault();
-            void submit();
+            void submit(e.metaKey || e.ctrlKey);
           }}
           placeholder={state === "busy" ? "补充或排队下一条…" : "给 Claude 发消息"}
           aria-label="给 Claude 发消息"
