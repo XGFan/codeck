@@ -328,10 +328,11 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
     <div className="flex flex-col gap-3" data-testid="question-form">
       {qs.map((q, i) => (
         <fieldset key={i} className="m-0 flex flex-col gap-1.5 border-0 p-0">
-          <legend className="mb-1.5 flex items-start gap-2 p-0 text-[12px]">
-            {q.header && <span className="shrink-0 rounded bg-selection px-1.5 py-px text-[11px] whitespace-nowrap text-accent">{q.header}</span>}
+          {/* One paragraph: a long question wraps back to the left edge, under the tag. */}
+          <legend className="mb-1.5 p-0 text-[12px] leading-[1.6]">
+            {q.header && <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">{q.header}</span>}
             <span className="font-medium">{q.question}</span>
-            {q.multiSelect && <span className="shrink-0 text-[11px] text-secondary">多选</span>}
+            {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
           </legend>
           {q.options.map((o) => {
             const on = !!picked[i]?.includes(o.label);

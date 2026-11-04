@@ -99,10 +99,11 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
   const custom = picked.filter((p) => !labels.has(p)).join(", ");
   return (
     <div data-testid="ask-question" className="flex flex-col gap-1.5">
-      <div className="flex items-start gap-2 text-[12px]">
-        {q.header && <span className="shrink-0 rounded bg-selection px-1.5 py-px text-[11px] whitespace-nowrap text-accent">{q.header}</span>}
+      {/* One paragraph: a long question wraps back to the left edge, under the tag. */}
+      <div data-testid="ask-legend" className="text-[12px] leading-[1.6]">
+        {q.header && <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">{q.header}</span>}
         <span className="font-medium">{q.question}</span>
-        {q.multiSelect && <span className="shrink-0 text-[11px] text-secondary">多选</span>}
+        {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
       </div>
       {options.map((o, i) => {
         const on = picked.includes(o.label);

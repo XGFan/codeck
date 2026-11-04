@@ -269,3 +269,37 @@ test("对话不折叠：过程与回答按顺序排开；回答下方是复制�
   expect((await prompt.getByTestId("prompt-meta").boundingBox())!.y).toBeGreaterThan(bubble.y + bubble.height - 1);
   await expect(t.getByText(/^Claude · \d/)).toHaveCount(0);
 });
+
+test("提问卡片：题目很长折行时，第二行从标签下方的最左边开始", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const sid = await openSession(page, RICH_TITLE);
+  await page.evaluate((sid) => {
+    const question = "模型与思考等级的选择器，按画布上这版（参考 Claude Code Desktop 文档）实现，还是你先发一张 Desktop 的截图我照着改？这一句要足够长才能折行。";
+    const input = { questions: [{ question, header: "选择器", multiSelect: false, options: [{ label: "按这版实现", description: "一个选择器" }, { label: "我发截图再调", description: "先改画布" }] }] };
+    window.__cvMock!.appendNode(sid, {
+      id: "e2e-long-ask",
+      timestampMs: Date.now(),
+      hidden: false,
+      inherited: false,
+      body: {
+        kind: "assistant",
+        messageId: "m-e2e-long-ask",
+        model: null,
+        usage: null,
+        isApiError: false,
+        blocks: [{ kind: "toolCall", toolUseId: "toolu_long_ask", name: "AskUserQuestion", inputJson: JSON.stringify(input), inputTruncated: false, result: null, subagentId: null, workflowRunId: null, notificationNodeId: null }],
+      },
+    });
+    window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
+  }, sid);
+  const legend = page.locator('[data-anchor="e2e-long-ask|toolu_long_ask"]').getByTestId("ask-legend");
+  await scrollBy(page.getByTestId("transcript"), 1e7);
+  await expect(legend).toBeVisible();
+  const lines = await legend.evaluate((el) => {
+    const text = el.querySelector("span.font-medium")!;
+    const rects = [...text.getClientRects()];
+    return { box: el.getBoundingClientRect().left, rects: rects.map((r) => r.left) };
+  });
+  expect(lines.rects.length).toBeGreaterThan(1);
+  expect(Math.abs(lines.rects[1]! - lines.box)).toBeLessThan(2);
+});
