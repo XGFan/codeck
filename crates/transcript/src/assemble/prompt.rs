@@ -32,7 +32,8 @@ pub fn user_text(e: &RawEntry) -> String {
 
 /// A prompt without the `<pasted_content id="xxxx">` … `</pasted_content id="xxxx">` tags Claude
 /// Code may put around a long paste (an account-level switch): the text as it was sent. Each tag
-/// goes with the line break or space it adds on its inner side.
+/// goes with the line break or space it adds on its inner side; the blank lines it puts before the
+/// paste go too when nothing was typed before it (`\n\n<pasted_content …>` from an empty box).
 pub fn unwrap_pasted(s: &str) -> String {
     const OPEN: &str = "<pasted_content id=\"";
     const CLOSE: &str = "</pasted_content id=\"";
@@ -50,6 +51,9 @@ pub fn unwrap_pasted(s: &str) -> String {
     while i < s.len() {
         let rest = &s[i..];
         if let Some(n) = tag_len(rest, OPEN) {
+            if out.trim().is_empty() {
+                out.clear();
+            }
             i += n;
             if s[i..].starts_with(['\n', ' ']) {
                 i += 1;
@@ -332,6 +336,9 @@ mod tests {
             unwrap_pasted("<pasted_content id=\"a0f9\"> x </pasted_content id=\"a0f9\">").trim(),
             "x"
         );
+        // A paste into an empty box: Claude Code puts two line breaks before the tag.
+        let alone = "\n\n<pasted_content id=\"6999\">\n第一行\n第二行\n</pasted_content id=\"6999\">\n";
+        assert_eq!(unwrap_pasted(alone), "第一行\n第二行\n");
         let other = "see <pasted_content id=\"zz\"> and 中文"; // 不是 Claude Code 的标签：保留
         assert_eq!(unwrap_pasted(other), other);
         assert_eq!(unwrap_pasted("plain"), "plain");
