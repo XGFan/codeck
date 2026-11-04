@@ -314,6 +314,9 @@ pub struct RawBlock {
     pub text: Option<Box<RawValue>>,
     #[serde(default)]
     pub thinking: Option<Box<RawValue>>,
+    /// thinking signature (base64 protobuf); says whether the block is narration, see [`RawBlock::is_narration`].
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub signature: Option<String>,
     /// image source (`{type, media_type, data}`).
     #[serde(default)]
     pub source: Option<Box<RawValue>>,
@@ -332,6 +335,34 @@ impl RawBlock {
     /// Decodes `thinking` when it is a JSON string.
     pub fn thinking_str(&self) -> Option<String> {
         decode_str(self.thinking.as_deref())
+    }
+
+    /// A `thinking` block that is narration: the progress notes Claude writes for the reader, which Claude Code
+    /// stores as thinking (text kept, real thinking is stored empty) and shows in the TUI as ordinary text. Only
+    /// its signature tells: a protobuf whose kind field (8) reads `narration` rather than `thinking`.
+    pub fn is_narration(&self) -> bool {
+        use base64::Engine as _;
+        if self.block_type() != "thinking" {
+            return false;
+        }
+        let Some(sig) = self.signature.as_deref() else {
+            return false;
+        };
+        // The kind sits in the first few dozen bytes; decode just that much (a whole number of base64 quads).
+        let head = &sig[..sig.len().min(96) / 4 * 4];
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(head) else {
+            return false;
+        };
+        memchr::memmem::find(&bytes, b"\x42\x09narration").is_some()
+    }
+
+    /// The text an assistant block shows as text: a `text` block's, or a narration `thinking` block's.
+    pub fn assistant_text(&self) -> Option<String> {
+        match self.block_type() {
+            "text" => self.text_str(),
+            "thinking" if self.is_narration() => self.thinking_str(),
+            _ => None,
+        }
     }
 }
 
@@ -617,5 +648,48 @@ pub mod lenient {
             }
         }
         d.deserialize_any(V(PhantomData))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Signatures shaped like Claude Code's: a protobuf whose kind field (8) is `narration` / `thinking`.
+    const NARRATION_SIG: &str =
+        "CAQSLwoRCBMYAjgBQgluYXJyYXRpb24SDAABAgMEBQYHCAkKCxoMDA0ODxAREhMUFRYX";
+    const THINKING_SIG: &str =
+        "CAQSLgoRCBMYAjgBQgh0aGlua2luZxIMAAECAwQFBgcICQoLGgwMDQ4PEBESExQVFhc=";
+
+    fn block(json: &str) -> RawBlock {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn narration_is_told_by_the_signature_and_shows_as_text() {
+        let nar = block(&format!(
+            r#"{{"type":"thinking","thinking":"Checking the tests.","signature":"{NARRATION_SIG}"}}"#
+        ));
+        assert!(nar.is_narration());
+        assert_eq!(nar.assistant_text().as_deref(), Some("Checking the tests."));
+
+        let thinking = block(&format!(
+            r#"{{"type":"thinking","thinking":"hmm","signature":"{THINKING_SIG}"}}"#
+        ));
+        assert!(!thinking.is_narration());
+        assert_eq!(thinking.assistant_text(), None);
+
+        for other in [
+            r#"{"type":"thinking","thinking":"hmm"}"#,
+            r#"{"type":"thinking","thinking":"hmm","signature":"not base64!"}"#,
+        ] {
+            assert!(!block(other).is_narration());
+        }
+        assert_eq!(
+            block(r#"{"type":"text","text":"hi"}"#)
+                .assistant_text()
+                .as_deref(),
+            Some("hi")
+        );
     }
 }

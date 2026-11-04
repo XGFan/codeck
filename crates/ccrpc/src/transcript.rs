@@ -1038,6 +1038,20 @@ impl Tailer {
                 b.text = Some(cap(t));
                 Some(b)
             }
+            // Narration (`RawBlock::is_narration`) is text in the TUI, so it is a text block here too.
+            "thinking"
+                if assistant
+                    && rb.is_narration()
+                    && rb.thinking_str().is_some_and(|t| !t.trim().is_empty()) =>
+            {
+                let t = rb.thinking_str().unwrap_or_default();
+                if agent.is_none() {
+                    self.last_text = Some(t.clone());
+                }
+                let mut b = Block::new(BlockKind::Text, uuid, i);
+                b.text = Some(cap(t));
+                Some(b)
+            }
             "thinking" if assistant => {
                 let mut b = Block::new(BlockKind::Thinking, uuid, i);
                 b.text = Some(cap(rb.thinking_str().unwrap_or_default()));
@@ -1791,6 +1805,46 @@ mod tests {
     fn system(uuid: &str, parent: Option<&str>, subtype: &str, logical: Option<&str>) -> Value {
         json!({"type": "system", "subtype": subtype, "uuid": uuid, "parentUuid": parent,
             "logicalParentUuid": logical, "content": ""})
+    }
+
+    #[test]
+    fn narration_is_a_text_block_and_the_last_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let think = |uuid: &str, parent: &str, text: &str, sig: &str| {
+            json!({"type": "assistant", "uuid": uuid, "parentUuid": parent, "message": {"id": uuid, "role": "assistant",
+                "content": [{"type": "thinking", "thinking": text, "signature": sig}]}})
+        };
+        write_lines(
+            &main,
+            &[
+                prompt("u1", None, "hi", 1),
+                think(
+                    "a1",
+                    "u1",
+                    "private",
+                    "CAQSLgoRCBMYAjgBQgh0aGlua2luZxIMAAECAwQFBgcICQoLGgwMDQ4PEBESExQVFhc=",
+                ),
+                think(
+                    "a2",
+                    "a1",
+                    "Checking the layout.",
+                    "CAQSLwoRCBMYAjgBQgluYXJyYXRpb24SDAABAgMEBQYHCAkKCxoMDA0ODxAREhMUFRYX",
+                ),
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        let blocks: Vec<_> = t
+            .poll()
+            .into_iter()
+            .filter_map(|e| match e {
+                TxEvent::Block(b) => Some((b.kind, b.text)),
+                _ => None,
+            })
+            .collect();
+        assert!(blocks.contains(&(BlockKind::Thinking, Some("private".into()))));
+        assert!(blocks.contains(&(BlockKind::Text, Some("Checking the layout.".into()))));
+        assert_eq!(t.last_text(), Some("Checking the layout."));
     }
 
     #[test]

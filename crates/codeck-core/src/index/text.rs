@@ -78,8 +78,9 @@ pub fn extract_docs(rec: &EntryRecord, agent_id: Option<&str>) -> Vec<TextDoc> {
         "assistant" => {
             for (bi, b) in e.blocks().iter().enumerate() {
                 match b.block_type() {
-                    "text" => {
-                        if let Some(t) = b.text_str().filter(|t| !t.trim().is_empty()) {
+                    // Narration thinking blocks are text to the reader, so they are searched like it.
+                    "text" | "thinking" => {
+                        if let Some(t) = b.assistant_text().filter(|t| !t.trim().is_empty()) {
                             out.push(doc(bi, DocRole::Assistant, cap(t, TEXT_CAP), None));
                         }
                     }
@@ -379,6 +380,18 @@ mod tests {
         assert_eq!(d[1].body, "ls -la\nList");
         assert_eq!(d[1].tool_use_id.as_deref(), Some("t1"));
         assert_eq!(d[2].body, "x\ny");
+    }
+
+    #[test]
+    fn indexes_narration_as_assistant_text_but_not_thinking() {
+        let d = docs(
+            r#"{"type":"assistant","uuid":"a","message":{"id":"m","content":[{"type":"thinking","thinking":"Looking at the layout.","signature":"CAQSLwoRCBMYAjgBQgluYXJyYXRpb24SDAABAgMEBQYHCAkKCxoMDA0ODxAREhMUFRYX"},{"type":"thinking","thinking":"secret","signature":"CAQSLgoRCBMYAjgBQgh0aGlua2luZxIMAAECAwQFBgcICQoLGgwMDQ4PEBESExQVFhc="}]}}"#,
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            (d[0].role, d[0].block_idx, d[0].body.as_str()),
+            (DocRole::Assistant, 0, "Looking at the layout.")
+        );
     }
 
     #[test]

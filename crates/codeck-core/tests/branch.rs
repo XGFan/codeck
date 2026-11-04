@@ -493,3 +493,22 @@ fn main_set_covers_the_main_line_display_set() {
         "basic has no abandoned branch"
     );
 }
+
+/// Narration (progress notes stored as a thinking block, marked so in its signature) is shown as text, as in the
+/// TUI; real thinking stays thinking.
+#[test]
+fn narration_thinking_blocks_are_text() {
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","content":[{"type":"thinking","thinking":"Looking at the layout first.","signature":"CAQSLwoRCBMYAjgBQgluYXJyYXRpb24SDAABAgMEBQYHCAkKCxoMDA0ODxAREhMUFRYX"},{"type":"thinking","thinking":"private","signature":"CAQSLgoRCBMYAjgBQgh0aGlua2luZxIMAAECAwQFBgcICQoLGgwMDQ4PEBESExQVFhc="}]}}"#,
+    ]);
+    let s = session(f);
+    let t = main_transcript(&s, vec![]);
+    let NodeBody::Assistant { blocks, .. } = &t.nodes.last().unwrap().body else {
+        panic!("no assistant node")
+    };
+    assert!(
+        matches!(&blocks[0], AssistantBlock::Text { text } if text == "Looking at the layout first.")
+    );
+    assert!(matches!(&blocks[1], AssistantBlock::Thinking { text } if text == "private"));
+}

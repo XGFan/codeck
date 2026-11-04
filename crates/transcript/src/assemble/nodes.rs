@@ -203,7 +203,12 @@ fn assistant_body(ctx: &RenderCtx<'_>, frags: &[usize], shown: &[bool]) -> NodeB
                 }),
                 "thinking" => {
                     if let Some(t) = b.thinking_str().filter(|t| !t.trim().is_empty()) {
-                        blocks.push(AssistantBlock::Thinking { text: t });
+                        // Narration is what the TUI shows as text (see `RawBlock::is_narration`).
+                        blocks.push(if b.is_narration() {
+                            AssistantBlock::Text { text: t }
+                        } else {
+                            AssistantBlock::Thinking { text: t }
+                        });
                     }
                 }
                 "redacted_thinking" => {}

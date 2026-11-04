@@ -2,7 +2,6 @@
 
 use super::{LoadedFile, SessionSkeleton, prompt, tree};
 use crate::model::{BranchChoice, BranchOption, BranchPoint};
-use crate::raw::decode_str;
 
 /// Preview length of a branch option in characters.
 const PREVIEW_CHARS: usize = 100;
@@ -125,9 +124,7 @@ fn assistant_preview(s: &SessionSkeleton, files: &[LoadedFile], head: usize) -> 
     };
     for &f in frags {
         for b in s.entry(files, f).blocks() {
-            if b.block_type() == "text"
-                && let Some(t) = decode_str(b.text.as_deref()).filter(|t| !t.trim().is_empty())
-            {
+            if let Some(t) = b.assistant_text().filter(|t| !t.trim().is_empty()) {
                 return t;
             }
         }
