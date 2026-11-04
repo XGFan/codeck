@@ -393,7 +393,10 @@ export type ProjectSummary = {
 export type PromptOrigin = { kind: "human" } | 
 /**  `<command-name>name</command-name>…<command-args>args</command-args>`. */
 { kind: "command"; name: string; args: string } | { kind: "commandOutput" } | 
-/**  Background agent completion (`<task-notification>`). */
+/**
+ *  A background task's notice (`<task-notification>`): an agent, a shell command, a Monitor,
+ *  a Workflow…; `summary` is unescaped.
+ */
 { kind: "taskNotification"; taskId: string | null; toolUseId: string | null; status: string | null; summary: string | null } | 
 /**
  *  A message from another Claude session of an agent team

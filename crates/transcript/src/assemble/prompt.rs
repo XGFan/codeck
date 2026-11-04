@@ -114,8 +114,18 @@ fn notice_fields(t: &str) -> TaskNotice {
         task_id: tag(t, "task-id"),
         tool_use_id: tag(t, "tool-use-id"),
         status: tag(t, "status"),
-        summary: tag(t, "summary"),
+        // Claude Code escapes it as XML text: a command's `>` arrives as `&gt;`.
+        summary: tag(t, "summary").map(|v| unescape_xml(&v)),
     }
+}
+
+/// XML text back to what was written (`&amp;` last, so `&amp;gt;` stays `&gt;`).
+fn unescape_xml(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 /// Classifies a user entry that is neither a tool result nor a compact summary.
@@ -282,6 +292,14 @@ mod tests {
                 assert_eq!(status.as_deref(), Some("completed"));
                 assert_eq!(summary.as_deref(), Some("done"));
             }
+            o => panic!("unexpected {o:?}"),
+        }
+        let cmd = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"a &gt; b.log 2&gt;&amp;1 &amp;&amp; echo &amp;gt;\" completed (exit code 0)</summary>\n</task-notification>";
+        match classify(&e, cmd) {
+            PromptOrigin::TaskNotification { summary, .. } => assert_eq!(
+                summary.as_deref(),
+                Some("Background command \"a > b.log 2>&1 && echo &gt;\" completed (exit code 0)")
+            ),
             o => panic!("unexpected {o:?}"),
         }
         assert_eq!(

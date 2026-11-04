@@ -128,7 +128,8 @@ pub enum PromptOrigin {
         args: String,
     },
     CommandOutput,
-    /// Background agent completion (`<task-notification>`).
+    /// A background task's notice (`<task-notification>`): an agent, a shell command, a Monitor,
+    /// a Workflow…; `summary` is unescaped.
     TaskNotification {
         task_id: Option<String>,
         tool_use_id: Option<String>,

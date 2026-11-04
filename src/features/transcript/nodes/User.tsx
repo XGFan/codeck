@@ -5,6 +5,7 @@ import { stripAnsi } from "@/lib/ansi";
 import { Markdown } from "@/lib/markdown";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
+import { describeNotice } from "../notice";
 import { ImageRefs } from "../tools";
 import { clock, prettyJson } from "../util";
 import { Anchor } from "./Anchor";
@@ -52,9 +53,9 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
 /** A command output without its `<local-command-stdout>`-style tags and ANSI codes. */
 const outputText = (text: string) => stripAnsi(text.replace(/<\/?(?:local-command|bash)-std(?:out|err)>/g, "")).trim();
 
-const STATUS_TEXT: Record<string, string> = { completed: "已完成", failed: "失败", killed: "已终止", error: "失败" };
+const STATUS_TEXT: Record<string, string> = { completed: "已完成", failed: "失败", killed: "已终止", stopped: "已停止", error: "失败" };
 
-/** Task-notification prompt: compact system-style row linking back to the background agent's card. */
+/** Task-notification prompt: a compact row for a background task's end, linking back to where it was started. */
 export function NotificationRow({ node, body }: { node: Node; body: UserBody }) {
   const { runs, toolNode, scope } = useTranscriptCtx();
   const o = body.origin;
@@ -62,6 +63,7 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
   const run = [...runs.values()].find((r) => (o.toolUseId && r.toolUseId === o.toolUseId) || (o.taskId && r.agentId === o.taskId));
   const cardNode = o.toolUseId ? toolNode.get(o.toolUseId) : undefined;
   const failed = o.status === "failed" || o.status === "error";
+  const n = describeNotice(o.summary, run ? (run.description ?? run.agentType ?? o.taskId) : null);
   return (
     <Anchor
       nodeId={node.id}
@@ -69,9 +71,16 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
     >
       <Clock size={14} strokeWidth={1.5} className="shrink-0 text-secondary" aria-hidden />
       <span data-testid="task-notification" className="min-w-[200px] flex-1">
-        后台 agent <strong className="font-semibold">{run?.description ?? run?.agentType ?? o.taskId ?? "任务"}</strong>{" "}
+        {n.kind}{" "}
+        {n.name && (
+          <>
+            <strong data-testid="task-notification-name" title={n.name} className="inline-block max-w-full truncate align-bottom font-semibold">
+              {n.name}
+            </strong>{" "}
+          </>
+        )}
         <span className={failed ? "text-error" : undefined}>{STATUS_TEXT[o.status ?? ""] ?? o.status ?? "有更新"}</span>
-        {o.summary && <span className="text-secondary"> · {o.summary}</span>}
+        {n.detail && <span className="text-secondary"> · {n.detail}</span>}
         <span className="ml-1.5 text-secondary">{clock(node.timestampMs)}</span>
       </span>
       {cardNode && o.toolUseId && (

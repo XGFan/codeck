@@ -131,6 +131,16 @@ test("后台 agent 卡片与结果通知互相跳转", async ({ page }) => {
   await expect(page.locator('[data-anchor="n12|tu_agent_tests"][data-highlighted]')).toBeVisible();
 });
 
+test("后台命令的结束通知写「后台命令」和命令本身，不当成 agent", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const row = page.locator('[data-anchor="n-notify-bash"]');
+  await reveal(page.getByTestId("transcript"), row);
+  await expect(row.getByTestId("task-notification")).toHaveText(/^后台命令 cargo build --release > build\.log 2>&1 已完成/);
+  await expect(row).not.toContainText("agent");
+  await expect(row.getByTestId("notification-to-card")).toHaveCount(0);
+  await expect(page.locator('[data-anchor="n-notify"]').getByTestId("task-notification")).toContainText("后台 agent");
+});
+
 test("显示系统消息开关控制隐藏条目", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const transcript = page.getByTestId("transcript");
