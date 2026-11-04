@@ -79,14 +79,15 @@ export function SessionHeader() {
           <span
             role="tooltip"
             data-testid="session-details"
-            className="invisible absolute top-full left-0 z-20 mt-1.5 grid w-max grid-cols-[auto_auto] gap-x-4 gap-y-1 rounded-lg border border-border bg-ground px-3 py-2 text-[12px] shadow-lg group-focus-within/info:visible group-hover/info:visible"
+            className="invisible absolute top-full left-0 z-20 mt-1.5 grid w-max grid-cols-[auto_auto] gap-x-4 gap-y-1 rounded-lg tabular-nums border border-border bg-ground px-3 py-2 text-[12px] shadow-lg group-focus-within/info:visible group-hover/info:visible"
           >
             <span>输出</span>
             <span className="text-right text-text">{formatTokens(t.output)}</span>
-            <span>输入（缓存）</span>
-            <span className="text-right text-text">
-              {formatTokens(t.input + t.cacheRead + t.cacheCreation)}（{formatTokens(t.cacheRead)}）
-            </span>
+            {/* Two rows, no brackets: a full-width bracket's built-in space throws off the right-aligned column. */}
+            <span>输入</span>
+            <span className="text-right text-text">{formatTokens(t.input + t.cacheRead + t.cacheCreation)}</span>
+            <span>缓存读取</span>
+            <span className="text-right text-text">{formatTokens(t.cacheRead)}</span>
             <span>工具调用</span>
             <span className="text-right text-text">{s.toolCallCount} 次</span>
             {s.subagentCount > 0 && (
