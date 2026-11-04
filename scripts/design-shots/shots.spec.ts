@@ -82,7 +82,10 @@ async function reveal(page: Page, target: Locator) {
 test.beforeAll(() => mkdirSync(OUT, { recursive: true }));
 
 test.afterAll(() => {
-  writeFileSync(join(OUT, "manifest.json"), JSON.stringify({ pages: PAGES, shots }, null, 2) + "\n");
+  // `at`: the local day the shots were taken (shown on the canvas).
+  const d = new Date();
+  const at = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  writeFileSync(join(OUT, "manifest.json"), JSON.stringify({ at, pages: PAGES, shots }, null, 2) + "\n");
 });
 
 test("主界面", async ({ page }) => {
