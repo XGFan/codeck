@@ -37,6 +37,18 @@ impl CoreError {
     }
 }
 
+impl From<transcript::TranscriptError> for CoreError {
+    fn from(e: transcript::TranscriptError) -> Self {
+        use transcript::TranscriptError as T;
+        match e {
+            T::NotFound(s) => CoreError::NotFound(s),
+            T::Io(e) => CoreError::Io(e),
+            T::Json(e) => CoreError::Json(e),
+            T::Internal(s) => CoreError::Internal(s),
+        }
+    }
+}
+
 impl From<CoreError> for AppError {
     fn from(e: CoreError) -> Self {
         AppError {

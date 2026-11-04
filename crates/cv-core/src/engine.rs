@@ -347,25 +347,25 @@ impl Engine {
 
     pub fn get_tool_detail(&self, r: &ToolDetailRequest) -> CoreResult<ToolDetail> {
         self.with_session(&r.session_id, &r.scope, |s, agent| {
-            assemble::content::tool_detail(s, r, agent)
+            Ok(assemble::content::tool_detail(s, r, agent)?)
         })
     }
 
     pub fn get_image(&self, r: &ImageRequest) -> CoreResult<ImageData> {
         self.with_session(&r.session_id, &r.scope, |s, agent| {
-            assemble::content::image(s, r, agent)
+            Ok(assemble::content::image(s, r, agent)?)
         })
     }
 
     pub fn resolve_jump(&self, r: &JumpRequest) -> CoreResult<JumpTarget> {
         self.with_session(&r.session_id, &TranscriptScope::Main, |s, _| {
-            assemble::jump::jump(s, r)
+            Ok(assemble::jump::jump(s, r)?)
         })
     }
 
     pub fn find_in_session(&self, r: &FindRequest) -> CoreResult<FindResult> {
         self.with_session(&r.session_id, &r.scope, |s, agent| {
-            assemble::find::find(s, r, agent)
+            Ok(assemble::find::find(s, r, agent)?)
         })
     }
 

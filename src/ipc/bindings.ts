@@ -39,7 +39,7 @@ export const events = {
 /* Types */
 /**
  *  Message histogram over the requested range: the finest bucket with at most
- *  [`crate::stats::MAX_ACTIVITY_BARS`] bars; empty bars included.
+ *  `cv_core::stats::MAX_ACTIVITY_BARS` bars; empty bars included.
  */
 export type Activity = {
 	bucket: ActivityBucket,
@@ -473,7 +473,7 @@ export type Stats = {
 	daily: DailyModelTokens[],
 	heatDaily: DayCount[],
 	activity: Activity,
-	/**  The most expensive sessions in range (at most [`crate::stats::TOP_SESSIONS`]). */
+	/**  The most expensive sessions in range (at most `cv_core::stats::TOP_SESSIONS`). */
 	sessions: SessionStat[],
 };
 

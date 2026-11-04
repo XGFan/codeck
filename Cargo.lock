@@ -515,13 +515,13 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "base64 0.22.1",
- "cv-core",
  "libc",
  "notify",
  "serde",
  "serde_json",
  "tempfile",
  "toh-proto",
+ "transcript",
  "ureq 2.12.1",
 ]
 
@@ -796,6 +796,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+ "transcript",
 ]
 
 [[package]]
@@ -4834,6 +4835,21 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "transcript"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libc",
+ "memchr",
+ "serde",
+ "serde_json",
+ "specta",
+ "specta-typescript",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

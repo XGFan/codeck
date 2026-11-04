@@ -16,7 +16,7 @@ pub mod workflow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::error::{CoreError, CoreResult};
+use crate::error::{TranscriptError, TranscriptResult};
 use crate::model::{
     AgentId, FileRole, ForkOrigin, InheritedRange, NodeId, SubagentRun, TitleSource, TokenTotals,
     Transcript, TranscriptRequest, TranscriptScope, WorkflowRun,
@@ -350,7 +350,7 @@ pub fn transcript(
     s: &AssembledSession,
     r: &TranscriptRequest,
     agent_file: Option<&LoadedFile>,
-) -> CoreResult<Transcript> {
+) -> TranscriptResult<Transcript> {
     match &r.scope {
         TranscriptScope::Main => {
             let sk = &s.skeleton;
@@ -393,7 +393,7 @@ pub fn transcript(
         }
         TranscriptScope::Subagent { agent_id } => {
             let file = agent_file
-                .ok_or_else(|| CoreError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
+                .ok_or_else(|| TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
             let files = std::slice::from_ref(file);
             let sk = skeleton::build(files);
             let path = branch::resolve_path(&sk, &r.branch_choices);

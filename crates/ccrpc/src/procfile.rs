@@ -1,7 +1,7 @@
 //! Process Files: `<claude config>/sessions/<pid>.json` written by every running Claude Code.
-//! The struct and the liveness check (pid plus `procStart`) are cv-core's.
+//! The struct and the liveness check (pid plus `procStart`) are the transcript crate's.
 
-pub use cv_core::live::{ProcessFile, is_alive};
+pub use ::transcript::live::{ProcessFile, is_alive};
 
 use crate::locate::Roots;
 

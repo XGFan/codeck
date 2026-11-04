@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use cv_core::assemble::{LoadedFile, WorkflowFiles, prompt, skeleton, tree, workflow};
-use cv_core::model::FileRole;
-use cv_core::raw::{RawBlock, RawContent, RawEntry, decode_str};
+use ::transcript::assemble::{LoadedFile, WorkflowFiles, prompt, skeleton, tree, workflow};
+use ::transcript::model::FileRole;
+use ::transcript::raw::{RawBlock, RawContent, RawEntry, decode_str};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -118,7 +118,7 @@ pub enum TxEvent {
         /// From the main file (not a Subagent Run).
         main: bool,
         model: Option<String>,
-        usage: cv_core::pricing::Usage,
+        usage: ::transcript::pricing::Usage,
         /// Cost Claude Code logged itself, if any.
         logged_cost: Option<f64>,
     },
@@ -808,7 +808,7 @@ impl Tailer {
                         out.push(TxEvent::Usage {
                             main: agent.is_none(),
                             model: msg.model.clone(),
-                            usage: cv_core::pricing::Usage {
+                            usage: ::transcript::pricing::Usage {
                                 input: n(u.input_tokens),
                                 output: n(u.output_tokens),
                                 cache_read: n(u.cache_read_input_tokens),
@@ -1055,10 +1055,10 @@ pub fn main_blocks(main: &Path, since: u64) -> (Vec<Block>, u64) {
 /// stay on it).
 /// Entries in the Main Line's tree or under a real root (no parent) but not on the Main Line are
 /// abandoned; entries cut off by a dangling parent are a fragment, not a Branch, and are kept.
-/// The Main Line itself follows cv-core's rules (merged fragments, absorbed tool results, compact
+/// The Main Line itself follows the transcript crate's rules (merged fragments, absorbed tool results, compact
 /// boundaries). `None` if unreadable.
 pub fn off_main_uuids(main: &Path, leaf: &str, upto: u64) -> Option<HashSet<String>> {
-    let mut chunk = cv_core::parse::read_entries(main, 0).ok()?;
+    let mut chunk = ::transcript::parse::read_entries(main, 0).ok()?;
     chunk.records.retain(|r| r.offset <= upto);
     let real_root: HashSet<String> = chunk
         .records
@@ -1216,8 +1216,8 @@ fn read_meta_tool_use_id(dir: &Path, stem: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// One complete transcript line: cv-core's tolerant entry plus the `operation` field of
-/// `queue-operation` entries (which cv-core does not model).
+/// One complete transcript line: the transcript crate's tolerant entry plus the `operation` field of
+/// `queue-operation` entries (which the transcript crate does not model).
 struct Line {
     entry: RawEntry,
     operation: Option<String>,
@@ -1227,7 +1227,7 @@ struct Line {
     offset: u64,
 }
 
-/// Fields of a few entry kinds that cv-core does not model.
+/// Fields of a few entry kinds that the transcript crate does not model.
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct ExtraFields {
@@ -1250,7 +1250,7 @@ struct Chunk {
 }
 
 /// Reads the complete lines of `path` from byte `from` (read-only; a partial last line is left
-/// for the next read; lines that are not JSON objects are skipped). Not cv-core's `read_entries`:
+/// for the next read; lines that are not JSON objects are skipped). Not the transcript crate's `read_entries`:
 /// that one rewrites `queued_command` attachments into user messages (steer needs them apart) and
 /// has no read cap.
 fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {

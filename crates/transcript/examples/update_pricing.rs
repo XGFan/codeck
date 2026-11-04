@@ -7,7 +7,7 @@
 
 use std::io::Read;
 
-use cv_core::pricing::PriceTable;
+use transcript::pricing::PriceTable;
 
 fn main() {
     let mut json = String::new();

@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 toh-proto.workspace = true
-cv-core.workspace = true
+transcript.workspace = true
 alacritty_terminal.workspace = true
 serde.workspace = true
 serde_json.workspace = true

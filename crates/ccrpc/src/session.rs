@@ -434,7 +434,7 @@ pub struct Engine {
     turn_active: bool,
     last_text: Option<String>,
     turn: TurnStats,
-    prices: cv_core::pricing::PriceTable,
+    prices: ::transcript::pricing::PriceTable,
     library: Library,
     analyzer: Option<Analyzer>,
     /// The analysis in flight: dialog signature and where its result arrives.
@@ -548,7 +548,7 @@ impl Engine {
             turn_active: false,
             last_text: None,
             turn: TurnStats::default(),
-            prices: cv_core::pricing::PriceTable::embedded(),
+            prices: ::transcript::pricing::PriceTable::embedded(),
             library: Library::load(layout::library_dir()),
             analyzer: Analyzer::from_env(),
             analysis: None,
@@ -849,7 +849,7 @@ impl Engine {
         self.look_at_screen();
     }
 
-    fn note_main_usage(&mut self, model: Option<&str>, u: &cv_core::pricing::Usage) {
+    fn note_main_usage(&mut self, model: Option<&str>, u: &::transcript::pricing::Usage) {
         if let Some(m) = model.filter(|m| !m.is_empty() && *m != "<synthetic>") {
             self.model = Some(m.to_string());
         }

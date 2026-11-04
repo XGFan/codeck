@@ -9,7 +9,7 @@ use serde_json::value::RawValue;
 
 use super::nodes::{persisted_ref, result_content};
 use super::{AssembledSession, LoadedFile, SessionSkeleton, skeleton};
-use crate::error::{CoreError, CoreResult};
+use crate::error::{TranscriptError, TranscriptResult};
 use crate::model::{
     DetailSource, ImageData, ImageRequest, ToolDetail, ToolDetailRequest, ToolPart, TranscriptScope,
 };
@@ -36,12 +36,12 @@ fn scope_view<'a>(
     s: &'a AssembledSession,
     scope: &TranscriptScope,
     agent_file: Option<&'a LoadedFile>,
-) -> CoreResult<(Cow<'a, SessionSkeleton>, &'a [LoadedFile])> {
+) -> TranscriptResult<(Cow<'a, SessionSkeleton>, &'a [LoadedFile])> {
     match scope {
         TranscriptScope::Main => Ok((Cow::Borrowed(&s.skeleton), &s.main_files)),
         TranscriptScope::Subagent { agent_id } => {
             let f = agent_file
-                .ok_or_else(|| CoreError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
+                .ok_or_else(|| TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
             let files = std::slice::from_ref(f);
             Ok((Cow::Owned(skeleton::build(files)), files))
         }
@@ -95,7 +95,7 @@ pub fn tool_detail(
     s: &AssembledSession,
     r: &ToolDetailRequest,
     agent_file: Option<&LoadedFile>,
-) -> CoreResult<ToolDetail> {
+) -> TranscriptResult<ToolDetail> {
     let (sk, files) = scope_view(s, &r.scope, agent_file)?;
     let id = r.tool_use_id.as_str();
     match r.part {
@@ -103,7 +103,7 @@ pub fn tool_detail(
             let &i = sk
                 .tool_use_at
                 .get(id)
-                .ok_or_else(|| CoreError::NotFound("该工具调用".to_owned()))?;
+                .ok_or_else(|| TranscriptError::NotFound("该工具调用".to_owned()))?;
             let raw = find_block(sk.entry(files, i), "tool_use", id)
                 .and_then(|b| b.input.as_deref())
                 .map(|v| v.get().to_owned())
@@ -126,7 +126,7 @@ pub fn tool_detail(
             });
             let Some((e, block)) = found else {
                 if !sk.tool_use_at.contains_key(id) {
-                    return Err(CoreError::NotFound("该工具调用".to_owned()));
+                    return Err(TranscriptError::NotFound("该工具调用".to_owned()));
                 }
                 return Ok(ToolDetail {
                     text: String::new(),
@@ -202,7 +202,7 @@ pub fn image(
     s: &AssembledSession,
     r: &ImageRequest,
     agent_file: Option<&LoadedFile>,
-) -> CoreResult<ImageData> {
+) -> TranscriptResult<ImageData> {
     let (sk, files) = scope_view(s, &r.scope, agent_file)?;
     let ordinal = r.image.ordinal as usize;
     let found = match &r.image.tool_use_id {
@@ -227,7 +227,7 @@ pub fn image(
                 .and_then(|b| image_data(b.source.as_deref()))
         }),
     };
-    found.ok_or_else(|| CoreError::NotFound("该图片".to_owned()))
+    found.ok_or_else(|| TranscriptError::NotFound("该图片".to_owned()))
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ Claude Viewer：只读的 macOS 桌面应用（Tauri 2 + React 19），用来搜
 
 | 目录 | 内容 | 说明 |
 |---|---|---|
+| `crates/transcript` | 解析库：读 Claude Code 的数据（transcript、进程文件、价格），组装成显示模型；无 SQLite、无 tauri | 本文件「架构」 |
 | `crates/cv-core`、`src-tauri`、`src` | Claude Viewer 本体 | 本文件 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
 | `apps/cc-gui` | cc-gui（过渡期，驾驶功能并入 viewer 后删除） | 见 [apps/cc-gui/CLAUDE.md](apps/cc-gui/CLAUDE.md) |
@@ -38,7 +39,7 @@ E2E_PORT=1431 pnpm test:e2e                        # 并行跑多份时各用一
 
 pnpm bindings                  # 改了 IPC 类型/命令后重新生成 src/ipc/bindings.ts
 curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
-  | cargo run -p cv-core --example update_pricing   # 刷新内置价格快照
+  | cargo run -p transcript --example update_pricing   # 刷新内置价格快照
 pnpm tauri build --bundles app --target aarch64-apple-darwin
 ```
 
@@ -46,13 +47,15 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 ## 架构
 
-三层，数据单向流动：`crates/cv-core`（纯 Rust，无 tauri 依赖）→ `src-tauri`（外壳）→ `src`（React）。
+三层，数据单向流动：`crates/transcript`（解析）→ `crates/cv-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `src-tauri`（外壳）→ `src`（React）。ccrpc 也依赖 `crates/transcript`，不依赖 cv-core。
 
-### cv-core
+### transcript 与 cv-core
+
+- `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`、`live`（进程文件）、`pricing`。cv-core 以原路径 `pub use` 重新导出它们（`cv_core::model::…`、`crate::assemble::…` 照旧可用）。解析层的错误是 `TranscriptError`，cv-core 按变体映射到 `CoreError`。
 
 - `engine.rs` 的 `Engine` 是 src-tauri 调用的**唯一入口**，全部是阻塞调用。它负责：索引同步（stat 遍历 → 与 `files` 表比对 → rayon 并行轻解析 → 按批事务写入 → 重算受影响的 Session；追加只读 `[parsed_offset, EOF)`，文件变小/被替换则整 Session 重解析）；以及显示用的小 LRU（按 source/sidecar 的 path+size+mtime 哈希校验）。
 - 管线：`scan`（遍历数据根、按 realpath/inode 去重）→ `raw`（宽容的 serde 结构，字段全可选）→ `parse`（按行解析，坏行跳过并计数）→ `assemble/*`（把事件日志组装成节点：parentUuid 树、Branch/Main Line、compact 接续、Fork、Subagent/Workflow 关联、工具摘要、⌘F 查找、搜索跳转）→ `index/*`（SQLite + FTS5 trigram）→ `search` / `stats` / `diag`。`known.rs` 列出已知的条目类型/内容块/工具名，未知的进诊断而不是丢弃。
-- `model/*` 是 IPC 类型的**唯一来源**（specta 导出）。改这里或 `src-tauri/src/commands.rs` 的签名后必须 `pnpm bindings`；`src/ipc/bindings.ts` 是生成文件，勿手改。
+- `model/*`（在 `crates/transcript`）是 IPC 类型的**唯一来源**（specta 导出）。改这里或 `src-tauri/src/commands.rs` 的签名后必须 `pnpm bindings`；`src/ipc/bindings.ts` 是生成文件，勿手改。
 - 索引是可丢弃的镜像（ADR-0003）：不写迁移，schema 变化就把 `index/schema.rs` 的 `SCHEMA_VERSION` +1，启动时自动删库重建。
 - 工具输出不进 FTS，也不提供搜索（ADR-0004）；⌘F 会话内查找仍覆盖工具输出（`assemble/find.rs`）。
 - API 金额：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine::rebill_changed`）。价格表在 `Engine` 里，联网下载在 src-tauri（`prices.rs`，ADR-0005）。

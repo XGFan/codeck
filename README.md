@@ -59,7 +59,7 @@ pnpm tauri dev          # 启动应用（读取真实数据目录）
 pnpm dev:mock           # 只启动前端，使用内置 mock 数据（浏览器打开 http://localhost:1420）
 ```
 
-Rust 侧的 IPC 类型是唯一来源，修改 `crates/cv-core/src/model/*` 后重新生成前端绑定：
+Rust 侧的 IPC 类型是唯一来源，修改 `crates/transcript/src/model/*` 后重新生成前端绑定：
 
 ```sh
 pnpm bindings           # 写入 src/ipc/bindings.ts（勿手改）
@@ -83,11 +83,11 @@ CV_REAL_ROOT=~/.claude cargo test -p cv-core --release --test assemble -- --igno
 CV_BENCH_ROOT=~/.claude cargo test -p cv-core --release --test search -- --ignored --nocapture    # 建全文索引并测查询耗时
 ```
 
-内置价格快照（`crates/cv-core/src/pricing-snapshot.json`）的刷新方式：
+内置价格快照（`crates/transcript/src/pricing-snapshot.json`）的刷新方式：
 
 ```sh
 curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
-  | cargo run -p cv-core --example update_pricing
+  | cargo run -p transcript --example update_pricing
 ```
 
 `crates/cv-core/tests/fixtures/` 是从真实 Session 精简、脱敏得到的结构样本（见其中的 README），由 `crates/cv-core/examples/sanitize.rs` 生成。
@@ -111,7 +111,9 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/Claude Viewer.app" "/App
 ## 结构
 
 ```
-crates/cv-core/   纯 Rust 核心：扫描、容错解析、对话组装、SQLite 索引（FTS5 trigram）、搜索、统计、诊断
+crates/transcript/ 解析库：容错解析、对话组装、显示模型、进程文件、价格（ccrpc 也用它）
+crates/cv-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断
+crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
 src-tauri/        Tauri 外壳：命令与事件、后台 worker、FSEvents 监听、Live 轮询、设置
 src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock 双实现）
 e2e/              Playwright 用例

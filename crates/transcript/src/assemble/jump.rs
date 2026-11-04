@@ -5,7 +5,7 @@
 //! select every Branch head on the target's root path that the default path does not follow.
 
 use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, skeleton, tree};
-use crate::error::{CoreError, CoreResult};
+use crate::error::{TranscriptError, TranscriptResult};
 use crate::known;
 use crate::model::{BranchChoice, JumpRequest, JumpTarget, TranscriptScope};
 use crate::parse;
@@ -13,7 +13,7 @@ use crate::parse;
 /// Bound on the `parentAgentId` chain (cycle guard).
 const MAX_AGENT_DEPTH: usize = 64;
 
-pub fn jump(s: &AssembledSession, r: &JumpRequest) -> CoreResult<JumpTarget> {
+pub fn jump(s: &AssembledSession, r: &JumpRequest) -> TranscriptResult<JumpTarget> {
     let Some(agent_id) = &r.agent_id else {
         let t = locate(&s.skeleton, r)?;
         return Ok(JumpTarget {
@@ -33,11 +33,11 @@ pub fn jump(s: &AssembledSession, r: &JumpRequest) -> CoreResult<JumpTarget> {
         .subagent_metas
         .iter()
         .find(|m| &m.agent_id == agent_id)
-        .ok_or_else(|| CoreError::NotFound("该 Subagent".to_owned()))?;
+        .ok_or_else(|| TranscriptError::NotFound("该 Subagent".to_owned()))?;
     let path = meta
         .transcript_path
         .as_ref()
-        .ok_or_else(|| CoreError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
+        .ok_or_else(|| TranscriptError::NotFound(format!("Subagent {agent_id} 的记录文件")))?;
     let file = LoadedFile {
         path: path.clone(),
         role: meta.role,
@@ -91,7 +91,7 @@ struct Located {
     hidden: bool,
 }
 
-fn locate(sk: &SessionSkeleton, r: &JumpRequest) -> CoreResult<Located> {
+fn locate(sk: &SessionSkeleton, r: &JumpRequest) -> TranscriptResult<Located> {
     let by_tool = |t: &String| {
         sk.results_for
             .get(t)
@@ -103,7 +103,7 @@ fn locate(sk: &SessionSkeleton, r: &JumpRequest) -> CoreResult<Located> {
         .get(&r.node_id)
         .copied()
         .or_else(|| r.tool_use_id.as_ref().and_then(by_tool))
-        .ok_or_else(|| CoreError::NotFound("该消息".to_owned()))?;
+        .ok_or_else(|| TranscriptError::NotFound("该消息".to_owned()))?;
     let n = &sk.nodes[idx];
     let mut tool_use_id = r.tool_use_id.clone();
     // `on`: the entry that must be on the selected path; `display`: the node the UI shows.

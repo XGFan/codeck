@@ -13,7 +13,7 @@ use serde_json::Value;
 use super::content::{self, DETAIL_BYTES};
 use super::nodes::{persisted_ref, result_content};
 use super::{AssembledSession, LoadedFile, SessionSkeleton, skeleton};
-use crate::error::CoreResult;
+use crate::error::TranscriptResult;
 use crate::model::{
     AssistantBlock, FindLocation, FindMatch, FindRequest, FindResult, NodeBody, TranscriptRequest,
     TranscriptScope,
@@ -23,7 +23,7 @@ pub fn find(
     s: &AssembledSession,
     r: &FindRequest,
     agent_file: Option<&LoadedFile>,
-) -> CoreResult<FindResult> {
+) -> TranscriptResult<FindResult> {
     let needle = r.query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(FindResult {
