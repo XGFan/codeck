@@ -334,13 +334,34 @@ pub fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A rule of the input box: all `─`, or with a title near its right end (`──── probe-a ─`: the
+/// top rule of a Session named with `/rename`).
+pub fn is_input_rule(l: &str) -> bool {
+    let l = l.trim_end();
+    if !l.starts_with('─') || !l.ends_with('─') {
+        return false;
+    }
+    let head = l.trim_end_matches('─');
+    if head.is_empty() {
+        return true;
+    }
+    let tail = l[head.len()..].chars().count();
+    let body = head.trim_start_matches('─');
+    let lead = head[..head.len() - body.len()].chars().count();
+    let Some(title) = body.strip_prefix(' ').and_then(|t| t.strip_suffix(' ')) else {
+        return false;
+    };
+    // The title sits at the right end (a dialog's `──── Title ────` frame is not an input box rule).
+    !title.trim().is_empty() && !title.contains('─') && tail <= 3 && lead >= 4
+}
+
 /// The prompt input box: the text after `❯` between the two horizontal rules at the bottom.
 /// `Some("")` when empty, `None` when no input box is visible (a dialog has the screen).
 pub fn input_box(lines: &[String]) -> Option<String> {
     let rules: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.starts_with('─') && l.chars().all(|c| c == '─'))
+        .filter(|(_, l)| is_input_rule(l))
         .map(|(i, _)| i)
         .collect();
     let (&bottom, rest) = rules.split_last()?;
@@ -672,6 +693,28 @@ mod tests {
     }
 
     #[test]
+    fn input_box_under_a_titled_rule() {
+        // A Session named with `/rename` shows its name in the top rule (Claude Code 2.1.318).
+        let rule = "─".repeat(60);
+        let lines: Vec<String> = [
+            "❯ /rename probe-a".to_string(),
+            "  ⎿  Session renamed to: probe-a".to_string(),
+            format!("{} probe-a ─", "─".repeat(50)),
+            "❯ /cost".to_string(),
+            rule.clone(),
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle)".to_string(),
+        ]
+        .into();
+        assert_eq!(input_box(&lines).as_deref(), Some("/cost"));
+        assert_eq!(permission_mode(&lines), Some(crate::rpc::PermissionMode::Bypass));
+        assert!(!is_input_rule(&format!("{} Settings {}", "─".repeat(30), "─".repeat(30))));
+        assert!(!is_input_rule("── probe-a ─"));
+        // A long name on a narrow screen still leaves a short rule before it.
+        assert!(is_input_rule(&format!("{} {} ─", "─".repeat(6), "a-rather-long-session-name-for-a-narrow-pane")));
+        assert!(!is_input_rule(&format!("{} a ─ b ─", "─".repeat(30))));
+    }
+
+    #[test]
     fn input_text_skips_the_dim_placeholder() {
         let box_ = |inner: &str| {
             let rule = "─".repeat(30);
@@ -716,9 +759,7 @@ mod tests {
 /// edits on`, `⏸ plan mode on`, `⏵⏵ auto mode on`).
 pub fn permission_mode(lines: &[String]) -> Option<crate::rpc::PermissionMode> {
     use crate::rpc::PermissionMode::*;
-    let rule = lines
-        .iter()
-        .rposition(|l| l.starts_with('─') && l.chars().all(|c| c == '─'))?;
+    let rule = lines.iter().rposition(|l| is_input_rule(l))?;
     lines[rule + 1..].iter().find_map(|l| {
         let l = l.to_lowercase();
         if l.contains("manual mode on") {

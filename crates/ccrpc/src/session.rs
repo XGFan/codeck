@@ -229,11 +229,17 @@ impl Marks {
         }
     }
 
+    /// A slash command's record is rebuilt as `/name args`: spaces typed in it need not match.
     fn prompt_after(&self, after: u64, text: &str) -> Option<&str> {
+        let slash = text.trim_start().starts_with('/');
         self.prompts
             .iter()
             .rev()
-            .find(|(s, _, t)| *s > after && t.trim() == text.trim())
+            .find(|(s, _, t)| {
+                *s > after
+                    && (t.trim() == text.trim()
+                        || (slash && recognize::collapse_ws(t) == recognize::collapse_ws(text)))
+            })
             .map(|(_, u, _)| u.as_str())
     }
 
@@ -3272,6 +3278,16 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slash_command_confirms_whatever_spaces_were_typed() {
+        let mut m = Marks::default();
+        m.prompt("u1".into(), "/release v1".into());
+        assert_eq!(m.prompt_after(0, "/release  v1 "), Some("u1"));
+        assert_eq!(m.prompt_after(1, "/release v1"), None);
+        m.prompt("u2".into(), "hello world".into());
+        assert_eq!(m.prompt_after(0, "hello  world"), None);
+    }
 
     #[test]
     fn marks_compare_by_sequence_not_length() {

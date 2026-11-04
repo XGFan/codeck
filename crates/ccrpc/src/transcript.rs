@@ -134,7 +134,8 @@ pub enum TxEvent {
     Enqueued {
         content: String,
     },
-    /// A user prompt entry in the main file (string content).
+    /// A user prompt entry in the main file (string content), or a slash command's record there as
+    /// typed (`/name args`; no block, it only confirms the `prompt` that sent it).
     UserPrompt {
         uuid: String,
         text: String,
@@ -718,6 +719,12 @@ impl Tailer {
                     duration_ms: e.duration_ms.map(|d| d.max(0.0) as u64),
                 });
             }
+            // Newer Claude Code records a local slash command (`/rename`, `/model x`) this way.
+            "system" if agent.is_none() && e.subtype.as_deref() == Some("local_command") => {
+                if let Some(text) = decode_str(e.content.as_deref()).and_then(|c| command_line(&c)) {
+                    out.push(TxEvent::UserPrompt { uuid, text });
+                }
+            }
             "queue-operation" if agent.is_none() => {
                 if e.operation.as_deref() == Some("enqueue") {
                     let content = prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
@@ -798,6 +805,11 @@ impl Tailer {
                 match &msg.content {
                     Some(RawContent::Text(s)) if !assistant => {
                         if prompt::is_command_record(s) {
+                            if agent.is_none()
+                                && let Some(text) = command_line(s)
+                            {
+                                out.push(TxEvent::UserPrompt { uuid, text });
+                            }
                             return;
                         }
                         let s = &prompt::unwrap_pasted(s);
@@ -1148,6 +1160,19 @@ struct Chunk {
     capped: bool,
 }
 
+/// A slash command's record (`<command-name>/x</command-name>…<command-args>a</command-args>`) as
+/// it was typed: `/x a`. Its output and `!` shell records are not commands.
+fn command_line(s: &str) -> Option<String> {
+    let t = s.trim_start();
+    if !t.starts_with("<command-name>") && !t.starts_with("<command-message>") {
+        return None;
+    }
+    let name = prompt::tag(t, "command-name")?;
+    let args = prompt::tag(t, "command-args").unwrap_or_default();
+    let line = format!("/{} {}", name.trim().trim_start_matches('/'), args.trim());
+    Some(line.trim_end().to_string())
+}
+
 /// Reads the complete lines of `path` from byte `from` (read-only; a partial last line is left
 /// for the next read; lines that are not JSON objects are skipped), at most [`MAX_READ`] bytes,
 /// without rewriting `queued_command` attachments (steer needs them apart from prompts).
@@ -1319,6 +1344,30 @@ mod tests {
         let evs = t.poll();
         assert!(!evs.is_empty());
         assert!(t.pending_named("AskUserQuestion").is_none());
+    }
+
+    #[test]
+    fn slash_command_records_confirm_as_typed_without_blocks() {
+        // Claude Code 2.1.318: a local command as a `system` entry, a prompt-type one as a `user` entry.
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let local = json!({"type": "system", "subtype": "local_command", "uuid": "c1",
+            "content": "<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>probe-a</command-args>"});
+        let output = json!({"type": "system", "subtype": "local_command", "uuid": "c2",
+            "content": "<local-command-stdout>Session renamed to: probe-a</local-command-stdout>"});
+        let skill = json!({"type": "user", "uuid": "c3", "message": {"role": "user",
+            "content": "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args></command-args>"}});
+        write_lines(&main, &[local, output, skill]);
+        let evs = Tailer::new(&main).poll();
+        let prompts: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match e {
+                TxEvent::UserPrompt { uuid, text } => Some((uuid.as_str(), text.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(prompts, vec![("c1", "/rename probe-a"), ("c3", "/review")]);
+        assert!(blocks(&evs).is_empty());
     }
 
     #[test]

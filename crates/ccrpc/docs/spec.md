@@ -77,13 +77,13 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 
 | 命令 | 可用状态 | 做法 | 成功时 `data` |
 |---|---|---|---|
-| `prompt {text, images?}` | idle 且上一轮已结束（上一轮只差结束时最多等 6s） | 先清空输入框（中止后被放回的提示词），bracketed paste 写正文，再发 `\r`（写入与回车前都确认屏幕上是输入框而不是对话框）；等 transcript 出现这条用户消息（≤30s）；回车前 Claude Code 恰好自己开始了一轮（后台任务的通知等），提示词会进它的队列（transcript 出现 enqueue），也算送达；enqueue 不带正文时（别的 Session 发来的消息也是这样）要再过 2 秒仍没有这条用户消息、且正文已离开输入框才算。以 `/` 或 `!` 开头的正文会被 Claude Code 当作斜杠命令或 shell 命令 ；`images` 为 Host 上的图片文件路径，正文之前逐个以 bracketed paste 写入路径、确认输入框出现 `[Image #n]` | `uuid`、`prompt_id`（插件看到的提交，没看到为 null）、`delivered_as`（`prompt`；进了 Claude Code 的队列为 `queued`，此时 `uuid`、`prompt_id` 为 null） |
+| `prompt {text, images?}` | idle 且上一轮已结束（上一轮只差结束时最多等 6s） | 先清空输入框（中止后被放回的提示词），bracketed paste 写正文，再发 `\r`（写入与回车前都确认屏幕上是输入框而不是对话框）；等 transcript 出现这条用户消息（≤30s）；回车前 Claude Code 恰好自己开始了一轮（后台任务的通知等），提示词会进它的队列（transcript 出现 enqueue），也算送达；enqueue 不带正文时（别的 Session 发来的消息也是这样）要再过 2 秒仍没有这条用户消息、且正文已离开输入框才算。以 `/` 或 `!` 开头的正文会被 Claude Code 当作斜杠命令或 shell 命令；斜杠命令以 transcript 里它的命令记录（`<command-name>` 的 user 条目，新版本地命令为 `system` / `local_command` 条目，还原成 `/name args` 比对）确认，`uuid` 为该记录的 uuid；打开面板、不留记录的命令（如 `/cost`）要等满 30 秒才超时，这期间其他命令也在排队，应改用 `slash`；`images` 为 Host 上的图片文件路径，正文之前逐个以 bracketed paste 写入路径、确认输入框出现 `[Image #n]` | `uuid`、`prompt_id`（插件看到的提交，没看到为 null）、`delivered_as`（`prompt`；进了 Claude Code 的队列为 `queued`，此时 `uuid`、`prompt_id` 为 null） |
 | `steer {text}` | busy | 先清空输入框再同样写入；忙时输入会排队，在当前工具调用结束后送达（transcript `queue-operation`/`enqueue`，随后作为 `queued_command` 附件交给模型）。等 enqueue（≤10s） | `delivered_as`：`queued`；若这时本轮恰好结束、被当作新提示词，则为 `prompt` |
 | `follow_up {text, images?}` | 除 exited | 进 ccrpc 队列；在两条命令之间、`idle` 已满 1 秒且上一轮已结束时按 `prompt`（刚 Stop 时 Claude Code 会先为它自己队列里的东西——如后台任务的通知——起一轮）（连同 `images`，图片路径在入队时就检查）依次发出（不会在别的命令等待期间发出）；失败发 `follow_up_failed` 事件 | `queued`（队列长度） |
 | `abort` | busy / waiting | 发 `Esc`；等状态离开 busy / waiting（≤10s） | `state` |
 | `answer_permission {request_id, decision, message?}` | waiting.permission | 请求在插件里等着（主线）：`allow` 与 `deny` 经 hook 回决定——`deny` 不带 `message` 时中断本轮（同审批框的 No），带 `message` 时它作为反馈交给模型、本轮继续；`allow_always` 按审批框自己的“总是允许”选项（它加的规则如 `python3 *` 比 hook 能给的精确命令宽，见 probes.md），按键后放掉 hook，没有这一项则 `not_offered`。请求不在插件里等（后台 Subagent、hook 已超时）：识别审批框按对应选项的数字键，`message` 在拒绝、回到 idle 后作为 `prompt` 发出 | `state`；按键拒绝且有 `message` 时另有 `message_uuid` |
 | `answer_question {request_id, answers}` | waiting.question | 只经插件：`answers` 与题目一一对应，`{"options":[label…]}`（多选以 `, ` 连接）或 `{"other":"文本"}`（单选、多选都可），作为 AskUserQuestion 的 `answers` 回给 hook；提问不在插件里等时返回 `unsupported` | `state` |
-| `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行） | `{}` |
+| `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行）；等命令离开输入框或被选择框顶替（≤2s），不等 transcript | `{}` |
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
 | `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`、`agent_id`；挂起的 choice 为它的 `choice` 事件）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`taken_over`、`co_display`、`mode`（输入框下模式行最后一次看到的，没看到过取插件报来的 `permission_mode`）、`model`（主线最后一条 assistant 的模型）、`context_tokens`（它的 input + cache_read + cache_creation） |
@@ -143,7 +143,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 正文一次 bracketed paste（`ESC[200~ … ESC[201~`）写入，换行不会提交；等输入框里出现内容（≤2s，长正文显示为 `[Pasted text …]`）后再单独发 `\r`。4.5k 字符（含中文、换行）一次写入逐字正确。
 - 按键之间至少隔 50ms，屏幕还没反应时最多等到 80ms。斜杠命令输入后等输入框出现该命令（≤1s）再回车，回车后等它离开输入框（≤2s）。
 - 写入前去掉控制字符（保留 `\n`、`\t`，`\r` 换成 `\n`），防止注入转义序列。
-- 写入前等屏幕上出现输入框（≤2s；刚启动时进程文件先说 idle、TUI 还没画好）。
+- 写入前等屏幕上出现输入框（≤2s；刚启动时进程文件先说 idle、TUI 还没画好）。输入框上下两条横线；`/rename` 过的 Session 上边那条右端带名字（`──── 名字 ─`），也认作输入框。
 - 清空输入框：按输入框行数重复“`ctrl+u` + 退格”，等屏幕上输入框变空（≤500ms，最多 3 次）；不用 `ctrl+c`（连按两次会退出 Claude Code）。
 - 读输入框内容时不算暗色的格（空输入框里的占位提示 `Try "…"`、补全的灰字）与紧挨在它前面的反显光标格。
 
