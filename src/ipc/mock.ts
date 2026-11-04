@@ -75,8 +75,9 @@ export interface MockProbe {
   guiLog: string[];
   badge: number;
   images: number;
+  copied: string[];
 }
-const probe: MockProbe = { sent: [], guiLog: [], badge: 0, images: 0 };
+const probe: MockProbe = { sent: [], guiLog: [], badge: 0, images: 0, copied: [] };
 if (typeof window !== "undefined") (window as unknown as { __mock: MockProbe }).__mock = probe;
 
 const later = (f: () => void) => setTimeout(f, 0);
@@ -205,12 +206,15 @@ export const mockBackend: Backend = {
   guiLog: async (_conn, text) => {
     probe.guiLog.push(text);
   },
+  logDir: async (id) => (conns.get(id)?.closed ? null : `/mock/logs/${id}`),
   saveImage: async (_b64, ext) => `/tmp/cc-gui-mock-${++probe.images}.${ext}`,
   pickDir: async () => "/tmp/mock-new",
   setBadge: async (n) => {
     probe.badge = n;
   },
-  copyText: async () => {},
+  copyText: async (text) => {
+    probe.copied.push(text);
+  },
   onLine: (cb) => {
     lineCbs.add(cb);
     return () => lineCbs.delete(cb);

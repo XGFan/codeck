@@ -28,6 +28,8 @@ export interface Backend {
   disconnect(conn: string): Promise<void>;
   /** A line in the connection's gui.log (or the global one). */
   guiLog(conn: string | null, text: string): Promise<void>;
+  /** The connection's log directory (wire.jsonl, ccrpc.log, gui.log); null once ccrpc has exited. */
+  logDir(conn: string): Promise<string | null>;
   /** Stores a pasted image; returns its path on the Host. */
   saveImage(base64: string, ext: string): Promise<string>;
   pickDir(): Promise<string | null>;

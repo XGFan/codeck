@@ -177,6 +177,16 @@ test("unsent input stays with its Session across switches", async ({ page }) => 
   await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
 });
 
+test("the header copies what is needed to look into a Session", async ({ page }) => {
+  await open(page, "turns");
+  const header = page.getByTestId("header");
+  await header.hover();
+  await header.getByRole("button", { name: "复制排查信息" }).click();
+  await expect(header).toContainText("已复制");
+  const copied = await page.evaluate(() => (window as unknown as { __mock: { copied: string[] } }).__mock.copied.pop());
+  expect(copied).toMatch(/^holder_id: \S+\nsession_id: \S+\ncwd: \S+\nlogs: \/mock\/logs\/mock\d+$/);
+});
+
 test("a long stream scrolls inside its area, following the newest turn", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 420 });
   await open(page, "界面用例");

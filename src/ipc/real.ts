@@ -27,6 +27,7 @@ export const realBackend: Backend = {
   send: (conn, msg) => invoke("send", { conn, line: JSON.stringify(msg) }),
   disconnect: (conn) => invoke("disconnect", { conn }),
   guiLog: (conn, text) => invoke("gui_log", { conn, text }),
+  logDir: (conn) => invoke<string | null>("log_dir", { conn }),
   saveImage: (base64, ext) => invoke<string>("save_image", { base64, ext }),
   pickDir: async () => {
     const r = await open({ directory: true, multiple: false });

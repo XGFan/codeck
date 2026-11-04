@@ -74,6 +74,8 @@ cc-gui 是基于 [ccrpc](../../ccrpc) 的 Claude Code 桌面 GUI，只在本机�
   gui.log      用户操作（按钮 → 命令 id）、渲染异常、ccrpc 退出码与 stderr
 ```
 
+顶栏标题旁（悬停显示）“复制排查信息”：复制 holder_id、session_id、cwd 与这个连接的日志目录，交给排查的 Session。
+
 出问题时另开终端 Session 排查，不做应用内的问题上报。排查方法见 CLAUDE.md。
 
 ## 8. 测试

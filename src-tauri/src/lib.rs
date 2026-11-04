@@ -80,6 +80,12 @@ async fn gui_log(app: State<'_, App>, conn: Option<String>, text: String) -> R<(
     Ok(())
 }
 
+/// The connection's log directory, `None` once its ccrpc has exited.
+#[tauri::command]
+async fn log_dir(app: State<'_, App>, conn: String) -> R<Option<String>> {
+    Ok(app.log_dir(&conn).map(|p| p.display().to_string()))
+}
+
 #[tauri::command]
 async fn save_image(app: State<'_, App>, base64: String, ext: String) -> R<String> {
     app.save_image(&base64, &ext)
@@ -103,6 +109,7 @@ pub fn run() {
             send,
             disconnect,
             gui_log,
+            log_dir,
             save_image
         ])
         .build(tauri::generate_context!())

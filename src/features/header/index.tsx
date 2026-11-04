@@ -1,6 +1,9 @@
 import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
+import { useEffect, useState } from "react";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Tasks } from "@/features/tasks";
+import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
 import type { ConnState } from "@/state/conn";
 import { useStore } from "@/state/store";
@@ -40,11 +43,19 @@ export function Header({ c }: { c: ConnState }) {
     if (!r.success) setError(`${String(msg.type)} 失败：${r.error?.message ?? ""}`);
   };
   const mode = MODES.find((m) => m.id === c.mode);
+  const logDir = useLogDir(c);
+  const debugInfo = [
+    `holder_id: ${c.holderId ?? "-"}`,
+    `session_id: ${c.sessionId ?? "-"}`,
+    `cwd: ${cwd ?? "-"}`,
+    `logs: ${logDir ?? "-"}`,
+  ].join("\n");
   return (
     <header className="flex h-[38px] shrink-0 items-center gap-3 border-b border-border px-4" data-tauri-drag-region data-testid="header">
-      <div className="min-w-0 flex-1" data-tauri-drag-region>
+      <div className="group/copy flex min-w-0 flex-1 items-center" data-tauri-drag-region>
         <span className="truncate text-[13px] font-medium text-text">{title || c.holderId || "新 Session"}</span>
         {cwd && <span className="ml-2 truncate text-[11px] text-secondary">{cwd}</span>}
+        <CopyButton text={debugInfo} label="复制排查信息" className="ml-2 shrink-0" />
       </div>
       <span className="text-[11px] text-secondary" data-testid="state">
         {STATE_LABEL[c.state] ?? c.state}
@@ -98,4 +109,17 @@ export function Header({ c }: { c: ConnState }) {
       </DropdownMenu.Root>
     </header>
   );
+}
+
+/** The connection's log directory; asked again once a new Session's directory is renamed after `ready`. */
+function useLogDir(c: ConnState): string | null {
+  const [dir, setDir] = useState<string | null>(null);
+  useEffect(() => {
+    let gone = false;
+    void api.logDir(c.conn).then((d) => !gone && setDir(d), () => {});
+    return () => {
+      gone = true;
+    };
+  }, [c.conn, c.holderId]);
+  return dir;
 }
