@@ -76,6 +76,8 @@ pnpm bindings           # 写入 src/ipc/bindings.ts（勿手改）
 ```sh
 cargo test --workspace                                  # 解析、组装、索引、搜索、统计、诊断（基于脱敏 fixture）
 cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all                # 提交前格式化 Rust 代码
+scripts/install-git-hooks.sh   # 一次性：装 pre-commit 钩子，Rust 代码没格式化时拦下提交
 pnpm typecheck && pnpm test                             # 前端类型检查与单元测试
 pnpm exec playwright install webkit && pnpm test:e2e    # E2E（mock 模式，WebKit）
 ```
