@@ -538,6 +538,14 @@ fn subagents_link_by_tool_use_id_name_and_parent() {
         }
         b => panic!("unexpected {b:?}"),
     }
+    // A background run's result is the notification's <result>, not the launch tool_result.
+    assert_eq!(run(ASYNC).status.as_deref(), Some("completed"));
+    assert!(
+        run(ASYNC)
+            .final_text
+            .as_deref()
+            .is_some_and(|t| t.starts_with("dolore minim exercitation"))
+    );
 
     // meta.name == toolUseResult.name (teammate without toolUseId)
     let team_call = call(&t, "toolu_01TdePUUDtAB6J6JGdhnLudR");
@@ -610,6 +618,34 @@ fn subagents_link_by_tool_use_id_name_and_parent() {
         Some(SYNC)
     );
     assert_eq!(s2.orphan_subagent_ids, [ORPHAN]);
+}
+
+#[test]
+fn background_subagent_without_notification_has_no_result() {
+    // The run is still going: its notification is not in the main file yet.
+    let project = fixture_dir("subagents")
+        .join("projects")
+        .join(ids::SUBAGENTS_DIR);
+    let mut main = load(
+        &project.join(format!("{}.jsonl", ids::SUBAGENTS)),
+        FileRole::Main,
+        None,
+    );
+    let before = main.records.len();
+    main.records.retain(|r| {
+        r.entry
+            .content_text()
+            .is_none_or(|t| !t.trim_start().starts_with("<task-notification>"))
+    });
+    assert_eq!(main.records.len(), before - 1);
+    let session_dir = project.join(ids::SUBAGENTS);
+    let sidecar = load_sidecar(&session_dir);
+    let s = assemble(ids::SUBAGENTS, &session_dir, vec![main], sidecar);
+    let t = main_t(&s, false);
+    let run = t.subagents.iter().find(|r| r.agent_id == ASYNC).unwrap();
+    assert!(run.is_async);
+    assert_eq!(run.status.as_deref(), Some("async_launched"));
+    assert_eq!(run.final_text, None);
 }
 
 #[test]
@@ -952,6 +988,89 @@ fn images_are_references_fetched_on_demand() {
     }
     // No base64 payload leaks into the transcript.
     assert!(!serde_json::to_string(&t).unwrap().contains("iVBORw0KGgo"));
+}
+
+fn meta(agent_id: &str, json: &str) -> SubagentMetaFile {
+    SubagentMetaFile {
+        agent_id: agent_id.into(),
+        role: FileRole::Subagent,
+        workflow_run_id: None,
+        transcript_path: None,
+        meta_json: Some(json.into()),
+    }
+}
+
+#[test]
+fn subagent_runs_say_how_far_they_got() {
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","content":[{"type":"tool_use","id":"t_ok","name":"Agent","input":{"prompt":"p"}},{"type":"tool_use","id":"t_err","name":"Agent","input":{"prompt":"p"}},{"type":"tool_use","id":"t_bg","name":"Agent","input":{"prompt":"p"}},{"type":"tool_use","id":"t_run","name":"Agent","input":{"prompt":"p"}}]}}"#,
+        // Foreground: a result without a status, and an error result (a plain string).
+        r#"{"type":"user","uuid":"r1","parentUuid":"a1","toolUseResult":{"agentId":"ag_ok"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_ok","content":"all good"}]}}"#,
+        r#"{"type":"user","uuid":"r2","parentUuid":"r1","toolUseResult":"Error: interrupted","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_err","is_error":true,"content":"interrupted"}]}}"#,
+        // Background: launched, then notified with only the task id.
+        r#"{"type":"user","uuid":"r3","parentUuid":"r2","toolUseResult":{"status":"async_launched","agentId":"ag_bg"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_bg","content":"Async agent launched successfully. agentId: ag_bg"}]}}"#,
+        r#"{"type":"user","uuid":"r4","parentUuid":"r3","toolUseResult":{"status":"async_launched","agentId":"ag_run"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_run","content":"Async agent launched successfully. agentId: ag_run"}]}}"#,
+        r#"{"type":"user","uuid":"n1","parentUuid":"r4","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>ag_bg</task-id>\n<status>completed</status>\n<summary>Agent \"bg\" finished</summary>\n<result>found 2 bugs &amp; fixed</result>\n</task-notification>"}}"#,
+    ]);
+    let sidecar = SessionSidecar {
+        subagent_metas: vec![
+            meta("ag_ok", r#"{"toolUseId":"t_ok"}"#),
+            meta("ag_err", r#"{"toolUseId":"t_err"}"#),
+            meta("ag_bg", r#"{"toolUseId":"t_bg"}"#),
+            meta("ag_run", r#"{"toolUseId":"t_run"}"#),
+        ],
+        ..SessionSidecar::default()
+    };
+    let s = assemble("sid", Path::new("/nonexistent"), vec![f], sidecar);
+    let t = main_t(&s, false);
+    let run = |id: &str| t.subagents.iter().find(|r| r.agent_id == id).unwrap();
+    assert_eq!(run("ag_ok").status.as_deref(), Some("completed"));
+    assert_eq!(run("ag_ok").final_text.as_deref(), Some("all good"));
+    assert_eq!(run("ag_err").status.as_deref(), Some("failed"));
+    assert_eq!(run("ag_bg").status.as_deref(), Some("completed"));
+    assert_eq!(
+        run("ag_bg").final_text.as_deref(),
+        Some("found 2 bugs & fixed")
+    );
+    assert_eq!(call(&t, "t_bg").notification_node_id.as_deref(), Some("n1"));
+    assert_eq!(run("ag_run").status.as_deref(), Some("async_launched"));
+    assert_eq!(run("ag_run").final_text, None);
+}
+
+#[test]
+fn nested_background_runs_are_read_from_their_parent_file() {
+    let main = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","content":[{"type":"tool_use","id":"t_p","name":"Agent","input":{"prompt":"p"}}]}}"#,
+        r#"{"type":"user","uuid":"r1","parentUuid":"a1","toolUseResult":{"status":"completed","agentId":"ag_p"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_p","content":"done"}]}}"#,
+    ]);
+    let mut parent = from_lines(&[
+        r#"{"type":"user","uuid":"p0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"p"}}"#,
+        r#"{"type":"assistant","uuid":"p1","parentUuid":"p0","isSidechain":true,"message":{"id":"pm1","content":[{"type":"tool_use","id":"t_n","name":"Agent","input":{"prompt":"q","run_in_background":true}}]}}"#,
+        r#"{"type":"user","uuid":"p2","parentUuid":"p1","isSidechain":true,"toolUseResult":{"status":"async_launched","agentId":"ag_n"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_n","content":"Async agent launched successfully. agentId: ag_n"}]}}"#,
+    ]);
+    parent.role = FileRole::Subagent;
+    parent.agent_id = Some("ag_p".into());
+    let sidecar = SessionSidecar {
+        subagent_metas: vec![
+            meta("ag_p", r#"{"toolUseId":"t_p"}"#),
+            meta(
+                "ag_n",
+                r#"{"toolUseId":"t_n","parentAgentId":"ag_p","spawnDepth":1}"#,
+            ),
+        ],
+        ..SessionSidecar::default()
+    };
+    let s = assemble("sid", Path::new("/nonexistent"), vec![main], sidecar);
+    let scope = TranscriptScope::Subagent {
+        agent_id: "ag_p".into(),
+    };
+    let t = transcript(&s, &request(scope, false), Some(&parent)).unwrap();
+    let nested = t.subagents.iter().find(|r| r.agent_id == "ag_n").unwrap();
+    assert!(nested.is_async);
+    assert_eq!(nested.status.as_deref(), Some("async_launched"));
+    assert_eq!(nested.final_text, None);
 }
 
 #[test]

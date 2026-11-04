@@ -70,21 +70,43 @@ pub fn background_launch(text: &str) -> Option<(&'static str, String)> {
     None
 }
 
-/// A parsed task-notification prompt.
+/// A background task's notifications, merged: the first one's node (where the card links to), the
+/// last one's status and result (a resumed agent notifies again when it stops).
 #[derive(Debug, Clone)]
 pub struct Notification {
     pub node_id: NodeId,
-    pub task_id: Option<String>,
     pub status: Option<String>,
     pub summary: Option<String>,
+    /// `<result>`: the agent's final text (capped).
+    pub result: Option<String>,
+    /// Order of the last notification merged in.
+    seq: u32,
 }
 
-/// Task-notification prompts keyed by their `<tool-use-id>` (F11).
-pub fn notification_facts(
-    s: &SessionSkeleton,
-    files: &[LoadedFile],
-) -> HashMap<String, Notification> {
-    let mut out = HashMap::new();
+/// Task-notification prompts by their `<tool-use-id>` (F11) and by their `<task-id>` (for an agent,
+/// its agent id); some notifications carry only the task id.
+#[derive(Debug, Default)]
+pub struct Notices {
+    pub by_tool: HashMap<String, Notification>,
+    pub by_task: HashMap<String, Notification>,
+}
+
+impl Notices {
+    /// The notifications of the background task launched by `tool_use_id` / with id `task_id`.
+    pub fn get(&self, tool_use_id: Option<&str>, task_id: &str) -> Option<&Notification> {
+        let by_tool = tool_use_id.and_then(|t| self.by_tool.get(t));
+        let by_task = self.by_task.get(task_id);
+        match (by_tool, by_task) {
+            // The later-indexed entry of the two holds the newer status.
+            (Some(a), Some(b)) => Some(if b.seq > a.seq { b } else { a }),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+pub fn notification_facts(s: &SessionSkeleton, files: &[LoadedFile]) -> Notices {
+    let mut out = Notices::default();
+    let mut seq = 0u32;
     for (i, n) in s.nodes.iter().enumerate() {
         if n.entry_type != "user" || n.is_tool_result || n.is_compact_summary || n.is_human {
             continue;
@@ -97,30 +119,38 @@ pub fn notification_facts(
             continue;
         }
         let text = prompt::user_text(e);
-        if let PromptOrigin::TaskNotification {
+        let PromptOrigin::TaskNotification {
             task_id,
-            tool_use_id: Some(tool_use_id),
+            tool_use_id,
             status,
             summary,
         } = prompt::classify(e, &text)
-        {
-            out.entry(tool_use_id).or_insert(Notification {
-                node_id: n.uuid.clone(),
-                task_id,
-                status,
-                summary,
-            });
+        else {
+            continue;
+        };
+        seq += 1;
+        let result = prompt::tag(&text, "result")
+            .map(|r| nodes::cap_text(&prompt::unescape_xml(&r), RESULT_BYTES, RESULT_LINES).0);
+        let fresh = Notification {
+            node_id: n.uuid.clone(),
+            status,
+            summary,
+            result,
+            seq,
+        };
+        for (map, key) in [(&mut out.by_tool, tool_use_id), (&mut out.by_task, task_id)] {
+            let Some(key) = key else { continue };
+            map.entry(key)
+                .and_modify(|old| {
+                    *old = Notification {
+                        node_id: old.node_id.clone(),
+                        ..fresh.clone()
+                    }
+                })
+                .or_insert_with(|| fresh.clone());
         }
     }
     out
-}
-
-/// tool_use id → task-notification prompt uuid.
-pub fn notifications(s: &SessionSkeleton, files: &[LoadedFile]) -> HashMap<String, NodeId> {
-    notification_facts(s, files)
-        .into_iter()
-        .map(|(k, v)| (k, v.node_id))
-        .collect()
 }
 
 /// Facts from the results of Agent/Task tool calls in one file.
@@ -184,8 +214,12 @@ fn agent_input(s: &SessionSkeleton, files: &[LoadedFile], tool_use_id: &str) -> 
         .unwrap_or_default()
 }
 
-/// Capped text of the tool_result for `tool_use_id`, if any.
-fn result_text(s: &SessionSkeleton, files: &[LoadedFile], tool_use_id: &str) -> Option<String> {
+/// The tool_result for `tool_use_id`, if any: its capped text (`None` when empty) and `is_error`.
+fn result_of(
+    s: &SessionSkeleton,
+    files: &[LoadedFile],
+    tool_use_id: &str,
+) -> Option<(Option<String>, bool)> {
     let &r = s.results_for.get(tool_use_id)?.first()?;
     let block = s
         .entry(files, r)
@@ -194,7 +228,68 @@ fn result_text(s: &SessionSkeleton, files: &[LoadedFile], tool_use_id: &str) -> 
         .find(|b| b.tool_use_id.as_deref() == Some(tool_use_id))?;
     let (text, _) = nodes::result_content(block.content.as_deref());
     let text = text.trim();
-    (!text.is_empty()).then(|| nodes::cap_text(text, RESULT_BYTES, RESULT_LINES).0)
+    let text = (!text.is_empty()).then(|| nodes::cap_text(text, RESULT_BYTES, RESULT_LINES).0);
+    Some((text, block.is_error == Some(true)))
+}
+
+/// How far the run `agent_id`, launched by `tool_use_id` in `s`, has got: `(is_async, status, final_text)`.
+/// A background run ends with its task-notification (its tool_result only says it launched); a foreground
+/// one with its tool_result, which may carry no status (an error result is a plain string).
+fn outcome(
+    s: &SessionSkeleton,
+    files: &[LoadedFile],
+    results: &AgentResults,
+    notes: &Notices,
+    tool_use_id: &str,
+    agent_id: &str,
+) -> (bool, Option<String>, Option<String>) {
+    let result_status = results.status.get(tool_use_id).cloned();
+    let is_async = result_status.as_deref() == Some("async_launched");
+    let note = notes.get(Some(tool_use_id), agent_id);
+    let note_status = note.and_then(|n| n.status.clone());
+    if is_async {
+        let text = note.and_then(|n| n.result.clone().or_else(|| n.summary.clone()));
+        return (true, note_status.or(result_status), text);
+    }
+    let result = result_of(s, files, tool_use_id);
+    let ended = result
+        .as_ref()
+        .map(|(_, err)| if *err { "failed" } else { "completed" }.to_owned());
+    let status = note_status.or(result_status).or(ended);
+    let text = result
+        .and_then(|(t, _)| t)
+        .or_else(|| note.and_then(|n| n.summary.clone()));
+    (false, status, text)
+}
+
+/// Inside an agent file (Subagent scope): fills in how its nested runs went (the Session-wide runs
+/// only know their meta), and returns tool_use id → task-notification uuid for this file.
+pub fn nested_outcomes(
+    s: &SessionSkeleton,
+    files: &[LoadedFile],
+    nested: &mut [SubagentRun],
+    by_tool: &HashMap<String, AgentId>,
+) -> HashMap<String, NodeId> {
+    let results = agent_results(s, files);
+    let notes = notification_facts(s, files);
+    let mut links: HashMap<String, NodeId> = notes
+        .by_tool
+        .iter()
+        .map(|(k, v)| (k.clone(), v.node_id.clone()))
+        .collect();
+    for (tool, agent) in by_tool {
+        let Some(run) = nested.iter_mut().find(|r| &r.agent_id == agent) else {
+            continue;
+        };
+        (run.is_async, run.status, run.final_text) =
+            outcome(s, files, &results, &notes, tool, agent);
+        if let Some(n) = notes.by_task.get(agent) {
+            links
+                .entry(tool.clone())
+                .or_insert_with(|| n.node_id.clone());
+        }
+    }
+    links
 }
 
 /// Links every sidecar Subagent Run: `meta.toolUseId` in the main file, a nested run's
@@ -210,6 +305,7 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
         .collect();
     let mut links = Links {
         notification_by_tool: notes
+            .by_tool
             .iter()
             .map(|(k, v)| (k.clone(), v.node_id.clone()))
             .collect(),
@@ -254,23 +350,21 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
         let tool_use_id = main_tool
             .clone()
             .or_else(|| meta.tool_use_id.clone().filter(|_| nested));
-        let note = main_tool.as_ref().and_then(|t| notes.get(t));
-        let result_status = main_tool
-            .as_ref()
-            .and_then(|t| results.status.get(t))
-            .cloned();
-        let is_async = result_status.as_deref() == Some("async_launched");
+        let (is_async, status, final_text) = match main_tool.as_deref() {
+            Some(t) => outcome(s, files, &results, &notes, t, &m.agent_id),
+            None => (false, None, None),
+        };
+        if let (Some(t), Some(n)) = (&main_tool, notes.by_task.get(&m.agent_id)) {
+            // A notification carrying only the task id still links to the card.
+            links
+                .notification_by_tool
+                .entry(t.clone())
+                .or_insert_with(|| n.node_id.clone());
+        }
         let input = main_tool
             .as_deref()
             .map(|t| agent_input(s, files, t))
             .unwrap_or_default();
-        let result = main_tool.as_deref().and_then(|t| result_text(s, files, t));
-        let summary = note.and_then(|n| n.summary.clone());
-        let final_text = if is_async {
-            summary.or(result)
-        } else {
-            result.or(summary)
-        };
         let stats = sidecar
             .agent_stats
             .get(&m.agent_id)
@@ -286,7 +380,7 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
             tool_use_id,
             workflow_run_id: m.workflow_run_id.clone(),
             is_async,
-            status: note.and_then(|n| n.status.clone()).or(result_status),
+            status,
             model: stats.model.clone().or(meta.model),
             message_count: stats.message_count,
             tool_call_count: stats.tool_call_count,

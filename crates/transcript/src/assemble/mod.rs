@@ -399,14 +399,14 @@ pub fn transcript(
             let sk = skeleton::build(files);
             let path = branch::resolve_path(&sk, &r.branch_choices);
             let display = tree::display_entries(&sk, &path);
-            let nested: Vec<SubagentRun> = s
+            let mut nested: Vec<SubagentRun> = s
                 .subagents
                 .iter()
                 .filter(|run| run.parent_agent_id.as_deref() == Some(agent_id.as_str()))
                 .cloned()
                 .collect();
             let by_tool = subagent::nested_links(&sk, files, &nested);
-            let notifications = subagent::notifications(&sk, files);
+            let notifications = subagent::nested_outcomes(&sk, files, &mut nested, &by_tool);
             let no_workflows = HashMap::new();
             let ctx = nodes::RenderCtx {
                 skeleton: &sk,

@@ -7,6 +7,8 @@ import { useCurrentTranscript, useTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
 import { TranscriptList } from "@/features/transcript/Transcript";
 import { elapsed } from "@/features/transcript/util";
+import { RunStatus, useSessionLive } from "@/features/transcript/nodes/Agents";
+import { runState } from "@/features/transcript/runState";
 
 const crumbLabel = (run: SubagentRun | undefined, id: string) =>
   run ? [run.agentType ?? run.name, run.description].filter(Boolean).join(" · ") || id : id;
@@ -34,7 +36,14 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
     for (const r of data?.subagents ?? []) m.set(r.agentId, r);
     return m;
   }, [main?.subagents, data?.subagents]);
-  const run = runs.get(agentId);
+  // How the run went is read from the file that launched it: its parent's transcript (cached, the panel showed it).
+  const parentId = stack.length > 1 ? stack[stack.length - 2]! : null;
+  const parentScope = useMemo<TranscriptScope>(() => ({ kind: "subagent", agentId: parentId ?? "" }), [parentId]);
+  const { data: parent } = useTranscript(parentId ? { sessionId, scope: parentScope, branchChoices, includeHidden } : null);
+  const run = (parentId ? parent?.subagents.find((r) => r.agentId === agentId) : undefined) ?? runs.get(agentId);
+  const live = useSessionLive(sessionId);
+  // A nested run's entry in main knows only its meta: no status until the parent's transcript is in.
+  const state = run && (!parentId || parent) ? runState(run, undefined, live) : null;
   const close = () => setPanelStack([]);
 
   useHotkey("Escape", () => {
@@ -102,6 +111,7 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
           {meta.filter(Boolean).map((m) => (
             <span key={m}>{m}</span>
           ))}
+          <RunStatus state={state} />
         </div>
       </div>
       {error && !loaded ? (

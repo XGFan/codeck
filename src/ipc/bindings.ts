@@ -614,7 +614,10 @@ export type SubagentRun = {
 	startedMs: number | null,
 	endedMs: number | null,
 	promptPreview: string | null,
-	/**  Agent tool_result text, else the task-notification summary. */
+	/**
+	 *  Agent tool_result text, else the task-notification summary; for a background run, the
+	 *  task-notification's result, else its summary (`None` until it arrives).
+	 */
 	finalText: string | null,
 };
 

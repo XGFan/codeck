@@ -191,7 +191,11 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await page.getByTestId("tasks-done").click();
   await expect(tasks).toHaveCount(2);
   await expect(tasks.nth(1)).toContainText("为限流中间件补集成测试");
-  await page.keyboard.press("Escape");
+  // A Subagent opens its Subagent Run in the side panel.
+  await tasks.nth(1).getByTestId("task-open").click();
+  await expect(page.getByTestId("tasks-list")).toHaveCount(0);
+  await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText(["test-engineer · 为限流中间件补集成测试"]);
+  await page.getByTestId("panel-close").click();
   // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);
 

@@ -109,6 +109,8 @@ test("打开 Subagent 面板，嵌套卡片推入面包屑，Esc 关闭", async 
   await expect(card).toContainText("正在右侧查看");
   await expect(panel.getByTestId("task-prompt")).toContainText("找出 lumen-api 里所有 tower Layer 的注册位置与顺序。");
   await expect(panel.getByTestId("final-result")).toContainText("共 3 处注册");
+  await expect(card.getByTestId("run-status")).toHaveText("已完成");
+  await expect(panel.getByTestId("panel-meta").getByTestId("run-status")).toHaveText("已完成");
 
   await panel.locator('[data-agent-id="ag-nested1"]').getByTestId("open-subagent").click();
   await expect(crumbs.getByTestId("crumb")).toHaveText(["Explore · 梳理现有中间件注册方式", "general-purpose · 核对 cors 层的配置来源"]);
@@ -135,6 +137,9 @@ test("后台 agent 卡片与结果通知互相跳转", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const card = page.locator('[data-testid="subagent-card"][data-agent-id="ag-async1"]');
   await reveal(page.getByTestId("transcript"), card);
+  // Ended with its notification: the result is the notification's, not the launch message.
+  await expect(card.getByTestId("run-status")).toHaveText("已完成");
+  await expect(card).toContainText("测试代理完成");
   await card.getByTestId("card-to-notification").click();
   await expect(page.locator('[data-anchor="n-notify"][data-highlighted]')).toBeVisible();
   await page.locator('[data-anchor="n-notify"]').getByTestId("notification-to-card").click();

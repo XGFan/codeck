@@ -121,7 +121,7 @@ fn notice_fields(t: &str) -> TaskNotice {
 }
 
 /// XML text back to what was written (`&amp;` last, so `&amp;gt;` stays `&gt;`).
-fn unescape_xml(s: &str) -> String {
+pub(crate) fn unescape_xml(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")

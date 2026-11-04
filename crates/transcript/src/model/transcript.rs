@@ -244,7 +244,8 @@ pub struct SubagentRun {
     #[specta(type = Option<Number>)]
     pub ended_ms: Option<f64>,
     pub prompt_preview: Option<String>,
-    /// Agent tool_result text, else the task-notification summary.
+    /// Agent tool_result text, else the task-notification summary; for a background run, the
+    /// task-notification's result, else its summary (`None` until it arrives).
     pub final_text: Option<String>,
 }
 

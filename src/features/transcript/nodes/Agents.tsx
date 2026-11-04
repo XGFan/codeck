@@ -2,14 +2,40 @@ import { ArrowDown, Check, Loader, Network, Unlink, Workflow, X } from "lucide-r
 import type { Node, SubagentRun, ToolCall, WorkflowAgent, WorkflowRun } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
+import { useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 import type { AgentCardData } from "../grouping";
+import { DONE, FAILED, type RunState, runState } from "../runState";
 import { clock, elapsed, shortModel } from "../util";
 import { Anchor } from "./Anchor";
 import { scrollToNode, useTranscriptCtx } from "./scroll";
 
-const FAILED = new Set(["failed", "error", "killed", "cancelled"]);
-const DONE = new Set(["completed", "success", "succeeded", "done"]);
+const STATE_LABEL: Record<RunState, string> = { running: "运行中", done: "已完成", failed: "失败", noNotice: "未收到完成通知" };
+
+/** Whether the Subagent Run has ended: running / done / failed, or a background run whose notification never came. */
+export function RunStatus({ state }: { state: RunState | null }) {
+  if (!state) return null;
+  return (
+    <span
+      data-testid="run-status"
+      data-state={state}
+      className={cn(
+        "flex shrink-0 items-center gap-1 text-[12px]",
+        state === "done" ? "text-live" : state === "failed" ? "text-error" : "text-secondary",
+      )}
+    >
+      {state === "running" && <Loader size={12} strokeWidth={2} className="animate-spin" aria-hidden />}
+      {state === "done" && <Check size={12} strokeWidth={2.2} aria-hidden />}
+      {state === "failed" && <X size={12} strokeWidth={2.2} aria-hidden />}
+      {STATE_LABEL[state]}
+    </span>
+  );
+}
+
+/** Whether the Session is live (its process runs, or it was just written). */
+export function useSessionLive(sessionId: string | null): boolean {
+  return useSession(sessionId).data?.summary.live != null;
+}
 
 const runDuration = (r: SubagentRun) => (r.startedMs != null && r.endedMs != null ? r.endedMs - r.startedMs : null);
 
@@ -26,10 +52,11 @@ function promptOf(run: SubagentRun, call?: ToolCall): string | null {
 
 /** Subagent Run card: type, description, model/messages/duration, task and result previews, open link. */
 export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: ToolCall; node?: Node }) {
-  const { scope, openAgent, activeAgentId } = useTranscriptCtx();
+  const { sessionId, scope, openAgent, activeAgentId } = useTranscriptCtx();
+  const state = runState(run, call, useSessionLive(sessionId));
   const active = activeAgentId === run.agentId;
   const nested = scope.kind === "subagent";
-  const failed = FAILED.has(run.status ?? "") || call?.result?.isError === true;
+  const failed = state === "failed";
   const prompt = promptOf(run, call);
   const result = run.finalText ?? (call?.result && !run.isAsync ? call.result.text : null);
   const dur = runDuration(run);
@@ -56,6 +83,7 @@ export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: Too
         )}
         <span className="min-w-[120px] flex-1 truncate">{run.description ?? run.name ?? run.agentId}</span>
         <span className="text-[12px] text-secondary">{meta.filter(Boolean).join(" · ")}</span>
+        <RunStatus state={state} />
       </div>
       {prompt && (
         <div className="line-clamp-2 text-[12px] text-text/80">
@@ -63,13 +91,11 @@ export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: Too
           <span className="ml-3">{prompt}</span>
         </div>
       )}
-      {result ? (
+      {result && (
         <div className="line-clamp-2 text-[12px] text-text/80">
           <span className={failed ? "text-error" : "text-live"}>{failed ? "失败" : "结果"}</span>
           <span className="ml-3">{result}</span>
         </div>
-      ) : (
-        run.isAsync && <div className="text-[12px] text-secondary">后台运行 · 未收到结果</div>
       )}
       <div className="flex items-center gap-3 text-[12px]">
         {run.isAsync && call?.notificationNodeId && (
