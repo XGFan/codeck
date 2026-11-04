@@ -10,6 +10,7 @@ import type {
   IndexStatus,
   IndexStatusEvent,
   JumpRequest,
+  LaunchRule,
   JumpTarget,
   LiveChanged,
   ProjectSummary,
@@ -64,6 +65,8 @@ export interface Api {
   driveInfo(): Promise<DriveInfo>;
   /** Saves the analyzer's settings (blank = not set here); `apiKey: null` keeps the saved key, `""` removes it. */
   driveSetAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerInfo>;
+  /** Saves the launch rules (extra claude arguments by directory for 「新建 Session」); returns what was saved. */
+  driveSetLaunchRules(rules: LaunchRule[]): Promise<LaunchRule[]>;
   /** `ccrpc ls --json`. */
   driveList(): Promise<LsEntry[]>;
   /** `ccrpc attach --co-display`; returns the connection id. */

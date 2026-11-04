@@ -10,7 +10,7 @@
 
 import type { InMsg, LsEntry, Task } from "@/features/drive/protocol";
 import type { Api, Unlisten } from "./api";
-import type { AnalyzerInfo } from "./bindings";
+import type { AnalyzerInfo, LaunchRule } from "./bindings";
 
 interface WireLine {
   t?: number;
@@ -219,6 +219,7 @@ type DriveApi = Pick<
   Api,
   | "driveInfo"
   | "driveSetAnalyzer"
+  | "driveSetLaunchRules"
   | "driveList"
   | "driveConnect"
   | "driveNew"
@@ -232,6 +233,9 @@ type DriveApi = Pick<
   | "onDriveLine"
   | "onDriveExit"
 >;
+
+/** The launch rules saved in the mock settings (trimmed, rules without arguments dropped, like the backend). */
+let launchRules: LaunchRule[] = [];
 
 /** The analyzer as the mock app has it: a key from the login shell, nothing saved in the settings. */
 const analyzer: { apiKey: string | null; baseUrl: string | null; model: string | null } = { apiKey: null, baseUrl: null, model: null };
@@ -259,6 +263,7 @@ export function createMockDrive(): DriveApi {
         { level: "fail", text: "fail\tplugin\tccrpc 插件未启用" },
       ],
       analyzer: analyzerInfo(),
+      launchRules,
       logRoot: "/mock/Logs/dev.joy.codeck/drive",
     }),
     driveList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
@@ -269,6 +274,12 @@ export function createMockDrive(): DriveApi {
       analyzer.baseUrl = blank(baseUrl);
       analyzer.model = blank(model);
       return analyzerInfo();
+    },
+    driveSetLaunchRules: async (rules) => {
+      launchRules = rules
+        .map((r) => ({ dir: r.dir.trim().replace(/\/+$/, ""), args: r.args.trim() }))
+        .filter((r) => r.args);
+      return launchRules;
     },
     driveConnect: async (holderId) => {
       const fx = fixtures.find((f) => f.ls.holder_id === holderId);

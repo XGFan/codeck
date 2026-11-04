@@ -12,6 +12,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use super::logs::{self, Wire};
+use crate::settings::LaunchRule;
 
 pub type R<T> = Result<T, String>;
 
@@ -162,12 +163,18 @@ impl App {
         self.spawn(sink, "attach", &[holder_id.to_string()], holder_id)
     }
 
-    /// `ccrpc new --co-display --cwd <cwd>`.
-    pub fn new_session(&self, sink: Sink, cwd: &str) -> R<String> {
+    /// `ccrpc new --co-display --cwd <cwd> [-- <launch rule's claude arguments>]`.
+    pub fn new_session(&self, sink: Sink, cwd: &str, rules: &[LaunchRule]) -> R<String> {
         if !Path::new(cwd).is_dir() {
             return Err(format!("{cwd} 不是目录"));
         }
-        self.spawn(sink, "new", &["--cwd".into(), cwd.into()], "new")
+        let mut args = vec!["--cwd".to_string(), cwd.to_string()];
+        let extra = super::launch::args_for(rules, Path::new(cwd), &self.env)?;
+        if !extra.is_empty() {
+            args.push("--".into());
+            args.extend(extra);
+        }
+        self.spawn(sink, "new", &args, "new")
     }
 
     /// Starts ccrpc `sub` with `args` and relays it to `sink` as a new connection.
@@ -371,4 +378,62 @@ fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>
         *d = to;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    /// 「新建 Session」 hands the matching launch rule's arguments to `ccrpc new` after `--`.
+    #[test]
+    fn new_session_passes_launch_rule_args_to_ccrpc() {
+        let d = tempfile::tempdir().unwrap();
+        let argv = d.path().join("argv");
+        let fake = d.path().join("ccrpc");
+        std::fs::write(
+            &fake,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\n", argv.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cwd = d.path().join("work").join("app");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let app = App::new(
+            HashMap::new(),
+            fake,
+            d.path().join("logs"),
+            d.path().join("img"),
+        )
+        .unwrap();
+        let rules = [LaunchRule {
+            dir: d.path().join("work").display().to_string(),
+            args: "--add-dir '/x y'".into(),
+        }];
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sink: Sink = Arc::new(move |o| {
+            if let Out::Exit(_) = o {
+                let _ = tx.send(());
+            }
+        });
+        let run = |rules: &[LaunchRule]| {
+            app.new_session(sink.clone(), cwd.to_str().unwrap(), rules)
+                .unwrap();
+            rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Ok(s) = std::fs::read_to_string(&argv) {
+                    let _ = std::fs::remove_file(&argv);
+                    // Skip `new --co-display --log <file>`.
+                    return s.lines().skip(4).map(str::to_string).collect::<Vec<_>>();
+                }
+                assert!(Instant::now() < deadline, "fake ccrpc did not run");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let cwd_s = cwd.display().to_string();
+        assert_eq!(run(&rules), ["--cwd", &cwd_s, "--", "--add-dir", "/x y"]);
+        assert_eq!(run(&[]), ["--cwd", &cwd_s]);
+    }
 }

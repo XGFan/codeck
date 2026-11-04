@@ -3,6 +3,7 @@
 //! at startup would slow CoDeck down.
 
 pub mod env;
+pub mod launch;
 pub mod logs;
 pub mod relay;
 
@@ -114,6 +115,7 @@ pub struct DriveInfo {
     pub ccrpc_path: String,
     pub doctor: Vec<relay::DoctorLine>,
     pub analyzer: AnalyzerInfo,
+    pub launch_rules: Vec<crate::settings::LaunchRule>,
     pub log_root: String,
 }
 
@@ -199,6 +201,24 @@ pub async fn drive_set_analyzer(
     .await
 }
 
+/// Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved.
+#[tauri::command]
+#[specta::specta]
+pub async fn drive_set_launch_rules(
+    state: State<'_, DriveState>,
+    rules: Vec<crate::settings::LaunchRule>,
+) -> CmdResult<Vec<crate::settings::LaunchRule>> {
+    with_drive(&state, move |app| {
+        let rules = launch::normalize(rules, &app.env)?;
+        let mut s = crate::settings::load();
+        s.launch_rules = rules.clone();
+        crate::settings::save(&s).map_err(|e| format!("保存设置失败：{e}"))?;
+        app.gui_line(&format!("launch rules saved ({})", rules.len()));
+        Ok(rules)
+    })
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn drive_info(state: State<'_, DriveState>) -> CmdResult<DriveInfo> {
@@ -207,6 +227,7 @@ pub async fn drive_info(state: State<'_, DriveState>) -> CmdResult<DriveInfo> {
             ccrpc_path: app.ccrpc.display().to_string(),
             doctor: app.refresh_doctor(),
             analyzer: analyzer_info(app),
+            launch_rules: crate::settings::load().launch_rules,
             log_root: app.log_root.display().to_string(),
         })
     })
@@ -243,7 +264,10 @@ pub async fn drive_new(
     cwd: String,
 ) -> CmdResult<String> {
     let sink = sink(&handle);
-    with_drive(&state, move |app| app.new_session(sink, &cwd)).await
+    with_drive(&state, move |app| {
+        app.new_session(sink, &cwd, &crate::settings::load().launch_rules)
+    })
+    .await
 }
 
 #[tauri::command]

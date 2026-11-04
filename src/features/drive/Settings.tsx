@@ -1,7 +1,9 @@
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { AnalyzerInfo } from "@/ipc/bindings";
+import { api } from "@/ipc";
+import type { AnalyzerInfo, LaunchRule } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { useDrive } from "./store";
 
@@ -14,7 +16,7 @@ function Row({ label, children, testId }: { label: string; children: React.React
   );
 }
 
-/** Settings › 驾驶: ccrpc's path, `ccrpc doctor`, the analyzer, the log directory. Asks for `driveInfo` when shown. */
+/** Settings › 驾驶: ccrpc's path, `ccrpc doctor`, the analyzer, launch rules, the log directory. Asks for `driveInfo` when shown. */
 export function DriveSettings() {
   const info = useDrive((s) => s.info);
   const infoError = useDrive((s) => s.infoError);
@@ -71,6 +73,9 @@ export function DriveSettings() {
       </Row>
       <Row label="界面分析器" testId="set-analyzer">
         {info ? <AnalyzerForm a={info.analyzer} /> : "…"}
+      </Row>
+      <Row label="启动参数" testId="set-launch-rules">
+        {info ? <LaunchRulesForm saved={info.launchRules} /> : "…"}
       </Row>
       <Row label="日志目录" testId="set-drive-logs">
         <code className="break-all font-mono text-[13px]">{info?.logRoot ?? "…"}</code>
@@ -158,5 +163,68 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
         Anthropic Messages 协议（POST Endpoint/v1/messages），留空的项用登录 shell 的 CCRPC_ANALYZER_* 或 ccrpc 的默认值。Key 存在本机设置文件，仅本人可读。
       </div>
     </form>
+  );
+}
+
+/**
+ * Extra claude arguments by directory for 「新建 Session」 (like a shell wrapper adding `--add-dir` by working
+ * directory): the deepest directory covering the Session's wins.
+ */
+function LaunchRulesForm({ saved }: { saved: LaunchRule[] }) {
+  const save = useDrive((s) => s.saveLaunchRules);
+  const [rules, setRules] = useState(saved);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const edit = (i: number, args: string) => setRules((rs) => rs.map((r, j) => (j === i ? { ...r, args } : r)));
+  const add = async () => {
+    const dir = await api.pickDir();
+    if (dir && !rules.some((r) => r.dir === dir)) setRules((rs) => [...rs, { dir, args: "" }]);
+  };
+  const submit = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      await save(rules);
+      setResult({ ok: true, text: "已保存，之后新建的 Session 生效" });
+    } catch (e) {
+      setResult({ ok: false, text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}` });
+    }
+    setBusy(false);
+  };
+  useEffect(() => setRules(saved), [saved]);
+  return (
+    <div className="flex flex-col gap-2 text-[13px]">
+      {rules.map((r, i) => (
+        <div key={r.dir} data-testid="launch-rule" className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2">
+          <code className="truncate font-mono text-[12px]" title={r.dir}>
+            {r.dir}
+          </code>
+          <Input value={r.args} onChange={(e) => edit(i, e.target.value)} placeholder="--add-dir=/path/to/dir" aria-label={`${r.dir} 的启动参数`} data-testid="launch-rule-args" />
+          <Button
+            type="button"
+            variant="ghost"
+            className="size-8 p-0"
+            title="删除"
+            aria-label={`删除 ${r.dir}`}
+            onClick={() => setRules((rs) => rs.filter((_, j) => j !== i))}
+            data-testid="launch-rule-remove"
+          >
+            <X size={14} strokeWidth={1.6} aria-hidden />
+          </Button>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" className="h-8" disabled={busy} onClick={() => void add()} data-testid="launch-rule-add">
+          添加目录…
+        </Button>
+        <Button type="button" className="h-8" disabled={busy} onClick={() => void submit()} data-testid="launch-rules-save">
+          保存
+        </Button>
+        {result && <span className={cn("text-[12px]", result.ok ? "text-secondary" : "text-error")}>{result.text}</span>}
+      </div>
+      <div className="text-[12px] text-secondary">
+        在目录或其子目录里新建 Session 时，把参数追加给 claude；多个目录都包含它时用最深的那个。参数按 shell 规则拆分，~ 与 $VAR 按登录 shell 的环境展开（单引号里的不展开）；参数为空的目录保存时去掉。
+      </div>
+    </div>
   );
 }

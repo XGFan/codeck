@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "@/ipc";
-import type { DriveInfo, LiveEntry } from "@/ipc/bindings";
+import type { DriveInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { apply, initial, type ConnState } from "./conn";
 import { createEarlyBuffer } from "./early";
@@ -97,6 +97,8 @@ interface DriveStore {
   loadInfo(): Promise<void>;
   /** Saves the analyzer's settings (see `driveSetAnalyzer`); rejects with the reason. */
   saveAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<void>;
+  /** Saves the launch rules (see `driveSetLaunchRules`); rejects with the reason. */
+  saveLaunchRules(rules: LaunchRule[]): Promise<void>;
   /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
   connect(holderId: string, sessionId: string): Promise<void>;
   newSession(): Promise<void>;
@@ -374,6 +376,11 @@ export const useDrive = create<DriveStore>((set, get) => {
     async saveAnalyzer(apiKey, baseUrl, model) {
       const analyzer = await api.driveSetAnalyzer(apiKey, baseUrl, model);
       set((s) => (s.info ? { info: { ...s.info, analyzer } } : {}));
+    },
+
+    async saveLaunchRules(rules) {
+      const launchRules = await api.driveSetLaunchRules(rules);
+      set((s) => (s.info ? { info: { ...s.info, launchRules } } : {}));
     },
 
     async loadInfo() {

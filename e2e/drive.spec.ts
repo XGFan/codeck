@@ -458,6 +458,36 @@ test("设置 › 驾驶：ccrpc 路径、doctor 的失败项、日志目录；�
   expect((await probe(page)).analyzerSaves).toBe(3);
 });
 
+test("设置 › 驾驶 › 启动参数：选目录、填参数、保存；参数为空的目录保存时去掉，可删除", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Meta+,");
+  await page.getByRole("tab", { name: "驾驶" }).click();
+  const box = page.getByTestId("set-launch-rules");
+  await expect(box.getByTestId("launch-rule")).toHaveCount(0);
+  await box.getByTestId("launch-rule-add").click();
+  await expect(box.getByTestId("launch-rule")).toContainText("/tmp/mock-new");
+  // The picker returning a directory already listed adds nothing.
+  await box.getByTestId("launch-rule-add").click();
+  await expect(box.getByTestId("launch-rule")).toHaveCount(1);
+  await box.getByTestId("launch-rule-args").fill("--add-dir=/tmp/extra");
+  await box.getByTestId("launch-rules-save").click();
+  await expect(box).toContainText("已保存，之后新建的 Session 生效");
+
+  // Saved: back after reopening the settings.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+,");
+  await page.getByRole("tab", { name: "驾驶" }).click();
+  await expect(box.getByTestId("launch-rule-args")).toHaveValue("--add-dir=/tmp/extra");
+
+  // Blank arguments drop the rule on saving; removing it does too.
+  await box.getByTestId("launch-rule-args").fill("  ");
+  await box.getByTestId("launch-rules-save").click();
+  await expect(box.getByTestId("launch-rule")).toHaveCount(0);
+  await box.getByTestId("launch-rule-add").click();
+  await box.getByTestId("launch-rule-remove").click();
+  await expect(box.getByTestId("launch-rule")).toHaveCount(0);
+});
+
 test("ccrpc ls 只在有 Live Session 或驾驶连接时轮询，恢复时立即查一次", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH);

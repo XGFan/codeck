@@ -14,6 +14,17 @@ pub struct Settings {
     /// ccrpc's screen analyzer, over the login shell's `CCRPC_ANALYZER_*` (see `drive::env`).
     #[serde(default)]
     pub analyzer: AnalyzerSettings,
+    /// Extra claude arguments by directory for Sessions CoDeck starts (see `drive::launch`).
+    #[serde(default)]
+    pub launch_rules: Vec<LaunchRule>,
+}
+
+/// 「设置 › 驾驶 › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below.
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchRule {
+    pub dir: String,
+    pub args: String,
 }
 
 /// What 「设置 › 驾驶」 sets for ccrpc's analyzer; `None` leaves the login shell's variable (or ccrpc's
@@ -84,6 +95,10 @@ mod tests {
                 base_url: None,
                 model: Some("m".into()),
             },
+            launch_rules: vec![LaunchRule {
+                dir: "/a".into(),
+                args: "--add-dir=/b".into(),
+            }],
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);

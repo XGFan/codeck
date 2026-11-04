@@ -34,6 +34,8 @@ export const commands = {
 	 *  removes it. Applies to the connections made from now on.
 	 */
 	driveSetAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerInfo>("drive_set_analyzer", { apiKey, baseUrl, model }),
+	/**  Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved. */
+	driveSetLaunchRules: (rules: LaunchRule[]) => __TAURI_INVOKE<LaunchRule[]>("drive_set_launch_rules", { rules }),
 	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
 	driveList: () => __TAURI_INVOKE<string>("drive_list"),
 	driveConnect: (holderId: string) => __TAURI_INVOKE<string>("drive_connect", { holderId }),
@@ -199,6 +201,7 @@ export type DriveInfo = {
 	ccrpcPath: string,
 	doctor: DoctorLine[],
 	analyzer: AnalyzerInfo,
+	launchRules: LaunchRule[],
 	logRoot: string,
 };
 
@@ -315,6 +318,12 @@ export type JumpTarget = {
 	inSubagent: boolean,
 	inAbandonedBranch: boolean,
 	needsHidden: boolean,
+};
+
+/**  「设置 › 驾驶 › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below. */
+export type LaunchRule = {
+	dir: string,
+	args: string,
 };
 
 /**  Full snapshot of the Live Session set; emitted only when it changes. */

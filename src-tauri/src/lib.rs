@@ -41,6 +41,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::list_slash_commands,
             drive::drive_info,
             drive::drive_set_analyzer,
+            drive::drive_set_launch_rules,
             drive::drive_list,
             drive::drive_connect,
             drive::drive_new,

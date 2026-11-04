@@ -31,6 +31,7 @@ export function createRealApi(): Api {
     copyText: writeText,
     driveInfo: commands.driveInfo,
     driveSetAnalyzer: commands.driveSetAnalyzer,
+    driveSetLaunchRules: commands.driveSetLaunchRules,
     driveList: async () => JSON.parse(await commands.driveList()) as LsEntry[],
     driveConnect: commands.driveConnect,
     driveNew: commands.driveNew,

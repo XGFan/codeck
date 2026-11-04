@@ -110,7 +110,7 @@ fn relays_a_real_session_and_logs_it() {
         let _ = tx.lock().unwrap().send(o);
     });
 
-    let conn = app.new_session(sink, &work).unwrap();
+    let conn = app.new_session(sink, &work, &[]).unwrap();
     let mut holder = Holder {
         toh: sandbox.join("toh"),
         id: None,
