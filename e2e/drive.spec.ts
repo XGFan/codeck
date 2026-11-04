@@ -64,6 +64,7 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await expect(card).toContainText("touch mock-tool.txt");
   await expect(card.getByTestId("tool-call")).toHaveAttribute("data-tool", "Bash");
   await expect(card.getByTestId("allow-always")).toContainText("always allow access to");
+  await expect(card.getByTestId("allow")).toHaveText("1. 允许");
   await expect(card.getByTestId("deny")).toBeVisible();
   // Waiting: Enter does not send, it moves focus to the card.
   await page.getByTestId("drive-input").fill("先别发");
@@ -119,6 +120,9 @@ test("忙时 Enter 排队（可撤销）、⌘Enter 插话；数字键作答；D
   const card = page.getByTestId("permission-card");
   await expect(card).toContainText("README.md");
   await expect(card).toContainText("新的一行");
+  // A learned layout: the buttons carry the dialog's own words, not fixed ones.
+  await expect(card.getByTestId("allow")).toHaveText("1. Yes");
+  await expect(card.getByTestId("deny")).toHaveText("3. No");
   // This Session's card and the LCP Session, counted once each.
   await expect.poll(async () => (await probe(page)).badge).toBe(2);
   await page.getByTestId("cancel-follow-up").click();

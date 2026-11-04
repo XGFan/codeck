@@ -280,7 +280,16 @@ impl App {
 /// is settled (renamed, or it could not be).
 fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return false };
-    let Some(h) = v["holder_id"].as_str().filter(|_| v["type"] == "ready") else { return false };
+    if v["type"] != "ready" {
+        return false;
+    }
+    // Used in a path: only a Holder ID of the expected form (as `connect` requires).
+    let Some(h) = v["holder_id"]
+        .as_str()
+        .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+    else {
+        return true;
+    };
     let mut d = dir.lock();
     let Some(name) = d.file_name().and_then(|n| n.to_str()) else { return true };
     let to = d.with_file_name(name.replacen("new", h, 1));

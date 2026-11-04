@@ -164,6 +164,10 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
   const { busy, error, send } = useAnswer(c);
   const [feedback, setFeedback] = useState<string | null>(null);
   const always = r.options?.find((o) => o.meaning === "allow_always");
+  // A learned layout's meanings come from a model: its buttons show the dialog's own words, so a
+  // wrongly labelled option is visible before it is pressed.
+  const label = (meaning: string, fallback: string) =>
+    r.layout_source === "learned" ? (r.options?.find((o) => o.meaning === meaning)?.label ?? fallback) : fallback;
   const answer = (decision: string, message?: string) =>
     send({ type: "answer_permission", request_id: r.request_id, decision, ...(message ? { message } : {}) });
   const actions = [() => void answer("allow"), ...(always ? [() => void answer("allow_always")] : []), () => void answer("deny")];
@@ -174,7 +178,7 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
       <ToolInput r={r} sessionId={c.sessionId} />
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         <Button size="sm" disabled={busy} onClick={() => void answer("allow")} data-testid="allow">
-          {++n}. 允许
+          {++n}. {label("allow", "允许")}
         </Button>
         {always && (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void answer("allow_always")} title={always.label} data-testid="allow-always" className="max-w-[28rem]">
@@ -184,7 +188,7 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
           </Button>
         )}
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void answer("deny")} data-testid="deny">
-          {++n}. 拒绝
+          {++n}. {label("deny", "拒绝")}
         </Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => setFeedback(feedback == null ? "" : null)} data-testid="deny-with-message">
           拒绝，并告诉 Claude…
