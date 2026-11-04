@@ -44,6 +44,6 @@ _Avoid_: 用户消息, peer message, 队友输入
 从另一个 Session 复制了部分历史后继续进行的新 Session；被复制的那个称为它的 **Origin Session**。
 _Avoid_: 分支, 副本, resume（resume 不产生新 Session 时不算 Fork）
 
-**API 金额**:
-按 API 公开价格估算的花费（美元），由每条 assistant 消息的模型和 token 算出；同一次 API 调用出现在多个 Session 中时只计一次，归入最早的那个 Session。它是估算值，不是实际账单（订阅用户并不按此付费）。
-_Avoid_: 费用, 花费, 账单, cost（文案中）
+**Cost**:
+按 API 公开单价估算的花费（美元），由每条 assistant 消息的模型和 token 算出；同一次 API 调用出现在多个 Session 中时只计一次，归入最早的那个 Session。它是估算值，不是实际账单（订阅用户并不按此付费）。界面与文档里一律写 Cost。
+_Avoid_: API 金额（「API」有歧义）, 金额, 费用, 花费, 账单

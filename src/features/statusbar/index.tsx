@@ -4,15 +4,19 @@ import { useIndexStatus } from "@/queries";
 
 const nf = new Intl.NumberFormat("en-US");
 
+/**
+ * The foot of the Session list: index status, then stats and settings. While the list is hidden the two buttons
+ * sit in the toolbar instead ([`Toolbar`]), so the conversation keeps no bar of its own.
+ */
 export function StatusBar() {
   const { data: s } = useIndexStatus();
   const actions = (
-    <span className="ml-auto flex items-center gap-0.5">
+    <span className="ml-auto flex shrink-0 items-center gap-0.5">
       <StatsToggle className="size-6" />
       <SettingsButton className="size-6 text-secondary" />
     </span>
   );
-  if (!s) return <div className="flex items-center border-t border-border bg-sidebar px-1.5">{actions}</div>;
+  if (!s) return <div className="flex h-9 shrink-0 items-center border-t border-border px-1.5">{actions}</div>;
 
   const busy = s.phase === "scanning" || s.phase === "indexingText";
   const pct =
@@ -25,7 +29,7 @@ export function StatusBar() {
     <div
       data-testid="statusbar"
       data-tauri-drag-region="deep"
-      className="flex items-center gap-3 border-t border-border bg-sidebar pr-1.5 pl-3 text-[11px] text-secondary"
+      className="flex h-9 shrink-0 items-center gap-3 border-t border-border pr-1.5 pl-4 text-[11px] text-secondary"
     >
       {s.phase === "error" ? (
         <span className="text-error">索引失败{s.error ? ` · ${s.error}` : ""}</span>
@@ -40,7 +44,7 @@ export function StatusBar() {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(pct)}
-            className="h-1 w-28 overflow-hidden rounded-full bg-border"
+            className="h-1 min-w-8 flex-1 overflow-hidden rounded-full bg-border"
           >
             <span className="block h-full rounded-full bg-accent transition-[width]" style={{ width: `${pct}%` }} />
           </span>

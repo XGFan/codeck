@@ -136,10 +136,12 @@ test("显示系统消息开关控制隐藏条目", async ({ page }) => {
   const transcript = page.getByTestId("transcript");
   await transcript.evaluate((e) => (e.scrollTop = 0));
   await expect(transcript.getByText("可用技能：review、simplify、security-review（共 3 项）")).toHaveCount(0);
-  await page.getByTestId("header").getByText("显示系统消息").click();
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
   await transcript.evaluate((e) => (e.scrollTop = 0));
   await expect(transcript.getByText("可用技能：review、simplify、security-review（共 3 项）")).toBeVisible();
-  await page.getByTestId("header").getByText("显示系统消息").click();
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
   await expect(transcript.getByText("可用技能：review、simplify、security-review（共 3 项）")).toHaveCount(0);
 });
 

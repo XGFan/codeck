@@ -56,7 +56,8 @@ export function useLeadingInset(): string | undefined {
   const { hidden } = useSessionsHidden();
   const fullScreen = useFullScreen();
   if (!hidden) return undefined;
-  return fullScreen ? "pl-[84px]" : "pl-[140px]";
+  // The toolbar holds four 28px buttons then (list, search, stats, settings).
+  return fullScreen ? "pl-[148px]" : "pl-[212px]";
 }
 
 const TOOL_CLASS =
@@ -73,7 +74,7 @@ function Toggle({ pane, label, keys, icon, disabled }: { pane: CollapsiblePane; 
   );
 }
 
-/** Opens the stats dialog. Lives in the status bar. */
+/** Opens the stats dialog. At the foot of the Session list, or in the toolbar while the list is hidden. */
 export function StatsToggle({ className }: { className?: string }) {
   const active = useUi((s) => s.statsOpen);
   const setStatsOpen = useUi((s) => s.setStatsOpen);
@@ -92,8 +93,11 @@ export function StatsToggle({ className }: { className?: string }) {
   );
 }
 
-/** Session list toggle and search, pinned right after the traffic lights like a native toolbar. */
-export function Toolbar() {
+/**
+ * Session list toggle and search, pinned right after the traffic lights like a native toolbar; `children` (stats
+ * and settings while the list is hidden) follow them.
+ */
+export function Toolbar({ children }: { children?: React.ReactNode }) {
   const toggle = useUi((s) => s.toggleCollapsed);
   const { forced } = useSessionsHidden();
   const fullScreen = useFullScreen();
@@ -112,6 +116,7 @@ export function Toolbar() {
       >
         <Search size={16} strokeWidth={1.6} aria-hidden />
       </button>
+      {children}
     </div>
   );
 }

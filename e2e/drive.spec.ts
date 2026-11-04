@@ -77,7 +77,7 @@ test("标题栏：ccrpc ls 里的 Live Session 可驾驶，插件未报到时禁
   await expect(page.getByTestId("drive-connect")).toHaveAttribute("title", "ccrpc 插件未加载，重启 claude 后可驾驶");
 
   await open(page, NOT_LISTED);
-  await expect(page.getByTestId("header")).toContainText("复制 resume 命令");
+  await expect(page.getByTestId("header-more")).toBeVisible();
   await expect(page.getByTestId("drive-connect")).toHaveCount(0);
 });
 
@@ -149,22 +149,21 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
 test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({ page }) => {
   await drive(page, RICH);
   await expect(state(page)).toContainText("空闲");
-  // At 1280 wide the title row keeps its buttons; the drive controls get a row of their own.
+  // The header says the state once, in one word; the drive controls sit at the foot of the input box.
   const header = page.getByTestId("header");
-  const title = await header.getByRole("heading", { name: RICH }).boundingBox();
-  for (const b of [header.getByRole("button", { name: "复制 resume 命令" }), header.getByTestId("header-more")]) {
-    const box = (await b.boundingBox())!;
-    expect(Math.abs(box.y + box.height / 2 - (title!.y + title!.height / 2))).toBeLessThan(8);
-  }
-  expect((await page.getByTestId("drive-controls").boundingBox())!.y).toBeGreaterThan(title!.y + title!.height);
+  await expect(header.getByTestId("live-state")).toHaveText("空闲");
+  await expect(header.getByTestId("drive-controls")).toHaveCount(0);
+  const box = (await page.getByTestId("drive-input").boundingBox())!;
+  expect((await page.getByTestId("drive-controls").boundingBox())!.y).toBeGreaterThan(box.y + box.height - 4);
   // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);
 
   await send(page, "改一下 README");
   await expect(state(page)).toContainText("工作中");
-  await expect(page.getByTestId("progress")).toContainText("Thinking");
+  // Claude Code's progress line is under the last message, in the transcript.
+  await expect(page.getByTestId("transcript").getByTestId("progress")).toContainText("Thinking");
 
-  await expect(page.getByTestId("drive-hint")).toContainText("Enter 插话");
+  await expect(page.getByTestId("drive-input")).toHaveAttribute("placeholder", /^插话/);
   await send(page, "做完再跑一下测试");
   await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "做完再跑一下测试" });
   await expect(page.getByTestId("drive-input")).toHaveValue("");
@@ -233,9 +232,8 @@ test("Pane 里换了 Session（/clear）时选中跟着切换；复制排查信�
   await expect(page.getByTestId("header").getByRole("heading", { name: JWT })).toBeVisible();
   await expect(page.getByTestId("drive-panel")).toBeVisible();
 
-  const controls = page.getByTestId("drive-controls");
-  await controls.hover();
-  await controls.getByRole("button", { name: "复制排查信息" }).click();
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitem", { name: "复制排查信息" }).click();
   const copied = await page.evaluate(() => window.__cvCalls!.filter((c) => c.method === "copyText").pop()?.args[0]);
   expect(copied).toMatch(/^holder_id: mclear0000001\nsession_id: c04e77a2-0003-4000-8000-000000000003\ncwd: \/work\/lumen\nlogs: \S+$/);
 
@@ -384,7 +382,7 @@ test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一�
   await drive(page, REFUSED);
   await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
   await expect(page.getByTestId("proc-exit")).toContainText("正被 mac 使用");
-  await expect(page.getByTestId("drive-hint")).toHaveText("ccrpc 已退出");
+  await expect(page.getByTestId("drive-input")).toHaveAttribute("placeholder", "ccrpc 已退出");
   await expect(page.getByTestId("reconnect")).toBeVisible();
 });
 

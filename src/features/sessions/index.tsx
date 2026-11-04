@@ -18,7 +18,7 @@ const SORTS: { value: SessionSort; menu: string; order: string }[] = [
   { value: "created", menu: "创建", order: "创建时间" },
   { value: "messages", menu: "消息数", order: "消息数" },
   { value: "tokens", menu: "Token", order: "Token" },
-  { value: "cost", menu: "金额", order: "金额" },
+  { value: "cost", menu: "Cost", order: "Cost" },
 ];
 
 /** Every Session, unfiltered: which ones are indexed while a Project filter hides some. */
@@ -252,7 +252,7 @@ function LiveDot({ state }: { state: "busy" | "waiting" | "idle" }) {
     <span
       data-testid="live-dot"
       data-state={state}
-      title={state === "busy" ? "进行中 · 工作中" : state === "waiting" ? "进行中 · 等待作答" : "进行中 · 等待输入"}
+      title={state === "busy" ? "工作中" : state === "waiting" ? "等待作答" : "空闲"}
       className={cn(
         "size-2 shrink-0 rounded-full",
         state === "busy" && "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]",

@@ -12,7 +12,7 @@ import type { QuestionEvent, TurnEndEvent } from "./protocol";
 import { Requests } from "./Requests";
 import { connFor, draftKey, errorKey, lsEntryFor, useDrive, waitingSessions } from "./store";
 
-export { DriveBar, DriveConnect } from "./Header";
+export { DriveConnect, STATE_WORD, useDriveDebugInfo } from "./Header";
 export { QuestionForm } from "./Requests";
 export { DriveSettings } from "./Settings";
 export { connFor, lsEntryFor, useDrive } from "./store";
@@ -220,17 +220,28 @@ function Panel({ c }: { c: ConnState }) {
           </div>
         ))}
         <Requests c={c} />
-        {c.progress && c.state === "busy" ? (
-          <div className="truncate text-[12px] text-claude" data-testid="progress">
-            {c.progress.text}
-          </div>
-        ) : (
-          c.lastTurn && c.state !== "busy" && <LastTurn ev={c.lastTurn} />
-        )}
         <Composer c={c} />
       </div>
     </div>
   );
+}
+
+/**
+ * The foot of the open Session's transcript while driven: Claude Code's progress line while busy (as in the
+ * terminal, under the last message), else the last turn's end. Nothing when not driven.
+ */
+export function DriveTail() {
+  const sessionId = useUi((s) => s.sessionId);
+  const c = useDrive((s) => connFor(s, sessionId));
+  if (!c || c.procExit) return null;
+  if (c.state === "busy")
+    return (
+      <div className="flex items-center gap-2 pt-[18px] text-[13px] text-claude" data-testid="progress">
+        <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-claude/25 border-t-claude" aria-hidden />
+        <span className="min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
+      </div>
+    );
+  return c.lastTurn ? <LastTurn ev={c.lastTurn} /> : null;
 }
 
 /** The last turn's end: duration, tokens, estimated cost; error; aborted. */
@@ -239,10 +250,10 @@ function LastTurn({ ev }: { ev: TurnEndEvent }) {
   const parts = [
     ev.duration_ms != null ? `用时 ${formatDuration(ev.duration_ms)}` : null,
     tokens > 0 ? `${formatTokens(tokens)} token` : null,
-    ev.api_cost != null ? `API 金额 ${formatCost(ev.api_cost)}` : null,
+    ev.api_cost != null ? `Cost ${formatCost(ev.api_cost)}` : null,
   ].filter(Boolean);
   return (
-    <div data-testid="turn-end" data-prompt-id={ev.prompt_id ?? ""} className="flex flex-wrap items-center gap-x-3 text-[11px] text-secondary">
+    <div data-testid="turn-end" data-prompt-id={ev.prompt_id ?? ""} className="flex flex-wrap items-center gap-x-3 pt-3 text-[11px] text-secondary">
       <span>上一轮</span>
       {parts.length > 0 && <span>{parts.join(" · ")}</span>}
       {ev.aborted && <span className="font-semibold">已中止</span>}

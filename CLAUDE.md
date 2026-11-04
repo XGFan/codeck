@@ -67,7 +67,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `model/*`（在 `crates/transcript`）是 IPC 类型的**唯一来源**（specta 导出）。改这里或 `src-tauri/src/commands.rs` 的签名后必须 `pnpm bindings`；`src/ipc/bindings.ts` 是生成文件，勿手改。
 - 索引是可丢弃的镜像（ADR-0003）：不写迁移，schema 变化就把 `index/schema.rs` 的 `SCHEMA_VERSION` +1，启动时自动删库重建。
 - 工具输出不进 FTS，也不提供搜索（ADR-0004）；⌘F 会话内查找仍覆盖工具输出（`assemble/find.rs`）。
-- API 金额：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine::rebill_changed`）。价格表在 `Engine` 里，联网下载在 src-tauri（`prices.rs`，ADR-0005）。
+- Cost：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine::rebill_changed`）。价格表在 `Engine` 里，联网下载在 src-tauri（`prices.rs`，ADR-0005）。
 
 ### src-tauri
 

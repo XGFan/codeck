@@ -43,8 +43,8 @@ test("改动过其他 Project 的 Session 也出现在那个 Project 下；行�
 
 test("打开会话后渲染标题栏与消息", async ({ page }) => {
   await openRich(page);
-  await expect(page.getByTestId("live-state")).toContainText("进行中");
-  await expect(page.getByTestId("header")).toContainText("复制 resume 命令");
+  await expect(page.getByTestId("live-state")).toHaveText("工作中");
+  await expect(page.getByTestId("header-more")).toBeVisible();
   await expect(page.locator('[data-kind="userPrompt"]').first()).toBeVisible();
   await expect(page.locator('[data-kind="assistant"]').first()).toBeVisible();
   await expect(page.getByTestId("tool-call").first()).toBeVisible();
@@ -94,9 +94,9 @@ test("等待作答的 Session 显示琥珀色点", async ({ page }) => {
   await page.goto("/");
   const dot = page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" }).getByTestId("live-dot");
   await expect(dot).toHaveAttribute("data-state", "waiting");
-  await expect(dot).toHaveAttribute("title", "进行中 · 等待作答");
+  await expect(dot).toHaveAttribute("title", "等待作答");
   await page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" }).click();
-  await expect(page.getByTestId("live-state")).toContainText("进行中 · 等待作答");
+  await expect(page.getByTestId("live-state")).toHaveText("等待作答");
 });
 
 test("setLive 切换进行中标记", async ({ page }) => {
@@ -105,7 +105,7 @@ test("setLive 切换进行中标记", async ({ page }) => {
   await expect(dot).toHaveAttribute("data-state", "busy");
   await page.evaluate((sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: null, source: "recentWrite" }), id);
   await expect(dot).toHaveAttribute("data-state", "idle");
-  await expect(page.getByTestId("live-state")).toContainText("等待输入");
+  await expect(page.getByTestId("live-state")).toHaveText("空闲");
   await page.evaluate((sid) => window.__cvMock!.setLive(sid, null), id);
   await expect(dot).toHaveCount(0);
   await expect(page.getByTestId("live-state")).toContainText("已结束");
@@ -115,7 +115,8 @@ test("显示系统消息后出现隐藏节点", async ({ page }) => {
   await openRich(page);
   const hidden = page.getByText("可用技能：review、simplify、security-review");
   await expect(hidden).toHaveCount(0);
-  await page.getByRole("checkbox", { name: "显示系统消息" }).click();
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
   // The refetch with hidden nodes may land after our scroll while the view is still pinned to the bottom.
   const transcript = page.getByTestId("transcript");
   await expect
@@ -195,19 +196,24 @@ test("Session 列表收起时，在搜索里选择 Project 会自动展开列表
   await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toBeVisible();
 });
 
-test("头部显示 API 金额，悬停可看按模型明细", async ({ page }) => {
+test("头部显示 Cost，悬停可看按模型明细；其余统计在 ⓘ 的悬停卡片里", async ({ page }) => {
   await openRich(page);
   const cost = page.getByTestId("header").getByTestId("session-cost");
-  await expect(cost).toHaveText(/^API \$\d+\.\d{2}$/);
+  await expect(cost).toHaveText(/^Cost \$\d+\.\d{2}$/);
+  const details = page.getByTestId("session-details");
+  await expect(details).toBeHidden();
+  await page.getByTestId("header").getByRole("button", { name: "更多统计" }).hover();
+  await expect(details).toBeVisible();
+  await expect(details).toContainText("工具调用");
   const title = (await cost.getAttribute("title"))!;
   expect(title).toContain("claude-sonnet-5-5");
   expect(title).toContain("claude-haiku-4-5");
 });
 
-test("Session 列表可按金额排序", async ({ page }) => {
+test("Session 列表可按 Cost 排序", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "排序方式" }).click();
-  await page.getByRole("menuitem", { name: "金额" }).click();
+  await page.getByRole("menuitem", { name: "Cost" }).click();
   const values = async () =>
     (await page.getByTestId("row-cost").allTextContents()).map((c) => (c.startsWith("<") ? 0.005 : Number(c.replace(/[$,]/g, ""))));
   // The list refetches after the sort changes; wait for the new order.

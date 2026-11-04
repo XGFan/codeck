@@ -8,6 +8,7 @@ import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
 import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
+import { DriveFooter } from "./Header";
 import { draftKey, EMPTY_DRAFT, useDrive, type Draft } from "./store";
 import { Tasks } from "./Tasks";
 
@@ -131,20 +132,19 @@ export function Composer({ c }: { c: ConnState }) {
     }
   };
 
-  const hint = matches.length
-    ? "↑↓ 选择 · Tab 补全 · Esc 收起"
-    : !live
+  // What Enter does now, said in the empty box (no hint line of its own).
+  const placeholder = !live
     ? c.procExit
       ? "ccrpc 已退出"
       : c.sessionExited
         ? "Session 已结束"
         : "连接中…"
     : state === "busy"
-      ? "Enter 插话，当前工具调用结束后送达 · ⌘Enter 中断本轮、立即发送 · Esc 中止"
+      ? "插话，当前工具调用结束后送达（⌘Enter 中断本轮、立即发送，Esc 中止）"
       : state === "waiting"
-        ? "先回答上面的请求 · Esc 中止"
+        ? "先回答上面的请求（Esc 中止）"
         : state === "idle"
-          ? "Enter 发送 · Shift+Enter 换行 · 可粘贴截图"
+          ? "给 Claude 发消息（Shift+Enter 换行，可粘贴截图）"
           : "启动中…";
 
   return (
@@ -171,14 +171,15 @@ export function Composer({ c }: { c: ConnState }) {
           </button>
         </div>
       )}
+      {error && (
+        <div className="mb-1.5 truncate text-[12px] text-error" data-testid="drive-error" title={error}>
+          {error}
+        </div>
+      )}
       <div className={cn("relative rounded-xl border border-border bg-ground px-3 pt-2 pb-1.5", live ? "focus-within:border-accent" : "opacity-60")}>
         {matches.length > 0 && (
-          <ul
-            role="listbox"
-            aria-label="斜杠命令"
-            data-testid="slash-menu"
-            className="absolute right-0 bottom-full left-0 mb-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-ground py-1 shadow-lg"
-          >
+          <div data-testid="slash-menu" className="absolute right-0 bottom-full left-0 mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-ground shadow-lg">
+          <ul role="listbox" aria-label="斜杠命令" className="max-h-72 overflow-y-auto py-1">
             {matches.map((m) => (
               <li
                 key={m.name}
@@ -212,6 +213,8 @@ export function Composer({ c }: { c: ConnState }) {
               </li>
             ))}
           </ul>
+          <div className="border-t border-border px-3 py-1 text-[11px] text-secondary">↑↓ 选择 · Tab 补全 · Esc 收起</div>
+          </div>
         )}
         {images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="images">
@@ -266,21 +269,20 @@ export function Composer({ c }: { c: ConnState }) {
             e.preventDefault();
             void submit(e.metaKey || e.ctrlKey);
           }}
-          placeholder={state === "busy" ? "补充或排队下一条…" : "给 Claude 发消息"}
+          placeholder={placeholder}
           aria-label="给 Claude 发消息"
           className="block w-full resize-none bg-transparent text-[14px] leading-[1.5] outline-none placeholder:text-secondary"
           data-testid="drive-input"
         />
         <div className="flex items-center gap-2 pt-1">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-secondary" data-testid="drive-hint">
-            {error ? <span className="text-error">{error}</span> : hint}
-          </span>
-          {images.length > 0 && (
-            <span className="flex items-center gap-1 text-[11px] text-secondary">
-              <ImageIcon size={11} aria-hidden /> {images.length}
-            </span>
-          )}
-          <Tasks c={c} />
+          <DriveFooter c={c}>
+            {images.length > 0 && (
+              <span className="flex items-center gap-1 text-[11px] text-secondary">
+                <ImageIcon size={11} aria-hidden /> {images.length}
+              </span>
+            )}
+            <Tasks c={c} />
+          </DriveFooter>
           <button
             type="button"
             aria-label="发送"

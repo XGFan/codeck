@@ -170,7 +170,7 @@ function Overview({ stats, rangeDays }: { stats: Stats; rangeDays: number | null
     { id: "messages", label: "消息", value: num(o.messages), sub: o.activeDays ? `日均 ${num(Math.round(o.messages / o.activeDays))} 条` : "—" },
     {
       id: "cost",
-      label: "API 金额",
+      label: "Cost",
       value: formatCost(o.cost),
       sub: o.unpricedMessages > 0 ? `${num(o.unpricedMessages)} 条消息无价格，未计入` : o.activeDays ? `日均 ${formatCost(o.cost / o.activeDays)}` : "—",
     },
@@ -361,7 +361,7 @@ function StatsPanel() {
                 )}
               </Card>
 
-              <Card className="@3xl:row-span-2" title="Session 排行" aside={<span className="text-[11px] text-secondary">按 API 金额</span>}>
+              <Card className="@3xl:row-span-2" title="Session 排行" aside={<span className="text-[11px] text-secondary">按 Cost</span>}>
                 {stats.sessions.length === 0 && <Empty />}
                 {stats.sessions.map((s) => (
                   <button

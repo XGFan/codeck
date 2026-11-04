@@ -1,12 +1,12 @@
 import { useUi } from "@/state/ui";
 import { DrivePanel, DriveRoot, ElsewhereBanner } from "@/features/drive";
 import { FindBar } from "@/features/find";
-import { Toolbar, useSessionsHidden } from "@/features/layout";
+import { StatsToggle, Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
 import { SearchOverlay } from "@/features/search";
 import { SessionHeader } from "@/features/header";
 import { SessionList } from "@/features/sessions";
-import { SettingsDialog } from "@/features/settings";
+import { SettingsButton, SettingsDialog } from "@/features/settings";
 import { StatsDialog } from "@/features/stats";
 import { StatusBar } from "@/features/statusbar";
 import { SubagentPanel } from "@/features/subagent-panel";
@@ -20,7 +20,7 @@ export default function App() {
   const hideList = useSessionsHidden().hidden;
 
   return (
-    <div className="grid h-full grid-rows-[1fr_28px]">
+    <div className="grid h-full grid-rows-[1fr]">
       <div
         className="grid min-h-0"
         style={{ gridTemplateColumns: `${hideList ? 0 : 320}px 1fr` }}
@@ -31,6 +31,7 @@ export default function App() {
           className={cn("flex min-h-0 flex-col border-r border-border bg-list", hideList && "invisible overflow-hidden border-r-0")}
         >
           <SessionList />
+          {!hideList && <StatusBar />}
         </section>
 
         <main data-testid="pane-conversation" className="flex min-h-0 min-w-0 flex-col bg-ground">
@@ -50,8 +51,15 @@ export default function App() {
           </div>
         </main>
       </div>
-      <StatusBar />
-      <Toolbar />
+      <Toolbar>
+        {/* With the list hidden, its foot's buttons join the toolbar. */}
+        {hideList && (
+          <>
+            <StatsToggle />
+            <SettingsButton className="size-7 text-secondary" />
+          </>
+        )}
+      </Toolbar>
       <DriveRoot />
       {/* Overlays: portal/fixed based; wrapped so placeholder stubs stay out of the layout. */}
       <div className="fixed right-0 bottom-0 size-0 overflow-hidden">

@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
-import { useUnindexed } from "@/features/drive";
+import { DriveTail, useUnindexed } from "@/features/drive";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
@@ -61,8 +61,9 @@ export function TranscriptView() {
   }
   if (unindexed && data?.sessionId !== sessionId) {
     return (
-      <div data-testid="transcript-new" className="flex flex-1 items-center justify-center text-[13px] text-secondary">
+      <div data-testid="transcript-new" className="flex flex-1 flex-col items-center justify-center px-6 text-[13px] text-secondary">
         新 Session，发送第一条提示词后显示对话
+        <DriveTail />
       </div>
     );
   }
@@ -225,6 +226,17 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
   }, [rows, isMain]);
   useEffect(() => (isMain ? resetReading : undefined), [isMain]);
 
+  // Stay at the bottom when the drive's line under the last message (progress, last turn) grows the content,
+  // or the view itself gets shorter (the drive panel grows: a queued message, a card).
+  const tailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const ro = new ResizeObserver(() => {
+      if (pinned.current) toBottom();
+    });
+    for (const el of [tailRef.current, scrollRef.current]) if (el) ro.observe(el);
+    return () => ro.disconnect();
+  }, [toBottom]);
+
   // Stay at the bottom while content grows (new rows, late measurements) if the user was there.
   const total = virtualizer.getTotalSize();
   useLayoutEffect(() => {
@@ -326,6 +338,11 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
               );
             })}
           </div>
+          {follow && (
+            <div ref={tailRef} className="mx-auto -mt-5 max-w-[820px] pb-5">
+              <DriveTail />
+            </div>
+          )}
         </div>
         {unread && (
           <button
