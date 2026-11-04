@@ -108,8 +108,72 @@ fn sink(handle: &AppHandle) -> Sink {
 pub struct DriveInfo {
     pub ccrpc_path: String,
     pub doctor: Vec<relay::DoctorLine>,
-    pub analyzer: bool,
+    pub analyzer: AnalyzerInfo,
     pub log_root: String,
+}
+
+/// ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › 驾驶」 saved, and what the next
+/// ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzerInfo {
+    /// A key reaches ccrpc: the analyzer is on.
+    pub enabled: bool,
+    /// Where that key comes from: `settings` or `shell`; null when there is none.
+    pub key_source: Option<String>,
+    /// The key's last 4 characters.
+    pub key_hint: Option<String>,
+    /// Saved in the settings (null: not set here).
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    /// From the login shell (null: not set there; ccrpc's default then applies).
+    pub shell_base_url: Option<String>,
+    pub shell_model: Option<String>,
+}
+
+fn analyzer_info(app: &App) -> AnalyzerInfo {
+    let saved = crate::settings::load().analyzer;
+    let filled = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+    let shell = |k: &str| app.env.get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let (key, key_source) = match (filled(&saved.api_key), shell("CCRPC_ANALYZER_API_KEY")) {
+        (Some(k), _) => (Some(k), Some("settings".to_string())),
+        (None, Some(k)) => (Some(k), Some("shell".to_string())),
+        (None, None) => (None, None),
+    };
+    AnalyzerInfo {
+        enabled: key.is_some(),
+        key_hint: key.map(|k| k.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()),
+        key_source,
+        base_url: filled(&saved.base_url),
+        model: filled(&saved.model),
+        shell_base_url: shell("CCRPC_ANALYZER_BASE_URL"),
+        shell_model: shell("CCRPC_ANALYZER_MODEL"),
+    }
+}
+
+/// Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
+/// removes it. Applies to the connections made from now on.
+#[tauri::command]
+#[specta::specta]
+pub async fn drive_set_analyzer(
+    state: State<'_, DriveState>,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> CmdResult<AnalyzerInfo> {
+    with_drive(&state, move |app| {
+        let mut s = crate::settings::load();
+        let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        if let Some(k) = api_key {
+            s.analyzer.api_key = blank(Some(k));
+        }
+        s.analyzer.base_url = blank(base_url);
+        s.analyzer.model = blank(model);
+        crate::settings::save(&s).map_err(|e| format!("保存设置失败：{e}"))?;
+        app.gui_line("analyzer settings saved");
+        Ok(analyzer_info(app))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -119,7 +183,7 @@ pub async fn drive_info(state: State<'_, DriveState>) -> CmdResult<DriveInfo> {
         Ok(DriveInfo {
             ccrpc_path: app.ccrpc.display().to_string(),
             doctor: app.refresh_doctor(),
-            analyzer: app.env.get("CCRPC_ANALYZER_API_KEY").is_some_and(|k| !k.is_empty()),
+            analyzer: analyzer_info(app),
             log_root: app.log_root.display().to_string(),
         })
     })

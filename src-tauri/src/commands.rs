@@ -55,7 +55,8 @@ pub async fn set_data_root(state: State<'_, AppState>, path: Option<String>) -> 
     {
         return Err(CoreError::InvalidQuery(format!("目录不存在：{p}")).into());
     }
-    let settings = Settings { data_root: path };
+    // Only the data root changes: the rest of the settings (the analyzer) stays.
+    let settings = Settings { data_root: path, ..settings::load() };
     let engine = tauri::async_runtime::spawn_blocking(move || {
         settings::save(&settings)?;
         let engine = open_engine(&settings)?;

@@ -30,6 +30,7 @@ export function createRealApi(): Api {
     onPricesChanged: (cb) => events.pricesChangedEvent.listen(() => cb()),
     copyText: writeText,
     driveInfo: commands.driveInfo,
+    driveSetAnalyzer: commands.driveSetAnalyzer,
     driveList: async () => JSON.parse(await commands.driveList()) as LsEntry[],
     driveConnect: commands.driveConnect,
     driveNew: commands.driveNew,

@@ -46,6 +46,8 @@ interface DriveStore {
   /** Polls `ccrpc ls` again after it stopped. */
   retry(): void;
   loadInfo(): Promise<void>;
+  /** Saves the analyzer's settings (see `driveSetAnalyzer`); rejects with the reason. */
+  saveAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<void>;
   /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
   connect(holderId: string, sessionId: string): Promise<void>;
   newSession(): Promise<void>;
@@ -316,6 +318,11 @@ export const useDrive = create<DriveStore>((set, get) => {
     retry() {
       set({ lsError: null, infoError: null });
       sync();
+    },
+
+    async saveAnalyzer(apiKey, baseUrl, model) {
+      const analyzer = await api.driveSetAnalyzer(apiKey, baseUrl, model);
+      set((s) => (s.info ? { info: { ...s.info, analyzer } } : {}));
     },
 
     async loadInfo() {

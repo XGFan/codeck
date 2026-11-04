@@ -30,7 +30,7 @@ const TURNS = "迁移表单校验到 zod";
 const TRUST = "/review 订单列表页";
 const REFUSED = "Longhorn 卷扩容与备份策略";
 
-type Probe = { sent: { msg: Record<string, unknown> }[]; lists: number; guiLog: string[]; badge: number };
+type Probe = { sent: { msg: Record<string, unknown> }[]; lists: number; guiLog: string[]; badge: number; analyzerSaves: number };
 const probe = (page: Page) => page.evaluate(() => window.__cvDrive as unknown as Probe);
 const lastSent = async (page: Page, type: string) => (await probe(page)).sent.map((s) => s.msg).filter((m) => m.type === type).pop();
 
@@ -356,15 +356,33 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   await expect(state(page)).toContainText("空闲");
 });
 
-test("设置 › 驾驶：ccrpc 路径、doctor 的失败项、分析器与日志目录", async ({ page }) => {
+test("设置 › 驾驶：ccrpc 路径、doctor 的失败项、日志目录；分析器的 Key、Endpoint、模型可在这里设置", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "驾驶" }).click();
   await expect(page.getByTestId("set-ccrpc")).toContainText("/mock/bin/ccrpc");
   await expect(page.getByTestId("set-ccrpc")).toContainText("CODECK_CCRPC");
   await expect(page.getByTestId("set-doctor").locator('[data-level="fail"]')).toContainText("ccrpc 插件未启用");
-  await expect(page.getByTestId("set-analyzer")).toContainText("已开启");
   await expect(page.getByTestId("set-drive-logs")).toContainText("/mock/Logs/dev.joy.codeck/drive");
+
+  // The analyzer: a key from the login shell until one is saved here, with an endpoint and model.
+  const status = page.getByTestId("analyzer-status");
+  await expect(status).toHaveText("已开启 · Key 来自登录 shell 的 CCRPC_ANALYZER_API_KEY（…abcd）");
+  await expect(page.getByTestId("analyzer-base-url")).toHaveAttribute("placeholder", "https://api.deepseek.com/anthropic");
+  await page.getByTestId("analyzer-key").fill("sk-ant-test-9876");
+  await page.getByTestId("analyzer-base-url").fill("https://api.anthropic.com");
+  await page.getByTestId("analyzer-model").fill("claude-haiku-4-5");
+  await page.getByTestId("analyzer-save").click();
+  await expect(status).toHaveText("已开启 · Key 保存在这里（…9876）");
+  await expect(page.getByTestId("analyzer-key")).toHaveValue("");
+  await expect(page.getByTestId("analyzer-base-url")).toHaveValue("https://api.anthropic.com");
+  await expect(page.getByTestId("set-analyzer")).toContainText("之后新建的驾驶连接生效");
+  // Saving again with the key box empty keeps the key; clearing it goes back to the shell's.
+  await page.getByTestId("analyzer-save").click();
+  await expect(status).toHaveText("已开启 · Key 保存在这里（…9876）");
+  await page.getByTestId("analyzer-clear-key").click();
+  await expect(status).toContainText("来自登录 shell");
+  expect((await probe(page)).analyzerSaves).toBe(3);
 });
 
 test("ccrpc ls 只在有 Live Session 或驾驶连接时轮询，恢复时立即查一次", async ({ page }) => {

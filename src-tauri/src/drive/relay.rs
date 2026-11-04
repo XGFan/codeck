@@ -77,10 +77,16 @@ impl App {
         Ok(app)
     }
 
+    /// A ccrpc process with the login shell's environment, the analyzer's settings over it (read at each
+    /// start: a change applies to the next connection).
     pub fn command(&self) -> Command {
         let mut c = Command::new(&self.ccrpc);
-        c.env_clear().envs(&self.env);
+        c.env_clear().envs(self.effective_env());
         c
+    }
+
+    pub fn effective_env(&self) -> HashMap<String, String> {
+        super::env::with_analyzer(&self.env, &crate::settings::load().analyzer)
     }
 
     pub fn gui_line(&self, text: &str) {

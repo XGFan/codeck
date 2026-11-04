@@ -29,6 +29,11 @@ export const commands = {
 	/**  Slash commands for completion while driving a Session started in `cwd`. */
 	listSlashCommands: (cwd: string | null) => __TAURI_INVOKE<SlashCommand[]>("list_slash_commands", { cwd }),
 	driveInfo: () => __TAURI_INVOKE<DriveInfo>("drive_info"),
+	/**
+	 *  Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
+	 *  removes it. Applies to the connections made from now on.
+	 */
+	driveSetAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerInfo>("drive_set_analyzer", { apiKey, baseUrl, model }),
 	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
 	driveList: () => __TAURI_INVOKE<string>("drive_list"),
 	driveConnect: (holderId: string) => __TAURI_INVOKE<string>("drive_connect", { holderId }),
@@ -70,6 +75,25 @@ export type ActivityBar = {
 
 /**  Width of one activity bar; aligned in local time (whole n hours, midnight, Monday, the 1st). */
 export type ActivityBucket = "hour1" | "hour3" | "hour6" | "hour12" | "day" | "week" | "month";
+
+/**
+ *  ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › 驾驶」 saved, and what the next
+ *  ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
+ */
+export type AnalyzerInfo = {
+	/**  A key reaches ccrpc: the analyzer is on. */
+	enabled: boolean,
+	/**  Where that key comes from: `settings` or `shell`; null when there is none. */
+	keySource: string | null,
+	/**  The key's last 4 characters. */
+	keyHint: string | null,
+	/**  Saved in the settings (null: not set here). */
+	baseUrl: string | null,
+	model: string | null,
+	/**  From the login shell (null: not set there; ccrpc's default then applies). */
+	shellBaseUrl: string | null,
+	shellModel: string | null,
+};
 
 /**  Error returned by every command. `message` is one Chinese sentence for display. */
 export type AppError = {
@@ -174,7 +198,7 @@ export type DriveExitEvent = {
 export type DriveInfo = {
 	ccrpcPath: string,
 	doctor: DoctorLine[],
-	analyzer: boolean,
+	analyzer: AnalyzerInfo,
 	logRoot: string,
 };
 

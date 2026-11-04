@@ -148,7 +148,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **别处在等**：切回窗口时，当前 Session 没有要作答的、而别的 Session 在等作答（与 Dock 角标同一口径），对话区顶部显示一行「<标题> 在等你作答，点此切过去」，点击选中那个 Session；切换 Session 后消失，可关闭。
 - **Dock 角标**：等待作答的 Session 数 = Live 状态为 waiting 的 Session（全部 Session，不限于已连接）∪ 已连接且有请求卡片的 Session，去重。
 - **与 cc-gui 不同之处**（有意不移植）：等作答的 Session 不在列表里置顶，Session 列表保持原有排序（Live 点为琥珀色）；`ccrpc doctor` 的 fail 不在启动时顶部提示，只在「设置 › 驾驶」里显示（启动时不读 ccrpc 信息）。
-- **设置 › 驾驶**：ccrpc 路径、`ccrpc doctor` 的结果（fail 醒目显示）、分析器是否开启（登录 shell 环境里设置了 `CCRPC_ANALYZER_API_KEY`）、日志目录。这些信息在打开该页时才读取。
+- **设置 › 驾驶**：ccrpc 路径、`ccrpc doctor` 的结果（fail 醒目显示）、界面分析器、日志目录。这些信息在打开该页时才读取。界面分析器（ccrpc 认不出的对话框交给它，Anthropic Messages 协议，`POST {Endpoint}/v1/messages`）：显示是否开启、Key 来自哪里（设置 / 登录 shell，只显示末 4 位）；可填 API Key、Endpoint、模型，存进应用的 `settings.json`（`analyzer`，文件权限 0600），启动 ccrpc 时覆盖登录 shell 的 `CCRPC_ANALYZER_API_KEY` / `_BASE_URL` / `_MODEL`，留空的项照用登录 shell 的或 ccrpc 的默认值；对之后新建的连接生效。Key 输入框留空保存不改已存的 Key，「清除保存的 Key」删掉它。
 - **日志**：常开，按连接分目录，仅本人可读写，保留 14 天：
 
   ```

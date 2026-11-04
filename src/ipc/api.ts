@@ -1,4 +1,5 @@
 import type {
+  AnalyzerInfo,
   AppInfo,
   Diagnostics,
   DriveInfo,
@@ -61,6 +62,8 @@ export interface Api {
   // Driving (ccrpc): one child process per connection, JSONL both ways, logs.
   /** ccrpc's path, `ccrpc doctor`, the analyzer, the log root; the first call reads the login shell's environment. */
   driveInfo(): Promise<DriveInfo>;
+  /** Saves the analyzer's settings (blank = not set here); `apiKey: null` keeps the saved key, `""` removes it. */
+  driveSetAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerInfo>;
   /** `ccrpc ls --json`. */
   driveList(): Promise<LsEntry[]>;
   /** `ccrpc attach --co-display`; returns the connection id. */

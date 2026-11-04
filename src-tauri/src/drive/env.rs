@@ -64,6 +64,21 @@ fn read_login_env() -> Option<HashMap<String, String>> {
 
 /// The ccrpc to run: `CODECK_CCRPC`, else `~/.local/bin/ccrpc` (where `ccrpc plugin install` is
 /// expected to have been run from), else `ccrpc` on PATH.
+/// The analyzer's variables set in 「设置 › 驾驶」 override the login shell's (empty ones are left out).
+pub fn with_analyzer(env: &HashMap<String, String>, a: &crate::settings::AnalyzerSettings) -> HashMap<String, String> {
+    let mut env = env.clone();
+    for (k, v) in [
+        ("CCRPC_ANALYZER_API_KEY", &a.api_key),
+        ("CCRPC_ANALYZER_BASE_URL", &a.base_url),
+        ("CCRPC_ANALYZER_MODEL", &a.model),
+    ] {
+        if let Some(v) = v.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            env.insert(k.into(), v.into());
+        }
+    }
+    env
+}
+
 pub fn ccrpc_path(env: &HashMap<String, String>) -> PathBuf {
     if let Some(p) = env.get("CODECK_CCRPC").filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
@@ -80,4 +95,34 @@ pub fn ccrpc_path(env: &HashMap<String, String>) -> PathBuf {
         }
     }
     local
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::AnalyzerSettings;
+
+    #[test]
+    fn analyzer_settings_override_the_login_shell() {
+        let shell: HashMap<String, String> = [
+            ("PATH", "/bin"),
+            ("CCRPC_ANALYZER_API_KEY", "from-shell"),
+            ("CCRPC_ANALYZER_MODEL", "shell-model"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let a = AnalyzerSettings {
+            api_key: Some(" from-settings ".into()),
+            base_url: Some("https://api.anthropic.com".into()),
+            model: Some("  ".into()),
+        };
+        let env = with_analyzer(&shell, &a);
+        assert_eq!(env["CCRPC_ANALYZER_API_KEY"], "from-settings");
+        assert_eq!(env["CCRPC_ANALYZER_BASE_URL"], "https://api.anthropic.com");
+        // Blank in settings: the login shell's stays.
+        assert_eq!(env["CCRPC_ANALYZER_MODEL"], "shell-model");
+        assert_eq!(env["PATH"], "/bin");
+        assert_eq!(with_analyzer(&shell, &AnalyzerSettings::default()), shell);
+    }
 }

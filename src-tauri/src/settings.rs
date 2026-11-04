@@ -11,6 +11,22 @@ pub const SETTINGS_FILE: &str = "settings.json";
 pub struct Settings {
     /// Data root override; `None` = `$CLAUDE_CONFIG_DIR` or `~/.claude`.
     pub data_root: Option<String>,
+    /// ccrpc's screen analyzer, over the login shell's `CCRPC_ANALYZER_*` (see `drive::env`).
+    #[serde(default)]
+    pub analyzer: AnalyzerSettings,
+}
+
+/// What 「设置 › 驾驶」 sets for ccrpc's analyzer; `None` leaves the login shell's variable (or ccrpc's
+/// default) in place.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzerSettings {
+    /// `CCRPC_ANALYZER_API_KEY`.
+    pub api_key: Option<String>,
+    /// `CCRPC_ANALYZER_BASE_URL` (an Anthropic Messages endpoint).
+    pub base_url: Option<String>,
+    /// `CCRPC_ANALYZER_MODEL`.
+    pub model: Option<String>,
 }
 
 pub fn settings_path() -> PathBuf {
@@ -33,13 +49,19 @@ pub fn save(settings: &Settings) -> std::io::Result<()> {
     save_to(&settings_path(), settings)
 }
 
-/// Writes atomically (temp file + rename) so a crash never leaves a half-written file.
+/// Writes atomically (temp file + rename) so a crash never leaves a half-written file. Only the user
+/// may read it: it can hold the analyzer's API key.
 pub fn save_to(path: &Path, settings: &Settings) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(settings)?)?;
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    f.write_all(&serde_json::to_vec_pretty(settings)?)?;
+    drop(f);
     std::fs::rename(tmp, path)
 }
 
@@ -53,11 +75,17 @@ mod tests {
         let path = dir.path().join("nested").join(SETTINGS_FILE);
         let some = Settings {
             data_root: Some("/data/root".into()),
+            analyzer: AnalyzerSettings { api_key: Some("k-1".into()), base_url: None, model: Some("m".into()) },
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         save_to(&path, &Settings::default()).unwrap();
         assert_eq!(load_from(&path).data_root, None);
+        // A settings file from before the analyzer fields still loads.
+        std::fs::write(&path, br#"{"dataRoot":"/x"}"#).unwrap();
+        assert_eq!(load_from(&path).data_root.as_deref(), Some("/x"));
     }
 
     #[test]

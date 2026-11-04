@@ -10,6 +10,7 @@
 
 import type { InMsg, LsEntry, Task } from "@/features/drive/protocol";
 import type { Api, Unlisten } from "./api";
+import type { AnalyzerInfo } from "./bindings";
 
 interface WireLine {
   t?: number;
@@ -86,8 +87,10 @@ export interface DriveProbe {
   guiLog: string[];
   badge: number;
   images: number;
+  /** `driveSetAnalyzer` calls. */
+  analyzerSaves: number;
 }
-const probe: DriveProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0 };
+const probe: DriveProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0 };
 
 declare global {
   interface Window {
@@ -174,6 +177,7 @@ const subscribe = <T>(set: Set<T>, cb: T): Promise<Unlisten> => {
 type DriveApi = Pick<
   Api,
   | "driveInfo"
+  | "driveSetAnalyzer"
   | "driveList"
   | "driveConnect"
   | "driveNew"
@@ -188,6 +192,22 @@ type DriveApi = Pick<
   | "onDriveExit"
 >;
 
+/** The analyzer as the mock app has it: a key from the login shell, nothing saved in the settings. */
+const analyzer: { apiKey: string | null; baseUrl: string | null; model: string | null } = { apiKey: null, baseUrl: null, model: null };
+const SHELL_KEY = "sk-shell-0000abcd";
+function analyzerInfo(): AnalyzerInfo {
+  const key = analyzer.apiKey ?? SHELL_KEY;
+  return {
+    enabled: true,
+    keySource: analyzer.apiKey ? "settings" : "shell",
+    keyHint: key.slice(-4),
+    baseUrl: analyzer.baseUrl,
+    model: analyzer.model,
+    shellBaseUrl: null,
+    shellModel: null,
+  };
+}
+
 export function createMockDrive(): DriveApi {
   window.__cvDrive = probe;
   return {
@@ -197,10 +217,18 @@ export function createMockDrive(): DriveApi {
         { level: "ok", text: "ok\ttoh\t/mock/bin/toh" },
         { level: "fail", text: "fail\tplugin\tccrpc 插件未启用" },
       ],
-      analyzer: true,
+      analyzer: analyzerInfo(),
       logRoot: "/mock/Logs/dev.joy.codeck/drive",
     }),
     driveList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session").map((f) => ({ ...f.ls }))),
+    driveSetAnalyzer: async (apiKey, baseUrl, model) => {
+      probe.analyzerSaves++;
+      const blank = (v: string | null) => (v?.trim() ? v.trim() : null);
+      if (apiKey !== null) analyzer.apiKey = blank(apiKey);
+      analyzer.baseUrl = blank(baseUrl);
+      analyzer.model = blank(model);
+      return analyzerInfo();
+    },
     driveConnect: async (holderId) => {
       const fx = fixtures.find((f) => f.ls.holder_id === holderId);
       if (!fx) throw new Error(`没有 ${holderId} 的录制`);
