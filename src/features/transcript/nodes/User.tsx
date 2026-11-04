@@ -8,6 +8,7 @@ import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
 import { ImageRefs } from "../tools";
 import { clock, prettyJson } from "../util";
+import { TaskPromptCard } from "./Agents";
 import { Anchor } from "./Anchor";
 import { scrollToNode, useTranscriptCtx } from "./scroll";
 
@@ -17,6 +18,7 @@ type UserBody = Extract<Node["body"], { kind: "userPrompt" }>;
 export function UserPromptView({ node, body, branch }: { node: Node; body: UserBody; branch?: BranchPoint | null }) {
   const o = body.origin;
   if (o.kind === "teammate") return <TeammateCard node={node} body={body} />;
+  if (o.kind === "coordinator") return <CoordinatorCard node={node} body={body} />;
   if (o.kind !== "human" && o.kind !== "command") {
     return (
       <div data-testid={o.kind === "commandOutput" ? "command-output" : undefined} className="flex items-baseline gap-2 text-[12px] text-secondary">
@@ -51,6 +53,13 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
   );
 }
 
+/** In a Subagent Run: a message its parent sent it (SendMessage), shown like the task prompt. */
+function CoordinatorCard({ node, body }: { node: Node; body: UserBody }) {
+  const { scope, runs } = useTranscriptCtx();
+  const parent = scope.kind === "subagent" ? runs.get(scope.agentId)?.parentAgentId : null;
+  return <TaskPromptCard node={node} text={body.text} title={parent ? "上级 Subagent 发来的消息" : "主对话发来的消息"} />;
+}
+
 /** A command output without its `<local-command-stdout>`-style tags and ANSI codes. */
 const outputText = (text: string) => stripAnsi(text.replace(/<\/?(?:local-command|bash)-std(?:out|err)>/g, "")).trim();
 
@@ -62,7 +71,11 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
   const o = body.origin;
   if (o.kind !== "taskNotification") return null;
   const run = [...runs.values()].find((r) => (o.toolUseId && r.toolUseId === o.toolUseId) || (o.taskId && r.agentId === o.taskId));
-  const cardNode = o.toolUseId ? toolNode.get(o.toolUseId) : undefined;
+  // The launch is the run's Agent call; after a SendMessage resumed the agent, the notification names that call instead.
+  const launch = run?.toolUseId ?? o.toolUseId;
+  const cardNode = launch ? toolNode.get(launch) : undefined;
+  const resumedBy = o.toolUseId && o.toolUseId !== launch ? o.toolUseId : null;
+  const resumeNode = resumedBy ? toolNode.get(resumedBy) : undefined;
   const failed = o.status === "failed" || o.status === "error";
   const n = describeNotice(o.summary, run ? (run.description ?? run.agentType ?? o.taskId) : null);
   return (
@@ -84,15 +97,26 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
         {n.detail && <span className="text-secondary"> · {n.detail}</span>}
         <span className="ml-1.5 text-secondary">{clock(node.timestampMs)}</span>
       </span>
-      {cardNode && o.toolUseId && (
+      {cardNode && launch && (
         <button
           type="button"
           data-testid="notification-to-card"
-          onClick={() => scrollToNode({ scope, nodeId: cardNode, toolUseId: o.toolUseId })}
+          onClick={() => scrollToNode({ scope, nodeId: cardNode, toolUseId: launch })}
           className="flex items-center gap-0.5 text-accent hover:underline"
         >
           <ArrowUp size={12} strokeWidth={2} aria-hidden />
           查看派出位置
+        </button>
+      )}
+      {resumeNode && resumedBy && (
+        <button
+          type="button"
+          data-testid="notification-to-resume"
+          onClick={() => scrollToNode({ scope, nodeId: resumeNode, toolUseId: resumedBy })}
+          className="flex items-center gap-0.5 text-accent hover:underline"
+        >
+          <ArrowUp size={12} strokeWidth={2} aria-hidden />
+          查看续接位置
         </button>
       )}
     </Anchor>

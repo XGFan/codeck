@@ -6,6 +6,9 @@ use crate::raw::RawEntry;
 
 /// Line Claude Code puts before a `<teammate-message>` it relays to the lead session.
 const TEAMMATE_PREAMBLE: &str = "Another Claude session sent a message:";
+/// What Claude Code wraps a coordinator message in (agent file, `origin.kind` `coordinator`).
+const COORDINATOR_PREAMBLE: &str = "The coordinator sent a message while you were working:";
+const COORDINATOR_SUFFIX: &str = "Address this before completing your current task.";
 
 /// Title / first-prompt length cap in characters (§3.4 step 9).
 pub const TITLE_CHARS: usize = 120;
@@ -131,11 +134,15 @@ pub(crate) fn unescape_xml(s: &str) -> String {
 
 /// Classifies a user entry that is neither a tool result nor a compact summary.
 pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
+    let origin_kind = e.origin.as_ref().and_then(|o| o.kind.as_deref());
+    // Recorded as meta, but it is the next thing the agent was asked to do.
+    if origin_kind == Some("coordinator") {
+        return PromptOrigin::Coordinator;
+    }
     if e.is_meta == Some(true) {
         return PromptOrigin::Meta;
     }
     let t = text.trim_start();
-    let origin_kind = e.origin.as_ref().and_then(|o| o.kind.as_deref());
     if origin_kind == Some("task-notification") || t.starts_with("<task-notification>") {
         let n = notice_fields(t);
         return PromptOrigin::TaskNotification {
@@ -241,6 +248,14 @@ fn attr(s: &str, name: &str) -> Option<String> {
     let end = open[start..].find('"')? + start;
     let v = open[start..end].trim();
     (!v.is_empty()).then(|| v.to_owned())
+}
+
+/// A coordinator message without Claude Code's wrapper sentences.
+pub fn coordinator_body(text: &str) -> String {
+    let t = text.trim();
+    let t = t.strip_prefix(COORDINATOR_PREAMBLE).unwrap_or(t);
+    let t = t.trim_end().strip_suffix(COORDINATOR_SUFFIX).unwrap_or(t);
+    t.trim().to_owned()
 }
 
 /// Inner text of the first `<name>…</name>` in `s`, trimmed; `None` when absent or empty.

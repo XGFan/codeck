@@ -146,6 +146,25 @@ test("后台 agent 卡片与结果通知互相跳转", async ({ page }) => {
   await expect(page.locator('[data-anchor="n12|tu_agent_tests"][data-highlighted]')).toBeVisible();
 });
 
+test("SendMessage 续接后的结束通知：派出位置仍是 Agent 调用，另有续接位置；面板里显示主对话发来的消息", async ({ page }) => {
+  const sid = await openSession(page, RICH_TITLE);
+  await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n-notify2", toolUseId: null, agentPath: [] });
+  const note = page.locator('[data-anchor="n-notify2"]');
+  await expect(note).toBeVisible();
+  await note.getByTestId("notification-to-resume").click();
+  await expect(page.locator('[data-anchor="n14|tu_sendmsg"][data-highlighted]')).toBeVisible();
+  await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n-notify2", toolUseId: null, agentPath: [] });
+  await note.getByTestId("notification-to-card").click();
+  await expect(page.locator('[data-anchor="n12|tu_agent_tests"][data-highlighted]')).toBeVisible();
+
+  await page.locator('[data-testid="subagent-card"][data-agent-id="ag-async1"]').getByTestId("open-subagent").click();
+  const panel = page.getByTestId("subagent-panel");
+  const prompts = panel.getByTestId("task-prompt");
+  await expect(prompts).toHaveCount(2);
+  await expect(prompts.nth(1)).toContainText("主对话发来的消息");
+  await expect(prompts.nth(1)).toContainText("再补一个窗口恢复的边界用例。");
+});
+
 test("后台命令的结束通知写「后台命令」和命令本身，不当成 agent", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const row = page.locator('[data-anchor="n-notify-bash"]');

@@ -119,7 +119,8 @@ const thinkingKey = (nodeId: string) => `thinking:${nodeId}`;
 
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
 
-const isTurnStart = (b: Body<"userPrompt">) => b.origin.kind === "human" || b.origin.kind === "command";
+// A coordinator message (SendMessage to a Subagent Run) starts the agent's next round of work.
+const isTurnStart = (b: Body<"userPrompt">) => b.origin.kind === "human" || b.origin.kind === "command" || b.origin.kind === "coordinator";
 
 export function buildRows(input: GroupingInput): Grouping {
   const { branchPoints, showHidden, inheritedExpanded, agent } = input;

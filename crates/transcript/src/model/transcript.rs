@@ -143,6 +143,10 @@ pub enum PromptOrigin {
         color: Option<String>,
         summary: Option<String>,
     },
+    /// In a Subagent Run: a message its parent sent it (SendMessage) while it worked or after it
+    /// stopped (`origin.kind` `coordinator`); not typed by the user. The text has Claude Code's
+    /// wrapper sentences removed.
+    Coordinator,
     Meta,
 }
 

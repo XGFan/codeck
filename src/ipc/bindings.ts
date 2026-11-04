@@ -406,7 +406,13 @@ export type PromptOrigin = { kind: "human" } |
  *  A message from another Claude session of an agent team
  *  (`<teammate-message teammate_id="…" color="…" summary="…">`); not typed by the user.
  */
-{ kind: "teammate"; teammateId: string | null; color: string | null; summary: string | null } | { kind: "meta" };
+{ kind: "teammate"; teammateId: string | null; color: string | null; summary: string | null } | 
+/**
+ *  In a Subagent Run: a message its parent sent it (SendMessage) while it worked or after it
+ *  stopped (`origin.kind` `coordinator`); not typed by the user. The text has Claude Code's
+ *  wrapper sentences removed.
+ */
+{ kind: "coordinator" } | { kind: "meta" };
 
 export type SearchGroup = {
 	session: SessionSummary,

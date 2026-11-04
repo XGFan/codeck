@@ -227,8 +227,8 @@ export function OrphanHeader({ count }: { count: number }) {
   );
 }
 
-/** Subagent scope: the task prompt the parent sent, clamped with "展开全部". */
-export function TaskPromptCard({ node, text }: { node: Node; text: string }) {
+/** Subagent scope: the task prompt the parent sent (or a later message from it), clamped with "展开全部". */
+export function TaskPromptCard({ node, text, title = "任务 PROMPT" }: { node: Node; text: string; title?: string }) {
   const key = `taskPrompt:${node.id}`;
   const open = useUi((s) => s.expanded[key] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
@@ -237,7 +237,7 @@ export function TaskPromptCard({ node, text }: { node: Node; text: string }) {
     <Anchor nodeId={node.id}>
       <div data-testid="task-prompt" className="rounded-lg border border-border bg-ground px-3 py-2.5">
         <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold text-secondary">
-          任务 PROMPT<span className="font-normal">{clock(node.timestampMs)}</span>
+          {title}<span className="font-normal">{clock(node.timestampMs)}</span>
         </div>
         <div className={cn("text-[12px] break-words whitespace-pre-wrap text-text/80", !open && long && "line-clamp-4")}>{text}</div>
         {long && (

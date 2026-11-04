@@ -1074,6 +1074,44 @@ fn nested_background_runs_are_read_from_their_parent_file() {
 }
 
 #[test]
+fn coordinator_messages_show_in_the_subagent_scope() {
+    // SendMessage to a background agent: recorded in its file as meta, wrapped by Claude Code.
+    let main = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","content":[{"type":"tool_use","id":"t_p","name":"Agent","input":{"prompt":"review"}}]}}"#,
+        r#"{"type":"user","uuid":"r1","parentUuid":"a1","toolUseResult":{"status":"async_launched","agentId":"ag_p"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_p","content":"Async agent launched successfully. agentId: ag_p"}]}}"#,
+    ]);
+    let mut agent = from_lines(&[
+        r#"{"type":"user","uuid":"p0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"review"}}"#,
+        r#"{"type":"assistant","uuid":"p1","parentUuid":"p0","isSidechain":true,"message":{"id":"pm1","content":[{"type":"text","text":"2 findings"}]}}"#,
+        r#"{"type":"user","uuid":"p2","parentUuid":"p1","isSidechain":true,"isMeta":true,"origin":{"kind":"coordinator"},"message":{"role":"user","content":"The coordinator sent a message while you were working:\nI fixed both; re-review.\n\nAddress this before completing your current task."}}"#,
+        r#"{"type":"assistant","uuid":"p3","parentUuid":"p2","isSidechain":true,"message":{"id":"pm2","content":[{"type":"text","text":"approved"}]}}"#,
+    ]);
+    agent.role = FileRole::Subagent;
+    agent.agent_id = Some("ag_p".into());
+    let sidecar = SessionSidecar {
+        subagent_metas: vec![meta("ag_p", r#"{"toolUseId":"t_p"}"#)],
+        ..SessionSidecar::default()
+    };
+    let s = assemble("sid", Path::new("/nonexistent"), vec![main], sidecar);
+    let scope = TranscriptScope::Subagent {
+        agent_id: "ag_p".into(),
+    };
+    let t = transcript(&s, &request(scope, false), Some(&agent)).unwrap();
+    let node = t.nodes.iter().find(|n| n.id == "p2").expect("shown");
+    assert!(!node.hidden);
+    match &node.body {
+        NodeBody::UserPrompt { origin, text, .. } => {
+            assert_eq!(origin, &PromptOrigin::Coordinator);
+            assert_eq!(text, "I fixed both; re-review.");
+        }
+        b => panic!("unexpected {b:?}"),
+    }
+    // Not the user's: no Branch head, not a counted message.
+    assert!(t.branch_points.is_empty());
+}
+
+#[test]
 fn slash_command_images_show_on_the_command() {
     // The command line is text only; its pasted image comes in the meta entry after it, with the skill text.
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";

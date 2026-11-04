@@ -262,7 +262,15 @@ export const richMain: Node[] = [
   asstNode("n14", ts(), [
     text("对照一下监控面板的截图，确认限流指标已出现。"),
     call("tu_img", "Read", { file_path: "/Users/dev/Pictures/grafana-ratelimit.png" }, { text: "[image]", images: [screenshot] }),
+    // Resumes the finished background agent: its next notification names this call, not the Agent call.
+    call("tu_sendmsg", "SendMessage", { to: "ag-async1", message: "再补一个窗口恢复的边界用例。" }, { text: "Resuming agent ag-async1" }),
   ]),
+  userNode(
+    "n-notify2",
+    ts(),
+    '<task-notification>\n<task-id>ag-async1</task-id>\n<tool-use-id>tu_sendmsg</tool-use-id>\n<status>completed</status>\n<summary>Agent "为限流中间件补集成测试" finished</summary>\n</task-notification>',
+    { origin: { kind: "taskNotification", taskId: "ag-async1", toolUseId: "tu_sendmsg", status: "completed", summary: 'Agent "为限流中间件补集成测试" finished' } },
+  ),
   otherNode("n15", ts(), { kind: "system", subtype: "informational", level: "info", text: "已自动切换到 claude-sonnet-5-5（上一模型限额已用尽）" }),
   otherNode("n-turn", ts(), { kind: "system", subtype: "turn_duration", level: null, text: "本轮耗时 4 分 12 秒" }, { hidden: true }),
   otherNode("n-cb", ts(), { kind: "compactBoundary", trigger: "auto", preTokens: 168_204 }),
@@ -397,6 +405,8 @@ export const richAgentNodes: Record<string, Node[]> = {
       }),
     ]),
     asstNode("ag2-a2", START + 18 * MIN, [text("新增 14 个用例，全部通过。")]),
+    userNode("ag2-u2", START + 19 * MIN, "再补一个窗口恢复的边界用例。", { origin: { kind: "coordinator" } }),
+    asstNode("ag2-a3", START + 20 * MIN, [text("补上了窗口恢复的边界用例，共 15 个，全部通过。")]),
   ],
   "ag-orphan": [
     userNode("ago-u1", START + 2 * MIN, "kestrel-cli 的 HTTP 重试策略是什么？"),
