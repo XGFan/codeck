@@ -142,6 +142,8 @@ pub struct ForkChild {
 pub struct SessionDetail {
     pub summary: SessionSummary,
     pub cwd: Option<String>,
+    /// `cwd` is not a directory any more (a removed worktree): the Session cannot be resumed there.
+    pub cwd_missing: bool,
     pub project_path: String,
     pub project_missing: bool,
     #[specta(type = Number)]

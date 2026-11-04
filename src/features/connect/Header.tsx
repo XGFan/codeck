@@ -1,4 +1,4 @@
-import { ChevronDown, Power, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
+import { ChevronDown, Power, RotateCcw, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
 import type { ConnState } from "./conn";
 import { ModelPicker } from "./Model";
+import { resumeOffer } from "./resume";
 import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useConnect } from "./store";
 
 const MODES: { id: string; label: string }[] = [
@@ -35,16 +36,28 @@ export const footBtn = "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-s
  * 「Connect」 in the header's title row, for a Session in `ccrpc ls` that is not connected (disabled until its ccrpc
  * plugin has reported), or whose connection ended with the Session (connecting again replaces it). 「Disconnect」 and
  * 「关闭」 in its place while connected; the other controls are at the foot of the input box ([`ConnectFooter`]).
+ * An ended Session not in clay gets 「Resume」 instead (`resume`: what the index knows of it).
  */
-export function ConnectButton({ sessionId }: { sessionId: string }) {
+export function ConnectButton({ sessionId, resume }: { sessionId: string; resume?: { cwd: string | null; cwdMissing: boolean; live: boolean } }) {
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
   const c = useConnect((s) => connFor(s, sessionId));
   const taken = useConnect((s) => (entry ? holderConnected(s, entry.holder_id) : false));
   const connect = useConnect((s) => s.connect);
   const disconnect = useConnect((s) => s.disconnect);
   const error = useConnect((s) => s.errors[sessionId]);
+  const ccrpcError = useConnect((s) => s.lsError ?? s.infoError);
+  const startResume = useConnect((s) => s.resume);
+  const resuming = useConnect((s) => !!s.resuming[sessionId]);
   const [connecting, setConnecting] = useState(false);
 
+  // A Resume on its way: until ccrpc names the Session, or its failure is dealt with.
+  if (resuming)
+    return (
+      <span data-testid="resume-pending" className={cn(pill, "opacity-60")}>
+        <RotateCcw size={13} strokeWidth={1.6} aria-hidden />
+        Resume 中…
+      </span>
+    );
   // Connected: 「Disconnect」 in the same place (closes ccrpc's stdin; the Session keeps running), and 「关闭」 beside it.
   if (c && isLive(c))
     return (
@@ -56,8 +69,29 @@ export function ConnectButton({ sessionId }: { sessionId: string }) {
         <ConnectClose c={c} />
       </>
     );
-  // Not connected, or the Connected Session ended (it may be back: `claude --resume` in the terminal).
-  if (!entry || taken) return error ? <ConnectError errKey={sessionId} text={error} /> : null;
+  // Not in clay: an ended Session can be resumed (not one running elsewhere).
+  if (!entry) {
+    const offer = resume ? resumeOffer({ ...resume, ccrpcError }) : ({ kind: "hidden" } as const);
+    if (offer.kind === "hidden") return error ? <ConnectError errKey={sessionId} text={error} /> : null;
+    return (
+      <>
+        {error && <ConnectError errKey={sessionId} text={error} />}
+        <button
+          type="button"
+          data-testid="resume-button"
+          disabled={offer.kind === "disabled"}
+          title={offer.kind === "disabled" ? offer.why : "在新的 clay Pane 里 claude --resume，从 Main Line 末尾继续，然后 Connect"}
+          onClick={() => resume?.cwd && void startResume(sessionId, resume.cwd)}
+          className={pill}
+        >
+          <RotateCcw size={13} strokeWidth={1.6} aria-hidden />
+          Resume
+        </button>
+      </>
+    );
+  }
+  // In clay but its Holder is connected for another Session (after `/clear` there).
+  if (taken) return error ? <ConnectError errKey={sessionId} text={error} /> : null;
   return (
     <>
       {error && <ConnectError errKey={sessionId} text={error} />}

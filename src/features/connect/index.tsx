@@ -4,13 +4,14 @@ import { api } from "@/ipc";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey } from "@/lib/hotkeys";
 import type { SessionQuery } from "@/ipc/bindings";
-import { useSessionList, useSessions } from "@/queries";
+import { useSession, useSessionList, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { Requests } from "./Requests";
+import { resumeOffer } from "./resume";
 import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } from "./store";
 
 export { ConnectButton, STATE_WORD, useConnectDebugInfo } from "./Header";
@@ -225,9 +226,7 @@ function Panel({ c }: { c: ConnState }) {
             action={c.holderId ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" } : undefined}
           />
         )}
-        {c.sessionExited && !c.procExit && (
-          <NoticeCard testId="session-exit" icon={<Unplug size={18} strokeWidth={1.7} />} title="Session 已结束" desc="在终端里 resume 后可以重新 Connect。" />
-        )}
+        {c.sessionExited && !c.procExit && <SessionExited c={c} />}
         {c.notices.map((n) => (
           <NoticeCard key={n.id} testId="notice" icon={<Info size={18} strokeWidth={1.7} />} title={n.text} onClose={() => dismiss(c.conn, n.id)} />
         ))}
@@ -241,6 +240,37 @@ function Panel({ c }: { c: ConnState }) {
         )}
       </div>
     </div>
+  );
+}
+
+/** The Connected Session ended (`session_exit`): only this card, with 「Resume」 when the Session can be. */
+function SessionExited({ c }: { c: ConnState }) {
+  const sessionId = c.sessionId ?? c.resumeOf;
+  const { data: d } = useSession(sessionId);
+  const startResume = useConnect((s) => s.resume);
+  const ccrpcError = useConnect((s) => s.lsError ?? s.infoError);
+  // Back in clay already (resumed in the terminal): 「Connect」 in the header, not a second claude.
+  const inLs = useConnect((s) => lsEntryFor(s, sessionId) != null);
+  const busy = useConnect((s) => (sessionId ? !!s.resuming[sessionId] : false));
+  const offer = d && sessionId ? resumeOffer({ live: d.summary.live != null || inLs, cwd: d.cwd, cwdMissing: d.cwdMissing, ccrpcError }) : null;
+  return (
+    <NoticeCard
+      testId="session-exit"
+      icon={<Unplug size={18} strokeWidth={1.7} />}
+      title="Session 已结束"
+      action={
+        offer && offer.kind !== "hidden" && sessionId && d?.cwd
+          ? {
+              label: "Resume",
+              primary: true,
+              disabled: offer.kind === "disabled" || busy,
+              title: offer.kind === "disabled" ? offer.why : "在新的 clay Pane 里 claude --resume，从 Main Line 末尾继续，然后 Connect",
+              testId: "session-exit-resume",
+              onClick: () => void startResume(sessionId, d.cwd!),
+            }
+          : undefined
+      }
+    />
   );
 }
 

@@ -177,6 +177,28 @@ impl App {
         self.spawn(sink, "new", &args, "new")
     }
 
+    /// Resume: `ccrpc new --co-display --cwd <cwd> -- [launch rule's arguments] --resume <session_id>`, in a new Pane.
+    pub fn resume_session(
+        &self,
+        sink: Sink,
+        session_id: &str,
+        cwd: &str,
+        rules: &[LaunchRule],
+    ) -> R<String> {
+        // toh types the command into the Pane's shell: only a Session ID goes through.
+        if !is_session_id(session_id) {
+            return Err("Session ID 不对".into());
+        }
+        if !Path::new(cwd).is_dir() {
+            return Err(format!("{cwd} 不是目录"));
+        }
+        let mut args = vec!["--cwd".to_string(), cwd.to_string(), "--".into()];
+        args.extend(super::launch::args_for(rules, Path::new(cwd), &self.env)?);
+        args.extend(["--resume".to_string(), session_id.to_string()]);
+        // Named like a new Session's (`new` → its Holder ID once `ready` says it); gui.log has the arguments.
+        self.spawn(sink, "new", &args, "new")
+    }
+
     /// Starts ccrpc `sub` with `args` and relays it to `sink` as a new connection.
     fn spawn(&self, sink: Sink, sub: &str, args: &[String], dir_name: &str) -> R<String> {
         let id = format!("c{}", self.next());
@@ -380,15 +402,24 @@ fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>
     true
 }
 
+/// A Session ID as Claude Code writes it: a lowercase or uppercase UUID (`8-4-4-4-12` hex digits).
+fn is_session_id(s: &str) -> bool {
+    s.len() == 36
+        && s.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
 
-    /// 「新建 Session」 hands the matching launch rule's arguments to `ccrpc new` after `--`.
+    /// 「新建 Session」 and Resume hand the matching launch rule's arguments to `ccrpc new` after `--`.
     #[test]
-    fn new_session_passes_launch_rule_args_to_ccrpc() {
+    fn new_and_resume_pass_launch_rule_args_to_ccrpc() {
         let d = tempfile::tempdir().unwrap();
         let argv = d.path().join("argv");
         let fake = d.path().join("ccrpc");
@@ -435,5 +466,33 @@ mod tests {
         let cwd_s = cwd.display().to_string();
         assert_eq!(run(&rules), ["--cwd", &cwd_s, "--", "--add-dir", "/x y"]);
         assert_eq!(run(&[]), ["--cwd", &cwd_s]);
+
+        // Resume: the rule's arguments, then `--resume <id>`; only a Session ID gets through.
+        let id = "d30b178c-94da-426f-a80a-2f1ce4b4b40f";
+        app.resume_session(sink.clone(), id, cwd.to_str().unwrap(), &rules)
+            .unwrap();
+        rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let args = loop {
+            if let Ok(s) = std::fs::read_to_string(&argv) {
+                break s.lines().skip(4).map(str::to_string).collect::<Vec<_>>();
+            }
+            assert!(Instant::now() < deadline, "fake ccrpc did not run");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(
+            args,
+            ["--cwd", &cwd_s, "--", "--add-dir", "/x y", "--resume", id]
+        );
+        for bad in [
+            "x; rm -rf ~",
+            "d30b178c-94da-426f-a80a-2f1ce4b4b40",
+            "d30b178c 94da-426f-a80a-2f1ce4b4b40f",
+        ] {
+            assert!(
+                app.resume_session(sink.clone(), bad, cwd.to_str().unwrap(), &[])
+                    .is_err()
+            );
+        }
     }
 }

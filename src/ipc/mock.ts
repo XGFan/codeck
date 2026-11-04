@@ -416,6 +416,7 @@ function sessionDetail(sessionId: string): SessionDetail {
   return {
     summary: s,
     cwd: p.path,
+    cwdMissing: p.missing,
     projectPath: p.path,
     projectMissing: p.missing,
     durationMs: s.lastActiveMs - s.createdMs,

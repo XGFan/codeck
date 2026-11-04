@@ -528,11 +528,75 @@ test("Session 在终端里退出后：输入区只剩一行提示，头部重新
   await expect(page.getByTestId("session-exit")).toContainText("Session 已结束");
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
   await expect(page.getByTestId("connect-disconnect")).toHaveCount(0);
-  // Still in `ccrpc ls` (resumed in the terminal): connecting again replaces the ended connection.
+  // Still in `ccrpc ls` (resumed in the terminal): no Resume, connecting again replaces the ended connection.
+  await expect(page.getByTestId("session-exit-resume")).toHaveCount(0);
   await page.getByTestId("connect-button").click();
   await expect.poll(async () => (await probe(page)).guiLog.filter((l) => l === "connect mresumed00001").length).toBe(2);
   expect((await probe(page)).guiLog).toContain("close (replaced)");
   await expect(page.getByTestId("session-exit")).toHaveCount(1);
+});
+
+test("Resume：已结束、不在 clay 里的 Session 在新 Pane 里重新运行并 Connect", async ({ page }) => {
+  const redis = "91d5be38-0004-4000-8000-000000000004";
+  await page.goto("/");
+  await open(page, "排查 Redis 连接池泄漏");
+  const header = page.getByTestId("header");
+  await expect(header.getByTestId("connect-button")).toHaveCount(0);
+  const resume = header.getByTestId("resume-button");
+  await expect(resume).toHaveAttribute("title", /从 Main Line 末尾继续/);
+  await resume.click();
+  // The same Session, connected: no 「新 Session」 row, the header and the input area as for Connect.
+  await expect(header.getByRole("heading", { name: "排查 Redis 连接池泄漏" })).toBeVisible();
+  await expect(header.getByTestId("connect-disconnect")).toBeVisible();
+  await expect(page.getByTestId("connect-input")).toBeEnabled();
+  await expect(header.getByTestId("resume-button")).toHaveCount(0);
+  await expect(page.locator(`[data-testid=session-row][data-pending][data-session-id="${redis}"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-testid=session-row][data-session-id="${redis}"]`)).toHaveCount(1);
+  expect((await probe(page)).guiLog).toContain(`resume ${redis}`);
+});
+
+test("Resume：ccrpc 在 ready 里就给出 Session ID 时同样连上（不停在「Resume 中…」）", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "排查 Redis 连接池泄漏");
+  await page.evaluate(() => {
+    (window.__cvCcrpc as unknown as { resumeNamedInReady: boolean }).resumeNamedInReady = true;
+  });
+  await page.getByTestId("resume-button").click();
+  await expect(page.getByTestId("header").getByTestId("connect-disconnect")).toBeVisible();
+  await expect(page.getByTestId("resume-pending")).toHaveCount(0);
+  await expect(page.getByTestId("connect-input")).toBeEnabled();
+});
+
+test("Resume 失败：claude 找不到 Session 时标题栏写明原因，新开的 Pane 关掉", async ({ page }) => {
+  await page.goto("/");
+  await open(page, JWT);
+  await page.getByTestId("resume-button").click();
+  // Until the failure is dealt with (the screen read, the Pane closed) it cannot be started again.
+  await expect(page.getByTestId("resume-pending")).toBeVisible();
+  await expect(page.getByTestId("resume-button")).toHaveCount(0);
+  const error = page.getByTestId("header").getByTestId("connect-error");
+  await expect(error).toHaveText("Resume 失败：No conversation found with session ID: c04e77a2-0003-4000-8000-000000000003");
+  // Read from the Pane, then the Pane closed and the connection dropped: Resume can be tried again.
+  expect(await lastSent(page, "get_screen")).toBeTruthy();
+  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true });
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(page.getByTestId("resume-button")).toBeEnabled();
+});
+
+test("Session 已结束的卡片上直接 Resume", async ({ page }) => {
+  await page.goto("/");
+  await open(page, "排查 Redis 连接池泄漏");
+  await page.getByTestId("resume-button").click();
+  await expect(page.getByTestId("connect-input")).toBeEnabled();
+  // `/exit` ends claude (its Pane stays, out of `ccrpc ls`): the card, with Resume on it.
+  await send(page, "/exit");
+  const card = page.getByTestId("session-exit");
+  await expect(card).toContainText("Session 已结束");
+  await card.getByTestId("session-exit-resume").click();
+  await expect(page.getByTestId("session-exit")).toHaveCount(0);
+  await expect(page.getByTestId("connect-input")).toBeEnabled();
+  await expect(page.getByTestId("connect-disconnect")).toBeVisible();
+  expect((await probe(page)).guiLog.filter((l) => l === "resume 91d5be38-0004-4000-8000-000000000004")).toHaveLength(2);
 });
 
 test("目录信任框是选择卡片", async ({ page }) => {

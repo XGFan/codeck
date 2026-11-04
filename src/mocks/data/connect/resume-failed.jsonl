@@ -1,0 +1,8 @@
+{"t": 1793700002000, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mresumefail01", "session_id": null, "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "starting", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
+{"t": 1793700002010, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700002020, "dir": "recv", "msg": {"type": "state", "state": "exited"}}
+{"t": 1793700002030, "dir": "recv", "msg": {"type": "session_exit"}}
+{"t": 1793700002040, "dir": "send", "msg": {"type": "get_screen", "id": "g1"}}
+{"t": 1793700002050, "dir": "recv", "msg": {"type": "response", "id": "g1", "command": "get_screen", "success": true, "data": {"lines": ["dev@mac lumen-api % claude --resume c04e77a2-0003-4000-8000-000000000003", "No conversation found with session ID: c04e77a2-0003-4000-8000-000000000003", "dev@mac lumen-api %", "", ""], "cursor": [2, 20]}}}
+{"t": 1793700002060, "dir": "send", "msg": {"type": "exit", "id": "g2", "close_pane": true}}
+{"t": 1793700002070, "dir": "recv", "msg": {"type": "response", "id": "g2", "command": "exit", "success": true, "data": {}}}

@@ -270,6 +270,27 @@ pub async fn ccrpc_new(
     .await
 }
 
+/// Resume: starts the ended Session `session_id` again in a new Pane (`claude --resume`) and connects to it.
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_resume(
+    handle: AppHandle,
+    state: State<'_, CcrpcState>,
+    session_id: String,
+    cwd: String,
+) -> CmdResult<String> {
+    let sink = sink(&handle);
+    with_ccrpc(&state, move |app| {
+        app.resume_session(
+            sink,
+            &session_id,
+            &cwd,
+            &crate::settings::load().launch_rules,
+        )
+    })
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn ccrpc_send(state: State<'_, CcrpcState>, conn: String, line: String) -> CmdResult<()> {

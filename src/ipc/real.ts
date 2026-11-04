@@ -35,6 +35,7 @@ export function createRealApi(): Api {
     ccrpcList: async () => JSON.parse(await commands.ccrpcList()) as LsEntry[],
     ccrpcConnect: commands.ccrpcConnect,
     ccrpcNew: commands.ccrpcNew,
+    ccrpcResume: commands.ccrpcResume,
     ccrpcSend: async (conn, msg) => void (await commands.ccrpcSend(conn, JSON.stringify(msg))),
     ccrpcDisconnect: async (conn) => void (await commands.ccrpcDisconnect(conn)),
     ccrpcGuiLog: async (conn, text) => void (await commands.ccrpcGuiLog(conn, text)),

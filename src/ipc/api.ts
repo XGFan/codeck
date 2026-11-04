@@ -73,6 +73,8 @@ export interface Api {
   ccrpcConnect(holderId: string): Promise<string>;
   /** `ccrpc new --co-display --cwd`; returns the connection id. */
   ccrpcNew(cwd: string): Promise<string>;
+  /** Resume: `ccrpc new --co-display --cwd <cwd> -- --resume <sessionId>` in a new Pane; returns the connection id. */
+  ccrpcResume(sessionId: string, cwd: string): Promise<string>;
   ccrpcSend(conn: string, msg: object): Promise<void>;
   /** Closes ccrpc's stdin (the Session keeps running). */
   ccrpcDisconnect(conn: string): Promise<void>;

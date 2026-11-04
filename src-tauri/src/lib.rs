@@ -45,6 +45,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ccrpc::ccrpc_list,
             ccrpc::ccrpc_connect,
             ccrpc::ccrpc_new,
+            ccrpc::ccrpc_resume,
             ccrpc::ccrpc_send,
             ccrpc::ccrpc_disconnect,
             ccrpc::ccrpc_gui_log,

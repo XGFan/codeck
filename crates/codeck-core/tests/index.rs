@@ -460,6 +460,8 @@ fn engine_lists_projects_sessions_and_detail() {
         detail.resume_command,
         format!("claude --resume {}", ids::FORK_ORIGIN)
     );
+    // The fixture's cwd (`/Users/dev/...`) is not on this machine.
+    assert!(detail.cwd.is_some() && detail.cwd_missing);
     assert_eq!(detail.files.len(), 1);
     assert_eq!(detail.forks.len(), 1);
     assert_eq!(detail.forks[0].session_id, ids::FORK_CHILD);

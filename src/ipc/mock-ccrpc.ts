@@ -5,8 +5,9 @@
 // recording can stand for a Session of CoDeck's mock data and keeps its ids when re-recorded. Connecting replays what ccrpc printed up to the first
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
-// get_tasks) are answered from what was replayed. `new-session` is not listed:
-// `ccrpcNew` opens it.
+// get_tasks) are answered from what was replayed. `new-session` and `resume*` are not listed: `ccrpcNew` opens
+// the first; `ccrpcResume` opens `resume` (its `session_changed` names the Session asked for), or
+// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it).
 
 import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
@@ -102,6 +103,8 @@ export interface CcrpcProbe {
   images: number;
   /** `ccrpcSetAnalyzer` calls. */
   analyzerSaves: number;
+  /** Set by a test: the next Resume's `ready` names the Session already (the plugin checked in first). */
+  resumeNamedInReady?: boolean;
 }
 const probe: CcrpcProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0 };
 
@@ -195,9 +198,15 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       later(() => emit(id, { type: "state", state: "exited" } as InMsg));
       later(() => emit(id, { type: "session_exit" } as InMsg));
       return;
-    // Typed into the TUI; what it does shows on the screen, not in a reply.
+    // Typed into the TUI; what it does shows on the screen, not in a reply. `/exit` ends claude (the Pane stays).
     case "slash":
-      return c.state && (c.state as { state?: string }).state !== "idle" ? respond(id, msg, null, "not_idle") : respond(id, msg, {});
+      if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
+      respond(id, msg, {});
+      if (String(msg.command).replace(/^\//, "") === "exit") {
+        later(() => emit(id, { type: "state", state: "exited" } as InMsg));
+        later(() => emit(id, { type: "session_exit" } as InMsg));
+      }
+      return;
     default:
       return respond(id, msg, null, `录制里没有 ${String(msg.type)}`);
   }
@@ -223,6 +232,7 @@ type CcrpcApi = Pick<
   | "ccrpcList"
   | "ccrpcConnect"
   | "ccrpcNew"
+  | "ccrpcResume"
   | "ccrpcSend"
   | "ccrpcDisconnect"
   | "ccrpcGuiLog"
@@ -233,6 +243,9 @@ type CcrpcApi = Pick<
   | "onCcrpcLine"
   | "onCcrpcExit"
 >;
+
+/** The Session whose Resume fails in the mock: claude cannot find it (`resume-failed.jsonl`). */
+export const RESUME_FAILS = "c04e77a2-0003-4000-8000-000000000003";
 
 /** The launch rules saved in the mock settings (trimmed, rules without arguments dropped, like the backend). */
 let launchRules: LaunchRule[] = [];
@@ -266,7 +279,7 @@ export function createMockCcrpc(): CcrpcApi {
       launchRules,
       logRoot: "/mock/Logs/dev.joy.codeck/ccrpc",
     }),
-    ccrpcList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
+    ccrpcList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !f.name.startsWith("resume-") && f.name !== "resume" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
     ccrpcSetAnalyzer: async (apiKey, baseUrl, model) => {
       probe.analyzerSaves++;
       const blank = (v: string | null) => (v?.trim() ? v.trim() : null);
@@ -288,6 +301,19 @@ export function createMockCcrpc(): CcrpcApi {
       // Tauri does not promise the command's answer before the connection's first events.
       if (fx.connectDelayMs) await new Promise((r) => setTimeout(r, fx.connectDelayMs));
       return id;
+    },
+    ccrpcResume: async (sessionId) => {
+      const name = sessionId === RESUME_FAILS ? "resume-failed" : "resume";
+      const fx = fixtures.find((f) => f.name === name);
+      if (!fx) throw new Error(`没有 ${name} 的录制`);
+      const inReady = !!probe.resumeNamedInReady;
+      probe.resumeNamedInReady = false;
+      const lines = fx.lines
+        .filter((l) => !(inReady && l.msg?.type === "session_changed"))
+        .map((l) =>
+          l.msg?.type === "session_changed" || (inReady && l.msg?.type === "ready") ? { ...l, msg: { ...l.msg, session_id: sessionId } } : l,
+        );
+      return open({ ...fx, lines });
     },
     ccrpcNew: async () => {
       const fx = fixtures.find((f) => f.name === "new-session");

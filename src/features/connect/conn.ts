@@ -50,9 +50,11 @@ export interface ConnState {
   unread: boolean;
   /** Short notices (analysis results, takeovers…), newest last. */
   notices: { id: number; text: string }[];
+  /** The Session a Resume started this connection for: it stands for that Session until ccrpc names one. */
+  resumeOf: string | null;
 }
 
-export function initial(conn: string, holderId: string | null): ConnState {
+export function initial(conn: string, holderId: string | null, resumeOf: string | null = null): ConnState {
   return {
     conn,
     holderId,
@@ -75,6 +77,7 @@ export function initial(conn: string, holderId: string | null): ConnState {
     sessionExited: false,
     unread: false,
     notices: [],
+    resumeOf,
   };
 }
 

@@ -314,6 +314,7 @@ impl Engine {
         };
         Ok(SessionDetail {
             summary,
+            cwd_missing: row.cwd.as_deref().is_some_and(|c| !Path::new(c).is_dir()),
             cwd: row.cwd,
             project_path: row.project_path,
             project_missing: row.project_missing,

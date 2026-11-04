@@ -3,6 +3,7 @@ import { api } from "@/ipc";
 import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { apply, initial, type ConnState } from "./conn";
+import { resumeFailure } from "./resume";
 import { createEarlyBuffer } from "./early";
 import type { InMsg, LsEntry, ResponseMsg, Task } from "./protocol";
 
@@ -90,6 +91,8 @@ interface ConnectStore {
   live: LiveEntry[] | null;
   /** Unsent input by Session id (a connection id before it has one): kept across switches and reconnects. */
   drafts: Record<string, Draft>;
+  /** Sessions a Resume is under way for, until ccrpc names the Session or the failure is dealt with. */
+  resuming: Record<string, true>;
 
   /** Subscribes to ccrpc's lines and exits and starts polling `ccrpc ls`; returns the cleanup. */
   start(): () => void;
@@ -105,6 +108,12 @@ interface ConnectStore {
   /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
   connect(holderId: string, sessionId: string): Promise<void>;
   newSession(): Promise<void>;
+  /**
+   * Resume: starts the ended Session `sessionId` again in a new Pane, from `cwd` (where it started), and connects;
+   * a failure (claude exits before naming the Session, or 30 s without it) is shown on that Session and the Pane
+   * closed.
+   */
+  resume(sessionId: string, cwd: string): Promise<void>;
   /** Sends a command and waits for its response (never rejects: failures are responses). */
   command(conn: string, msg: Record<string, unknown>): Promise<ResponseMsg>;
   disconnect(conn: string): Promise<void>;
@@ -129,6 +138,10 @@ const pending = new Map<string, Pending>();
 const exitWaiters = new Map<string, () => void>();
 /** Connections being disconnected on purpose: their exit is not a failure. */
 const closing = new Set<string>();
+/** How long a Resume may take to name its Session before it counts as failed. */
+const RESUME_TIMEOUT_MS = 30_000;
+/** Resume connections being given up (one failure per connection). */
+const failingResumes = new Set<string>();
 /** New Sessions to select once they have a session id. */
 const selectOnReady = new Set<string>();
 /** Events of connections whose id has not come back from `ccrpcConnect` / `ccrpcNew` yet. */
@@ -157,7 +170,9 @@ export function lsEntryFor(s: Pick<Lookup, "ls">, sessionId: string | null): LsE
 export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
   if (!sessionId) return null;
   const holder = lsEntryFor(s, sessionId)?.holder_id;
-  const all = Object.values(s.conns).filter((c) => (c.ready ? c.sessionId === sessionId : holder != null && c.holderId === holder));
+  const all = Object.values(s.conns).filter((c) =>
+    c.resumeOf === sessionId && c.sessionId == null ? true : c.ready ? c.sessionId === sessionId : holder != null && c.holderId === holder,
+  );
   return all.find((c) => !c.procExit) ?? all[all.length - 1] ?? null;
 }
 
@@ -197,6 +212,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
     }
     update(conn, (c) => apply(c, msg));
     const after = get().conns[conn]!;
+    // A Resume is through once its Session is named: in `ready` (checked in already) or a later `session_changed`.
+    if (before.resumeOf && !before.sessionId && after.sessionId) setResuming(before.resumeOf, false);
     switch (msg.type) {
       case "ready":
         if (selectOnReady.has(conn) && msg.session_id) {
@@ -211,6 +228,10 @@ export const useConnect = create<ConnectStore>((set, get) => {
         if (selectOnReady.delete(conn) || (open != null && (open === msg.previous || open === before.sessionId))) select(msg.session_id);
         break;
       }
+      case "session_exit":
+        // claude exited before naming the Session: a Resume that did not start (e.g. it cannot find the Session).
+        if (before.resumeOf && !before.sessionId) void failResume(conn, null);
+        break;
       case "turn_end":
         if (useUi.getState().sessionId !== after.sessionId || document.hidden) update(conn, (c) => ({ ...c, unread: true }));
         void get().refreshTasks(conn);
@@ -227,13 +248,16 @@ export const useConnect = create<ConnectStore>((set, get) => {
     exitWaiters.delete(conn);
     failPending(conn);
     selectOnReady.delete(conn);
+    const c = get().conns[conn];
+    // ccrpc itself ended before naming the Session: that Resume is over (its card says why).
+    if (c?.resumeOf && !c.sessionId && !failingResumes.has(conn)) setResuming(c.resumeOf, false);
     if (closing.delete(conn)) return removeConn(conn);
     update(conn, (c) => ({ ...c, procExit: { code, stderr }, requests: [], progress: null }));
   };
 
   /** Adds a connection, then replays what arrived for it before its id came back. */
-  const addConn = (conn: string, holderId: string | null) => {
-    set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId) } }));
+  const addConn = (conn: string, holderId: string | null, resumeOf: string | null = null) => {
+    set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId, resumeOf) } }));
     for (const e of early.take(conn)) {
       if (e.kind === "line") onLine(conn, e.msg);
       else onExit(conn, e.code, e.stderr);
@@ -276,6 +300,39 @@ export const useConnect = create<ConnectStore>((set, get) => {
     }
     removeConn(conn);
   };
+  /**
+   * Gives a Resume up: the reason (claude's last line on the Pane, or `why`) goes on its Session, then the new Pane is
+   * closed and the connection dropped.
+   */
+  const failResume = async (conn: string, timedOut: string | null) => {
+    const c = get().conns[conn];
+    if (!c?.resumeOf || failingResumes.has(conn)) return;
+    const sessionId = c.resumeOf;
+    failingResumes.add(conn);
+    // Let the shell draw its prompt again, so claude's last line is above the cursor.
+    await new Promise((r) => window.setTimeout(r, 300));
+    const r = await get().command(conn, { type: "get_screen" });
+    const lines = r.success && Array.isArray(r.data?.lines) ? (r.data.lines as string[]) : [];
+    const cursor = r.success && Array.isArray(r.data?.cursor) ? Number((r.data.cursor as unknown[])[0]) : null;
+    const line = resumeFailure(lines, cursor);
+    let reason = timedOut ? `${timedOut}（${line}）` : line;
+    // `exit` needs claude idle or gone: one still on a screen of its own keeps its Pane, say so.
+    const e = await get().command(conn, { type: "exit", close_pane: true, stop_tasks: true });
+    if (!e.success) reason += `；Pane 没有关掉：${e.error?.message ?? ""}`;
+    void api.ccrpcGuiLog(conn, `resume failed: ${reason}`);
+    setErr(sessionId, `Resume 失败：${reason}`);
+    await closeAndWait(conn);
+    failingResumes.delete(conn);
+    setResuming(sessionId, false);
+  };
+  const setResuming = (sessionId: string, on: boolean) =>
+    set((s) => {
+      if (!!s.resuming[sessionId] === on) return {};
+      const resuming = { ...s.resuming };
+      if (on) resuming[sessionId] = true;
+      else delete resuming[sessionId];
+      return { resuming };
+    });
   const setErr = (key: string, e: string | null) =>
     set((s) => {
       const errors = { ...s.errors };
@@ -334,6 +391,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
     newError: null,
     live: null,
     drafts: loadDrafts(),
+    resuming: {},
 
     start() {
       const offs: (() => void)[] = [];
@@ -422,6 +480,39 @@ export const useConnect = create<ConnectStore>((set, get) => {
         addConn(conn, null);
       } catch (e) {
         set({ newError: `新建 Session 失败：${errText(e)}` });
+      }
+    },
+
+    async resume(sessionId, cwd) {
+      // One at a time per Session (the header and the ended card both offer it).
+      if (get().resuming[sessionId]) return;
+      setResuming(sessionId, true);
+      setErr(sessionId, null);
+      void api.ccrpcGuiLog(null, `resume ${sessionId}`);
+      // An ended connection on this Session (its ccrpc may still run, driving nothing) goes first.
+      const stale = Object.values(get().conns).filter((c) => (c.sessionId === sessionId || c.resumeOf === sessionId) && !isLive(c));
+      await Promise.all(stale.map((c) => closeAndWait(c.conn)));
+      // claude continues from the end of the Main Line: show that, not a Branch picked earlier.
+      if (useUi.getState().sessionId === sessionId) useUi.setState({ branchChoices: [] });
+      try {
+        const conn = await api.ccrpcResume(sessionId, cwd);
+        addConn(conn, null, sessionId);
+        // Not while a card waits for you (the folder trust dialog comes before claude names the Session).
+        const check = () => {
+          const c = get().conns[conn];
+          // Gone: unless a later attempt for this Session is on its way.
+          if (!c) {
+            const other = Object.values(get().conns).some((x) => x.resumeOf === sessionId && !x.sessionId && isLive(x));
+            return other ? undefined : setResuming(sessionId, false);
+          }
+          if (c.sessionId || !isLive(c)) return;
+          if (c.requests.length > 0) window.setTimeout(check, RESUME_TIMEOUT_MS);
+          else void failResume(conn, "30 秒内没有启动");
+        };
+        window.setTimeout(check, RESUME_TIMEOUT_MS);
+      } catch (e) {
+        setErr(sessionId, `Resume 失败：${errText(e)}`);
+        setResuming(sessionId, false);
       }
     },
 
