@@ -1,4 +1,4 @@
-//! Errors of the parsing / assembly layer. cv-core maps them onto its `TranscriptError` variant by variant.
+//! Errors of the parsing / assembly layer. codeck-core maps them onto its `TranscriptError` variant by variant.
 
 pub type TranscriptResult<T> = Result<T, TranscriptError>;
 

@@ -85,7 +85,7 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await drive(page, TOOLS);
   await expect(state(page)).toContainText("空闲");
   expect((await probe(page)).guiLog).toContain("connect m8ded9f28b056");
-  // Viewer's single-key shortcuts (j / k) stay out of the input box.
+  // CoDeck's single-key shortcuts (j / k) stay out of the input box.
   await page.getByTestId("drive-input").pressSequentially("jk");
   await expect(page.getByTestId("drive-input")).toHaveValue("jk");
 
@@ -133,7 +133,7 @@ test("忙时 Enter 排队（可撤销）、⌘Enter 插话；数字键作答；D
     expect(Math.abs(box.y + box.height / 2 - (title!.y + title!.height / 2))).toBeLessThan(8);
   }
   expect((await page.getByTestId("drive-controls").boundingBox())!.y).toBeGreaterThan(title!.y + title!.height);
-  // The LCP Live Session waits (Viewer's Live data).
+  // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);
 
   await send(page, "改一下 README");
@@ -229,10 +229,10 @@ test("设置 › 驾驶：ccrpc 路径、doctor 的失败项、分析器与日�
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "驾驶" }).click();
   await expect(page.getByTestId("set-ccrpc")).toContainText("/mock/bin/ccrpc");
-  await expect(page.getByTestId("set-ccrpc")).toContainText("CV_CCRPC");
+  await expect(page.getByTestId("set-ccrpc")).toContainText("CODECK_CCRPC");
   await expect(page.getByTestId("set-doctor").locator('[data-level="fail"]')).toContainText("ccrpc 插件未启用");
   await expect(page.getByTestId("set-analyzer")).toContainText("已开启");
-  await expect(page.getByTestId("set-drive-logs")).toContainText("/mock/Logs/dev.joy.claude-viewer/drive");
+  await expect(page.getByTestId("set-drive-logs")).toContainText("/mock/Logs/dev.joy.codeck/drive");
 });
 
 test("ccrpc ls 只在有 Live Session 或驾驶连接时轮询，恢复时立即查一次", async ({ page }) => {
@@ -287,7 +287,7 @@ test("粘贴的图片随提示词发出", async ({ page }) => {
   expect(await preview.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
   await expect.poll(() => preview.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
   await send(page, "MOCK-SLOW please");
-  expect((await lastSent(page, "prompt"))?.images).toEqual(["/mock/Caches/dev.joy.claude-viewer/images/1.png"]);
+  expect((await lastSent(page, "prompt"))?.images).toEqual(["/mock/Caches/dev.joy.codeck/images/1.png"]);
   await expect(page.getByTestId("images")).toHaveCount(0);
 });
 

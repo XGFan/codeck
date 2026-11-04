@@ -1,4 +1,4 @@
-//! Claude Viewer desktop app: tauri shell around `cv_core::Engine`.
+//! CoDeck desktop app: tauri shell around `codeck_core::Engine`.
 
 pub mod commands;
 pub mod drive;
@@ -81,7 +81,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while running Claude Viewer")
+        .expect("error while running CoDeck")
         .run(|handle, ev| {
             if let tauri::RunEvent::Exit = ev {
                 // Closes every ccrpc; the Sessions themselves keep running.

@@ -17,7 +17,7 @@ export { DriveSettings } from "./Settings";
 export { connFor, useDrive } from "./store";
 
 /**
- * The Viewer's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
+ * The CoDeck's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
  * arrives, from the Session list it already loaded (unfiltered at startup) — no query of its own.
  */
 /** Every Session, unfiltered: the Live set until the first `LiveChanged` snapshot arrives. */
@@ -163,7 +163,7 @@ function Panel({ c }: { c: ConnState }) {
   const setError = useDrive((s) => s.setError);
   const live = !c.procExit && !c.sessionExited && c.ready;
 
-  // Esc: leaves a card's text field; aborts while busy / waiting; otherwise keeps the Viewer's meaning.
+  // Esc: leaves a card's text field; aborts while busy / waiting; otherwise keeps CoDeck's meaning.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "Escape" || isComposingKey(e.nativeEvent)) return;
     if (document.querySelector("[data-radix-popper-content-wrapper], [role=dialog]")) return;

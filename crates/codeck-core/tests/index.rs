@@ -8,8 +8,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use common::{fixture_root, ids};
-use cv_core::model::DataRootSource;
-use cv_core::{ChangeSet, Engine, EngineConfig};
+use codeck_core::model::DataRootSource;
+use codeck_core::{ChangeSet, Engine, EngineConfig};
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
 
@@ -284,7 +284,7 @@ fn schema_or_root_mismatch_rebuilds() {
         let v: u32 = c
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, cv_core::index::schema::SCHEMA_VERSION);
+        assert_eq!(v, codeck_core::index::schema::SCHEMA_VERSION);
         assert_eq!(files(&c), 0, "version mismatch: index recreated");
         let cs = engine.scan_all(&|_| {}).unwrap();
         assert_eq!(cs.changed, vec![ids::BASIC.to_owned()]);
@@ -422,7 +422,7 @@ fn agent_files_and_sidecars_are_classified() {
 /// Engine read API over the index. Titles/counts come from `assemble::summarize` (T2.2).
 #[test]
 fn engine_lists_projects_sessions_and_detail() {
-    use cv_core::model::{SessionQuery, SessionSort};
+    use codeck_core::model::{SessionQuery, SessionSort};
     let env = scanned("fork");
     let projects = env.engine.list_projects().unwrap();
     assert_eq!(projects.len(), 1);
@@ -472,7 +472,7 @@ fn engine_lists_projects_sessions_and_detail() {
 /// Node shapes come from assembly (T2.2).
 #[test]
 fn transcript_follows_appends() {
-    use cv_core::model::{TranscriptRequest, TranscriptScope};
+    use codeck_core::model::{TranscriptRequest, TranscriptScope};
     let env = scanned("basic");
     let req = TranscriptRequest {
         session_id: ids::BASIC.into(),
@@ -502,7 +502,7 @@ fn transcript_follows_appends() {
 /// Rebuild rescans with progress and reports everything as changed (no second scan needed).
 #[test]
 fn rebuild_rescans_and_reports_changes() {
-    use cv_core::model::{IndexPhase, SessionQuery};
+    use codeck_core::model::{IndexPhase, SessionQuery};
     let env = scanned("subagents");
     let phases = std::cell::RefCell::new(Vec::new());
     let cs = env
@@ -598,7 +598,7 @@ fn edit_block(tool: &str, file: &Path) -> String {
 /// main file or Subagents edited; appended edits extend the set.
 #[test]
 fn session_belongs_to_its_start_project_and_the_projects_it_edited() {
-    use cv_core::model::SessionQuery;
+    use codeck_core::model::SessionQuery;
     let work = tempfile::tempdir().unwrap();
     let ws = fs::canonicalize(work.path()).unwrap().join("ws");
     for repo in ["api", "web", "lib"] {

@@ -7,9 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use common::{copy_dir_all, fixture_dir, ids};
-use cv_core::model::{DataRootSource, Diagnostics, NameCount, SessionQuery};
-use cv_core::paths::index_db_path;
-use cv_core::{Engine, EngineConfig};
+use codeck_core::model::{DataRootSource, Diagnostics, NameCount, SessionQuery};
+use codeck_core::paths::index_db_path;
+use codeck_core::{Engine, EngineConfig};
 use serde_json::Value;
 use tempfile::TempDir;
 

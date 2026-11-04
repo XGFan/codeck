@@ -1,5 +1,5 @@
 {
-  "name": "claude-viewer",
+  "name": "codeck",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "version": "0.1.0",
@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "tauri": "tauri",
-    "bindings": "cargo test -p claude-viewer --lib export_bindings -- --exact"
+    "bindings": "cargo test -p codeck --lib export_bindings -- --exact"
   },
   "dependencies": {
     "@tanstack/react-query": "5.104.1",

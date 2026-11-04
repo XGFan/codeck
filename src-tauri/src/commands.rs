@@ -3,13 +3,13 @@
 
 use std::sync::Arc;
 
-use cv_core::model::{
+use codeck_core::model::{
     AppError, AppInfo, Diagnostics, ErrorCode, FindRequest, FindResult, ImageData, ImageRequest,
     IndexStatus, JumpRequest, JumpTarget, ProjectSummary, SearchRequest, SearchResponse,
     SessionDetail, SessionQuery, SessionSummary, Stats, StatsRequest, ToolDetail,
     ToolDetailRequest, Transcript, TranscriptRequest,
 };
-use cv_core::{CoreError, CoreResult, Engine};
+use codeck_core::{CoreError, CoreResult, Engine};
 use tauri::State;
 
 use crate::settings::{self, Settings};

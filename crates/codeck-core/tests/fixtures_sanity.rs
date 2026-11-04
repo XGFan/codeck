@@ -1,4 +1,4 @@
-//! Fixture sanity (T1.2). Plain serde_json on purpose: no cv-core APIs, so these tests pin the fixtures
+//! Fixture sanity (T1.2). Plain serde_json on purpose: no codeck-core APIs, so these tests pin the fixtures
 //! themselves. Expected numbers are documented in `tests/fixtures/README.md`.
 mod common;
 
@@ -577,8 +577,8 @@ fn nothing_sensitive_in_fixtures() {
             bad.push(&user);
         }
         // Extra private terms (e.g. employer or client names) are kept out of the repo:
-        // CV_FIXTURE_DENYLIST="name1,name2" cargo test -p cv-core --test fixtures_sanity
-        let extra = std::env::var("CV_FIXTURE_DENYLIST")
+        // CODECK_FIXTURE_DENYLIST="name1,name2" cargo test -p codeck-core --test fixtures_sanity
+        let extra = std::env::var("CODECK_FIXTURE_DENYLIST")
             .unwrap_or_default()
             .to_lowercase();
         bad.extend(extra.split(',').map(str::trim).filter(|t| t.len() > 2));

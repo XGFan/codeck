@@ -1,7 +1,7 @@
 use std::io::Write;
 
-use cv_core::parse::{parse_bytes, read_entries};
-use cv_core::raw::RawContent;
+use codeck_core::parse::{parse_bytes, read_entries};
+use codeck_core::raw::RawContent;
 
 const USER: &str = r#"{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-10-07T09:34:56.789Z","message":{"role":"user","content":"hello"}}"#;
 const ASSISTANT: &str = r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"msg_1","model":"claude-opus","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":5,"cache_read_input_tokens":7,"cache_creation_input_tokens":11}}}"#;

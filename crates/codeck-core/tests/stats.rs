@@ -10,10 +10,10 @@ use std::process::Command;
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone};
 use common::{copy_dir_all, fixture_dir, ids};
-use cv_core::model::{
+use codeck_core::model::{
     DataRootSource, Drill, SessionQuery, SessionSort, Stats, StatsRequest, TimeRange,
 };
-use cv_core::{Engine, EngineConfig};
+use codeck_core::{Engine, EngineConfig};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -311,7 +311,7 @@ fn tokens_counted_once_per_message_id() {
     assert_eq!(st.overview.output_tokens, 5151.0);
     assert_eq!(st.overview.messages, 20);
     assert_eq!(st.overview.sessions, 1);
-    let sum = |f: fn(&cv_core::model::DailyModelTokens) -> f64| st.daily.iter().map(f).sum::<f64>();
+    let sum = |f: fn(&codeck_core::model::DailyModelTokens) -> f64| st.daily.iter().map(f).sum::<f64>();
     assert_eq!(sum(|d| d.input), 51.0);
     assert_eq!(sum(|d| d.output), 5151.0);
     assert_eq!(sum(|d| d.cache_read), 1_761_742.0);
@@ -370,7 +370,7 @@ fn totals_match_oracle() {
     assert_eq!(got, daily);
 
     // Session ranking: most expensive first, at most TOP_SESSIONS, each with its own numbers.
-    assert!(st.sessions.len() <= cv_core::stats::TOP_SESSIONS);
+    assert!(st.sessions.len() <= codeck_core::stats::TOP_SESSIONS);
     assert!(st.sessions.windows(2).all(|w| w[0].cost >= w[1].cost));
     let basic = st
         .sessions
@@ -584,8 +584,8 @@ fn tokens_sort_orders_by_output_tokens() {
 
 #[test]
 fn activity_bucket_is_the_finest_with_at_most_170_bars() {
-    use cv_core::model::ActivityBucket as B;
-    use cv_core::stats::choose_bucket;
+    use codeck_core::model::ActivityBucket as B;
+    use codeck_core::stats::choose_bucket;
     let at = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
     let to = at("2026-10-27 13:20");
     let back = |days: i64| to - chrono::Duration::days(days);
@@ -643,7 +643,7 @@ fn activity_over_seven_days_is_hourly() {
             }),
         })
         .unwrap();
-    assert_eq!(st.activity.bucket, cv_core::model::ActivityBucket::Hour1);
+    assert_eq!(st.activity.bucket, codeck_core::model::ActivityBucket::Hour1);
     // 7 × 24 hours from a mid-hour start touch 169 hourly bars.
     assert_eq!(st.activity.bars.len(), 169);
     assert_eq!(

@@ -4,8 +4,8 @@ import type { WeeklyReset } from "@/lib/cycle";
 
 export type CollapsiblePane = "sessions";
 
-const COLLAPSED_KEY = "cv.collapsedPanes";
-const WEEKLY_RESET_KEY = "cv.weeklyReset";
+const COLLAPSED_KEY = "codeck.collapsedPanes";
+const WEEKLY_RESET_KEY = "codeck.weeklyReset";
 
 /** A remembered preference over `fallback`; `fallback` alone when storage is unavailable or garbled. */
 function load<T extends object>(key: string, fallback: T): T {

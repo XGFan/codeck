@@ -2,7 +2,7 @@
 //! into a shareable one. Only structure survives; free text becomes deterministic filler.
 //!
 //! Usage:
-//!   cargo run -p cv-core --example sanitize -- <input> [--lines 1-50,70-80]
+//!   cargo run -p codeck-core --example sanitize -- <input> [--lines 1-50,70-80]
 //!       [--uuids a,b,c | --uuid-file path] [--cwd /Users/dev/code/name] [--cap 160]
 //!
 //! Output goes to stdout, one JSON document per line. Lines that do not parse are skipped

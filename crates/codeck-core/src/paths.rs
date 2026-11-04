@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::model::DataRootSource;
 
 /// Bundle identifier; also the name of the app's cache and settings folders.
-pub const BUNDLE_ID: &str = "dev.joy.claude-viewer";
+pub const BUNDLE_ID: &str = "dev.joy.codeck";
 pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 pub const INDEX_FILE_NAME: &str = "index.sqlite";
 
@@ -71,14 +71,14 @@ pub fn sessions_dir(root: &Path) -> PathBuf {
     root.join("sessions")
 }
 
-/// `~/Library/Caches/dev.joy.claude-viewer`.
+/// `~/Library/Caches/dev.joy.codeck`.
 pub fn default_cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join(BUNDLE_ID)
 }
 
-/// `~/Library/Application Support/dev.joy.claude-viewer` (settings.json lives here).
+/// `~/Library/Application Support/dev.joy.codeck` (settings.json lives here).
 pub fn default_settings_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(std::env::temp_dir)

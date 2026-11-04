@@ -1,6 +1,6 @@
-//! Typed events (tauri-specta). Payload types live in `cv_core::model::events`.
+//! Typed events (tauri-specta). Payload types live in `codeck_core::model::events`.
 
-use cv_core::model::{IndexStatus, LiveChanged, SessionsChanged};
+use codeck_core::model::{IndexStatus, LiveChanged, SessionsChanged};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri_specta::Event;

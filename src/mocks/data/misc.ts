@@ -6,7 +6,7 @@ export const appInfo = {
   dataRoot: "/Users/dev/.claude",
   dataRootSource: "default",
   dataRootExists: true,
-  cacheDir: "/Users/dev/Library/Caches/claude-viewer",
+  cacheDir: "/Users/dev/Library/Caches/dev.joy.codeck",
   schemaVersion: 1,
 } satisfies AppInfo;
 

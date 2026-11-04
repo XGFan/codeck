@@ -1,6 +1,6 @@
 //! Driving Claude Code through `ccrpc` (one child process per connection, its lines relayed to the
 //! web view). The state is built lazily by the first command: reading the login shell's environment
-//! at startup would slow the Viewer down.
+//! at startup would slow CoDeck down.
 
 pub mod env;
 pub mod logs;
@@ -11,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
-use cv_core::model::{AppError, ErrorCode};
+use codeck_core::model::{AppError, ErrorCode};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
@@ -72,8 +72,8 @@ fn init() -> Result<App, String> {
     App::new(
         env,
         ccrpc,
-        home.join("Library/Logs/dev.joy.claude-viewer/drive"),
-        home.join("Library/Caches/dev.joy.claude-viewer/images"),
+        home.join("Library/Logs/dev.joy.codeck/drive"),
+        home.join("Library/Caches/dev.joy.codeck/images"),
     )
 }
 

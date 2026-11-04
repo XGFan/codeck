@@ -1,6 +1,6 @@
 [package]
-name = "claude-viewer"
-description = "Claude Viewer: a read-only desktop viewer for Claude Code history."
+name = "codeck"
+description = "CoDeck: a read-only desktop viewer for Claude Code history."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,14 +8,14 @@ license.workspace = true
 publish = false
 
 [lib]
-name = "claude_viewer_lib"
+name = "codeck_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build.workspace = true
 
 [dependencies]
-cv-core.workspace = true
+codeck-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 specta.workspace = true

@@ -2,14 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Claude Viewer：只读的 macOS 桌面应用（Tauri 2 + React 19），用来搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session。
+CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc 驾驶 ToH clay 里运行中的 Session（ADR-0007）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
 
 ## 仓库布局（monorepo）
 
 | 目录 | 内容 | 说明 |
 |---|---|---|
 | `crates/transcript` | 解析库：读 Claude Code 的数据（transcript、进程文件、价格），组装成显示模型；无 SQLite、无 tauri | 本文件「架构」 |
-| `crates/cv-core`、`src-tauri`、`src` | Claude Viewer 本体 | 本文件 |
+| `crates/codeck-core`、`src-tauri`、`src` | CoDeck 本体 | 本文件 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
 
 一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的驾驶功能（ADR-0007）。驾驶 E2E 的 wire fixture 在 `src/mocks/data/drive/`，`tools.jsonl` 用 `scripts/record-drive-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
@@ -25,8 +25,8 @@ pnpm tauri dev                 # 启动真实应用（读取真实数据目录�
 pnpm dev:mock                  # 只起前端 + 内置 mock 数据，http://localhost:1420
 
 cargo test --workspace
-cargo test -p cv-core --test parse                 # 单个集成测试文件（tests/*.rs）
-cargo test -p cv-core --test branch <name>         # 单个用例
+cargo test -p codeck-core --test parse                 # 单个集成测试文件（tests/*.rs）
+cargo test -p codeck-core --test branch <name>         # 单个用例
 cargo clippy --workspace --all-targets -- -D warnings
 
 pnpm typecheck && pnpm test                        # tsc + vitest（src/**/*.test.ts）
@@ -42,15 +42,15 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 pnpm tauri build --bundles app --target aarch64-apple-darwin
 ```
 
-真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CV_REAL_ROOT=~/.claude cargo test -p cv-core --release --test assemble -- --ignored --nocapture`、`CV_BENCH_ROOT=~/.claude cargo test -p cv-core --release --test search -- --ignored --nocapture`。
+真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test assemble -- --ignored --nocapture`、`CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`。
 
 ## 架构
 
-三层，数据单向流动：`crates/transcript`（解析）→ `crates/cv-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `src-tauri`（外壳）→ `src`（React）。ccrpc 也依赖 `crates/transcript`，不依赖 cv-core。
+三层，数据单向流动：`crates/transcript`（解析）→ `crates/codeck-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `src-tauri`（外壳）→ `src`（React）。ccrpc 也依赖 `crates/transcript`，不依赖 codeck-core。
 
-### transcript 与 cv-core
+### transcript 与 codeck-core
 
-- `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`、`live`（进程文件）、`pricing`。cv-core 以原路径 `pub use` 重新导出它们（`cv_core::model::…`、`crate::assemble::…` 照旧可用）。解析层的错误是 `TranscriptError`，cv-core 按变体映射到 `CoreError`。
+- `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`、`live`（进程文件）、`pricing`。codeck-core 以原路径 `pub use` 重新导出它们（`codeck_core::model::…`、`crate::assemble::…` 照旧可用）。解析层的错误是 `TranscriptError`，codeck-core 按变体映射到 `CoreError`。
 
 - `engine.rs` 的 `Engine` 是 src-tauri 调用的**唯一入口**，全部是阻塞调用。它负责：索引同步（stat 遍历 → 与 `files` 表比对 → rayon 并行轻解析 → 按批事务写入 → 重算受影响的 Session；追加只读 `[parsed_offset, EOF)`，文件变小/被替换则整 Session 重解析）；以及显示用的小 LRU（按 source/sidecar 的 path+size+mtime 哈希校验）。
 - 管线：`scan`（遍历数据根、按 realpath/inode 去重）→ `raw`（宽容的 serde 结构，字段全可选）→ `parse`（按行解析，坏行跳过并计数）→ `assemble/*`（把事件日志组装成节点：parentUuid 树、Branch/Main Line、compact 接续、Fork、Subagent/Workflow 关联、工具摘要、⌘F 查找、搜索跳转）→ `index/*`（SQLite + FTS5 trigram）→ `search` / `stats` / `diag`。`known.rs` 列出已知的条目类型/内容块/工具名，未知的进诊断而不是丢弃。
@@ -65,7 +65,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次 / TextBacklog / Rebuild / SetRoot / PollLive / Rescan）。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
 - `prices.rs`：下载 LiteLLM 价格表；worker 的 `RefreshPrices` 在独立线程里下载，结果以 `ApplyPrices` 交回 worker 写库，价格有变化时发 `PricesChanged` 事件。
 - `watcher.rs`（FSEvents，debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖，存于 Application Support）、`events.rs`（IndexStatus / SessionsChanged / LiveChanged / PricesChanged，以及驾驶的 DriveLine / DriveExit 事件）。
-- `drive/`：驾驶（ADR-0007）。每个连接一个 `ccrpc attach|new --co-display` 子进程，stdout 逐行原样转发为 `DriveLine` 事件（协议解析与状态都在前端 `features/drive`），三层日志在 `~/Library/Logs/dev.joy.claude-viewer/drive/`。状态在第一个 drive 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
+- `drive/`：驾驶（ADR-0007）。每个连接一个 `ccrpc attach|new --co-display` 子进程，stdout 逐行原样转发为 `DriveLine` 事件（协议解析与状态都在前端 `features/drive`），三层日志在 `~/Library/Logs/dev.joy.codeck/drive/`。状态在第一个 drive 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
 
 ### src（前端）
 
@@ -77,8 +77,8 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 ## 约束
 
-- **对数据根严格只读**（ADR-0002）：源文件只能用 `File::open` 读，绝不写入、移动、删除 `~/.claude` 下任何东西。应用自己的状态只放在 `~/Library/Caches/dev.joy.claude-viewer/`（索引、价格表缓存）和 `~/Library/Application Support/dev.joy.claude-viewer/`（设置）。
-- **测试 fixture**：`crates/cv-core/tests/fixtures/<场景>/` 是迷你数据根，由 `examples/sanitize.rs` 从真实 Session 脱敏生成；测试通过 `common::fixture_root(name)` 复制到临时目录使用，不要直接写 fixture 目录。`tests/fixtures_sanity.rs` 钉死了 fixture README 表格里的每个数字，并做敏感信息检查（`CV_FIXTURE_DENYLIST` 追加私有词）——改动或新增 fixture 时同步更新 README 表格和该测试，绝不提交未脱敏的真实数据。
+- **对数据根严格只读**（ADR-0002）：源文件只能用 `File::open` 读，绝不写入、移动、删除 `~/.claude` 下任何东西。应用自己的状态只放在 `~/Library/Caches/dev.joy.codeck/`（索引、价格表缓存）和 `~/Library/Application Support/dev.joy.codeck/`（设置）。
+- **测试 fixture**：`crates/codeck-core/tests/fixtures/<场景>/` 是迷你数据根，由 `examples/sanitize.rs` 从真实 Session 脱敏生成；测试通过 `common::fixture_root(name)` 复制到临时目录使用，不要直接写 fixture 目录。`tests/fixtures_sanity.rs` 钉死了 fixture README 表格里的每个数字，并做敏感信息检查（`CODECK_FIXTURE_DENYLIST` 追加私有词）——改动或新增 fixture 时同步更新 README 表格和该测试，绝不提交未脱敏的真实数据。
 - 启动、后台调度、设置这类流程单测覆盖不到，需要 `pnpm tauri dev` 实测。
 - 在 macOS 27 上 release 构建依赖根 `Cargo.toml` 中 `profile.release.build-override` 的 `strip = "none"`，不要删。
 - Commit message 风格：`feat|fix|docs|test|style: <中文描述>`，常用「——」补充说明原因或做法。

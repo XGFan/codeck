@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use cv_core::{CoreResult, Engine, EngineConfig, paths};
+use codeck_core::{CoreResult, Engine, EngineConfig, paths};
 use parking_lot::RwLock;
 
 use crate::settings::Settings;

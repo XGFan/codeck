@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
-//!   | cargo run -p cv-core --example update_pricing
+//!   | cargo run -p codeck-core --example update_pricing
 //! ```
 
 use std::io::Read;

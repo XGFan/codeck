@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/transcript", "crates/cv-core", "crates/ccrpc", "src-tauri"]
+members = ["crates/transcript", "crates/codeck-core", "crates/ccrpc", "src-tauri"]
 resolver = "3"
 
 [workspace.package]
@@ -9,7 +9,7 @@ rust-version = "1.91"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-cv-core = { path = "crates/cv-core" }
+codeck-core = { path = "crates/codeck-core" }
 transcript = { path = "crates/transcript" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }

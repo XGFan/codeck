@@ -4,7 +4,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use cv_core::paths;
+use codeck_core::paths;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 

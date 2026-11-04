@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Variables that belong to wherever Claude Viewer itself was started from, not to the Sessions.
+/// Variables that belong to wherever CoDeck itself was started from, not to the Sessions.
 const DROP: &[&str] = &["CLAUDECODE", "TOH_HOLDER_ID", "CLAUDE_CODE_ENTRYPOINT"];
 
 pub fn login_env() -> HashMap<String, String> {
@@ -62,10 +62,10 @@ fn read_login_env() -> Option<HashMap<String, String>> {
     (env.contains_key("PATH")).then_some(env)
 }
 
-/// The ccrpc to run: `CV_CCRPC`, else `~/.local/bin/ccrpc` (where `ccrpc plugin install` is
+/// The ccrpc to run: `CODECK_CCRPC`, else `~/.local/bin/ccrpc` (where `ccrpc plugin install` is
 /// expected to have been run from), else `ccrpc` on PATH.
 pub fn ccrpc_path(env: &HashMap<String, String>) -> PathBuf {
-    if let Some(p) = env.get("CV_CCRPC").filter(|p| !p.is_empty()) {
+    if let Some(p) = env.get("CODECK_CCRPC").filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
     let home = env.get("HOME").cloned().unwrap_or_default();

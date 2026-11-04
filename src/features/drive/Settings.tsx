@@ -44,7 +44,7 @@ export function DriveSettings() {
       )}
       <Row label="ccrpc" testId="set-ccrpc">
         <code className="break-all font-mono text-[13px]">{info?.ccrpcPath ?? (infoError ? "-" : "…")}</code>
-        <div className="mt-1 text-[12px] text-secondary">依次取登录 shell 环境变量 CV_CCRPC、~/.local/bin/ccrpc、PATH 里的 ccrpc。</div>
+        <div className="mt-1 text-[12px] text-secondary">依次取登录 shell 环境变量 CODECK_CCRPC、~/.local/bin/ccrpc、PATH 里的 ccrpc。</div>
       </Row>
       <Row label="ccrpc doctor" testId="set-doctor">
         {info ? (

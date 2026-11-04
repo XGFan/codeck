@@ -2,7 +2,7 @@
 // recorded `wire.jsonl` (`{t, dir: "send" | "recv", msg}`, plus `{dir: "exit", code, stderr}` and an
 // optional first `{dir: "meta", ls: {...}}` that overrides the `ccrpc ls` entry) and shows up as one
 // `ls` entry. A meta `session_id` (and `holder_id`) is also written into the recorded `ready`, so a
-// recording can stand for a Session of the Viewer's mock data and keeps its ids when re-recorded. Connecting replays what ccrpc printed up to the first
+// recording can stand for a Session of CoDeck's mock data and keeps its ids when re-recorded. Connecting replays what ccrpc printed up to the first
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks, cancel_follow_up) are answered from what was replayed. `new-session` is not listed:
@@ -197,7 +197,7 @@ export function createMockDrive(): DriveApi {
         { level: "fail", text: "fail\tplugin\tccrpc 插件未启用" },
       ],
       analyzer: true,
-      logRoot: "/mock/Logs/dev.joy.claude-viewer/drive",
+      logRoot: "/mock/Logs/dev.joy.codeck/drive",
     }),
     driveList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session").map((f) => ({ ...f.ls }))),
     driveConnect: async (holderId) => {
@@ -237,8 +237,8 @@ export function createMockDrive(): DriveApi {
     driveGuiLog: async (_conn, text) => {
       probe.guiLog.push(text);
     },
-    driveLogDir: async (id) => (conns.get(id)?.closed ? null : `/mock/Logs/dev.joy.claude-viewer/drive/${id}`),
-    driveSaveImage: async (_b64, ext) => `/mock/Caches/dev.joy.claude-viewer/images/${++probe.images}.${ext}`,
+    driveLogDir: async (id) => (conns.get(id)?.closed ? null : `/mock/Logs/dev.joy.codeck/drive/${id}`),
+    driveSaveImage: async (_b64, ext) => `/mock/Caches/dev.joy.codeck/images/${++probe.images}.${ext}`,
     pickDir: async () => "/tmp/mock-new",
     setBadge: async (n) => {
       probe.badge = n;

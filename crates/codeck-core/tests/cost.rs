@@ -9,8 +9,8 @@ use std::io::Write;
 use std::path::Path;
 
 use common::{fixture_root, ids};
-use cv_core::model::{DataRootSource, SessionQuery, SessionSort, StatsRequest};
-use cv_core::{Engine, EngineConfig};
+use codeck_core::model::{DataRootSource, SessionQuery, SessionSort, StatsRequest};
+use codeck_core::{Engine, EngineConfig};
 use tempfile::TempDir;
 
 fn open(root: &Path, cache: &Path) -> Engine {

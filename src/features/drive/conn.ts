@@ -1,5 +1,5 @@
 // One connection's state, folded from ccrpc's events. Pure: `apply` returns a new state.
-// Content is not kept here: the Viewer shows it from its own index and live following.
+// Content is not kept here: CoDeck shows it from its own index and live following.
 
 import type {
   ChoiceEvent,

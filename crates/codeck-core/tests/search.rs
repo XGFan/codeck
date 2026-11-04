@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use common::{copy_dir_all, fixture_dir, fixture_root, ids};
-use cv_core::model::{
+use codeck_core::model::{
     AppError, DataRootSource, ErrorCode, FindLocation, FindRequest, JumpRequest, SearchMode,
     SearchRequest, SearchResponse, SearchRole, TranscriptRequest, TranscriptScope,
 };
-use cv_core::search::query::{fts_phrase, is_fts_term};
-use cv_core::search::{fts, parse_query};
-use cv_core::{Engine, EngineConfig};
+use codeck_core::search::query::{fts_phrase, is_fts_term};
+use codeck_core::search::{fts, parse_query};
+use codeck_core::{Engine, EngineConfig};
 use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -561,11 +561,11 @@ fn find_in_session_covers_text_inputs_and_full_outputs() {
 // ------------------------------------------------------------------ real-root measurement
 
 /// Full text index time, DB size and query latencies on a real data root (read-only, temp
-/// cache). `CV_BENCH_ROOT=~/.claude cargo test -p cv-core --release --test search -- --ignored --nocapture`
+/// cache). `CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn measure_real_root() {
-    let root = std::env::var("CV_BENCH_ROOT")
+    let root = std::env::var("CODECK_BENCH_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| dirs_home().join(".claude"));
     // `CV_BENCH_CACHE` keeps the index for repeated query runs; default is a fresh temp dir.

@@ -34,7 +34,7 @@ interface DriveStore {
   errors: Record<string, string>;
   /** Why the last 「新建 Session」 failed (shown in the Session list). */
   newError: string | null;
-  /** The Viewer's Live Sessions from its `LiveChanged` events; null until the first one. */
+  /** The CoDeck's Live Sessions from its `LiveChanged` events; null until the first one. */
   live: LiveEntry[] | null;
   /** Unsent input by Session id (a connection id before it has one): kept across switches and reconnects. */
   drafts: Record<string, Draft>;
@@ -92,13 +92,13 @@ const errText = (e: unknown) => (e && typeof e === "object" && "message" in e ? 
 
 type Lookup = { ls: LsEntry[]; conns: Record<string, ConnState> };
 
-/** The `ccrpc ls` entry of a Viewer Session (the Holder's session id is the Session id). */
+/** The `ccrpc ls` entry of a CoDeck Session (the Holder's session id is the Session id). */
 export function lsEntryFor(s: Pick<Lookup, "ls">, sessionId: string | null): LsEntry | null {
   if (!sessionId) return null;
   return s.ls.find((e) => e.session_id === sessionId) ?? null;
 }
 
-/** The connection driving a Viewer Session: a live one first, else the last that exited. */
+/** The connection driving a CoDeck Session: a live one first, else the last that exited. */
 export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
   if (!sessionId) return null;
   const holder = lsEntryFor(s, sessionId)?.holder_id;
@@ -432,7 +432,7 @@ export const useDrive = create<DriveStore>((set, get) => {
   };
 });
 
-/** Sessions waiting for an answer: the Viewer's Live Sessions that wait, and connected Sessions with a card. */
+/** Sessions waiting for an answer: CoDeck's Live Sessions that wait, and connected Sessions with a card. */
 export function waitingSessions(liveWaiting: string[], conns: Record<string, ConnState>): string[] {
   const out = new Set(liveWaiting);
   for (const c of Object.values(conns)) if (!c.procExit && c.requests.length > 0) out.add(c.sessionId ?? c.conn);

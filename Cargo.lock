@@ -554,13 +554,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-viewer"
+name = "clipboard-win"
+version = "5.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+dependencies = [
+ "error-code",
+]
+
+[[package]]
+name = "codeck"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "codeck-core",
  "crossbeam-channel",
- "cv-core",
  "dirs",
  "libc",
  "notify",
@@ -583,12 +592,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "clipboard-win"
-version = "5.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+name = "codeck-core"
+version = "0.1.0"
 dependencies = [
- "error-code",
+ "aho-corasick",
+ "chrono",
+ "crossbeam-channel",
+ "dirs",
+ "libc",
+ "memchr",
+ "parking_lot",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "specta",
+ "specta-typescript",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "transcript",
 ]
 
 [[package]]
@@ -762,29 +785,6 @@ name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
-
-[[package]]
-name = "cv-core"
-version = "0.1.0"
-dependencies = [
- "aho-corasick",
- "chrono",
- "crossbeam-channel",
- "dirs",
- "libc",
- "memchr",
- "parking_lot",
- "rayon",
- "rusqlite",
- "serde",
- "serde_json",
- "specta",
- "specta-typescript",
- "tempfile",
- "thiserror 2.0.21",
- "tracing",
- "transcript",
-]
 
 [[package]]
 name = "darling"

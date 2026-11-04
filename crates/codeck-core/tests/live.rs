@@ -6,8 +6,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use common::{fixture_root, fixture_root_with_pids, ids, proc_start};
-use cv_core::model::{DataRootSource, LiveChanged, LiveSource, LiveState, LiveStatus};
-use cv_core::{Engine, EngineConfig};
+use codeck_core::model::{DataRootSource, LiveChanged, LiveSource, LiveState, LiveStatus};
+use codeck_core::{Engine, EngineConfig};
 use tempfile::TempDir;
 
 fn engine(root: &Path, cache: &TempDir) -> Engine {

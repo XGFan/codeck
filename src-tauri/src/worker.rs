@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
-use cv_core::model::{IndexStatus, SessionsChanged};
-use cv_core::{ChangeSet, CoreError, Engine, paths};
+use codeck_core::model::{IndexStatus, SessionsChanged};
+use codeck_core::{ChangeSet, CoreError, Engine, paths};
 use parking_lot::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;

@@ -76,7 +76,7 @@ pub struct ActivityBar {
 }
 
 /// Message histogram over the requested range: the finest bucket with at most
-/// `cv_core::stats::MAX_ACTIVITY_BARS` bars; empty bars included.
+/// `codeck_core::stats::MAX_ACTIVITY_BARS` bars; empty bars included.
 #[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Activity {
@@ -104,6 +104,6 @@ pub struct Stats {
     pub daily: Vec<DailyModelTokens>,
     pub heat_daily: Vec<DayCount>,
     pub activity: Activity,
-    /// The most expensive sessions in range (at most `cv_core::stats::TOP_SESSIONS`).
+    /// The most expensive sessions in range (at most `codeck_core::stats::TOP_SESSIONS`).
     pub sessions: Vec<SessionStat>,
 }

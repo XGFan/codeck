@@ -1,5 +1,5 @@
 // ccrpc JSONL protocol (crates/ccrpc/docs/spec.md §5, docs/protocol.schema.json): the subset driving uses.
-// Content (blocks, get_messages, branch, workflow) comes from the Viewer's own index, so only the
+// Content (blocks, get_messages, branch, workflow) comes from CoDeck's own index, so only the
 // events that carry state and control are typed here.
 
 export type StateName = "starting" | "idle" | "busy" | "waiting" | "exited";

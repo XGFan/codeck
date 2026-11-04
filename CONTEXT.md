@@ -1,4 +1,4 @@
-# Claude Viewer
+# CoDeck
 
 一个只读的 macOS 桌面应用，用来搜索和阅读 Claude Code 在本机留下的历史对话记录。
 

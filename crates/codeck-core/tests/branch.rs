@@ -4,15 +4,15 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::{fixture_dir, ids};
-use cv_core::assemble::{
+use codeck_core::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, SessionSkeleton, assemble, build_skeleton,
     transcript, tree,
 };
-use cv_core::model::{
+use codeck_core::model::{
     AssistantBlock, BranchChoice, FileRole, NodeBody, Transcript, TranscriptRequest,
     TranscriptScope,
 };
-use cv_core::parse::{parse_bytes, read_entries};
+use codeck_core::parse::{parse_bytes, read_entries};
 
 fn load(path: &Path) -> LoadedFile {
     LoadedFile {
@@ -352,7 +352,7 @@ fn choosing_an_alternative_head_follows_its_newest_leaf() {
     assert_eq!(t.branch_points.len(), 1);
     assert_eq!(t.branch_points[0].selected_head_id, uuid(sk, "96ad01af"));
     // The system satellite between the anchor and the heads stays on the path (hidden).
-    let path = cv_core::assemble::branch::resolve_path(
+    let path = codeck_core::assemble::branch::resolve_path(
         sk,
         &[BranchChoice {
             anchor_key: uuid(sk, "ee434cdd"),

@@ -161,7 +161,7 @@ fn toml_str(s: &str) -> String {
 }
 
 struct Rpc {
-    /// `CCRPC_E2E_WIRE_DIR`: every line sent and received, as Claude Viewer's drive `wire.jsonl`.
+    /// `CCRPC_E2E_WIRE_DIR`: every line sent and received, as CoDeck's drive `wire.jsonl`.
     wire: Option<Arc<Mutex<std::fs::File>>>,
     child: Child,
     stdin: Option<ChildStdin>,

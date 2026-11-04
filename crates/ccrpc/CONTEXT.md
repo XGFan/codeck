@@ -2,7 +2,7 @@
 
 让 Host 本机的脚本像 Pi RPC 那样驱动交互式 Claude Code：Claude Code 跑在 ToH 的 clay Pane 里，装着 ccrpc 插件；ccrpc 经 Holder 写 PTY，读 transcript / 进程文件 / 屏幕与插件报来的事件，不改变 Claude Code 的表现。
 
-Session、Live Session、Subagent Run、Main Line 沿用 [Claude Viewer 的定义](https://github.com/XGFan/claude-code-viewer/blob/main/CONTEXT.md)；Host、Holder、Pane、clay、Client 沿用 [ToH 的定义](https://github.com/XGFan/toh/blob/main/CONTEXT.md)。下面只列本项目新增的词。
+Session、Live Session、Subagent Run、Main Line 沿用 [CoDeck 的定义](https://github.com/XGFan/codeck/blob/main/CONTEXT.md)；Host、Holder、Pane、clay、Client 沿用 [ToH 的定义](https://github.com/XGFan/toh/blob/main/CONTEXT.md)。下面只列本项目新增的词。
 
 ## Language
 

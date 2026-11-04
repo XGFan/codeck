@@ -1,4 +1,4 @@
-//! The app's own settings (`~/Library/Application Support/dev.joy.claude-viewer/settings.json`).
+//! The app's own settings (`~/Library/Application Support/dev.joy.codeck/settings.json`).
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ pub struct Settings {
 }
 
 pub fn settings_path() -> PathBuf {
-    cv_core::paths::default_settings_dir().join(SETTINGS_FILE)
+    codeck_core::paths::default_settings_dir().join(SETTINGS_FILE)
 }
 
 /// Missing or unreadable settings fall back to defaults.

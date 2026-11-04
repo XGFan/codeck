@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use claude_viewer_lib::drive::relay::{App, Out};
+use codeck_lib::drive::relay::{App, Out};
 use serde_json::{Value, json};
 
 struct Holder {
@@ -55,9 +55,9 @@ fn next(rx: &mpsc::Receiver<Out>, what: &str, secs: u64, mut pred: impl FnMut(&V
 #[ignore = "real ccrpc + claude in the sandbox, with scripts/drive-sandbox/mock_model.py on :18765"]
 fn relays_a_real_session_and_logs_it() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let sandbox = PathBuf::from("/tmp/cv-drive-sandbox-test");
+    let sandbox = PathBuf::from("/tmp/codeck-drive-sandbox-test");
     let out = Command::new(root.join("scripts/drive-sandbox/env.sh"))
-        .env("CV_SANDBOX", &sandbox)
+        .env("CODECK_SANDBOX", &sandbox)
         .output()
         .unwrap();
     assert!(out.status.success(), "env.sh: {}", String::from_utf8_lossy(&out.stderr));

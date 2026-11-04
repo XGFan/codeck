@@ -1,6 +1,6 @@
-# Claude Viewer
+# CoDeck
 
-只读的 macOS 桌面应用，用来搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session。
+macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能驾驶 ToH clay 里正在运行的 Session。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
 
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
 - **读得舒服**：工具调用折叠成摘要，Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话区。
@@ -33,11 +33,11 @@
 
 | 内容 | 位置 |
 |---|---|
-| 索引（可丢弃，随时重建） | `~/Library/Caches/dev.joy.claude-viewer/index.sqlite` |
-| 价格表缓存 | `~/Library/Caches/dev.joy.claude-viewer/pricing.json` |
-| 设置（数据目录覆盖） | `~/Library/Application Support/dev.joy.claude-viewer/settings.json` |
-| 驾驶日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.claude-viewer/drive/` |
-| 驾驶时粘贴的图片 | `~/Library/Caches/dev.joy.claude-viewer/images/` |
+| 索引（可丢弃，随时重建） | `~/Library/Caches/dev.joy.codeck/index.sqlite` |
+| 价格表缓存 | `~/Library/Caches/dev.joy.codeck/pricing.json` |
+| 设置（数据目录覆盖） | `~/Library/Application Support/dev.joy.codeck/settings.json` |
+| 驾驶日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.codeck/drive/` |
+| 驾驶时粘贴的图片 | `~/Library/Caches/dev.joy.codeck/images/` |
 
 应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 API 金额；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）。
 
@@ -81,12 +81,12 @@ pnpm exec playwright install webkit && pnpm test:e2e    # E2E（mock 模式，We
 ```
 
 - `E2E_PORT=<端口>`：E2E 的 mock 开发服务器端口（默认 1421），并行跑多份 E2E 时各用一个。
-- `CV_FIXTURE_DENYLIST="词1,词2"`：fixture 脱敏检查额外拦截的私有词（如公司、客户名），不写进仓库。
+- `CODECK_FIXTURE_DENYLIST="词1,词2"`：fixture 脱敏检查额外拦截的私有词（如公司、客户名），不写进仓库。
 - 真实数据探针（只读，索引写入临时目录），用于检查性能与兼容性：
 
 ```sh
-CV_REAL_ROOT=~/.claude cargo test -p cv-core --release --test assemble -- --ignored --nocapture   # 组装全部 Session
-CV_BENCH_ROOT=~/.claude cargo test -p cv-core --release --test search -- --ignored --nocapture    # 建全文索引并测查询耗时
+CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test assemble -- --ignored --nocapture   # 组装全部 Session
+CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture    # 建全文索引并测查询耗时
 ```
 
 内置价格快照（`crates/transcript/src/pricing-snapshot.json`）的刷新方式：
@@ -96,7 +96,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
   | cargo run -p transcript --example update_pricing
 ```
 
-`crates/cv-core/tests/fixtures/` 是从真实 Session 精简、脱敏得到的结构样本（见其中的 README），由 `crates/cv-core/examples/sanitize.rs` 生成。
+`crates/codeck-core/tests/fixtures/` 是从真实 Session 精简、脱敏得到的结构样本（见其中的 README），由 `crates/codeck-core/examples/sanitize.rs` 生成。
 
 ## 构建
 
@@ -104,12 +104,12 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 pnpm tauri build --bundles app --target aarch64-apple-darwin
 ```
 
-产物在 `target/aarch64-apple-darwin/release/bundle/macos/Claude Viewer.app`，使用 ad-hoc 签名、未公证；首次打开如被 Gatekeeper 拦截，右键选择「打开」。
+产物在 `target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app`，使用 ad-hoc 签名、未公证；首次打开如被 Gatekeeper 拦截，右键选择「打开」。
 
 安装到「应用程序」（先退出正在运行的旧版本）：
 
 ```sh
-ditto "target/aarch64-apple-darwin/release/bundle/macos/Claude Viewer.app" "/Applications/Claude Viewer.app"
+ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applications/CoDeck.app"
 ```
 
 在 macOS 27 上，`tauri build` 设置的 `MACOSX_DEPLOYMENT_TARGET=14.0` 会让 cargo strip 后的 proc-macro 动态库无法加载（`mis-aligned LINKEDIT string pool`），因此 `Cargo.toml` 中对 `profile.release.build-override` 关闭了 strip，不影响最终应用。
@@ -118,7 +118,7 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/Claude Viewer.app" "/App
 
 ```
 crates/transcript/ 解析库：容错解析、对话组装、显示模型、进程文件、价格（ccrpc 也用它）
-crates/cv-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断
+crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
 src-tauri/        Tauri 外壳：命令与事件、后台 worker、FSEvents 监听、Live 轮询、设置
 src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock 双实现）
