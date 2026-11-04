@@ -81,6 +81,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - 只有一题时没有 `←`/`→` 和 Submit 标签（只有 ` ☐ Header`），选中即提交。
 - Other：按 `Type something.` 的编号进入输入状态（提示行出现 `ctrl+g to edit in Vim`），写入文字后回车。多选题里是 `[ ] Type something`。
 - 结果记录为 tool_result：`Your questions have been answered: "Q1"="A1", "Q2"="a, b". …`，多选答案以 `, ` 连接。
+- 2.1.318：题目画在 `│ ` 引用条里（每行开头），中文折行处不加空格；按键与上面相同（`mock_model_ask_before_attach` 实测单题与两题）。提问出现时没有 ccrpc 连着，插件的 hook 无输出返回，对话框照常等人作答。
 
 ## hooks 与插件（2.1.317）
 

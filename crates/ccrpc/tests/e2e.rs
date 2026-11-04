@@ -1290,7 +1290,7 @@ fn learns_an_unknown_dialog() {
 
 /// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
 /// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
-/// `MOCK-ASK` with an AskUserQuestion call, `MOCK-BG` with a background `sleep 2`, then `sleep 1`,
+/// `MOCK-ASK` with an AskUserQuestion call (`MOCK-ASKS`: two questions, the second multi-select), `MOCK-BG` with a background `sleep 2`, then `sleep 1`,
 /// then ~8 s of text (the background task ends meanwhile; its notification is answered as slowly);
 /// anything else (tool results too) with text `ok`.
 fn mock_model() -> String {
@@ -1362,9 +1362,15 @@ fn mock_model() -> String {
                         _ => json!({"command": "sleep 1", "description": "Wait"}),
                     }))
                 } else if asked("MOCK-ASK") > called("AskUserQuestion") && has_tool("AskUserQuestion") {
-                    Some(("AskUserQuestion", json!({"questions": [{"question": "Which color?", "header": "Color",
+                    let color = json!({"question": "Which color?", "header": "Color",
                         "options": [{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}],
-                        "multiSelect": false}]})))
+                        "multiSelect": false});
+                    let sizes = json!({"question": "Which sizes?", "header": "Sizes",
+                        "options": [{"label": "S", "description": "small"}, {"label": "M", "description": "medium"},
+                            {"label": "L", "description": "large"}],
+                        "multiSelect": true});
+                    let questions = if text.contains("MOCK-ASKS") { json!([color, sizes]) } else { json!([color]) };
+                    Some(("AskUserQuestion", json!({"questions": questions})))
                 } else {
                     None
                 };
@@ -1585,6 +1591,58 @@ fn mock_model_tools() {
         b["kind"] == "tool_result" && b["content"].as_str().is_some_and(|c| c.contains("Blue"))
     });
     assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
+}
+
+/// An AskUserQuestion asked while no ccrpc holds its hook (the ccrpc that sent the prompt left):
+/// the next ccrpc reads it from the transcript and answers it with keys on the dialog, for one
+/// question and for two (tabbed, the second multi-select, submitted on the Review tab).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_ask_before_attach() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+
+    // Asks, then leaves before answering: the hook is let go and the dialog stays for a person.
+    let ask_and_leave = |mut rpc: Rpc, id: &str, text: &str| -> (Value, Rpc) {
+        rpc.forget();
+        rpc.call(id, json!({"type": "prompt", "text": text}));
+        let held = rpc.event("question", Duration::from_secs(30));
+        let holder_pid = rpc.holder_pid.take();
+        drop(rpc);
+        let mut next = Rpc::attach(&env, &[&holder]);
+        next.holder_pid = holder_pid;
+        next.event("ready", Duration::from_secs(20));
+        let q = next.event("question", Duration::from_secs(10));
+        assert_eq!(q["request_id"], held["request_id"], "{q}");
+        assert_eq!(q["questions"], held["questions"], "{q}");
+        (q, next)
+    };
+
+    let (q, mut rpc) = ask_and_leave(rpc, "q1", "MOCK-ASK which");
+    rpc.call("a1", json!({"type": "answer_question", "request_id": q["request_id"], "answers": [{"options": ["Blue"]}]}));
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    let (q, mut rpc) = ask_and_leave(rpc, "q2", "MOCK-ASKS both");
+    assert_eq!(q["questions"].as_array().map(Vec::len), Some(2), "{q}");
+    rpc.call("a2", json!({"type": "answer_question", "request_id": q["request_id"],
+        "answers": [{"options": ["Red"]}, {"options": ["S", "L"]}]}));
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    let m = rpc.call("m1", json!({"type": "get_messages"}));
+    let results: Vec<&str> = m["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["kind"] == "tool_result")
+        .filter_map(|b| b["content"].as_str())
+        .collect();
+    assert!(results.iter().any(|c| c.contains("Blue")), "单题的结果里没有答案：{results:?}");
+    assert!(
+        results.iter().any(|c| c.contains("Red") && c.contains('S') && c.contains('L') && !c.contains("\"M\"")),
+        "两题的结果里没有答案：{results:?}"
+    );
 }
 
 /// A follow-up queued while a background task ends during the turn's last answer: right after

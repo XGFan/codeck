@@ -1419,6 +1419,9 @@ impl Engine {
                             WaitKind::Question
                         } else if since.elapsed() < CLASSIFY_GRACE || self.answered_until.is_some() {
                             return; // the plugin's PermissionRequest may still be on its way
+                        } else if self.pending_ask().is_some() {
+                            // Asked while no ccrpc held the hook (attached later): answered on the screen.
+                            WaitKind::Question
                         } else {
                             WaitKind::Dialog
                         }
@@ -1568,7 +1571,9 @@ impl Engine {
             }
             return;
         }
-        if self.open_request(id).is_none() {
+        // A question answered on the screen has no hook: it is open while its tool is pending.
+        let screen_ask = self.pending_ask().is_some_and(|p| p.id == *id);
+        if self.open_request(id).is_none() && !screen_ask {
             if let Some(done) = self.announced.take() {
                 self.resolved.insert(done);
             }
@@ -1783,12 +1788,16 @@ impl Engine {
                 }
             }
             WaitKind::Question => {
-                let Some(r) = self.requests.iter().find(|r| r.tool_name == "AskUserQuestion") else {
-                    return;
+                let (id, input, agent_id) = match self.requests.iter().find(|r| r.tool_name == "AskUserQuestion") {
+                    Some(r) => (r.id.clone(), r.input.clone(), r.agent_id.clone()),
+                    None => match self.pending_ask() {
+                        Some(p) => (p.id.clone(), p.input.clone(), None),
+                        None => return,
+                    },
                 };
-                let ev = json!({"type": "question", "request_id": r.id,
-                    "questions": r.input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": r.agent_id});
-                self.announced = Some(r.id.clone());
+                let ev = json!({"type": "question", "request_id": id,
+                    "questions": input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": agent_id});
+                self.announced = Some(id);
                 self.emit(ev);
             }
             WaitKind::Dialog => {
@@ -2526,12 +2535,18 @@ impl Engine {
     /// input, as if picked in the dialog).
     fn answer_question(&mut self, request_id: &str, answers: &[Answer]) -> CmdResult {
         self.check_request(WaitKind::Question, request_id)?;
-        let Some(idx) = self.requests.iter().position(|r| r.id == request_id) else {
-            return err("unknown_request", format!("当前挂起的请求不是 {request_id}"));
+        let held = self.requests.iter().position(|r| r.id == request_id);
+        let Some(idx) = held.filter(|&i| self.requests[i].reply.as_ref().is_some_and(|r| !hook::peer_gone(r))) else {
+            // No hook waits for it (asked before ccrpc attached, or the hook went away): keys.
+            let input = match held {
+                Some(i) => self.requests[i].input.clone(),
+                None => match self.tailer.as_ref().and_then(|t| t.pending_by_id(request_id)) {
+                    Some(p) => p.input.clone(),
+                    None => return err("unknown_request", format!("当前挂起的请求不是 {request_id}")),
+                },
+            };
+            return self.answer_question_on_screen(request_id, &input, answers);
         };
-        if self.requests[idx].reply.as_ref().is_none_or(hook::peer_gone) {
-            return err("unsupported", "这次提问没有在 ccrpc 插件里等待作答，只能在屏幕上回答");
-        }
         let input = self.requests[idx].input.clone();
         let questions = input
             .get("questions")
@@ -2547,6 +2562,122 @@ impl Engine {
             .map_err(|e| ("io", format!("回复 hook 失败：{e}")))?;
         self.answered(request_id);
         self.wait_leave_request(request_id)
+    }
+
+    /// The main line's AskUserQuestion still waiting for its result in the transcript.
+    fn pending_ask(&self) -> Option<&transcript::PendingTool> {
+        self.tailer
+            .as_ref()?
+            .pending()
+            .into_iter()
+            .find(|p| p.name == "AskUserQuestion" && p.agent_id.is_none())
+    }
+
+    /// Answers an AskUserQuestion with keys on its dialog (no hook waits for it): each question's
+    /// option number (a multi-select one toggles to the wanted set, then Submit), or `Type
+    /// something.` then the text; several questions end on the Review tab.
+    fn answer_question_on_screen(&mut self, request_id: &str, input: &Value, answers: &[Answer]) -> CmdResult {
+        let questions = input.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
+        // Validates every answer before the first key.
+        question_answers(&questions, answers).map_err(|m| ("bad_request", m))?;
+        let mut plan = Vec::new();
+        for (i, (q, a)) in questions.iter().zip(answers).enumerate() {
+            let multi = q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false);
+            if multi && matches!(a, Answer::Other(_)) {
+                return err("unsupported", format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1));
+            }
+            let title = q.get("question").and_then(Value::as_str).unwrap_or_default().to_string();
+            plan.push((title, a, multi));
+        }
+        self.writable()?;
+        let mut tabbed = false;
+        for (title, a, multi) in plan {
+            if !self.request_is(&WaitKind::Question, request_id) {
+                return err("unknown_request", format!("作答中请求已经变了，不再是 {request_id}"));
+            }
+            tabbed |= self.answer_one_on_screen(&title, a, multi)?;
+        }
+        if tabbed {
+            let review = self.wait_screen(Duration::from_secs(3), |_, s| match recognize::ask(&s.lines) {
+                Some(recognize::AskScreen::Review { submit }) => Some(submit),
+                _ => None,
+            });
+            let Some((submit, _)) = review else {
+                return Err(self.unrecognized("answer_question", None));
+            };
+            self.keys(submit.to_string().as_bytes())?;
+        }
+        self.answered(request_id);
+        self.wait_leave_request(request_id)
+    }
+
+    /// One question of [`Self::answer_question_on_screen`]; returns whether the dialog is tabbed.
+    fn answer_one_on_screen(&mut self, title: &str, a: &Answer, multi: bool) -> std::result::Result<bool, CmdErr> {
+        let found = self.wait_screen(Duration::from_secs(3), |_, s| match recognize::ask(&s.lines) {
+            Some(recognize::AskScreen::Question(q)) if recognize::same_text(&q.title, title) => Some(q),
+            _ => None,
+        });
+        let Some((q, s)) = found else {
+            return Err(self.unrecognized("answer_question", None));
+        };
+        match a {
+            Answer::Other(text) => {
+                let Some(n) = q.other else {
+                    return Err(self.unrecognized("answer_question", Some(&s)));
+                };
+                self.keys(n.to_string().as_bytes())?;
+                // Type only once the free-text field is active (digits would pick options).
+                let editing = self.wait_screen(Duration::from_secs(2), |_, s| match recognize::ask(&s.lines) {
+                    Some(recognize::AskScreen::Question(q)) if recognize::same_text(&q.title, title) && q.editing => Some(()),
+                    _ => None,
+                });
+                if editing.is_none() {
+                    return Err(self.unrecognized("answer_question", None));
+                }
+                let clean = pty::sanitize(text).replace(['\n', '\t'], " ");
+                self.keys(clean.as_bytes())?;
+                self.keys(b"\r")?;
+            }
+            Answer::Options(chosen) if !multi => {
+                let Some(o) = q.options.iter().find(|o| o.label == chosen[0]) else {
+                    return Err(self.unrecognized("answer_question", Some(&s)));
+                };
+                self.keys(o.number.to_string().as_bytes())?;
+            }
+            Answer::Options(chosen) => {
+                if q.options.len() != q.options.iter().filter(|o| o.checked.is_some()).count() {
+                    return Err(self.unrecognized("answer_question", Some(&s)));
+                }
+                for o in &q.options {
+                    if o.checked != Some(chosen.contains(&o.label)) {
+                        self.keys(o.number.to_string().as_bytes())?;
+                    }
+                }
+                if q.tabbed {
+                    self.keys(b"\x1b[C")?;
+                } else {
+                    // A single multi-select question: move the cursor onto the Submit row, Enter.
+                    let (Some(sub), Some(cur)) = (q.submit_row, q.cursor_row) else {
+                        return Err(self.unrecognized("answer_question", Some(&s)));
+                    };
+                    let rows_between =
+                        q.options.iter().filter(|o| o.row > cur && o.row < sub).count() + usize::from(q.other.is_some());
+                    for _ in 0..rows_between {
+                        self.keys(b"\x1b[B")?;
+                    }
+                    let on_submit = self
+                        .wait_screen(Duration::from_secs(2), |_, s| {
+                            s.lines.get(sub).filter(|l| l.trim_start().starts_with("❯ Submit")).map(|_| ())
+                        })
+                        .is_some();
+                    if !on_submit {
+                        return Err(self.unrecognized("answer_question", None));
+                    }
+                    self.keys(b"\r")?;
+                }
+            }
+        }
+        Ok(q.tabbed)
     }
 
     fn slash(&mut self, command: &str) -> CmdResult {
@@ -3033,8 +3164,11 @@ impl Engine {
         self.last_locate = None;
         self.tick();
         self.quiet = false;
-        // A turn already running is adopted: its Stop (whatever its prompt id) ends it.
-        self.turn_active = matches!(self.state, State::Busy | State::Waiting { .. });
+        // A turn already running is adopted: its Stop (whatever its prompt id) ends it. The
+        // Process File says so even while its waiting is not classified yet.
+        let raw = self.pf.as_ref().and_then(|p| p.status.as_deref());
+        self.turn_active =
+            matches!(self.state, State::Busy | State::Waiting { .. }) || matches!(raw, Some("busy" | "waiting"));
         if self.turn_active {
             self.turn = TurnStats::start(None, "prompt");
         }

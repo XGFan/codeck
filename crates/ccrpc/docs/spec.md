@@ -55,7 +55,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 |---|---|
 | `starting` | 还没有进程文件：claude 未启动，或停在 onboarding / 目录信任等启动界面（这些界面期间没有进程文件）。目录信任框作为 `choice` 发出（`layout: "trust_folder"`，选项 `Yes, I trust this folder` / `No, exit`），其余启动界面发 `dialog` |
 | `idle` / `busy` | 进程文件 `status` |
-| `waiting` | `status = waiting`。子类：`waitingFor = "permission prompt"` → `permission`；`"input needed"` 且插件报来了 AskUserQuestion 的 PermissionRequest → `question`（500ms 内没有则判为 `dialog`）；其余 → `dialog` |
+| `waiting` | `status = waiting`。子类：`waitingFor = "permission prompt"` → `permission`；`"input needed"` 且插件报来了 AskUserQuestion 的 PermissionRequest → `question`；500ms 内没有时，transcript 主线有未出结果的 AskUserQuestion（提问出现时没有 ccrpc 连着）→ `question`（题目取自 transcript，按屏幕作答），否则 → `dialog`；其余 → `dialog` |
 | `exited` | claude 进程消失或 Holder 断开 |
 
 - 由事件驱动：stdin 的新行、Holder 的帧（屏幕输出、尺寸所有者）、进程文件与 transcript 目录的文件变化都会立即触发一次检查；没有事件时每 250ms 兜底检查一次，命令等待期间每 50ms 一次。
@@ -82,7 +82,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `follow_up {text, images?}` | 除 exited | 进 ccrpc 队列；在两条命令之间、`idle` 已满 1 秒且上一轮已结束时按 `prompt`（刚 Stop 时 Claude Code 会先为它自己队列里的东西——如后台任务的通知——起一轮）（连同 `images`，图片路径在入队时就检查）依次发出（不会在别的命令等待期间发出）；失败发 `follow_up_failed` 事件 | `queued`（队列长度） |
 | `abort` | busy / waiting | 发 `Esc`；等状态离开 busy / waiting（≤10s） | `state` |
 | `answer_permission {request_id, decision, message?}` | waiting.permission | 请求在插件里等着（主线）：`allow` 与 `deny` 经 hook 回决定——`deny` 不带 `message` 时中断本轮（同审批框的 No），带 `message` 时它作为反馈交给模型、本轮继续；`allow_always` 按审批框自己的“总是允许”选项（它加的规则如 `python3 *` 比 hook 能给的精确命令宽，见 probes.md），按键后放掉 hook，没有这一项则 `not_offered`。请求不在插件里等（后台 Subagent、hook 已超时）：识别审批框按对应选项的数字键，`message` 在拒绝、回到 idle 后作为 `prompt` 发出 | `state`；按键拒绝且有 `message` 时另有 `message_uuid` |
-| `answer_question {request_id, answers}` | waiting.question | 只经插件：`answers` 与题目一一对应，`{"options":[label…]}`（多选以 `, ` 连接）或 `{"other":"文本"}`（单选、多选都可），作为 AskUserQuestion 的 `answers` 回给 hook；提问不在插件里等时返回 `unsupported` | `state` |
+| `answer_question {request_id, answers}` | waiting.question | `answers` 与题目一一对应，`{"options":[label…]}`（多选以 `, ` 连接）或 `{"other":"文本"}`。hook 在插件里等着时作为 AskUserQuestion 的 `answers` 回给 hook（单选、多选都可 other）；没有 hook 在等时（提问出现时没有 ccrpc 连着、或 hook 已放行）按屏幕作答：按选项编号（多选按编号切换到要的勾选再到 Submit，多题用 `right` 换题、最后在 Review 按 Submit answers），other 按 `Type something.` 的编号、进入输入状态后写入再回车，多选题不支持 other（`unsupported`） | `state` |
 | `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行）；等命令离开输入框或被选择框顶替（≤2s），不等 transcript | `{}` |
 | `set_model {model}` / `compact {instructions?}` / `clear` | idle | 即 `slash` 的 `model X` / `compact …` / `clear` | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |

@@ -283,7 +283,14 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
     let title_end = (title_row..footer)
         .find(|&i| lines[i].trim().is_empty())
         .unwrap_or(footer);
-    let title = collapse_ws(&lines[title_row..title_end].join(" "));
+    // 2.1.318 draws the question in a `│ ` quote bar.
+    let title = collapse_ws(
+        &lines[title_row..title_end]
+            .iter()
+            .map(|l| l.trim_start().strip_prefix('│').unwrap_or(l))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
     let all: Vec<MenuOption> = menu(&lines[title_end..footer])
         .into_iter()
         .map(|mut o| {
@@ -327,6 +334,12 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
         cursor_row,
         editing,
     }))
+}
+
+/// The same text once wrapping is undone: a line break in CJK text adds no space, in other text it
+/// replaces one, so every whitespace is dropped before comparing.
+pub fn same_text(a: &str, b: &str) -> bool {
+    a.chars().filter(|c| !c.is_whitespace()).eq(b.chars().filter(|c| !c.is_whitespace()))
 }
 
 /// Whitespace runs folded to one space, trimmed (screen text wraps and pads).
@@ -690,6 +703,20 @@ mod tests {
             Some("Reply with exactly the word PONG and nothing else.")
         );
         assert_eq!(input_box(&screen("ask_single.txt")), None);
+    }
+
+    #[test]
+    fn ask_in_a_quote_bar() {
+        // Claude Code 2.1.318 draws the question in a `│ ` bar; CJK text wraps without a space.
+        let Some(AskScreen::Question(q)) = ask(&screen("ask_single_quoted.txt")) else {
+            panic!()
+        };
+        let asked = "服务部署在 notes.example.com，用它自带的账号登录，再接 SSO。首次初始化向导不需要鉴权，所以先只开放内网。访问范围怎么定？";
+        assert!(same_text(&q.title, asked), "{}", q.title);
+        assert!(!q.tabbed);
+        let labels: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, vec!["内外网都可访问 (Recommended)", "仅内网"]);
+        assert_eq!(q.other, Some(3));
     }
 
     #[test]
