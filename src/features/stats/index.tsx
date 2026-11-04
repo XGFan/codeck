@@ -1,11 +1,15 @@
-import { format } from "date-fns";
-import { zhCN } from "date-fns/locale";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { Fragment, type ReactNode, useMemo, useState } from "react";
-import type { Drill, Stats, TimeRange } from "@/ipc/bindings";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import type { Drill, Stats } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
-import { cycleEnd, cycleStart } from "@/lib/cycle";
 import { formatCost, formatTokens } from "@/lib/format";
 import { useStats } from "@/queries";
 import { useUi } from "@/state/ui";
@@ -22,15 +26,7 @@ import {
   BUCKET_LABEL,
   themes,
 } from "./charts";
-
-const RANGES = [
-  { key: "cycle", label: "本周期", days: 7 },
-  { key: "7", label: "7 天", days: 7 },
-  { key: "30", label: "30 天", days: 30 },
-  { key: "90", label: "90 天", days: 90 },
-  { key: "all", label: "全部", days: null },
-] as const;
-type RangeKey = (typeof RANGES)[number]["key"];
+import { DEFAULT_RANGE, pageable, RANGE_MENU, resolveRange, sameRange, type RangeSel } from "./range";
 
 const DAY = 86_400_000;
 const num = (n: number) => n.toLocaleString("en-US");
@@ -206,11 +202,56 @@ function Bar({ pct, color, className }: { pct: number; color: string; className?
   );
 }
 
-const fmtReset = (d: Date) => format(d, "M月d日 EEE HH:mm", { locale: zhCN });
+const ARROW =
+  "flex size-7 items-center justify-center rounded-md border border-border bg-ground text-text outline-none hover:bg-selection focus-visible:outline-2 focus-visible:outline-accent disabled:text-secondary/50 disabled:hover:bg-ground";
 
-function remaining(ms: number): string {
-  const h = Math.max(0, Math.floor(ms / 3_600_000));
-  return h >= 24 ? `${Math.floor(h / 24)} 天 ${h % 24} 小时` : `${h} 小时 ${Math.floor((ms % 3_600_000) / 60_000)} 分`;
+/**
+ * The time range: a dropdown of cycles, months, the last N days and everything, then ‹ › stepping a cycle or
+ * month back and forth (to the current one at most; the rolling ranges do not step).
+ */
+function RangePicker({ sel, onChange }: { sel: RangeSel; onChange: (s: RangeSel) => void }) {
+  const weeklyReset = useUi((s) => s.weeklyReset);
+  const r = resolveRange(sel, new Date(), weeklyReset);
+  const steps = pageable(sel.kind);
+  const unit = sel.kind === "month" ? "个月" : "周期";
+  return (
+    <div role="group" aria-label="时间范围" className="flex items-center gap-1.5">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          data-testid="range-trigger"
+          className="flex h-7 items-center gap-1 rounded-md border border-border bg-ground px-2.5 text-[13px] font-semibold outline-none hover:bg-selection focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          {r.label}
+          <ChevronDown size={13} strokeWidth={1.8} aria-hidden />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-48">
+          {RANGE_MENU.map((g, gi) => (
+            <Fragment key={g.group ?? gi}>
+              {gi > 0 && <DropdownMenuSeparator />}
+              {g.group && <div className="px-2 pt-1 pb-0.5 text-[11px] text-secondary">{g.group}</div>}
+              {g.items.map((it) => (
+                <DropdownMenuCheckboxItem key={it.label} checked={sameRange(it.sel, sel)} onCheckedChange={() => onChange(it.sel)}>
+                  {it.label}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </Fragment>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <button type="button" aria-label={`上一${unit}`} disabled={!steps} onClick={() => onChange({ ...sel, offset: sel.offset - 1 })} className={ARROW}>
+        <ChevronLeft size={14} strokeWidth={1.8} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label={`下一${unit}`}
+        disabled={!steps || sel.offset >= 0}
+        onClick={() => onChange({ ...sel, offset: sel.offset + 1 })}
+        className={ARROW}
+      >
+        <ChevronRight size={14} strokeWidth={1.8} aria-hidden />
+      </button>
+    </div>
+  );
 }
 
 /** Stats as a large dialog over the window; a click outside or Esc closes it. */
@@ -236,20 +277,12 @@ export function StatsDialog() {
 function StatsPanel() {
   const dark = useDark();
   const theme = themes[dark ? "dark" : "light"];
-  const [rangeKey, setRangeKey] = useState<RangeKey>("30");
+  const [range, setRange] = useState<RangeSel>(DEFAULT_RANGE);
   const [metric, setMetric] = useState<Metric>("all");
 
   const weeklyReset = useUi((s) => s.weeklyReset);
-  const rangeDays = RANGES.find((r) => r.key === rangeKey)!.days;
-  const cycle = useMemo(() => {
-    if (rangeKey !== "cycle") return null;
-    const start = cycleStart(new Date(), weeklyReset);
-    return { start, end: cycleEnd(start) };
-  }, [rangeKey, weeklyReset]);
-  const timeRange = useMemo<TimeRange | null>(
-    () => (cycle ? { fromMs: cycle.start.getTime(), toMs: null } : rangeDays ? { fromMs: Date.now() - rangeDays * DAY, toMs: null } : null),
-    [cycle, rangeDays],
-  );
+  const resolved = useMemo(() => resolveRange(range, new Date(), weeklyReset), [range, weeklyReset]);
+  const { timeRange, days: rangeDays } = resolved;
   const { data: stats, isPending, isError } = useStats({ timeRange });
 
   const drill = (d: Drill) => {
@@ -278,16 +311,16 @@ function StatsPanel() {
     <div data-testid="stats" className="@container flex h-full min-w-0 flex-col bg-list">
       {/* The header stays put; only the content below scrolls. */}
       <header className="flex shrink-0 flex-col border-b border-border px-6">
-        {/* The toolbar row keeps its height; the cycle bar only adds a row below it. */}
+        {/* The toolbar row keeps its height whatever the range: picker after the title, dates beside it. */}
         <div className="flex min-h-[52px] flex-wrap items-center gap-3">
           <DialogPrimitive.Title asChild>
             <h1 className="m-0 shrink-0 text-[16px] font-semibold">统计</h1>
           </DialogPrimitive.Title>
-          {/* Same row whatever the range, so switching to 本周期 moves nothing; the reset is set in Settings. */}
+          <RangePicker sel={range} onChange={setRange} />
+          {/* The cycle's reset is set in Settings › 通用. */}
           <span data-testid="cycle-span" className="min-w-0 flex-1 truncate text-[12px] text-secondary">
-            {cycle && `本周期 ${fmtReset(cycle.start)} 至 ${fmtReset(cycle.end)}，还剩 ${remaining(cycle.end.getTime() - Date.now())}`}
+            {resolved.detail}
           </span>
-          <Segmented label="时间范围" value={rangeKey} options={RANGES.map((r) => ({ key: r.key, label: r.label }))} onChange={setRangeKey} />
           <DialogPrimitive.Close
             aria-label="关闭统计"
             className="-mr-2 flex size-7 items-center justify-center rounded-md text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent"
