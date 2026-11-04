@@ -390,6 +390,9 @@
           "$ref": "#/$defs/commands/abort"
         },
         {
+          "$ref": "#/$defs/commands/send_now"
+        },
+        {
           "$ref": "#/$defs/commands/answer_permission"
         },
         {
@@ -539,6 +542,23 @@
         "properties": {
           "type": {
             "const": "abort"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "send_now": {
+        "title": "send_now",
+        "description": "同 TUI 里排队时按 ctrl+enter：中断本轮，把 Claude Code 队列里的内容立即作为下一轮发出；busy 且 queue 不空时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "send_now"
           },
           "id": {
             "$ref": "#/$defs/id"
@@ -1091,6 +1111,12 @@
           "state"
         ]
       },
+      "send_now": {
+        "title": "send_now",
+        "description": "队列已被取走。",
+        "type": "object",
+        "properties": {}
+      },
       "answer_permission": {
         "title": "answer_permission",
         "description": "作答后的状态。",
@@ -1285,6 +1311,13 @@
           "co_display": {
             "type": "boolean",
             "description": "是否共显（--co-display）。"
+          },
+          "queue": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
           }
         },
         "required": [
@@ -1610,6 +1643,16 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/abort"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "send_now"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/send_now"
             }
           }
         },
@@ -1948,6 +1991,13 @@
               "null"
             ],
             "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+          },
+          "queue": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
           }
         },
         "required": [
@@ -2320,6 +2370,27 @@
           "type",
           "text",
           "error"
+        ]
+      },
+      "queue": {
+        "title": "queue",
+        "description": "Claude Code 的输入队列变了（入队、在本轮里送达、按 send_now 或本轮结束后发出、在 TUI 里按 ↑ 取回）。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "queue"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
+          }
+        },
+        "required": [
+          "type",
+          "items"
         ]
       },
       "branch": {
@@ -2715,6 +2786,9 @@
         },
         {
           "$ref": "#/$defs/events/follow_up_failed"
+        },
+        {
+          "$ref": "#/$defs/events/queue"
         },
         {
           "$ref": "#/$defs/events/branch"

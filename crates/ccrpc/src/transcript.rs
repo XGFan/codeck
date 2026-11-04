@@ -134,6 +134,9 @@ pub enum TxEvent {
     Enqueued {
         content: String,
     },
+    /// Claude Code's input queue changed (main line): what waits in it now, oldest first, task
+    /// notifications included.
+    Queue(Vec<String>),
     /// A user prompt entry in the main file (string content), or a slash command's record there as
     /// typed (`/name args`; no block, it only confirms the `prompt` that sent it).
     UserPrompt {
@@ -235,6 +238,8 @@ pub struct Tailer {
     /// Byte offset of every main-file entry, kept when `main_only` or `keep_offsets`.
     offsets: HashMap<String, u64>,
     keep_offsets: bool,
+    /// Claude Code's input queue as the main file's `queue-operation` entries leave it.
+    queue: Vec<String>,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -265,7 +270,13 @@ impl Tailer {
             keep_offsets: false,
             usage_seen: HashSet::new(),
             tasks: Vec::new(),
+            queue: Vec::new(),
         }
+    }
+
+    /// Claude Code's input queue now (main line), oldest first.
+    pub fn queue(&self) -> &[String] {
+        &self.queue
     }
 
     /// Background tasks seen so far.
@@ -726,9 +737,30 @@ impl Tailer {
                 }
             }
             "queue-operation" if agent.is_none() => {
-                if e.operation.as_deref() == Some("enqueue") {
-                    let content = prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
-                    out.push(TxEvent::Enqueued { content });
+                let content = prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
+                let before = self.queue.len();
+                match e.operation.as_deref() {
+                    Some("enqueue") => {
+                        self.queue.push(content.clone());
+                        out.push(TxEvent::Enqueued { content });
+                    }
+                    // Absorbed into the running turn (or dropped): by its text.
+                    Some("remove") => {
+                        if let Some(i) = self.queue.iter().position(|q| q.trim() == content.trim()) {
+                            self.queue.remove(i);
+                        }
+                    }
+                    // Taken to run as a turn: the oldest.
+                    Some("dequeue") if !self.queue.is_empty() => {
+                        self.queue.remove(0);
+                    }
+                    // `↑` in the TUI takes all of it back into the input box.
+                    Some("popAll") => self.queue.clear(),
+                    _ => {}
+                }
+                let changed = self.queue.len() != before || e.operation.as_deref() == Some("enqueue");
+                if changed {
+                    out.push(TxEvent::Queue(self.queue.clone()));
                 }
             }
             "attachment" if agent.is_none() => {
@@ -1368,6 +1400,32 @@ mod tests {
             .collect();
         assert_eq!(prompts, vec![("c1", "/rename probe-a"), ("c3", "/review")]);
         assert!(blocks(&evs).is_empty());
+    }
+
+    #[test]
+    fn queue_follows_the_queue_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let op = |op: &str, content: Option<&str>| {
+            let mut v = json!({"type": "queue-operation", "operation": op});
+            if let Some(c) = content {
+                v["content"] = json!(c);
+            }
+            v
+        };
+        write_lines(&main, &[op("enqueue", Some("a")), op("enqueue", Some("b")), op("enqueue", Some("c"))]);
+        let mut t = Tailer::new(&main);
+        let queues = |evs: Vec<TxEvent>| -> Vec<Vec<String>> {
+            evs.into_iter().filter_map(|e| if let TxEvent::Queue(q) = e { Some(q) } else { None }).collect()
+        };
+        assert_eq!(queues(t.poll()).last().unwrap(), &vec!["a", "b", "c"]);
+        let more = [op("remove", Some("b")), op("dequeue", None), op("popAll", None)];
+        let text: String = more.iter().map(|v| format!("{v}\n")).collect();
+        let mut f = std::fs::OpenOptions::new().append(true).open(&main).unwrap();
+        std::io::Write::write_all(&mut f, text.as_bytes()).unwrap();
+        let q = queues(t.poll());
+        assert_eq!(q, vec![vec!["a", "c"], vec!["c"], vec![]]);
+        assert!(t.queue().is_empty());
     }
 
     #[test]

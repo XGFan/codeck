@@ -81,6 +81,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `steer {text}` | busy | 先清空输入框再同样写入；忙时输入会排队，在当前工具调用结束后送达（transcript `queue-operation`/`enqueue`，随后作为 `queued_command` 附件交给模型）。等 enqueue（≤10s） | `delivered_as`：`queued`；若这时本轮恰好结束、被当作新提示词，则为 `prompt` |
 | `follow_up {text, images?}` | 除 exited | 进 ccrpc 队列；在两条命令之间、`idle` 已满 1 秒且上一轮已结束时按 `prompt`（刚 Stop 时 Claude Code 会先为它自己队列里的东西——如后台任务的通知——起一轮）（连同 `images`，图片路径在入队时就检查）依次发出（不会在别的命令等待期间发出）；失败发 `follow_up_failed` 事件 | `queued`（队列长度） |
 | `abort` | busy / waiting | 发 `Esc`；等状态离开 busy / waiting（≤10s） | `state` |
+| `send_now` | busy 且 `queue` 不空 | 同 TUI 里排队时按 `ctrl+enter`（`ESC[13;5u`）：本轮中断（发 `aborted` 的 `turn_end`），队列里的内容作为新的一轮立即发出（没有自己的 UserPromptSubmit，由它的 Stop 结束）；等队列被取走（≤5s） | `{}` |
 | `answer_permission {request_id, decision, message?}` | waiting.permission | 请求在插件里等着（主线）：`allow` 与 `deny` 经 hook 回决定——`deny` 不带 `message` 时中断本轮（同审批框的 No），带 `message` 时它作为反馈交给模型、本轮继续；`allow_always` 按审批框自己的“总是允许”选项（它加的规则如 `python3 *` 比 hook 能给的精确命令宽，见 probes.md），按键后放掉 hook，没有这一项则 `not_offered`。请求不在插件里等（后台 Subagent、hook 已超时）：识别审批框按对应选项的数字键，`message` 在拒绝、回到 idle 后作为 `prompt` 发出 | `state`；按键拒绝且有 `message` 时另有 `message_uuid` |
 | `answer_question {request_id, answers}` | waiting.question | `answers` 与题目一一对应，`{"options":[label…]}`（多选以 `, ` 连接）或 `{"other":"文本"}`。hook 在插件里等着时作为 AskUserQuestion 的 `answers` 回给 hook（单选、多选都可 other）；没有 hook 在等时（提问出现时没有 ccrpc 连着、或 hook 已放行）按屏幕作答：按选项编号（多选按编号切换到要的勾选再到 Submit，多题用 `right` 换题、最后在 Review 按 Submit answers），other 按 `Type something.` 的编号、进入输入状态后写入再回车，多选题不支持 other（`unsupported`） | `state` |
 | `slash {command}` | idle | 清空输入框，输入 `/<command>` 后回车（单行）；等命令离开输入框或被选择框顶替（≤2s），不等 transcript | `{}` |
@@ -114,6 +115,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键 |
 | `follow_up_failed` | `text`、`error` |
+| `queue` | `items`：Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的，先入在前；不含任务通知与 Teammate 消息），按 transcript 的 `queue-operation` 维护（`enqueue` 入队，`remove` 按正文移除，`dequeue` 取走最早的，`popAll` 清空）；变化时发。`ready` 与 `get_state` 也带 `queue` |
 | `branch` | Main Line 换到了另一个 Branch（rewind、编辑重发）。`at_uuid` 是此前发出的 block 里最后一个仍在 Main Line 上的 `uuid`，在它之后发出的 block 都已作废；为 null 时此前发出的全部作废。在新 Branch 的第一个 block 之前发。只由人发的提示词触发：它沿父条目往上（跳过附件等不产生 block 的条目）碰到的不是最后发出的那个条目时，按 transcript 库的规则以它为 Main Line 重算；后台结果通知、teammate 消息、compact 边界、父条目还没写出的条目不算。原样重发同一条提示词且没有回复（中止说明不算回复）的不发 |
 | `workflow` | Workflow Run 的整份状态：`run_id`、`tool_use_id`、`name`、`status`、`phases`（`index`、`title`、`detail`）、`agents`（`agent_id`、`label`、`phase_index`、`state`）。`workflows/<runId>.json` 或 `journal.jsonl` 内容有变化时发，内容不变不发 |
 | `taken_over` | `client`：接手者的客户端标识（旧 Holder 为 null） |

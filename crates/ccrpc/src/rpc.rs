@@ -46,6 +46,8 @@ pub enum Command {
         images: Vec<String>,
     },
     Abort,
+    /// `ctrl+enter`: interrupt the turn and send what waits in Claude Code's queue now.
+    SendNow,
     AnswerPermission {
         request_id: String,
         decision: Decision,
@@ -335,6 +337,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             images: opt_strings(obj, kind, "images")?,
         }),
         "abort" => Ok(Command::Abort),
+        "send_now" => Ok(Command::SendNow),
         "answer_permission" => {
             let request_id = req_text(obj, kind, "request_id")?;
             let decision = parse_decision(obj)?;
@@ -474,6 +477,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::Steer { .. } => "steer",
         Command::FollowUp { .. } => "follow_up",
         Command::Abort => "abort",
+        Command::SendNow => "send_now",
         Command::AnswerPermission { .. } => "answer_permission",
         Command::AnswerQuestion { .. } => "answer_question",
         Command::Slash { .. } => "slash",
@@ -867,6 +871,7 @@ mod tests {
             "steer",
             "follow_up",
             "abort",
+            "send_now",
             "answer_permission",
             "answer_question",
             "slash",

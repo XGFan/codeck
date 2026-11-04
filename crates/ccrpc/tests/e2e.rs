@@ -1465,6 +1465,35 @@ fn mock_model_turns() {
     assert_eq!(t3["aborted"], false);
 }
 
+/// Claude Code's own queue, as in the TUI: a steer that cannot be absorbed waits in it (a `queue`
+/// event lists it); `send_now` (`ctrl+enter`) interrupts the turn and runs it at once.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_send_now() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    let d = rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    let first = d["prompt_id"].clone();
+    std::thread::sleep(Duration::from_secs(2));
+    rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
+    let q = rpc.until("queue", Duration::from_secs(10), |v| v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty()));
+    assert_eq!(q["items"], json!(["MOCK-STEERED now"]), "{q}");
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["queue"], json!(["MOCK-STEERED now"]), "{st}");
+
+    rpc.call("n1", json!({"type": "send_now"}));
+    rpc.until("queue", Duration::from_secs(5), |v| v["type"] == "queue" && v["items"] == json!([]));
+    let t1 = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t1["prompt_id"], first, "{t1}");
+    assert_eq!(t1["aborted"], true, "{t1}");
+    let t2 = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
+    assert_eq!(t2["aborted"], false, "{t2}");
+}
+
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on
 /// the scripted model (no credits).
 #[test]

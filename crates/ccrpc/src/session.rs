@@ -461,6 +461,9 @@ pub struct Engine {
     startup_last: Option<Vec<String>>,
     /// Queued follow-ups: text and image paths.
     follow_ups: VecDeque<(String, Vec<String>)>,
+    /// What the person typed (or a steer sent) waiting in Claude Code's own queue, oldest first:
+    /// the transcript's queue minus task notifications and Teammate messages.
+    queue: Vec<String>,
     /// The next turn's Stop, come while this one's still waits for the transcript (claude fires
     /// both Stops before writing either turn): handled once this turn has ended.
     deferred_stop: Option<HookMsg>,
@@ -569,6 +572,7 @@ impl Engine {
             startup_checked: None,
             startup_last: None,
             follow_ups: VecDeque::new(),
+            queue: Vec::new(),
             deferred_stop: None,
             marks: Marks::default(),
             resolved: HashSet::new(),
@@ -703,6 +707,7 @@ impl Engine {
         }
         // `get_messages` reads the history on its own thread: start now.
         self.history.warm(path);
+        self.set_queue(t.queue());
         self.tailer = Some(t);
     }
 
@@ -774,6 +779,7 @@ impl Engine {
             }
             TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
             TxEvent::Enqueued { content } => self.marks.enqueue(content),
+            TxEvent::Queue(items) => self.set_queue(&items),
             TxEvent::Branch { at_uuid } => {
                 self.emit(json!({"type": "branch", "at_uuid": at_uuid}));
             }
@@ -2564,6 +2570,49 @@ impl Engine {
         self.wait_leave_request(request_id)
     }
 
+    /// Claude Code's queue changed: keep the person's part, and tell the caller.
+    fn set_queue(&mut self, items: &[String]) {
+        let mine: Vec<String> = items
+            .iter()
+            .filter(|t| {
+                let t = t.trim_start();
+                !t.starts_with("<task-notification>") && !t.contains("<teammate-message")
+            })
+            .cloned()
+            .collect();
+        if mine != self.queue {
+            self.queue = mine;
+            self.emit(json!({"type": "queue", "items": self.queue}));
+        }
+    }
+
+    /// Sends what waits in Claude Code's queue now, as `ctrl+enter` in the TUI: the running turn is
+    /// interrupted and the queue runs as the next prompt.
+    fn send_now(&mut self) -> CmdResult {
+        self.require(self.state == State::Busy, "not_busy")?;
+        if self.queue.is_empty() {
+            return err("bad_request", "队列里没有要发的内容");
+        }
+        self.writable()?;
+        // The running turn ends here (an interrupted turn gets no Stop); the queue runs as a turn
+        // of its own with no UserPromptSubmit, ended by its Stop (as a steer delivered after Stop).
+        if self.turn_active {
+            self.turn.aborted = true;
+            self.emit_turn_end(None, Value::Null);
+        }
+        self.pending_steers.clear();
+        self.turn = TurnStats::start(None, "prompt");
+        self.turn.provisional = true;
+        self.turn_active = true;
+        self.last_text = None;
+        self.keys(b"\x1b[13;5u")?;
+        if self.wait_until(Duration::from_secs(5), |e| e.queue.is_empty()) {
+            Ok(json!({}))
+        } else {
+            err("timeout", "5 秒内队列里的内容没有发出")
+        }
+    }
+
     /// The main line's AskUserQuestion still waiting for its result in the transcript.
     fn pending_ask(&self) -> Option<&transcript::PendingTool> {
         self.tailer
@@ -2930,6 +2979,7 @@ impl Engine {
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["follow_up_queue"] = json!(self.follow_ups.len());
         v["follow_ups"] = json!(self.follow_up_texts());
+        v["queue"] = json!(self.queue);
         v["taken_over"] = json!(self.taken_over);
         let info = self.session_info();
         for k in ["mode", "model", "context_tokens"] {
@@ -3035,6 +3085,7 @@ impl Engine {
                 Ok(json!({"queued": self.follow_ups.len()}))
             }
             Command::Abort => self.abort(),
+            Command::SendNow => self.send_now(),
             Command::AnswerPermission {
                 request_id,
                 decision,
@@ -3107,6 +3158,7 @@ impl Engine {
         v["size"] = json!([self.size.0, self.size.1]);
         v["taken_over"] = json!(self.taken_over);
         v["co_display"] = json!(self.co_display);
+        v["queue"] = json!(self.queue);
         let info = self.session_info();
         for k in ["mode", "model", "context_tokens"] {
             v[k] = info[k].clone();
