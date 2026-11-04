@@ -1,6 +1,7 @@
 //! Claude Viewer desktop app: tauri shell around `cv_core::Engine`.
 
 pub mod commands;
+pub mod drive;
 pub mod events;
 pub mod prices;
 pub mod settings;
@@ -11,7 +12,10 @@ pub mod worker;
 use tauri::Manager;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
 
-use crate::events::{IndexStatusEvent, LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent};
+use crate::events::{
+    DriveExitEvent, DriveLineEvent, IndexStatusEvent, LiveChangedEvent, PricesChangedEvent,
+    SessionsChangedEvent,
+};
 use crate::state::{AppState, open_engine};
 
 /// The single source of commands and events, shared by the app and the bindings export.
@@ -34,12 +38,23 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::reveal_session_file,
             commands::get_stats,
             commands::get_diagnostics,
+            drive::drive_info,
+            drive::drive_list,
+            drive::drive_connect,
+            drive::drive_new,
+            drive::drive_send,
+            drive::drive_disconnect,
+            drive::drive_gui_log,
+            drive::drive_log_dir,
+            drive::drive_save_image,
         ])
         .events(collect_events![
             IndexStatusEvent,
             SessionsChangedEvent,
             LiveChangedEvent,
-            PricesChangedEvent
+            PricesChangedEvent,
+            DriveLineEvent,
+            DriveExitEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
 }
@@ -52,6 +67,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(drive::DriveState::default())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
@@ -63,8 +80,14 @@ pub fn run() {
             jobs.send(worker::Job::RefreshPrices);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Claude Viewer");
+        .build(tauri::generate_context!())
+        .expect("error while running Claude Viewer")
+        .run(|handle, ev| {
+            if let tauri::RunEvent::Exit = ev {
+                // Closes every ccrpc; the Sessions themselves keep running.
+                handle.state::<drive::DriveState>().disconnect_all();
+            }
+        });
 }
 
 /// Writes `src/ipc/bindings.ts`. Run with `pnpm bindings`.

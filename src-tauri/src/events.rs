@@ -20,3 +20,18 @@ pub struct PricesChangedEvent;
 /// Only when the Live Session set or a status changes.
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
 pub struct LiveChangedEvent(pub LiveChanged);
+
+/// One line of a connection's ccrpc stdout, as it was written (not parsed).
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct DriveLineEvent {
+    pub conn: String,
+    pub line: String,
+}
+
+/// A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters).
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct DriveExitEvent {
+    pub conn: String,
+    pub code: Option<i32>,
+    pub stderr: String,
+}

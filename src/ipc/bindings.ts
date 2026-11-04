@@ -26,10 +26,23 @@ export const commands = {
 	revealSessionFile: (sessionId: string, agentId: string | null) => __TAURI_INVOKE<null>("reveal_session_file", { sessionId, agentId }),
 	getStats: (req: StatsRequest) => __TAURI_INVOKE<Stats>("get_stats", { req }),
 	getDiagnostics: () => __TAURI_INVOKE<Diagnostics>("get_diagnostics"),
+	driveInfo: () => __TAURI_INVOKE<DriveInfo>("drive_info"),
+	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
+	driveList: () => __TAURI_INVOKE<string>("drive_list"),
+	driveConnect: (holderId: string) => __TAURI_INVOKE<string>("drive_connect", { holderId }),
+	driveNew: (cwd: string) => __TAURI_INVOKE<string>("drive_new", { cwd }),
+	driveSend: (conn: string, line: string) => __TAURI_INVOKE<null>("drive_send", { conn, line }),
+	driveDisconnect: (conn: string) => __TAURI_INVOKE<null>("drive_disconnect", { conn }),
+	driveGuiLog: (conn: string | null, text: string) => __TAURI_INVOKE<null>("drive_gui_log", { conn, text }),
+	/**  The connection's log directory, `None` once its ccrpc has exited. */
+	driveLogDir: (conn: string) => __TAURI_INVOKE<string | null>("drive_log_dir", { conn }),
+	driveSaveImage: (base64: string, ext: string) => __TAURI_INVOKE<string>("drive_save_image", { base64, ext }),
 };
 
 /** Events */
 export const events = {
+	driveExitEvent: makeEvent<DriveExitEvent>("drive-exit-event"),
+	driveLineEvent: makeEvent<DriveLineEvent>("drive-line-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
@@ -137,12 +150,37 @@ export type Diagnostics = {
 	orphanSubagents: number,
 };
 
+export type DoctorLine = {
+	level: string,
+	text: string,
+};
+
 /**  Stats drill-down filter; days are local calendar days. */
 export type Drill = 
 /**  `day` is `YYYY-MM-DD`. */
 { kind: "day"; day: string } | { kind: "model"; model: string } | 
 /**  Main-file messages in `[from_ms, to_ms)` (an activity bar). */
 { kind: "span"; fromMs: number; toMs: number };
+
+/**  A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters). */
+export type DriveExitEvent = {
+	conn: string,
+	code: number | null,
+	stderr: string,
+};
+
+export type DriveInfo = {
+	ccrpcPath: string,
+	doctor: DoctorLine[],
+	analyzer: boolean,
+	logRoot: string,
+};
+
+/**  One line of a connection's ccrpc stdout, as it was written (not parsed). */
+export type DriveLineEvent = {
+	conn: string,
+	line: string,
+};
 
 export type ErrorCode = "notFound" | "invalidQuery" | "io" | "index" | "cancelled" | "internal";
 

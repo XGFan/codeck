@@ -574,9 +574,12 @@ dependencies = [
 name = "claude-viewer"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "crossbeam-channel",
  "cv-core",
  "dirs",
+ "libc",
  "notify",
  "notify-debouncer-full",
  "parking_lot",
@@ -587,6 +590,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-specta",
  "tempfile",
