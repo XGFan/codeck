@@ -158,6 +158,13 @@
           "type": "boolean",
           "description": "忙时插话送达的用户内容。"
         },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "带图的提示词（kind 为 user）里各张图片的 media_type，按顺序；内容用 get_image 取。没有图片时不出现。"
+        },
         "agent_id": {
           "type": "string",
           "description": "来自 Subagent Run 时的 agent id。"
@@ -414,6 +421,9 @@
         },
         {
           "$ref": "#/$defs/commands/get_tool_result"
+        },
+        {
+          "$ref": "#/$defs/commands/get_image"
         },
         {
           "$ref": "#/$defs/commands/cancel_follow_up"
@@ -806,6 +816,34 @@
         "required": [
           "type",
           "tool_use_id"
+        ],
+        "additionalProperties": false
+      },
+      "get_image": {
+        "title": "get_image",
+        "description": "读取提示词里的一张图片（user block 的 images），任意状态可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "get_image"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "uuid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "带 images 的 user block 的 uuid。"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "第几张（0 起，对应 images 的下标），缺省 0。"
+          }
+        },
+        "required": [
+          "type",
+          "uuid"
         ],
         "additionalProperties": false
       },
@@ -1365,6 +1403,25 @@
           "persisted"
         ]
       },
+      "get_image": {
+        "title": "get_image",
+        "description": "图片内容。",
+        "type": "object",
+        "properties": {
+          "media_type": {
+            "type": "string",
+            "description": "如 image/png。"
+          },
+          "data": {
+            "type": "string",
+            "description": "base64。"
+          }
+        },
+        "required": [
+          "media_type",
+          "data"
+        ]
+      },
       "cancel_follow_up": {
         "title": "cancel_follow_up",
         "description": "撤销结果。",
@@ -1663,6 +1720,16 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/get_tool_result"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "get_image"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/get_image"
             }
           }
         },

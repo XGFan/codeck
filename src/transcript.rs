@@ -69,6 +69,9 @@ pub struct Block {
     /// User input delivered mid-turn (typed while busy).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub queued: bool,
+    /// A prompt's images (media types, in order); their data comes from `get_image`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
     /// Set when the block comes from a Subagent Run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
@@ -94,6 +97,7 @@ impl Block {
             is_error: None,
             persisted: None,
             queued: false,
+            images: Vec::new(),
             agent_id: None,
             parent_tool_use_id: None,
             run_id: None,
@@ -666,6 +670,28 @@ impl Tailer {
         }
     }
 
+    /// Image `index` (0-based, among the entry's images) of the main-line prompt `uuid`:
+    /// `(media_type, base64 data)`.
+    pub fn image(&self, uuid: &str, index: usize) -> Option<(String, String)> {
+        use std::io::BufRead;
+        let needle = format!("\"uuid\":\"{uuid}\"");
+        let f = std::io::BufReader::new(std::fs::File::open(&self.main).ok()?);
+        for line in f.lines() {
+            let line = line.ok()?;
+            if !line.contains(&needle) {
+                continue;
+            }
+            let v: Value = serde_json::from_str(&line).ok()?;
+            if v["uuid"] != uuid || v["type"] != "user" {
+                continue;
+            }
+            let img = v["message"]["content"].as_array()?.iter().filter(|b| b["type"] == "image").nth(index)?;
+            let src = &img["source"];
+            return Some((src["media_type"].as_str()?.to_string(), src["data"].as_str()?.to_string()));
+        }
+        None
+    }
+
     fn on_entry(
         &mut self,
         line: &Line,
@@ -839,11 +865,21 @@ impl Tailer {
                             self.run_tools.entry(run_id).or_insert(tid);
                         }
                         // A prompt with images: image blocks and its text.
-                        if !assistant
+                        let image_prompt = !assistant
                             && agent.is_none()
                             && blocks.iter().any(|b| b.block_type() == "image")
-                            && !blocks.iter().any(|b| b.block_type() == "tool_result")
+                            && !blocks.iter().any(|b| b.block_type() == "tool_result");
+                        // The note Claude Code adds after it, naming where each image came from.
+                        if !assistant
+                            && e.is_meta == Some(true)
+                            && !blocks.is_empty()
+                            && blocks.iter().all(|b| {
+                                b.text_str().is_some_and(|t| t.starts_with("[Image: source: "))
+                            })
                         {
+                            return;
+                        }
+                        if image_prompt {
                             let text: Vec<String> = blocks.iter().filter_map(|b| b.text_str()).map(|t| unwrap_pasted(&t)).collect();
                             self.last_text = None;
                             out.push(TxEvent::UserPrompt {
@@ -851,10 +887,25 @@ impl Tailer {
                                 text: text.join("\n"),
                             });
                         }
+                        let mut images: Vec<String> = if image_prompt {
+                            blocks.iter().filter(|b| b.block_type() == "image").map(image_type).collect()
+                        } else {
+                            Vec::new()
+                        };
                         for (i, rb) in blocks.iter().enumerate() {
-                            if let Some(b) = self.block_of(rb, &uuid, i, assistant, agent) {
+                            if let Some(mut b) = self.block_of(rb, &uuid, i, assistant, agent) {
+                                if b.kind == BlockKind::User && !images.is_empty() {
+                                    b.images = std::mem::take(&mut images);
+                                }
                                 out.push(TxEvent::Block(Box::new(tag(b))));
                             }
+                        }
+                        // Images without any text: a user block of their own.
+                        if !images.is_empty() {
+                            let mut b = Block::new(BlockKind::User, &uuid, 0);
+                            b.text = Some(String::new());
+                            b.images = images;
+                            out.push(TxEvent::Block(Box::new(tag(b))));
                         }
                     }
                     None => {}
@@ -1059,6 +1110,15 @@ pub fn off_main_uuids(main: &Path, leaf: &str, upto: u64) -> Option<HashSet<Stri
             .map(|i| s.nodes[i].uuid.clone())
             .collect(),
     )
+}
+
+/// The media type of an image block (`image/png` when not recorded).
+fn image_type(b: &RawBlock) -> String {
+    b.source
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s.get()).ok())
+        .and_then(|v| v["media_type"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "image/png".into())
 }
 
 /// A prompt without the `<pasted_content id="xxxx">` … `</pasted_content id="xxxx">` tags Claude
@@ -1523,8 +1583,18 @@ mod tests {
             {"type": "text", "text": text},
             {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
         ]}});
-        write_lines(&main, &[line]);
-        let evs = Tailer::new(&main).poll();
+        let note = json!({"type": "user", "uuid": "u2", "isMeta": true, "message": {"role": "user", "content": [
+            {"type": "text", "text": "[Image: source: /tmp/x.png]"},
+        ]}});
+        write_lines(&main, &[line, note]);
+        let t = Tailer::new(&main);
+        let evs = { let mut t = Tailer::new(&main); t.poll() };
+        // The image note is not a block; the prompt's block names its image, fetched by uuid.
+        assert_eq!(blocks(&evs).len(), 1, "{evs:?}");
+        assert_eq!(blocks(&evs)[0].images, vec!["image/png".to_string()]);
+        assert_eq!(t.image("u1", 0), Some(("image/png".into(), "iVBORw0KGgo=".into())));
+        assert_eq!(t.image("u1", 1), None);
+        assert_eq!(t.image("u2", 0), None);
         let prompt = evs.iter().find_map(|e| match e {
             TxEvent::UserPrompt { text, .. } => Some(text.clone()),
             _ => None,

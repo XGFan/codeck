@@ -70,7 +70,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 - 响应：`{"type":"response","id":"7","command":"prompt","success":true,"data":{…}}`；失败为 `"success":false,"error":{"code":"…","message":"…"}`。
 - 事件：`{"type":"<事件名>",…}`，没有 `id`。
 - 连接后先发 `ready`：`protocol`（2）、`holder_id`、`session_id`、`cwd`、`claude_version`、`state`（及 `waiting`）、`size`（`[列, 行]`）、`taken_over`、`co_display`、`mode`、`model`、`context_tokens`（同 `get_state`）、`warnings`（Claude Code 不是实测过的版本、Holder 不报尺寸所有者时各一句）。连接前就有的 Workflow Run 在 `ready` 之后各发一次当前状态。
-- **被接手**：连着时尺寸所有者变成另一个 Client（旧 Holder 则是 PTY 尺寸变了），发 `taken_over`，清空 `follow_up` 队列；此后只有 `get_state`、`get_messages`、`get_screen`、`get_tool_result`、`get_tasks`、`cancel_follow_up`、`reclaim` 可用，其余命令返回 `taken_over`（命令执行中途被接手也在下一次写入前停下）。接手的人离开后用 `reclaim` 取回，或重新 `attach`。
+- **被接手**：连着时尺寸所有者变成另一个 Client（旧 Holder 则是 PTY 尺寸变了），发 `taken_over`，清空 `follow_up` 队列；此后只有 `get_state`、`get_messages`、`get_screen`、`get_tool_result`、`get_image`、`get_tasks`、`cancel_follow_up`、`reclaim` 可用，其余命令返回 `taken_over`（命令执行中途被接手也在下一次写入前停下）。接手的人离开后用 `reclaim` 取回，或重新 `attach`。
 - **命令按到达顺序逐条执行**；需要等待的命令（如 `prompt` 等 transcript 确认）执行期间事件照常发出，但下一条命令要等它返回。
 
 ### 5.1 命令
@@ -97,8 +97,9 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 | `stop_task {task_id}` | idle | 输入 `/tasks` 打开后台面板，按命令（后台 shell）或描述（Subagent、Workflow）找到以它开头的唯一一个运行中的行（没有、多于一个、或有同样的已结束行时都不按键，报 `unrecognized_screen`），一行一行移过去、确认光标在它上面后按 `x`；以面板为准确认它不再运行（≤5s），关面板；再等插件报来结果通知（≤2s，主线忙时要等当前工具结束），之前记为 `stopped` | `status`（通常 `killed`） |
 | `answer_choice {request_id, option}` | waiting（有挂起的 choice）；目录信任框时为 starting | 等对话框出现满 500ms，另取一次 Snapshot 确认屏幕上仍是该布局，`option` 按选项文字（完全一致，否则唯一前缀）找到编号按下；目录信任框按方向键把光标移到该项、回车，等它关闭 | `state` |
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
+| `get_image {uuid, index?}` | 任意 | 带图提示词的第 `index` 张图片（0 起，缺省 0；对应该 user block 的 `images`），从 transcript 里读 | `media_type`、`data`（base64） |
 
-错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果）、`taken_over`（Session 已被人接手）、`not_taken_over`（`reclaim` 时没被接手）、`not_offered`（没有“总是允许”）、`unsupported`（提问不在插件里等）、`unrecognized_screen`、`input_not_empty`、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
+错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果；`get_image` 找不到该图片）、`taken_over`（Session 已被人接手）、`not_taken_over`（`reclaim` 时没被接手）、`not_offered`（没有“总是允许”）、`unsupported`（提问不在插件里等）、`unrecognized_screen`、`input_not_empty`、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
 
 ### 5.2 事件
 
@@ -106,7 +107,7 @@ Holder ID → `<toh>/holders/<id>.json` 的 `child_pid`（Pane 的 shell）→ �
 |---|---|
 | `ready` | 见上 |
 | `state` | `state`；`waiting` 时另有 `waiting: {kind, waiting_for}` |
-| `block` | `kind`（`user` / `text` / `thinking` / `tool_use` / `tool_result`）、`uuid`、`index`（消息内序号）；`text`；`tool_use` 的 `id`、`name`、`input`；`tool_result` 的 `tool_use_id`、`content`（文本，超过 100KB 截断）、`is_error`，输出太大被存进 `tool-results/` 时 `content` 是 transcript 里的预览（模型看到的也只有它），另有 `persisted: {path, size}`；`user` 的 `text` 去掉了 Claude Code 给长粘贴加的 `<pasted_content id="…">` 标签，即写入时的原文；忙时插话送达的用户内容 `queued: true`；来自 Subagent Run 时另有 `agent_id`、`parent_tool_use_id`，属于 Workflow Run 时另有 `run_id`（`parent_tool_use_id` 为 Workflow 调用的 id） |
+| `block` | `kind`（`user` / `text` / `thinking` / `tool_use` / `tool_result`）、`uuid`、`index`（消息内序号）；`text`；`tool_use` 的 `id`、`name`、`input`；`tool_result` 的 `tool_use_id`、`content`（文本，超过 100KB 截断）、`is_error`，输出太大被存进 `tool-results/` 时 `content` 是 transcript 里的预览（模型看到的也只有它），另有 `persisted: {path, size}`；带图的提示词另有 `images`（各张图片的 media_type，内容用 `get_image` 取；Claude Code 随后记下图片来源路径的 `[Image: source: …]` 条目不作为 block）；`user` 的 `text` 去掉了 Claude Code 给长粘贴加的 `<pasted_content id="…">` 标签，即写入时的原文；忙时插话送达的用户内容 `queued: true`；来自 Subagent Run 时另有 `agent_id`、`parent_tool_use_id`，属于 Workflow Run 时另有 `run_id`（`parent_tool_use_id` 为 Workflow 调用的 id） |
 | `turn_end` | `prompt_id`：插件给的提示词 id（连接时已在进行的一轮为 null）；`trigger`：`prompt` / `task_notification`；`last_text`：Stop 的 `last_assistant_message`（StopFailure、中止为 null）；`error`：API 报错 `{kind, message}`（StopFailure 的 `error`，如 `rate_limit`、`server_error`、`unknown`），没有为 null；`aborted`：本轮被中止；`background_tasks`：Stop 时仍在运行的后台任务（Claude Code 原样：`id`、`type`、`status`、`description` 等），没有为 `[]`；`duration_ms`：`turn_duration` 的用时，没有则为 ccrpc 量的；`usage`：`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`（本轮期间读到的主线与 Subagent Run 的 assistant 消息，每个 message id 计一次；连接时已在进行的一轮只算连接之后的部分）；`api_cost`：按 cv-core 价格表估算的美元，有模型没有价格时为 null |
 | `permission_request` | `request_id`（= `tool_use_id`）、`tool_name`、`input`、`agent_id`（后台 Subagent 的请求）、`options`（屏幕上审批框的选项 `[{label, meaning}]`，`label` 为全文，`meaning` 为 `allow` / `allow_always` / `deny` / `other`；认不出为 null）、`layout_source`（`builtin` / `learned`，`options` 为 null 时为 null）。主线的请求收到插件的 PermissionRequest 后最多等 1 秒认出审批框再发，认不出照发（allow / deny 仍经插件） |
 | `question` | `request_id`、`questions`（AskUserQuestion 输入原样）、`agent_id` |

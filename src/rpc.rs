@@ -87,6 +87,11 @@ pub enum Command {
     GetToolResult {
         tool_use_id: String,
     },
+    /// A prompt's image (`images` of its user block), by the block's `uuid` and the image's index.
+    GetImage {
+        uuid: String,
+        index: usize,
+    },
     /// Drops queued follow-ups: the one at `index`, or all.
     CancelFollowUp {
         index: Option<usize>,
@@ -419,6 +424,13 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         "get_tool_result" => Ok(Command::GetToolResult {
             tool_use_id: req_text(obj, kind, "tool_use_id")?,
         }),
+        "get_image" => Ok(Command::GetImage {
+            uuid: req_text(obj, kind, "uuid")?,
+            index: match obj.get("index") {
+                None | Some(Value::Null) => 0,
+                Some(v) => v.as_u64().ok_or("get_image 的 index 必须是非负整数")? as usize,
+            },
+        }),
         other => Err(format!("unknown::{other}")),
     }
 }
@@ -473,6 +485,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::GetMessages { .. } => "get_messages",
         Command::GetScreen => "get_screen",
         Command::GetToolResult { .. } => "get_tool_result",
+        Command::GetImage { .. } => "get_image",
         Command::CancelFollowUp { .. } => "cancel_follow_up",
         Command::Reclaim { .. } => "reclaim",
         Command::SetMode { .. } => "set_mode",
@@ -865,6 +878,7 @@ mod tests {
             "get_messages",
             "get_screen",
             "get_tool_result",
+            "get_image",
             "cancel_follow_up",
             "reclaim",
             "set_mode",

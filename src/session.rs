@@ -2872,6 +2872,7 @@ impl Engine {
                 | Command::GetMessages { .. }
                 | Command::GetScreen
                 | Command::GetToolResult { .. }
+                | Command::GetImage { .. }
                 | Command::GetTasks
                 | Command::CancelFollowUp { .. }
                 | Command::Reclaim { .. }
@@ -2938,6 +2939,12 @@ impl Engine {
                         Ok(json!({"content": content, "persisted": persisted}))
                     }
                     None => err("unknown_request", format!("找不到 {tool_use_id} 的工具结果")),
+                }
+            }
+            Command::GetImage { uuid, index } => {
+                match self.tailer.as_ref().and_then(|t| t.image(uuid, *index)) {
+                    Some((media_type, data)) => Ok(json!({"media_type": media_type, "data": data})),
+                    None => err("unknown_request", format!("找不到 {uuid} 的第 {index} 张图片")),
                 }
             }
         }

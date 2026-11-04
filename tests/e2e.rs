@@ -1504,11 +1504,20 @@ fn mock_model_session() {
     });
     assert_eq!(u["type"], "block", "follow_up 没发出去：{u}");
     rpc.event("turn_end", Duration::from_secs(30));
+    // Its block names the image, which comes back as sent; Claude Code's note of where it came
+    // from is not a block.
+    assert_eq!(u["images"], json!(["image/png"]), "{u}");
+    let im = rpc.call("i1", json!({"type": "get_image", "uuid": u["uuid"], "index": 0}));
+    assert_eq!(im["media_type"], "image/png");
+    use base64::Engine as _;
+    assert_eq!(base64::engine::general_purpose::STANDARD.decode(im["data"].as_str().unwrap()).unwrap(), red_dot_png());
 
     // Paging back from the newest.
     let all = rpc.call("m0", json!({"type": "get_messages"}));
     let n = all["blocks"].as_array().unwrap().len();
     assert!(n >= 8, "{all}");
+    let notes = all["blocks"].as_array().unwrap().iter().filter(|b| b["text"].as_str().is_some_and(|t| t.starts_with("[Image: source:"))).count();
+    assert_eq!(notes, 0, "{all}");
     let last = rpc.call("m1", json!({"type": "get_messages", "limit": 3}));
     assert_eq!(last["blocks"].as_array().unwrap().len(), 3);
     assert_eq!(last["more"], true);
