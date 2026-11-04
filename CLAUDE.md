@@ -11,9 +11,8 @@ Claude Viewer：只读的 macOS 桌面应用（Tauri 2 + React 19），用来搜
 | `crates/transcript` | 解析库：读 Claude Code 的数据（transcript、进程文件、价格），组装成显示模型；无 SQLite、无 tauri | 本文件「架构」 |
 | `crates/cv-core`、`src-tauri`、`src` | Claude Viewer 本体 | 本文件 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
-| `apps/cc-gui` | cc-gui（过渡期，驾驶功能并入 viewer 后删除） | 见 [apps/cc-gui/CLAUDE.md](apps/cc-gui/CLAUDE.md) |
 
-一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）、一个 pnpm workspace（根包是 viewer，`apps/*` 是其他前端）。
+一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的驾驶功能（ADR-0007）。驾驶 E2E 的 wire fixture 在 `src/mocks/data/drive/`，`tools.jsonl` 用 `scripts/record-drive-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
 
 - 术语以 [CONTEXT.md](CONTEXT.md) 为准（Session / Project / Live Session / Subagent Run / Workflow Run / Branch / Main Line / Fork / Teammate Message），代码、注释、文案都用这些词，避开其中列出的 _Avoid_ 词。
 - 行为规格见 [docs/spec.md](docs/spec.md)（计数口径、用户输入判定、Main Line 规则等都在这里），关键取舍见 [docs/adr/](docs/adr/)。改动对外行为时同步更新 spec / README / CONTEXT。
