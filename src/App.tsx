@@ -35,8 +35,9 @@ export default function App() {
 
         <main data-testid="pane-conversation" className="flex min-h-0 min-w-0 flex-col bg-ground">
           {!sessionId && <div data-tauri-drag-region="deep" className="h-[52px] shrink-0" />}
-          <ElsewhereBanner />
           <SessionHeader />
+          {/* Under the header: the top strip is the title bar, where the toolbar floats once the list is hidden. */}
+          <ElsewhereBanner />
           <FindBar />
           <div className="flex min-h-0 flex-1">
             {/* The drive panel sits under the transcript, as wide as it. */}

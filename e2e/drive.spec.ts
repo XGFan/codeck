@@ -438,8 +438,16 @@ test("切回窗口时当前 Session 无事而别处在等作答：顶部一行�
   await expect(page.getByTestId("elsewhere")).toHaveCount(0);
 
   await open(page, NOT_LISTED);
+  // With the list hidden the toolbar floats over the conversation's top strip: the line stays clear of it, under the header.
+  await page.keyboard.press("Control+Meta+L");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.getByTestId("elsewhere")).toHaveText(`${NO_PLUGIN} 在等你作答，点此切过去`);
+  const line = (await page.getByTestId("elsewhere").boundingBox())!;
+  const tools = (await page.getByTestId("toolbar").boundingBox())!;
+  const header = (await page.getByTestId("header").boundingBox())!;
+  expect(line.y).toBeGreaterThanOrEqual(tools.y + tools.height);
+  expect(line.y).toBeGreaterThanOrEqual(header.y + header.height - 1);
+  await page.keyboard.press("Control+Meta+L");
   await page.getByTestId("elsewhere").click();
   await expect(page.getByTestId("header").getByRole("heading", { name: NO_PLUGIN })).toBeVisible();
   await expect(page.getByTestId("elsewhere")).toHaveCount(0);
