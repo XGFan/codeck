@@ -122,7 +122,9 @@ describe("subagent and workflow cards", () => {
     expect(par?.cards.map((c) => c.run.agentId)).toEqual(["ag-sync1", "ag-async1"]);
     const wfAt = rich.rows.findIndex((r) => r.kind === "workflow");
     expect(rich.rows[wfAt - 1]).toBe(par);
-    expect(rich.rows[wfAt + 1]).toMatchObject({ kind: "tool", call: { toolUseId: "tu_mcp" } });
+    const after = rich.rows[wfAt + 1] as Extract<Row, { kind: "group" }>;
+    expect(after.kind).toBe("group");
+    expect(after.items.map((i) => (i.type === "call" ? i.call.toolUseId : null))).toEqual(["tu_mcp", "tu_bg_build", "tu_artifact"]);
   });
 
   it("links the task notification and lists orphans at the end", () => {

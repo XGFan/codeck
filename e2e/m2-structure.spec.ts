@@ -132,7 +132,7 @@ test("后台 agent 卡片与结果通知互相跳转", async ({ page }) => {
   await reveal(page.getByTestId("transcript"), card);
   await card.getByTestId("card-to-notification").click();
   await expect(page.locator('[data-anchor="n-notify"][data-highlighted]')).toBeVisible();
-  await page.getByTestId("notification-to-card").click();
+  await page.locator('[data-anchor="n-notify"]').getByTestId("notification-to-card").click();
   await expect(page.locator('[data-anchor="n12|tu_agent_tests"][data-highlighted]')).toBeVisible();
 });
 
@@ -142,8 +142,39 @@ test("后台命令的结束通知写「后台命令」和命令本身，不当�
   await reveal(page.getByTestId("transcript"), row);
   await expect(row.getByTestId("task-notification")).toHaveText(/^后台命令 cargo build --release > build\.log 2>&1 已完成/);
   await expect(row).not.toContainText("agent");
-  await expect(row.getByTestId("notification-to-card")).toHaveCount(0);
   await expect(page.locator('[data-anchor="n-notify"]').getByTestId("task-notification")).toContainText("后台 agent");
+});
+
+test("后台命令：标「后台」、展开写完整命令与任务，和结束通知互相跳转", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const call = page.locator('[data-testid="tool-call"][data-tool="Bash"]').filter({ hasText: "cargo build --release" });
+  const group = page.getByTestId("tool-group").filter({ hasText: "cargo build --release > build.log" });
+  await reveal(page.getByTestId("transcript"), group);
+  await group.getByRole("button").first().click();
+  await expect(call.getByTestId("bash-background")).toHaveText("后台");
+  await call.getByRole("button").first().click();
+  await expect(call.getByTestId("tool-body")).toContainText("$ cargo build --release > build.log 2>&1");
+  await expect(call.getByTestId("bash-background-note")).toContainText("在后台运行（任务 b-build1）");
+  await expect(call.getByTestId("terminal")).toHaveCount(0);
+  await call.getByTestId("bash-to-notification").click();
+  await expect(page.locator('[data-anchor="n-notify-bash"][data-highlighted]')).toBeVisible();
+  await page.locator('[data-anchor="n-notify-bash"]').getByTestId("notification-to-card").click();
+  await expect(page.locator('[data-anchor="n12|tu_bg_build"][data-highlighted]')).toBeVisible();
+});
+
+test("工具输入是网址时（如 Artifact）可点击打开，点击不展开这次调用", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const group = page.getByTestId("tool-group").filter({ hasText: "cargo build --release > build.log" });
+  await reveal(page.getByTestId("transcript"), group);
+  await group.getByRole("button").first().click();
+  const call = page.locator('[data-testid="tool-call"][data-tool="Artifact"]');
+  const link = call.getByTestId("tool-link");
+  await expect(link).toHaveAttribute("href", "https://claude.ai/artifact/M0ckDesignCanvas");
+  await expect(link).toHaveAttribute("target", "_blank");
+  const popup = page.waitForEvent("popup");
+  await link.click();
+  await (await popup).close();
+  await expect(call.getByTestId("tool-body")).toHaveCount(0);
 });
 
 test("显示系统消息开关控制隐藏条目", async ({ page }) => {

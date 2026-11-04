@@ -1,5 +1,5 @@
 import { useUi } from "@/state/ui";
-import { Check, Circle, CircleDot, FileText, Globe, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
+import { ArrowDown, Check, Circle, CircleDot, FileText, Globe, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
 import { CopyButton } from "@/components/ui/copy-button";
@@ -7,6 +7,7 @@ import type { ToolCall } from "@/ipc/bindings";
 import { diffStrings, joinDiffs, rowsFromHunks, type DiffResult, type Hunk } from "@/lib/diff";
 import { langFromPath } from "@/lib/shiki";
 import { cn } from "@/lib/cn";
+import { scrollToNode } from "../nodes/scroll";
 import { prettyJson } from "../util";
 import { parseJson, useFullInput, useOutput, type ToolCtx } from "./data";
 import { CodeView, ImageRefs, Label, LoadBar, Mono, OutputView, PendingSpinner, Shell, Spinner, Terminal } from "./parts";
@@ -30,6 +31,8 @@ interface BashExtra {
   stderr?: string;
   interrupted?: boolean;
   returnCodeInterpretation?: string;
+  /** Set when the command went to the background (`run_in_background`): its output comes later, with the notice. */
+  backgroundTaskId?: string;
 }
 
 export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
@@ -41,8 +44,13 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
   const out = useOutput(call, ctx, split ? (extra!.stdout ?? "") : undefined);
   const stderr = split && !out.loaded ? (extra!.stderr ?? "") : "";
   const code = /(\d+)/.exec(extra?.returnCodeInterpretation ?? "")?.[1];
+  const bg = extra?.backgroundTaskId ?? (input.run_in_background === true ? "" : null);
   const status =
-    r == null ? undefined : extra?.interrupted ? (
+    r == null ? undefined : bg != null && !failed ? (
+      <span data-testid="bash-background" className="shrink-0 rounded border border-border px-1.5 text-[11px] leading-[18px] text-secondary">
+        后台
+      </span>
+    ) : extra?.interrupted ? (
       <span className="font-semibold">已中断</span>
     ) : failed ? (
       <span className="font-semibold">{code ? `退出码 ${code}` : "失败"}</span>
@@ -66,7 +74,7 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
     >
       <div className="group/copy relative">
         <CopyButton text={command} label="复制命令" className="absolute top-1 right-1.5 z-10 bg-terminal text-[#a1a1a6]" />
-      {command.includes("\n") && (
+      {command && (
         <pre className="m-0 overflow-auto bg-terminal px-3 pt-2.5 font-mono text-[12px] leading-[1.55] whitespace-pre-wrap break-words text-[#e4e4e6]">
           <span className="text-[#a1a1a6] select-none">$ </span>
           {command}
@@ -74,6 +82,8 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
       )}
       {r == null ? (
         <PendingSpinner />
+      ) : bg != null && !failed && out.text === "" && !stderr ? (
+        <BackgroundNote taskId={bg} noticeId={call.notificationNodeId} ctx={ctx} />
       ) : (
         <div data-testid="tool-output">
           <Terminal text={out.text} stderr={stderr} />
@@ -83,6 +93,28 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
       </div>
       <ImageRefs images={r?.images ?? []} ctx={ctx} />
     </Shell>
+  );
+}
+
+/** In place of the output of a command sent to the background: its task and a jump to the notice of its end. */
+function BackgroundNote({ taskId, noticeId, ctx }: { taskId: string; noticeId: string | null; ctx: ToolCtx | null }) {
+  return (
+    <div data-testid="bash-background-note" className="flex items-center gap-3 bg-terminal px-3 py-2.5 font-mono text-[12px] text-[#a1a1a6]">
+      <span className="flex-1">在后台运行{taskId && `（任务 ${taskId}）`}</span>
+      {noticeId && ctx ? (
+        <button
+          type="button"
+          data-testid="bash-to-notification"
+          onClick={() => scrollToNode({ scope: ctx.scope, nodeId: noticeId })}
+          className="flex shrink-0 items-center gap-0.5 font-sans text-[#7cb7ff] hover:underline"
+        >
+          跳到结束通知
+          <ArrowDown size={12} strokeWidth={2} aria-hidden />
+        </button>
+      ) : (
+        <span className="shrink-0 font-sans">未收到结束通知</span>
+      )}
+    </div>
   );
 }
 
@@ -392,7 +424,15 @@ export function GenericView({ nodeId, call, startMs, ctx, summary }: RenderProps
       failed={failed}
       icon={<Wrench {...ip} />}
       name={call.name}
-      summary={<Mono className="flex-1">{summary}</Mono>}
+      summary={
+        /^https?:\/\/\S+$/.test(summary) ? (
+          <a href={summary} target="_blank" rel="noreferrer" data-testid="tool-link" className="min-w-0 truncate font-mono text-[12px] text-accent hover:underline">
+            {summary}
+          </a>
+        ) : (
+          <Mono className="flex-1">{summary}</Mono>
+        )
+      }
     >
       <Label>输入</Label>
       {loading ? (

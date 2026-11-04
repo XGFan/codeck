@@ -219,6 +219,17 @@ export const richMain: Node[] = [
     call("tu_mcp", "mcp__github__list_pull_requests", { owner: "lumen", repo: "lumen-api", state: "open" }, {
       text: '[{"number":218,"title":"feat: 令牌桶限流","state":"open"},{"number":214,"title":"fix: 连接池泄漏","state":"open"}]',
     }),
+    call(
+      "tu_bg_build",
+      "Bash",
+      { command: "cargo build --release > build.log 2>&1", description: "后台构建 release", run_in_background: true },
+      {
+        text: "Command running in background with ID: b-build1. Output is being written to: /tmp/tasks/b-build1.output.",
+        extraJson: JSON.stringify({ stdout: "", stderr: "", interrupted: false, backgroundTaskId: "b-build1" }),
+      },
+      { notificationNodeId: "n-notify-bash" },
+    ),
+    call("tu_artifact", "Artifact", { action: "read", url: "https://claude.ai/artifact/M0ckDesignCanvas" }, { text: "[Artifact read]" }),
   ]),
   userNode(
     "n-notify",
@@ -230,7 +241,7 @@ export const richMain: Node[] = [
     "n-notify-bash",
     ts(),
     '<task-notification>\n<task-id>b-build1</task-id>\n<status>completed</status>\n<summary>Background command "cargo build --release &gt; build.log 2&gt;&amp;1" completed (exit code 0)</summary>\n</task-notification>',
-    { origin: { kind: "taskNotification", taskId: "b-build1", toolUseId: null, status: "completed", summary: 'Background command "cargo build --release > build.log 2>&1" completed (exit code 0)' } },
+    { origin: { kind: "taskNotification", taskId: "b-build1", toolUseId: "tu_bg_build", status: "completed", summary: 'Background command "cargo build --release > build.log 2>&1" completed (exit code 0)' } },
   ),
   userNode(
     "n-teammate",

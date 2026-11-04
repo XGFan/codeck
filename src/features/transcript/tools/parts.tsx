@@ -78,7 +78,8 @@ export function Shell({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => toggle(key, defaultOpen)}
+        // A link in the summary opens itself (the opener plugin takes `_blank` links) instead of toggling.
+        onClick={(e) => (e.target as Element).closest("a[href]") || toggle(key, defaultOpen)}
         className={cn(
           "group/tool flex min-h-7 w-full items-center gap-2 rounded-md text-left text-[13px]",
           failed ? "text-error" : "text-secondary hover:text-text",
