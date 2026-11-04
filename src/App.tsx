@@ -18,9 +18,11 @@ export default function App() {
   // Besides the user's toggle, the Subagent panel takes the session list's width so the conversation keeps
   // a readable column.
   const hideList = useSessionsHidden().hidden;
+  // The conversation column's width, for the transcript and the drive panel under it.
+  const convWidth = useUi((s) => s.convWidth);
 
   return (
-    <div className="grid h-full grid-rows-[1fr]">
+    <div className="grid h-full grid-rows-[1fr]" style={{ "--conv-w": `${convWidth}px` } as React.CSSProperties}>
       <div
         className="grid min-h-0"
         style={{ gridTemplateColumns: `${hideList ? 0 : 320}px 1fr` }}

@@ -207,6 +207,38 @@ test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点
   }
 });
 
+test("对话宽度：拖动列的边缘调节（两侧对称、居中），重开后保持；双击恢复 720px；键盘 ← / → 也可调", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openSession(page, RICH_TITLE, { folded: true });
+  const col = page.getByTestId("conversation-column");
+  const width = async () => Math.round((await col.boundingBox())!.width);
+  expect(await width()).toBe(720);
+  const center = async () => {
+    const b = (await col.boundingBox())!;
+    return Math.round(b.x + b.width / 2);
+  };
+  const c0 = await center();
+  const h = (await page.getByTestId("width-handle-right").boundingBox())!;
+  await page.mouse.move(h.x + h.width / 2, h.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(h.x + h.width / 2 + 100, h.y + 200, { steps: 5 });
+  await page.mouse.up();
+  expect(await width()).toBe(920);
+  expect(await center()).toBe(c0);
+  // The rows follow (the column's content is this wide).
+  const row = page.getByTestId("transcript").locator("[data-row]").first();
+  expect(Math.round((await row.boundingBox())!.width)).toBe(920);
+
+  await openSession(page, RICH_TITLE, { folded: true });
+  expect(await width()).toBe(920);
+
+  await page.getByTestId("width-handle-left").dblclick();
+  expect(await width()).toBe(720);
+  await page.getByTestId("width-handle-left").focus();
+  await page.keyboard.press("ArrowLeft");
+  expect(await width()).toBe(760);
+});
+
 test("显示系统消息开关控制隐藏条目", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const transcript = page.getByTestId("transcript");

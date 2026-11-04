@@ -6,6 +6,10 @@ export type CollapsiblePane = "sessions";
 
 const COLLAPSED_KEY = "codeck.collapsedPanes";
 const WEEKLY_RESET_KEY = "codeck.weeklyReset";
+const CONV_WIDTH_KEY = "codeck.conversationWidth";
+
+/** The conversation column's width (px): dragged at its edges, centered; double-click goes back to the default. */
+export const CONV_WIDTH = { default: 720, min: 480, max: 1600 };
 
 /** A remembered preference over `fallback`; `fallback` alone when storage is unavailable or garbled. */
 function load<T extends object>(key: string, fallback: T): T {
@@ -14,6 +18,10 @@ function load<T extends object>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function clampWidth(px: number): number {
+  return Number.isFinite(px) ? Math.round(Math.min(CONV_WIDTH.max, Math.max(CONV_WIDTH.min, px))) : CONV_WIDTH.default;
 }
 
 function save(key: string, value: unknown) {
@@ -69,6 +77,9 @@ interface UiState {
   settingsOpen: boolean;
   /** User-collapsed columns; remembered across launches. */
   collapsed: Record<CollapsiblePane, boolean>;
+  /** The conversation column's width (`CONV_WIDTH`); remembered across launches. */
+  convWidth: number;
+  setConvWidth: (px: number) => void;
   /** When the stats page's weekly cycle starts over; remembered across launches. */
   weeklyReset: WeeklyReset;
 
@@ -112,6 +123,12 @@ export const useUi = create<UiState>()((set) => ({
   settingsOpen: false,
   collapsed: load(COLLAPSED_KEY, { sessions: false }),
   weeklyReset: load(WEEKLY_RESET_KEY, { weekday: 0, minutes: 0 }),
+  convWidth: clampWidth(load(CONV_WIDTH_KEY, { px: CONV_WIDTH.default }).px),
+  setConvWidth: (px) => {
+    const convWidth = clampWidth(px);
+    save(CONV_WIDTH_KEY, { px: convWidth });
+    set({ convWidth });
+  },
 
   setProjectIds: (projectIds) => set({ projectIds }),
   selectSession: (id) => set((s) => (s.sessionId === id ? s : { sessionId: id, ...sessionDefaults })),

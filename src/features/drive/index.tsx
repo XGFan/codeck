@@ -214,7 +214,7 @@ function Panel({ c }: { c: ConnState }) {
       onKeyDown={onKeyDown}
       className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
     >
-      <div className="pointer-events-auto mx-auto flex w-full max-w-[720px] flex-col gap-2">
+      <div className="pointer-events-auto mx-auto flex w-full max-w-(--conv-w) flex-col gap-2">
         {c.procExit && (
           <NoticeCard
             tone="error"
