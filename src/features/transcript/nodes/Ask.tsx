@@ -1,6 +1,6 @@
 import { Check, MessageCircleQuestionMark } from "lucide-react";
 import type { Node } from "@/ipc/bindings";
-import { QuestionForm, useQuestionRequest } from "@/features/drive";
+import { QuestionForm, useQuestionRequest } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import type { RoleInfo, ToolCallBlock } from "../grouping";
 import { parseJson } from "../tools/data";
@@ -56,7 +56,7 @@ export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; 
   const fallback = result && !failed && !clarify && !answered ? result.text.trim() : "";
   const at = result?.timestampMs != null ? `你 · ${clock(result.timestampMs)} ` : "";
   const status = !result ? "等待回答" : failed ? "未回答" : clarify ? `${at}选择先聊聊` : `${at}已回答`;
-  // Driven and waiting on this question: answered right here.
+  // Connected and waiting on this question: answered right here.
   const pending = useQuestionRequest(call.toolUseId);
   const answering = !result && pending;
   return (

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc 驾驶 ToH clay 里运行中的 Session（ADR-0007）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
+CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc Connect ToH clay 里运行中的 Session（ADR-0007）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
 
 ## 仓库布局（monorepo）
 
@@ -12,9 +12,9 @@ CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude
 | `crates/codeck-core`、`src-tauri`、`src` | CoDeck 本体 | 本文件 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
 
-一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的驾驶功能（ADR-0007）。驾驶 E2E 的 wire fixture 在 `src/mocks/data/drive/`，`tools.jsonl` 用 `scripts/record-drive-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
+一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的 Connect 功能（ADR-0007）。Connect E2E 的 wire fixture 在 `src/mocks/data/connect/`，`tools.jsonl` 用 `scripts/record-connect-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
 
-- 术语以 [CONTEXT.md](CONTEXT.md) 为准（Session / Project / Live Session / Subagent Run / Workflow Run / Branch / Main Line / Fork / Teammate Message），代码、注释、文案都用这些词，避开其中列出的 _Avoid_ 词。
+- 术语以 [CONTEXT.md](CONTEXT.md) 为准（Session / Project / Live Session / Subagent Run / Workflow Run / Branch / Main Line / Fork / Teammate Message / Connect / Connected Session / Disconnect / Resume），代码、注释、文案都用这些词，避开其中列出的 _Avoid_ 词。
 - 行为规格见 [docs/spec.md](docs/spec.md)（计数口径、用户输入判定、Main Line 规则等都在这里），关键取舍见 [docs/adr/](docs/adr/)。改动对外行为时同步更新 spec / README / CONTEXT。
 
 ## 常用命令
@@ -74,8 +74,8 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `commands.rs`：每个命令都是 async，通过 `with_engine` 把 Engine 调用丢到 blocking pool，错误转成 `AppError`（`message` 是面向用户的中文文案）。新增命令要同时登记到 `lib.rs` 的 `specta_builder()`。
 - `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次 / TextBacklog / Rebuild / SetRoot / PollLive / Rescan）。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
 - `prices.rs`：下载 LiteLLM 价格表；worker 的 `RefreshPrices` 在独立线程里下载，结果以 `ApplyPrices` 交回 worker 写库，价格有变化时发 `PricesChanged` 事件。
-- `watcher.rs`（FSEvents，debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖，存于 Application Support）、`events.rs`（IndexStatus / SessionsChanged / LiveChanged / PricesChanged，以及驾驶的 DriveLine / DriveExit 事件）。
-- `drive/`：驾驶（ADR-0007）。每个连接一个 `ccrpc attach|new --co-display` 子进程，stdout 逐行原样转发为 `DriveLine` 事件（协议解析与状态都在前端 `features/drive`），三层日志在 `~/Library/Logs/dev.joy.codeck/drive/`。状态在第一个 drive 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
+- `watcher.rs`（FSEvents，debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖，存于 Application Support）、`events.rs`（IndexStatus / SessionsChanged / LiveChanged / PricesChanged，以及 ccrpc 的 CcrpcLine / CcrpcExit 事件）。
+- `ccrpc/`：Connect（ADR-0007）。每个连接一个 `ccrpc attach|new --co-display` 子进程，stdout 逐行原样转发为 `CcrpcLine` 事件（协议解析与状态都在前端 `features/connect`），三层日志在 `~/Library/Logs/dev.joy.codeck/ccrpc/`。状态在第一个 ccrpc 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
 
 ### src（前端）
 

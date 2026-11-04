@@ -69,7 +69,7 @@ test("j 在输入框内不触发轮次跳转", async ({ page }) => {
 test("复制：resume 命令、Session ID、消息；在 Finder 中显示", async ({ page }) => {
   await openRich(page);
   await page.getByTestId("header-more").click();
-  await page.getByRole("menuitem", { name: "复制 resume 命令" }).click();
+  await page.getByRole("menuitem", { name: "复制 Resume 命令" }).click();
   const id = await page.evaluate(() => window.__cvCalls!.find((c) => c.method === "copyText")!.args[0] as string);
   expect(id).toMatch(/^claude --resume [0-9a-f-]{36}$/);
   const sid = id.replace("claude --resume ", "");

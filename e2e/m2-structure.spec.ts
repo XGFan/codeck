@@ -338,7 +338,7 @@ test("Teammate 消息显示为可折叠卡片而非用户提问", async ({ page 
   await expect(body).not.toContainText("This came from another Claude session");
 });
 
-test("当前 Session 被移除后对话区回到空状态", async ({ page }) => {
+test("当前 Session 被移除后会话区回到空状态", async ({ page }) => {
   const sid = await openSession(page, RICH_TITLE);
   await expect(page.getByTestId("transcript").locator("[data-row]").first()).toBeVisible();
   await page.evaluate((id) => window.__cvMock!.emit("sessionsChanged", { changed: [], removed: [id], projectsChanged: false }), sid);

@@ -1,4 +1,4 @@
-//! Driving Claude Code through `ccrpc` (one child process per connection, its lines relayed to the
+//! Connecting to Claude Code through `ccrpc` (one child process per connection, its lines relayed to the
 //! web view). The state is built lazily by the first command: reading the login shell's environment
 //! at startup would slow CoDeck down.
 
@@ -18,7 +18,7 @@ use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
 use self::relay::{App, Out, Sink};
-use crate::events::{DriveExitEvent, DriveLineEvent};
+use crate::events::{CcrpcExitEvent, CcrpcLineEvent};
 
 type CmdResult<T> = Result<T, AppError>;
 
@@ -33,7 +33,7 @@ fn internal(e: impl std::fmt::Display) -> AppError {
 /// setup is not kept: the next command tries again (e.g. after ccrpc is installed). `Arc` so a
 /// command can take it into the blocking pool.
 #[derive(Default)]
-pub struct DriveState(Arc<Cell>);
+pub struct CcrpcState(Arc<Cell>);
 
 #[derive(Default)]
 struct Cell {
@@ -56,7 +56,7 @@ impl Cell {
     }
 }
 
-impl DriveState {
+impl CcrpcState {
     /// All connections' ccrpc processes are closed (the app is quitting); no-op when the state was
     /// never set up.
     pub fn disconnect_all(&self) {
@@ -73,13 +73,13 @@ fn init() -> Result<App, String> {
     App::new(
         env,
         ccrpc,
-        home.join("Library/Logs/dev.joy.codeck/drive"),
+        home.join("Library/Logs/dev.joy.codeck/ccrpc"),
         home.join("Library/Caches/dev.joy.codeck/images"),
     )
 }
 
-/// Runs `f` with the drive state, initialized on first use, on the blocking pool.
-async fn with_drive<T, F>(state: &State<'_, DriveState>, f: F) -> CmdResult<T>
+/// Runs `f` with the ccrpc state, initialized on first use, on the blocking pool.
+async fn with_ccrpc<T, F>(state: &State<'_, CcrpcState>, f: F) -> CmdResult<T>
 where
     T: Send + 'static,
     F: FnOnce(&App) -> Result<T, String> + Send + 'static,
@@ -98,8 +98,8 @@ fn sink(handle: &AppHandle) -> Sink {
     let handle = handle.clone();
     Arc::new(move |o| {
         let _ = match o {
-            Out::Line { conn, line } => DriveLineEvent { conn, line }.emit(&handle),
-            Out::Exit(e) => DriveExitEvent {
+            Out::Line { conn, line } => CcrpcLineEvent { conn, line }.emit(&handle),
+            Out::Exit(e) => CcrpcExitEvent {
                 conn: e.conn,
                 code: e.code,
                 stderr: e.stderr,
@@ -111,7 +111,7 @@ fn sink(handle: &AppHandle) -> Sink {
 
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct DriveInfo {
+pub struct CcrpcInfo {
     pub ccrpc_path: String,
     pub doctor: Vec<relay::DoctorLine>,
     pub analyzer: AnalyzerInfo,
@@ -119,7 +119,7 @@ pub struct DriveInfo {
     pub log_root: String,
 }
 
-/// ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › 驾驶」 saved, and what the next
+/// ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › ccrpc」 saved, and what the next
 /// ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -180,13 +180,13 @@ fn analyzer_info(app: &App) -> AnalyzerInfo {
 /// removes it. Applies to the connections made from now on.
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_set_analyzer(
-    state: State<'_, DriveState>,
+pub async fn ccrpc_set_analyzer(
+    state: State<'_, CcrpcState>,
     api_key: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
 ) -> CmdResult<AnalyzerInfo> {
-    with_drive(&state, move |app| {
+    with_ccrpc(&state, move |app| {
         let mut s = crate::settings::load();
         let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         if let Some(k) = api_key {
@@ -204,11 +204,11 @@ pub async fn drive_set_analyzer(
 /// Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved.
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_set_launch_rules(
-    state: State<'_, DriveState>,
+pub async fn ccrpc_set_launch_rules(
+    state: State<'_, CcrpcState>,
     rules: Vec<crate::settings::LaunchRule>,
 ) -> CmdResult<Vec<crate::settings::LaunchRule>> {
-    with_drive(&state, move |app| {
+    with_ccrpc(&state, move |app| {
         let rules = launch::normalize(rules, &app.env)?;
         let mut s = crate::settings::load();
         s.launch_rules = rules.clone();
@@ -221,9 +221,9 @@ pub async fn drive_set_launch_rules(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_info(state: State<'_, DriveState>) -> CmdResult<DriveInfo> {
-    with_drive(&state, |app| {
-        Ok(DriveInfo {
+pub async fn ccrpc_info(state: State<'_, CcrpcState>) -> CmdResult<CcrpcInfo> {
+    with_ccrpc(&state, |app| {
+        Ok(CcrpcInfo {
             ccrpc_path: app.ccrpc.display().to_string(),
             doctor: app.refresh_doctor(),
             analyzer: analyzer_info(app),
@@ -237,8 +237,8 @@ pub async fn drive_info(state: State<'_, DriveState>) -> CmdResult<DriveInfo> {
 /// `ccrpc ls --json`, serialized back to its text (the front end parses it).
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_list(state: State<'_, DriveState>) -> CmdResult<String> {
-    with_drive(&state, |app| {
+pub async fn ccrpc_list(state: State<'_, CcrpcState>) -> CmdResult<String> {
+    with_ccrpc(&state, |app| {
         let v = app.list_sessions()?;
         serde_json::to_string(&v).map_err(|e| format!("ccrpc ls 的输出不是 JSON：{e}"))
     })
@@ -247,24 +247,24 @@ pub async fn drive_list(state: State<'_, DriveState>) -> CmdResult<String> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_connect(
+pub async fn ccrpc_connect(
     handle: AppHandle,
-    state: State<'_, DriveState>,
+    state: State<'_, CcrpcState>,
     holder_id: String,
 ) -> CmdResult<String> {
     let sink = sink(&handle);
-    with_drive(&state, move |app| app.connect(sink, &holder_id)).await
+    with_ccrpc(&state, move |app| app.connect(sink, &holder_id)).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_new(
+pub async fn ccrpc_new(
     handle: AppHandle,
-    state: State<'_, DriveState>,
+    state: State<'_, CcrpcState>,
     cwd: String,
 ) -> CmdResult<String> {
     let sink = sink(&handle);
-    with_drive(&state, move |app| {
+    with_ccrpc(&state, move |app| {
         app.new_session(sink, &cwd, &crate::settings::load().launch_rules)
     })
     .await
@@ -272,14 +272,14 @@ pub async fn drive_new(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_send(state: State<'_, DriveState>, conn: String, line: String) -> CmdResult<()> {
-    with_drive(&state, move |app| app.send(&conn, &line)).await
+pub async fn ccrpc_send(state: State<'_, CcrpcState>, conn: String, line: String) -> CmdResult<()> {
+    with_ccrpc(&state, move |app| app.send(&conn, &line)).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_disconnect(state: State<'_, DriveState>, conn: String) -> CmdResult<()> {
-    with_drive(&state, move |app| {
+pub async fn ccrpc_disconnect(state: State<'_, CcrpcState>, conn: String) -> CmdResult<()> {
+    with_ccrpc(&state, move |app| {
         if app.disconnect(&conn) {
             Ok(())
         } else {
@@ -291,12 +291,12 @@ pub async fn drive_disconnect(state: State<'_, DriveState>, conn: String) -> Cmd
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_gui_log(
-    state: State<'_, DriveState>,
+pub async fn ccrpc_gui_log(
+    state: State<'_, CcrpcState>,
     conn: Option<String>,
     text: String,
 ) -> CmdResult<()> {
-    with_drive(&state, move |app| {
+    with_ccrpc(&state, move |app| {
         app.gui_log(conn.as_deref(), &text);
         Ok(())
     })
@@ -306,11 +306,11 @@ pub async fn drive_gui_log(
 /// The connection's log directory, `None` once its ccrpc has exited.
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_log_dir(
-    state: State<'_, DriveState>,
+pub async fn ccrpc_log_dir(
+    state: State<'_, CcrpcState>,
     conn: String,
 ) -> CmdResult<Option<String>> {
-    with_drive(&state, move |app| {
+    with_ccrpc(&state, move |app| {
         Ok(app.log_dir(&conn).map(|p| p.display().to_string()))
     })
     .await
@@ -318,10 +318,10 @@ pub async fn drive_log_dir(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn drive_save_image(
-    state: State<'_, DriveState>,
+pub async fn ccrpc_save_image(
+    state: State<'_, CcrpcState>,
     base64: String,
     ext: String,
 ) -> CmdResult<String> {
-    with_drive(&state, move |app| app.save_image(&base64, &ext)).await
+    with_ccrpc(&state, move |app| app.save_image(&base64, &ext)).await
 }

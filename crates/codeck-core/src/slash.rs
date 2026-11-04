@@ -1,4 +1,4 @@
-//! Slash commands a driven Session can run, for completion: Claude Code's built-in ones (a static
+//! Slash commands a Connected Session can run, for completion: Claude Code's built-in ones (a static
 //! list), the user's and the project's commands and skills, and those of enabled plugins. Read-only
 //! (ADR-0002): files are only opened; whatever is missing or unreadable is skipped.
 

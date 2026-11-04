@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/ipc";
 import type { AnalyzerInfo, LaunchRule } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
-import { useDrive } from "./store";
+import { useConnect } from "./store";
 
 function Row({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
   return (
@@ -16,13 +16,13 @@ function Row({ label, children, testId }: { label: string; children: React.React
   );
 }
 
-/** Settings › 驾驶: ccrpc's path, `ccrpc doctor`, the analyzer, launch rules, the log directory. Asks for `driveInfo` when shown. */
-export function DriveSettings() {
-  const info = useDrive((s) => s.info);
-  const infoError = useDrive((s) => s.infoError);
-  const lsError = useDrive((s) => s.lsError);
-  const loadInfo = useDrive((s) => s.loadInfo);
-  const retry = useDrive((s) => s.retry);
+/** Settings › ccrpc: ccrpc's path, `ccrpc doctor`, the analyzer, launch rules, the log directory. Asks for `ccrpcInfo` when shown. */
+export function CcrpcSettings() {
+  const info = useConnect((s) => s.info);
+  const infoError = useConnect((s) => s.infoError);
+  const lsError = useConnect((s) => s.lsError);
+  const loadInfo = useConnect((s) => s.loadInfo);
+  const retry = useConnect((s) => s.retry);
 
   useEffect(() => {
     void loadInfo();
@@ -32,7 +32,7 @@ export function DriveSettings() {
   return (
     <div className="divide-y divide-border">
       {stopped && (
-        <div role="alert" data-testid="set-drive-error" className="flex items-center gap-3 py-3 text-[13px] text-error">
+        <div role="alert" data-testid="set-ccrpc-error" className="flex items-center gap-3 py-3 text-[13px] text-error">
           <span className="min-w-0 flex-1">{stopped}</span>
           <Button
             variant="outline"
@@ -77,7 +77,7 @@ export function DriveSettings() {
       <Row label="启动参数" testId="set-launch-rules">
         {info ? <LaunchRulesForm saved={info.launchRules} /> : "…"}
       </Row>
-      <Row label="日志目录" testId="set-drive-logs">
+      <Row label="日志目录" testId="set-ccrpc-logs">
         <code className="break-all font-mono text-[13px]">{info?.logRoot ?? "…"}</code>
       </Row>
     </div>
@@ -93,7 +93,7 @@ const DEFAULT_MODEL = "deepseek-flash";
  * `CCRPC_ANALYZER_*` for the connections made from now on.
  */
 function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
-  const save = useDrive((s) => s.saveAnalyzer);
+  const save = useConnect((s) => s.saveAnalyzer);
   const [key, setKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(a.baseUrl ?? "");
   const [model, setModel] = useState(a.model ?? "");
@@ -105,7 +105,7 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
     try {
       await save(apiKey, baseUrl, model);
       setKey("");
-      setResult({ ok: true, text: "已保存，之后新建的驾驶连接生效" });
+      setResult({ ok: true, text: "已保存，之后新建的连接生效" });
     } catch (e) {
       setResult({ ok: false, text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}` });
     }
@@ -171,7 +171,7 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
  * directory): the deepest directory covering the Session's wins.
  */
 function LaunchRulesForm({ saved }: { saved: LaunchRule[] }) {
-  const save = useDrive((s) => s.saveLaunchRules);
+  const save = useConnect((s) => s.saveLaunchRules);
   const [rules, setRules] = useState(saved);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);

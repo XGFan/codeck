@@ -1,12 +1,12 @@
 #!/bin/sh
-# A sandbox for trying CoDeck's driving for real without touching your own ToH / claude / ccrpc:
-# its own TOH_STATE_DIR, CLAUDE_CONFIG_DIR and CCRPC_STATE_DIR under /tmp/codeck-drive-sandbox, Claude
-# Code talking to scripts/drive-sandbox/mock_model.py on loopback (start it with
+# A sandbox for trying CoDeck's Connect for real without touching your own ToH / claude / ccrpc:
+# its own TOH_STATE_DIR, CLAUDE_CONFIG_DIR and CCRPC_STATE_DIR under /tmp/codeck-ccrpc-sandbox, Claude
+# Code talking to scripts/ccrpc-sandbox/mock_model.py on loopback (start it with
 # `python3 -I mock_model.py 18765`), the ccrpc Plugin loaded with --plugin-dir (a wrapper adds it to
-# `ccrpc new`). Prints the work folder. Used by `cargo test --test drive_sandbox -- --ignored` and
-# by scripts/drive-sandbox/run-app.sh.
+# `ccrpc new`). Prints the work folder. Used by `cargo test --test ccrpc_sandbox -- --ignored` and
+# by scripts/ccrpc-sandbox/run-app.sh.
 set -eu
-B=${CODECK_SANDBOX:-/tmp/codeck-drive-sandbox}; PORT=${PORT:-18765}
+B=${CODECK_SANDBOX:-/tmp/codeck-ccrpc-sandbox}; PORT=${PORT:-18765}
 REAL=${CCRPC_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/target/release/ccrpc}
 rm -rf "$B"; mkdir -p "$B/toh" "$B/cc" "$B/st" "$B/work" "$B/layouts"
 chmod 700 "$B/toh" "$B/st"

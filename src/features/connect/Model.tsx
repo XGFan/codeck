@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import type { ConnState } from "./conn";
-import { errorKey, isLive, useDrive } from "./store";
+import { errorKey, isLive, useConnect } from "./store";
 
 const FAMILIES = ["opus", "fable", "sonnet", "haiku"] as const;
 
@@ -60,8 +60,8 @@ const MODELS = [
  * ask first (a choice card above the box).
  */
 export function ModelPicker({ c }: { c: ConnState }) {
-  const command = useDrive((s) => s.command);
-  const setError = useDrive((s) => s.setError);
+  const command = useConnect((s) => s.command);
+  const setError = useConnect((s) => s.setError);
   const [other, setOther] = useState("");
   const [open, setOpen] = useState(false);
   const idle = isLive(c) && c.state === "idle";
@@ -77,14 +77,14 @@ export function ModelPicker({ c }: { c: ConnState }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          data-testid="drive-model"
+          data-testid="connect-model"
           disabled={!idle}
           title={idle ? "切换模型与思考等级" : "空闲时可切换模型与思考等级"}
           className="ml-1 flex h-7 max-w-56 items-center gap-1.5 rounded-lg px-2 text-text/90 hover:bg-selection/60 disabled:hover:bg-transparent data-[state=open]:bg-selection/60"
         >
           <span className="truncate">{c.model ? modelLabel(c.model) : "模型"}</span>
           {c.effort && (
-            <span data-testid="drive-effort" className="shrink-0 text-secondary">
+            <span data-testid="connect-effort" className="shrink-0 text-secondary">
               {effortLabel(c.effort)}
             </span>
           )}

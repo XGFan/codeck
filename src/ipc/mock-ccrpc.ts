@@ -1,4 +1,4 @@
-// Wire-replay ccrpc for the mock API (`pnpm dev:mock`, E2E): each `src/mocks/data/drive/*.jsonl` is a
+// Wire-replay ccrpc for the mock API (`pnpm dev:mock`, E2E): each `src/mocks/data/connect/*.jsonl` is a
 // recorded `wire.jsonl` (`{t, dir: "send" | "recv", msg}`, plus `{dir: "exit", code, stderr}` and an
 // optional first `{dir: "meta", ls: {...}}` that overrides the `ccrpc ls` entry) and shows up as one
 // `ls` entry. A meta `session_id` (and `holder_id`) is also written into the recorded `ready`, so a
@@ -6,9 +6,9 @@
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks) are answered from what was replayed. `new-session` is not listed:
-// `driveNew` opens it.
+// `ccrpcNew` opens it.
 
-import type { InMsg, LsEntry, Task } from "@/features/drive/protocol";
+import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
 import type { AnalyzerInfo, LaunchRule } from "./bindings";
 
@@ -19,7 +19,7 @@ interface WireLine {
   code?: number | null;
   stderr?: string;
   ls?: Partial<LsEntry>;
-  /** On the meta line: `driveConnect` returns this long after the replay starts (events before the id). */
+  /** On the meta line: `ccrpcConnect` returns this long after the replay starts (events before the id). */
   connect_delay_ms?: number;
   /** On the meta line: what `get_tasks` answers (the recording's background tasks). */
   tasks?: Task[];
@@ -33,7 +33,7 @@ interface Fixture {
   tasks: Task[];
 }
 
-const raw = import.meta.glob("/src/mocks/data/drive/*.jsonl", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const raw = import.meta.glob("/src/mocks/data/connect/*.jsonl", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
 function parse(name: string, text: string): Fixture {
   const lines = text
@@ -93,22 +93,22 @@ const closedPanes = new Set<string>();
 let seq = 0;
 
 /** What the E2E tests look at. */
-export interface DriveProbe {
+export interface CcrpcProbe {
   sent: { conn: string; msg: Record<string, unknown> }[];
-  /** `driveList` calls (each is a `ccrpc ls` process in the app). */
+  /** `ccrpcList` calls (each is a `ccrpc ls` process in the app). */
   lists: number;
   guiLog: string[];
   badge: number;
   images: number;
-  /** `driveSetAnalyzer` calls. */
+  /** `ccrpcSetAnalyzer` calls. */
   analyzerSaves: number;
 }
-const probe: DriveProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0 };
+const probe: CcrpcProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0 };
 
 declare global {
   interface Window {
     /** E2E spy on the mock ccrpc. */
-    __cvDrive?: DriveProbe;
+    __cvCcrpc?: CcrpcProbe;
   }
 }
 
@@ -215,23 +215,23 @@ const subscribe = <T>(set: Set<T>, cb: T): Promise<Unlisten> => {
   return Promise.resolve(() => void set.delete(cb));
 };
 
-type DriveApi = Pick<
+type CcrpcApi = Pick<
   Api,
-  | "driveInfo"
-  | "driveSetAnalyzer"
-  | "driveSetLaunchRules"
-  | "driveList"
-  | "driveConnect"
-  | "driveNew"
-  | "driveSend"
-  | "driveDisconnect"
-  | "driveGuiLog"
-  | "driveLogDir"
-  | "driveSaveImage"
+  | "ccrpcInfo"
+  | "ccrpcSetAnalyzer"
+  | "ccrpcSetLaunchRules"
+  | "ccrpcList"
+  | "ccrpcConnect"
+  | "ccrpcNew"
+  | "ccrpcSend"
+  | "ccrpcDisconnect"
+  | "ccrpcGuiLog"
+  | "ccrpcLogDir"
+  | "ccrpcSaveImage"
   | "pickDir"
   | "setBadge"
-  | "onDriveLine"
-  | "onDriveExit"
+  | "onCcrpcLine"
+  | "onCcrpcExit"
 >;
 
 /** The launch rules saved in the mock settings (trimmed, rules without arguments dropped, like the backend). */
@@ -253,10 +253,10 @@ function analyzerInfo(): AnalyzerInfo {
   };
 }
 
-export function createMockDrive(): DriveApi {
-  window.__cvDrive = probe;
+export function createMockCcrpc(): CcrpcApi {
+  window.__cvCcrpc = probe;
   return {
-    driveInfo: async () => ({
+    ccrpcInfo: async () => ({
       ccrpcPath: "/mock/bin/ccrpc",
       doctor: [
         { level: "ok", text: "ok\ttoh\t/mock/bin/toh" },
@@ -264,10 +264,10 @@ export function createMockDrive(): DriveApi {
       ],
       analyzer: analyzerInfo(),
       launchRules,
-      logRoot: "/mock/Logs/dev.joy.codeck/drive",
+      logRoot: "/mock/Logs/dev.joy.codeck/ccrpc",
     }),
-    driveList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
-    driveSetAnalyzer: async (apiKey, baseUrl, model) => {
+    ccrpcList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls }))),
+    ccrpcSetAnalyzer: async (apiKey, baseUrl, model) => {
       probe.analyzerSaves++;
       const blank = (v: string | null) => (v?.trim() ? v.trim() : null);
       if (apiKey !== null) analyzer.apiKey = blank(apiKey);
@@ -275,13 +275,13 @@ export function createMockDrive(): DriveApi {
       analyzer.model = blank(model);
       return analyzerInfo();
     },
-    driveSetLaunchRules: async (rules) => {
+    ccrpcSetLaunchRules: async (rules) => {
       launchRules = rules
         .map((r) => ({ dir: r.dir.trim().replace(/\/+$/, ""), args: r.args.trim() }))
         .filter((r) => r.args);
       return launchRules;
     },
-    driveConnect: async (holderId) => {
+    ccrpcConnect: async (holderId) => {
       const fx = fixtures.find((f) => f.ls.holder_id === holderId);
       if (!fx) throw new Error(`没有 ${holderId} 的录制`);
       const id = open(fx);
@@ -289,12 +289,12 @@ export function createMockDrive(): DriveApi {
       if (fx.connectDelayMs) await new Promise((r) => setTimeout(r, fx.connectDelayMs));
       return id;
     },
-    driveNew: async () => {
+    ccrpcNew: async () => {
       const fx = fixtures.find((f) => f.name === "new-session");
       if (!fx) throw new Error("没有 new-session 的录制");
       return open(fx);
     },
-    driveSend: async (id, m) => {
+    ccrpcSend: async (id, m) => {
       const msg = m as Record<string, unknown>;
       probe.sent.push({ conn: id, msg });
       const c = conns.get(id);
@@ -307,23 +307,23 @@ export function createMockDrive(): DriveApi {
       }
       synth(id, c, msg);
     },
-    driveDisconnect: async (id) => {
+    ccrpcDisconnect: async (id) => {
       const c = conns.get(id);
       // Like the backend: a connection whose ccrpc has exited is unknown.
       if (!c || c.closed) throw new Error("ccrpc 已退出");
       c.closed = true;
       later(() => exitCbs.forEach((cb) => cb(id, 0, "")));
     },
-    driveGuiLog: async (_conn, text) => {
+    ccrpcGuiLog: async (_conn, text) => {
       probe.guiLog.push(text);
     },
-    driveLogDir: async (id) => (conns.get(id)?.closed ? null : `/mock/Logs/dev.joy.codeck/drive/${id}`),
-    driveSaveImage: async (_b64, ext) => `/mock/Caches/dev.joy.codeck/images/${++probe.images}.${ext}`,
+    ccrpcLogDir: async (id) => (conns.get(id)?.closed ? null : `/mock/Logs/dev.joy.codeck/ccrpc/${id}`),
+    ccrpcSaveImage: async (_b64, ext) => `/mock/Caches/dev.joy.codeck/images/${++probe.images}.${ext}`,
     pickDir: async () => "/tmp/mock-new",
     setBadge: async (n) => {
       probe.badge = n;
     },
-    onDriveLine: (cb) => subscribe(lineCbs, cb),
-    onDriveExit: (cb) => subscribe(exitCbs, cb),
+    onCcrpcLine: (cb) => subscribe(lineCbs, cb),
+    onCcrpcExit: (cb) => subscribe(exitCbs, cb),
   };
 }

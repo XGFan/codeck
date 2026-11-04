@@ -3,7 +3,7 @@ import { Popover } from "radix-ui";
 import { footBtn } from "./Header";
 import { useState } from "react";
 import type { ConnState } from "./conn";
-import { errorKey, useDrive } from "./store";
+import { errorKey, useConnect } from "./store";
 
 const KIND: Record<string, string> = { agent: "Subagent", shell: "Shell", workflow: "Workflow" };
 
@@ -12,9 +12,9 @@ const KIND: Record<string, string> = { agent: "Subagent", shell: "Shell", workfl
  * in a popover; finished ones only on request.
  */
 export function Tasks({ c }: { c: ConnState }) {
-  const command = useDrive((s) => s.command);
-  const refresh = useDrive((s) => s.refreshTasks);
-  const setError = useDrive((s) => s.setError);
+  const command = useConnect((s) => s.command);
+  const refresh = useConnect((s) => s.refreshTasks);
+  const setError = useConnect((s) => s.setError);
   const [showDone, setShowDone] = useState(false);
   const running = c.tasks.filter((t) => t.status === "running");
   const done = c.tasks.length - running.length;

@@ -1,4 +1,4 @@
-//! Launch rules (「设置 › 驾驶 › 启动参数」): extra claude arguments for Sessions CoDeck starts in a directory
+//! Launch rules (「设置 › ccrpc › 启动参数」): extra claude arguments for Sessions CoDeck starts in a directory
 //! or below it, like a shell wrapper that adds `--add-dir` by working directory.
 
 use std::collections::HashMap;

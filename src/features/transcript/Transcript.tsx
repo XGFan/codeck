@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
-import { DriveTail, useUnindexed } from "@/features/drive";
+import { ConnectTail, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { CONV_WIDTH, useUi } from "@/state/ui";
@@ -56,7 +56,7 @@ const foldState = (expanded: Record<string, boolean>) =>
 export function TranscriptView() {
   const sessionId = useUi((s) => s.sessionId);
   const { data, isPlaceholderData, error } = useCurrentTranscript();
-  // A driven or `ccrpc ls` Session not in the index yet: its transcript file appears with the first prompt.
+  // A Connected or `ccrpc ls` Session not in the index yet: its transcript file appears with the first prompt.
   const unindexed = useUnindexed(error);
   usePendingJump();
 
@@ -71,7 +71,7 @@ export function TranscriptView() {
     return (
       <div data-testid="transcript-new" className="flex flex-1 flex-col items-center justify-center px-6 text-[13px] text-secondary">
         新 Session，发送第一条提示词后显示对话
-        <DriveTail />
+        <ConnectTail />
       </div>
     );
   }
@@ -238,8 +238,8 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
   }, [rows, isMain]);
   useEffect(() => (isMain ? resetReading : undefined), [isMain]);
 
-  // Stay at the bottom when the drive's line under the last message (progress, last turn) grows the content,
-  // or the view itself gets shorter (the drive panel grows: a queued message, a card).
+  // Stay at the bottom when the connection's line under the last message (progress, last turn) grows the content,
+  // or the view itself gets shorter (the input area grows: a queued message, a card).
   const tailRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const ro = new ResizeObserver(() => {
@@ -351,9 +351,9 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
             })}
           </div>
           {follow && (
-            // Room at the end for the floating drive panel (its height, kept in `--drive-h` by the panel).
-            <div ref={tailRef} className="mx-auto -mt-5 max-w-(--conv-w)" style={{ paddingBottom: "calc(var(--drive-h, 0px) + 20px)" }}>
-              <DriveTail />
+            // Room at the end for the floating input area (its height, kept in `--connect-h` by the panel).
+            <div ref={tailRef} className="mx-auto -mt-5 max-w-(--conv-w)" style={{ paddingBottom: "calc(var(--connect-h, 0px) + 20px)" }}>
+              <ConnectTail />
             </div>
           )}
         </div>
@@ -367,7 +367,7 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
               toBottom();
               setUnread(false);
             }}
-            style={{ bottom: "calc(var(--drive-h, 0px) + 16px)" }}
+            style={{ bottom: "calc(var(--connect-h, 0px) + 16px)" }}
             className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full bg-accent px-3 py-1 text-[12px] text-white shadow-lg"
           >
             有新消息

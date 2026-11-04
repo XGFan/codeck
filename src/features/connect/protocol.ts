@@ -1,4 +1,4 @@
-// ccrpc JSONL protocol (crates/ccrpc/docs/spec.md §5, docs/protocol.schema.json): the subset driving uses.
+// ccrpc JSONL protocol (crates/ccrpc/docs/spec.md §5, docs/protocol.schema.json): the subset Connect uses.
 // Content (blocks, get_messages, branch, workflow) comes from CoDeck's own index, so only the
 // events that carry state and control are typed here.
 

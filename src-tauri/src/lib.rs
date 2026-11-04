@@ -1,7 +1,7 @@
 //! CoDeck desktop app: tauri shell around `codeck_core::Engine`.
 
+pub mod ccrpc;
 pub mod commands;
-pub mod drive;
 pub mod events;
 pub mod prices;
 pub mod settings;
@@ -13,7 +13,7 @@ use tauri::Manager;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
 
 use crate::events::{
-    DriveExitEvent, DriveLineEvent, IndexStatusEvent, LiveChangedEvent, PricesChangedEvent,
+    CcrpcExitEvent, CcrpcLineEvent, IndexStatusEvent, LiveChangedEvent, PricesChangedEvent,
     SessionsChangedEvent,
 };
 use crate::state::{AppState, open_engine};
@@ -39,25 +39,25 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::get_stats,
             commands::get_diagnostics,
             commands::list_slash_commands,
-            drive::drive_info,
-            drive::drive_set_analyzer,
-            drive::drive_set_launch_rules,
-            drive::drive_list,
-            drive::drive_connect,
-            drive::drive_new,
-            drive::drive_send,
-            drive::drive_disconnect,
-            drive::drive_gui_log,
-            drive::drive_log_dir,
-            drive::drive_save_image,
+            ccrpc::ccrpc_info,
+            ccrpc::ccrpc_set_analyzer,
+            ccrpc::ccrpc_set_launch_rules,
+            ccrpc::ccrpc_list,
+            ccrpc::ccrpc_connect,
+            ccrpc::ccrpc_new,
+            ccrpc::ccrpc_send,
+            ccrpc::ccrpc_disconnect,
+            ccrpc::ccrpc_gui_log,
+            ccrpc::ccrpc_log_dir,
+            ccrpc::ccrpc_save_image,
         ])
         .events(collect_events![
             IndexStatusEvent,
             SessionsChangedEvent,
             LiveChangedEvent,
             PricesChangedEvent,
-            DriveLineEvent,
-            DriveExitEvent
+            CcrpcLineEvent,
+            CcrpcExitEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
 }
@@ -71,7 +71,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(drive::DriveState::default())
+        .manage(ccrpc::CcrpcState::default())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
@@ -88,7 +88,7 @@ pub fn run() {
         .run(|handle, ev| {
             if let tauri::RunEvent::Exit = ev {
                 // Closes every ccrpc; the Sessions themselves keep running.
-                handle.state::<drive::DriveState>().disconnect_all();
+                handle.state::<ccrpc::CcrpcState>().disconnect_all();
             }
         });
 }

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "@/ipc";
-import type { DriveInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
+import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { apply, initial, type ConnState } from "./conn";
 import { createEarlyBuffer } from "./early";
@@ -22,7 +22,9 @@ export interface Draft {
 
 export const EMPTY_DRAFT: Draft = { text: "", images: [] };
 
-const DRAFTS_KEY = "codeck.drive.drafts";
+const DRAFTS_KEY = "codeck.connect.drafts";
+/** Where drafts were kept before the rename to Connect: read when the new key is absent, removed on the next save. */
+const OLD_DRAFTS_KEY = "codeck.drive.drafts";
 // A Session's id; a connection's key dies with it, so only these are kept across restarts.
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,7 +36,7 @@ const isDraft = (d: unknown): d is Draft =>
 
 function loadDrafts(): Record<string, Draft> {
   try {
-    const v: unknown = JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? "{}");
+    const v: unknown = JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? localStorage.getItem(OLD_DRAFTS_KEY) ?? "{}");
     if (!v || typeof v !== "object") return {};
     return Object.fromEntries(Object.entries(v).filter(([k, d]) => SESSION_ID.test(k) && isDraft(d)));
   } catch {
@@ -52,6 +54,7 @@ function flushDrafts() {
   if (!drafts) return;
   const keep = Object.fromEntries(Object.entries(drafts).filter(([k, d]) => SESSION_ID.test(k) && (d.text.trim() || d.images.length)));
   try {
+    localStorage.removeItem(OLD_DRAFTS_KEY);
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(keep));
   } catch {
     // Over the storage quota with the images' previews: keep the text at least.
@@ -71,9 +74,9 @@ function saveDrafts(drafts: Record<string, Draft>) {
 }
 if (typeof window !== "undefined") window.addEventListener("pagehide", flushDrafts);
 
-interface DriveStore {
-  /** `driveInfo`, asked for when first needed (its first call reads the login shell's environment). */
-  info: DriveInfo | null;
+interface ConnectStore {
+  /** `ccrpcInfo`, asked for when first needed (its first call reads the login shell's environment). */
+  info: CcrpcInfo | null;
   infoError: string | null;
   ls: LsEntry[];
   /** Why `ccrpc ls` stopped being polled. */
@@ -90,14 +93,14 @@ interface DriveStore {
 
   /** Subscribes to ccrpc's lines and exits and starts polling `ccrpc ls`; returns the cleanup. */
   start(): () => void;
-  /** Whether `ccrpc ls` is worth polling: some Session is Live, or one is driven. Polled only while the window is visible. */
+  /** Whether `ccrpc ls` is worth polling: some Session is Live, or one is connected. Polled only while the window is visible. */
   setWanted(wanted: boolean): void;
   /** Polls `ccrpc ls` again after it stopped. */
   retry(): void;
   loadInfo(): Promise<void>;
-  /** Saves the analyzer's settings (see `driveSetAnalyzer`); rejects with the reason. */
+  /** Saves the analyzer's settings (see `ccrpcSetAnalyzer`); rejects with the reason. */
   saveAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<void>;
-  /** Saves the launch rules (see `driveSetLaunchRules`); rejects with the reason. */
+  /** Saves the launch rules (see `ccrpcSetLaunchRules`); rejects with the reason. */
   saveLaunchRules(rules: LaunchRule[]): Promise<void>;
   /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
   connect(holderId: string, sessionId: string): Promise<void>;
@@ -128,7 +131,7 @@ const exitWaiters = new Map<string, () => void>();
 const closing = new Set<string>();
 /** New Sessions to select once they have a session id. */
 const selectOnReady = new Set<string>();
-/** Events of connections whose id has not come back from `driveConnect` / `driveNew` yet. */
+/** Events of connections whose id has not come back from `ccrpcConnect` / `ccrpcNew` yet. */
 const early = createEarlyBuffer();
 /** Connections already removed: their late events are dropped, not held. */
 const removed = new Set<string>();
@@ -150,7 +153,7 @@ export function lsEntryFor(s: Pick<Lookup, "ls">, sessionId: string | null): LsE
   return s.ls.find((e) => e.session_id === sessionId) ?? null;
 }
 
-/** The connection driving a CoDeck Session: a live one first, else the last that exited. */
+/** The connection to a CoDeck Session: a live one first, else the last that exited. */
 export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
   if (!sessionId) return null;
   const holder = lsEntryFor(s, sessionId)?.holder_id;
@@ -163,7 +166,7 @@ export const holderConnected = (s: Pick<Lookup, "conns">, holderId: string) =>
   Object.values(s.conns).some((c) => c.holderId === holderId && isLive(c));
 
 /**
- * A connection that still drives its Session. After `session_exit` ccrpc keeps running but drives nothing: the
+ * A connection still on its Session. After `session_exit` ccrpc keeps running but is on nothing: the
  * Session may come back (`claude --resume` in the terminal) under a new process, which needs a new attach.
  */
 export const isLive = (c: ConnState) => !c.procExit && !c.sessionExited;
@@ -172,7 +175,7 @@ export const draftKey = (c: ConnState) => c.sessionId ?? c.conn;
 /** Where a connection's errors are shown: its Session (the connection before it has one). */
 export const errorKey = draftKey;
 
-export const useDrive = create<DriveStore>((set, get) => {
+export const useConnect = create<ConnectStore>((set, get) => {
   const update = (conn: string, f: (c: ConnState) => ConnState) =>
     set((s) => (s.conns[conn] ? { conns: { ...s.conns, [conn]: f(s.conns[conn]) } } : {}));
 
@@ -260,14 +263,14 @@ export const useDrive = create<DriveStore>((set, get) => {
   /** Closes a connection's ccrpc (if still running), waits for it to exit (≤5 s), and drops the connection. */
   const closeAndWait = async (conn: string) => {
     const c = get().conns[conn];
-    void api.driveGuiLog(conn, "close (replaced)");
+    void api.ccrpcGuiLog(conn, "close (replaced)");
     if (c && !c.procExit) {
       const gone = new Promise<void>((resolve) => {
         exitWaiters.set(conn, resolve);
         window.setTimeout(resolve, 5000);
       });
       closing.add(conn);
-      await api.driveDisconnect(conn).catch(() => removeConn(conn));
+      await api.ccrpcDisconnect(conn).catch(() => removeConn(conn));
       await gone;
       exitWaiters.delete(conn);
     }
@@ -300,7 +303,7 @@ export const useDrive = create<DriveStore>((set, get) => {
   /** One `ccrpc ls`; the next is scheduled only after it answers. */
   const poll = async (gen: number) => {
     try {
-      const ls = await api.driveList();
+      const ls = await api.ccrpcList();
       if (gen !== pollGen) return;
       const text = JSON.stringify(ls);
       if (text !== lastLs) {
@@ -337,8 +340,8 @@ export const useDrive = create<DriveStore>((set, get) => {
       let gone = false;
       const keep = (p: Promise<() => void>) => void p.then((f) => (gone ? f() : offs.push(f)));
       // Fresh closures: a second `start` (StrictMode) must not share a listener the first one removes.
-      keep(api.onDriveLine((conn, msg) => onLine(conn, msg)));
-      keep(api.onDriveExit((conn, code, stderr) => onExit(conn, code, stderr)));
+      keep(api.onCcrpcLine((conn, msg) => onLine(conn, msg)));
+      keep(api.onCcrpcExit((conn, code, stderr) => onExit(conn, code, stderr)));
       keep(api.onLiveChanged((p) => set({ live: p.live })));
       const onVisible = () => {
         sync();
@@ -360,7 +363,7 @@ export const useDrive = create<DriveStore>((set, get) => {
     setWanted(w) {
       if (w === wanted) return sync();
       wanted = w;
-      // Nothing Live and nothing driven: what `ccrpc ls` said last is stale.
+      // Nothing Live and nothing connected: what `ccrpc ls` said last is stale.
       if (!w) {
         lastLs = "";
         set({ ls: [] });
@@ -374,19 +377,19 @@ export const useDrive = create<DriveStore>((set, get) => {
     },
 
     async saveAnalyzer(apiKey, baseUrl, model) {
-      const analyzer = await api.driveSetAnalyzer(apiKey, baseUrl, model);
+      const analyzer = await api.ccrpcSetAnalyzer(apiKey, baseUrl, model);
       set((s) => (s.info ? { info: { ...s.info, analyzer } } : {}));
     },
 
     async saveLaunchRules(rules) {
-      const launchRules = await api.driveSetLaunchRules(rules);
+      const launchRules = await api.ccrpcSetLaunchRules(rules);
       set((s) => (s.info ? { info: { ...s.info, launchRules } } : {}));
     },
 
     async loadInfo() {
       if (get().info) return;
       try {
-        set({ info: await api.driveInfo(), infoError: null });
+        set({ info: await api.ccrpcInfo(), infoError: null });
       } catch (e) {
         const why = `读取 ccrpc 信息失败：${errText(e)}`;
         set({ infoError: why });
@@ -396,13 +399,13 @@ export const useDrive = create<DriveStore>((set, get) => {
 
     async connect(holderId, sessionId) {
       setErr(sessionId, null);
-      void api.driveGuiLog(null, `connect ${holderId}`);
-      // Connections that drive nothing any more (ccrpc exited, or the Session ended and was resumed since) are
+      void api.ccrpcGuiLog(null, `connect ${holderId}`);
+      // Connections on nothing any more (ccrpc exited, or the Session ended and was resumed since) are
       // replaced; a ccrpc still attached must be gone first, a second attach to the Session is refused.
       const stale = Object.values(get().conns).filter((c) => (c.holderId === holderId || c.sessionId === sessionId) && !isLive(c));
       await Promise.all(stale.map((c) => closeAndWait(c.conn)));
       try {
-        addConn(await api.driveConnect(holderId), holderId);
+        addConn(await api.ccrpcConnect(holderId), holderId);
       } catch (e) {
         setErr(sessionId, `连接失败：${errText(e)}`);
       }
@@ -412,9 +415,9 @@ export const useDrive = create<DriveStore>((set, get) => {
       const dir = await api.pickDir();
       if (!dir) return;
       set({ newError: null });
-      void api.driveGuiLog(null, `new ${dir}`);
+      void api.ccrpcGuiLog(null, `new ${dir}`);
       try {
-        const conn = await api.driveNew(dir);
+        const conn = await api.ccrpcNew(dir);
         selectOnReady.add(conn);
         addConn(conn, null);
       } catch (e) {
@@ -425,16 +428,16 @@ export const useDrive = create<DriveStore>((set, get) => {
     command(conn, msg) {
       const id = `g${++cmdSeq}`;
       const full = { ...msg, id };
-      void api.driveGuiLog(conn, `command ${String(msg.type)} id=${id}`);
+      void api.ccrpcGuiLog(conn, `command ${String(msg.type)} id=${id}`);
       return new Promise<ResponseMsg>((resolve) => {
         pending.set(id, {
           conn,
           resolve: (r) => {
-            if (!r.success) void api.driveGuiLog(conn, `failed ${String(msg.type)} id=${id} ${r.error?.code}: ${r.error?.message}`);
+            if (!r.success) void api.ccrpcGuiLog(conn, `failed ${String(msg.type)} id=${id} ${r.error?.code}: ${r.error?.message}`);
             resolve(r);
           },
         });
-        api.driveSend(conn, full).catch((e: unknown) => {
+        api.ccrpcSend(conn, full).catch((e: unknown) => {
           pending.delete(id);
           resolve({ type: "response", id, command: String(msg.type), success: false, error: { code: "io", message: errText(e) } });
         });
@@ -444,17 +447,17 @@ export const useDrive = create<DriveStore>((set, get) => {
     async disconnect(conn) {
       const c = get().conns[conn];
       if (!c) return;
-      void api.driveGuiLog(conn, "disconnect");
+      void api.ccrpcGuiLog(conn, "disconnect");
       if (c.procExit) return removeConn(conn);
       closing.add(conn);
       // The backend no longer knows it (its ccrpc already exited): nothing is left to wait for.
-      await api.driveDisconnect(conn).catch(() => removeConn(conn));
+      await api.ccrpcDisconnect(conn).catch(() => removeConn(conn));
     },
 
     async close(conn) {
       const c = get().conns[conn];
       if (!c || !isLive(c)) return;
-      void api.driveGuiLog(conn, "close");
+      void api.ccrpcGuiLog(conn, "close");
       const fail = (r: ResponseMsg) => {
         closing.delete(conn);
         setErr(errorKey(c), `关闭失败：${r.error?.message ?? r.error?.code ?? ""}`);
@@ -473,10 +476,10 @@ export const useDrive = create<DriveStore>((set, get) => {
     async reconnect(conn) {
       const c = get().conns[conn];
       if (!c?.holderId) return;
-      void api.driveGuiLog(conn, `reconnect ${c.holderId}`);
+      void api.ccrpcGuiLog(conn, `reconnect ${c.holderId}`);
       await closeAndWait(conn);
       try {
-        addConn(await api.driveConnect(c.holderId), c.holderId);
+        addConn(await api.ccrpcConnect(c.holderId), c.holderId);
       } catch (e) {
         setErr(errorKey(c), `重连失败：${errText(e)}`);
       }

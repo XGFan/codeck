@@ -16,9 +16,21 @@ _Avoid_: 项目目录, workspace, folder
 仍有 Claude Code 进程在运行、可能继续追加内容的 Session；其余 Session 视为已结束。
 _Avoid_: 活跃会话, active session, 进行中的会话
 
-**驾驶**:
-经 ccrpc 连接一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，在应用里发提示词、作答审批与提问；被驾驶的 Session 即 ccrpc 的受控 Session。对话内容仍来自索引与实时追随。
-_Avoid_: 接管（ccrpc 的「接手」指人在 Client 上操作 Pane）, 控制模式, attach（文案中）
+**Connect**:
+经 ccrpc 连上一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，从此可以在应用里向它发提示词、作答审批与提问。
+_Avoid_: 驾驶, attach（ToH 的 attach 指把终端接到 Pane）, 接管（ccrpc 的「接手」指人在 Client 上操作 Pane）
+
+**Connected Session**:
+已 Connect 的 Live Session，即 ccrpc 一侧的受控 Session；对话内容仍来自索引与实时追随。
+_Avoid_: 被驾驶的 Session, 受控 Session（文案中）, 控制模式
+
+**Disconnect**:
+结束 Connect，Session 照常运行。
+_Avoid_: 断开, detach
+
+**Resume**:
+让一个已结束的 Session 重新运行（`claude --resume`）并 Connect 它；Session ID 不变，仍是同一个 Session。
+_Avoid_: 恢复, 继续, 重启
 
 **Subagent Run**:
 Session 内由一次 Task/Agent 工具调用派生出的子对话；它属于该 Session，不是独立的 Session。
@@ -42,7 +54,7 @@ _Avoid_: 用户消息, peer message, 队友输入
 
 **Fork**:
 从另一个 Session 复制了部分历史后继续进行的新 Session；被复制的那个称为它的 **Origin Session**。
-_Avoid_: 分支, 副本, resume（resume 不产生新 Session 时不算 Fork）
+_Avoid_: 分支, 副本, Resume（Resume 不产生新 Session，不算 Fork）
 
 **Cost**:
 按 API 公开单价估算的花费（美元），由每条 assistant 消息的模型和 token 算出；同一次 API 调用出现在多个 Session 中时只计一次，归入最早的那个 Session。它是估算值，不是实际账单（订阅用户并不按此付费）。界面与文档里一律写 Cost。

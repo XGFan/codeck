@@ -8,8 +8,8 @@ import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
 import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
-import { DriveFooter } from "./Header";
-import { draftKey, EMPTY_DRAFT, useDrive, type Draft } from "./store";
+import { ConnectFooter } from "./Header";
+import { draftKey, EMPTY_DRAFT, useConnect, type Draft } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { Tasks } from "./Tasks";
 
@@ -28,7 +28,7 @@ function toBase64(f: Blob): Promise<string> {
 
 /** Moves focus to the first request card's first answer (Enter while waiting): a card here, else a question on its transcript card. */
 function focusFirstCard() {
-  const answers = ["allow", "question-option", "choice-option"].map((t) => `[data-testid=drive-requests] [data-testid=${t}]:not(:disabled)`);
+  const answers = ["allow", "question-option", "choice-option"].map((t) => `[data-testid=connect-requests] [data-testid=${t}]:not(:disabled)`);
   const el =
     document.querySelector<HTMLElement>(answers.join(", ")) ??
     document.querySelector<HTMLElement>("[data-testid=ask][data-answering] [data-testid=question-option]:not(:disabled)");
@@ -39,15 +39,15 @@ function focusFirstCard() {
  * The input box: idle → `prompt` (a built-in slash command → `slash`); busy → `steer`, as Enter in
  * the terminal (Claude Code's own queue, shown in the TUI and above the box, delivered when the
  * current tool call ends); ⌘Enter while busy also sends the queue at once (`send_now`, ctrl+enter in
- * the terminal: the turn is interrupted); waiting → not sent, focus goes to the card. Esc is handled by the drive panel. What is
- * typed lives in the drive store, so switching Sessions keeps it. Typing `/name` lists matching
+ * the terminal: the turn is interrupted); waiting → not sent, focus goes to the card. Esc is handled by the input area. What is
+ * typed lives in the connect store, so switching Sessions keeps it. Typing `/name` lists matching
  * commands: ↑↓ pick, Tab (or Enter on a different one) completes, Esc hides the list.
  */
 export function Composer({ c }: { c: ConnState }) {
-  const command = useDrive((s) => s.command);
+  const command = useConnect((s) => s.command);
   const key = draftKey(c);
-  const { text, images } = useDrive((s) => s.drafts[key]) ?? EMPTY_DRAFT;
-  const setDraft = useDrive((s) => s.setDraft);
+  const { text, images } = useConnect((s) => s.drafts[key]) ?? EMPTY_DRAFT;
+  const setDraft = useConnect((s) => s.setDraft);
   const setText = (f: string | ((t: string) => string)) => setDraft(key, (d) => ({ ...d, text: typeof f === "function" ? f(d.text) : f }));
   const setImages = (f: (x: Draft["images"]) => Draft["images"]) => setDraft(key, (d) => ({ ...d, images: f(d.images) }));
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +128,7 @@ export function Composer({ c }: { c: ConnState }) {
     for (const f of files) {
       try {
         const b64 = await toBase64(f);
-        const path = await api.driveSaveImage(b64, extOf(f.type)!);
+        const path = await api.ccrpcSaveImage(b64, extOf(f.type)!);
         // A data: URL: the app's CSP allows data: images, not blob:.
         setImages((x) => [...x, { path, url: `data:${f.type};base64,${b64}` }]);
       } catch (err) {
@@ -274,17 +274,17 @@ export function Composer({ c }: { c: ConnState }) {
           placeholder={placeholder}
           aria-label="给 Claude 发消息"
           className="block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary"
-          data-testid="drive-input"
+          data-testid="connect-input"
         />
         <div className="-ml-2 flex items-center gap-1 pt-1.5">
-          <DriveFooter c={c}>
+          <ConnectFooter c={c}>
             {images.length > 0 && (
               <span className="flex h-7 items-center gap-1.5 px-2" title="粘贴的图片">
                 <ImageIcon size={14} strokeWidth={1.7} aria-hidden /> {images.length}
               </span>
             )}
             <Tasks c={c} />
-          </DriveFooter>
+          </ConnectFooter>
           {/* Busy with nothing typed: stop (Esc in the terminal) instead of send. */}
           {live && !text.trim() && (state === "busy" || state === "waiting") ? (
             <button

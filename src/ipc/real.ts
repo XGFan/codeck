@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { InMsg, LsEntry } from "@/features/drive/protocol";
+import type { InMsg, LsEntry } from "@/features/connect/protocol";
 import type { Api } from "./api";
 import { commands, events } from "./bindings";
 
@@ -29,24 +29,24 @@ export function createRealApi(): Api {
     onLiveChanged: (cb) => events.liveChangedEvent.listen((e) => cb(e.payload)),
     onPricesChanged: (cb) => events.pricesChangedEvent.listen(() => cb()),
     copyText: writeText,
-    driveInfo: commands.driveInfo,
-    driveSetAnalyzer: commands.driveSetAnalyzer,
-    driveSetLaunchRules: commands.driveSetLaunchRules,
-    driveList: async () => JSON.parse(await commands.driveList()) as LsEntry[],
-    driveConnect: commands.driveConnect,
-    driveNew: commands.driveNew,
-    driveSend: async (conn, msg) => void (await commands.driveSend(conn, JSON.stringify(msg))),
-    driveDisconnect: async (conn) => void (await commands.driveDisconnect(conn)),
-    driveGuiLog: async (conn, text) => void (await commands.driveGuiLog(conn, text)),
-    driveLogDir: commands.driveLogDir,
-    driveSaveImage: commands.driveSaveImage,
+    ccrpcInfo: commands.ccrpcInfo,
+    ccrpcSetAnalyzer: commands.ccrpcSetAnalyzer,
+    ccrpcSetLaunchRules: commands.ccrpcSetLaunchRules,
+    ccrpcList: async () => JSON.parse(await commands.ccrpcList()) as LsEntry[],
+    ccrpcConnect: commands.ccrpcConnect,
+    ccrpcNew: commands.ccrpcNew,
+    ccrpcSend: async (conn, msg) => void (await commands.ccrpcSend(conn, JSON.stringify(msg))),
+    ccrpcDisconnect: async (conn) => void (await commands.ccrpcDisconnect(conn)),
+    ccrpcGuiLog: async (conn, text) => void (await commands.ccrpcGuiLog(conn, text)),
+    ccrpcLogDir: commands.ccrpcLogDir,
+    ccrpcSaveImage: commands.ccrpcSaveImage,
     pickDir: async () => {
       const r = await open({ directory: true, multiple: false });
       return typeof r === "string" ? r : null;
     },
     setBadge: (count) => getCurrentWindow().setBadgeCount(count > 0 ? count : undefined),
-    onDriveLine: (cb) =>
-      events.driveLineEvent.listen(({ payload }) => {
+    onCcrpcLine: (cb) =>
+      events.ccrpcLineEvent.listen(({ payload }) => {
         let msg: InMsg;
         try {
           msg = JSON.parse(payload.line) as InMsg;
@@ -55,6 +55,6 @@ export function createRealApi(): Api {
         }
         cb(payload.conn, msg);
       }),
-    onDriveExit: (cb) => events.driveExitEvent.listen(({ payload }) => cb(payload.conn, payload.code, payload.stderr)),
+    onCcrpcExit: (cb) => events.ccrpcExitEvent.listen(({ payload }) => cb(payload.conn, payload.code, payload.stderr)),
   };
 }

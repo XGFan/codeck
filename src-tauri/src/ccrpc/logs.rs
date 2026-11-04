@@ -1,4 +1,4 @@
-//! Per-connection logs: `~/Library/Logs/dev.joy.codeck/drive/<date>/<holder_id>-<time>/` with
+//! Per-connection logs: `~/Library/Logs/dev.joy.codeck/ccrpc/<date>/<holder_id>-<time>/` with
 //! `wire.jsonl` (every line to and from ccrpc), `ccrpc.log` (ccrpc's own `--log`) and `gui.log`.
 //! Owner-only; date directories older than 14 days are removed at startup.
 

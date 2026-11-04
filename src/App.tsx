@@ -1,5 +1,5 @@
 import { useUi } from "@/state/ui";
-import { DrivePanel, DriveRoot, ElsewhereBanner } from "@/features/drive";
+import { ConnectPanel, ConnectRoot, ElsewhereBanner } from "@/features/connect";
 import { FindBar } from "@/features/find";
 import { StatsToggle, Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
@@ -18,7 +18,7 @@ export default function App() {
   // Besides the user's toggle, the Subagent panel takes the session list's width so the conversation keeps
   // a readable column.
   const hideList = useSessionsHidden().hidden;
-  // The conversation column's width, for the transcript and the drive panel under it.
+  // The conversation column's width, for the transcript and the input area under it.
   const convWidth = useUi((s) => s.convWidth);
 
   return (
@@ -43,10 +43,10 @@ export default function App() {
           <ElsewhereBanner />
           <FindBar />
           <div className="flex min-h-0 flex-1">
-            {/* The drive panel floats over the foot of the transcript, as wide as it. */}
+            {/* The input area floats over the foot of the transcript, as wide as it. */}
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               <TranscriptView />
-              <DrivePanel />
+              <ConnectPanel />
             </div>
             <Outline />
             <SubagentPanel />
@@ -62,7 +62,7 @@ export default function App() {
           </>
         )}
       </Toolbar>
-      <DriveRoot />
+      <ConnectRoot />
       {/* Overlays: portal/fixed based; wrapped so placeholder stubs stay out of the layout. */}
       <div className="fixed right-0 bottom-0 size-0 overflow-hidden">
         <SearchOverlay />

@@ -184,7 +184,7 @@ pub async fn get_diagnostics(state: State<'_, AppState>) -> CmdResult<Diagnostic
     with_engine(&state, |e| e.diagnostics()).await
 }
 
-/// Slash commands for completion while driving a Session started in `cwd`.
+/// Slash commands for completion while connected to a Session started in `cwd`.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_slash_commands(

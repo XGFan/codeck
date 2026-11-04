@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LsEntry } from "@/features/drive/protocol";
+import type { LsEntry } from "@/features/connect/protocol";
 import type { ProjectSummary } from "@/ipc/bindings";
 import { pendingSessions, projectOfCwd } from "./pending";
 

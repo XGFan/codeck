@@ -2,7 +2,7 @@ import type {
   AnalyzerInfo,
   AppInfo,
   Diagnostics,
-  DriveInfo,
+  CcrpcInfo,
   FindRequest,
   FindResult,
   ImageData,
@@ -28,7 +28,7 @@ import type {
   Transcript,
   TranscriptRequest,
 } from "./bindings";
-import type { InMsg, LsEntry } from "@/features/drive/protocol";
+import type { InMsg, LsEntry } from "@/features/connect/protocol";
 
 export type Unlisten = () => void;
 
@@ -50,7 +50,7 @@ export interface Api {
   revealSessionFile(sessionId: string, agentId: string | null): Promise<null>;
   getStats(req: StatsRequest): Promise<Stats>;
   getDiagnostics(): Promise<Diagnostics>;
-  /** Slash commands for completion while driving a Session started in `cwd`. */
+  /** Slash commands for completion while connected to a Session started in `cwd`. */
   listSlashCommands(cwd: string | null): Promise<SlashCommand[]>;
 
   onIndexStatus(cb: (payload: IndexStatusEvent) => void): Promise<Unlisten>;
@@ -60,33 +60,33 @@ export interface Api {
 
   copyText(text: string): Promise<void>;
 
-  // Driving (ccrpc): one child process per connection, JSONL both ways, logs.
+  // ccrpc: one child process per connection, JSONL both ways, logs.
   /** ccrpc's path, `ccrpc doctor`, the analyzer, the log root; the first call reads the login shell's environment. */
-  driveInfo(): Promise<DriveInfo>;
+  ccrpcInfo(): Promise<CcrpcInfo>;
   /** Saves the analyzer's settings (blank = not set here); `apiKey: null` keeps the saved key, `""` removes it. */
-  driveSetAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerInfo>;
+  ccrpcSetAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerInfo>;
   /** Saves the launch rules (extra claude arguments by directory for 「新建 Session」); returns what was saved. */
-  driveSetLaunchRules(rules: LaunchRule[]): Promise<LaunchRule[]>;
+  ccrpcSetLaunchRules(rules: LaunchRule[]): Promise<LaunchRule[]>;
   /** `ccrpc ls --json`. */
-  driveList(): Promise<LsEntry[]>;
+  ccrpcList(): Promise<LsEntry[]>;
   /** `ccrpc attach --co-display`; returns the connection id. */
-  driveConnect(holderId: string): Promise<string>;
+  ccrpcConnect(holderId: string): Promise<string>;
   /** `ccrpc new --co-display --cwd`; returns the connection id. */
-  driveNew(cwd: string): Promise<string>;
-  driveSend(conn: string, msg: object): Promise<void>;
+  ccrpcNew(cwd: string): Promise<string>;
+  ccrpcSend(conn: string, msg: object): Promise<void>;
   /** Closes ccrpc's stdin (the Session keeps running). */
-  driveDisconnect(conn: string): Promise<void>;
+  ccrpcDisconnect(conn: string): Promise<void>;
   /** A line in the connection's gui.log (or the global one). */
-  driveGuiLog(conn: string | null, text: string): Promise<void>;
+  ccrpcGuiLog(conn: string | null, text: string): Promise<void>;
   /** The connection's log directory; null once its ccrpc has exited. */
-  driveLogDir(conn: string): Promise<string | null>;
+  ccrpcLogDir(conn: string): Promise<string | null>;
   /** Stores a pasted image; returns its path. */
-  driveSaveImage(base64: string, ext: string): Promise<string>;
+  ccrpcSaveImage(base64: string, ext: string): Promise<string>;
   pickDir(): Promise<string | null>;
   /** The Dock badge; 0 clears it. */
   setBadge(count: number): Promise<void>;
   /** ccrpc's lines, parsed (lines that are not JSON are dropped). */
-  onDriveLine(cb: (conn: string, msg: InMsg) => void): Promise<Unlisten>;
+  onCcrpcLine(cb: (conn: string, msg: InMsg) => void): Promise<Unlisten>;
   /** ccrpc exited; `code` is null when killed by a signal. */
-  onDriveExit(cb: (conn: string, code: number | null, stderr: string) => void): Promise<Unlisten>;
+  onCcrpcExit(cb: (conn: string, code: number | null, stderr: string) => void): Promise<Unlisten>;
 }

@@ -15,7 +15,7 @@
 
 ## GUI MVP 要的改动（只在本机用，不发布）
 
-GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的驾驶功能（仓库根 `docs/spec.md`「驾驶」、ADR-0007）：对话内容来自 CoDeck 自己的索引，ccrpc 只提供状态与控制；每个驾驶的 clay Claude Code 连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
+GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（仓库根 `docs/spec.md`「Connect」、ADR-0007）：对话内容来自 CoDeck 自己的索引，ccrpc 只提供状态与控制；CoDeck 每 Connect 一个 clay 里的 Claude Code 就连一个 `ccrpc attach --co-display`；TUI 同时在 Mac Client 里显示，认不出的界面在 TUI 里手动处理。
 
 已做：`ls --json`（带标题）、`get_state` 的 `mode` / `model` / `context_tokens` 与 `session_info` 推送、`--co-display`、目录信任框作为 choice、`exit {close_pane, stop_tasks}`、`--log`、`progress` 事件、`get_messages` 的分页 / 增量缓存 / 后台线程 / `subagents`、`permission_request` 的 `options`、`choice` / `permission_request` 的 `layout_source`、`--log` 补足（版本、识别决策、整屏）、mock 端到端录 wire（`CCRPC_E2E_WIRE_DIR`）。
 

@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, Folder, GitBranch, X } from "lucide-react";
 import { useMemo, useRef, type KeyboardEvent } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { NewSessionButton, NewSessionError, useDrive, useUnread } from "@/features/drive";
+import { NewSessionButton, NewSessionError, useConnect, useUnread } from "@/features/connect";
 import type { Drill, ProjectSummary, SessionQuery, SessionSort, SessionSummary } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatCost, formatRelative, formatSpan, formatTokens } from "@/lib/format";
@@ -29,7 +29,7 @@ const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descend
  * Once indexed they are ordinary rows with the same id.
  */
 function usePending(list: SessionSummary[] | undefined, projects: ProjectSummary[] | undefined): PendingSession[] {
-  const ls = useDrive((s) => s.ls);
+  const ls = useConnect((s) => s.ls);
   const projectIds = useUi((s) => s.projectIds);
   const drill = useUi((s) => s.statsDrill);
   const filtered = projectIds.length > 0;

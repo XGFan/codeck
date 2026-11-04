@@ -11,12 +11,12 @@ import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { Requests } from "./Requests";
-import { connFor, draftKey, errorKey, lsEntryFor, useDrive, waitingSessions } from "./store";
+import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } from "./store";
 
-export { DriveConnect, STATE_WORD, useDriveDebugInfo } from "./Header";
+export { ConnectButton, STATE_WORD, useConnectDebugInfo } from "./Header";
 export { QuestionForm } from "./Requests";
-export { DriveSettings } from "./Settings";
-export { connFor, lsEntryFor, useDrive } from "./store";
+export { CcrpcSettings } from "./Settings";
+export { connFor, lsEntryFor, useConnect } from "./store";
 
 /**
  * The CoDeck's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
@@ -26,7 +26,7 @@ export { connFor, lsEntryFor, useDrive } from "./store";
 const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
 
 function useLive(): { id: string; waiting: boolean }[] {
-  const live = useDrive((s) => s.live);
+  const live = useConnect((s) => s.live);
   // Not the list on screen: its project / time filter would hide Live Sessions elsewhere.
   const { data: list } = useSessions(ALL_SESSIONS, live == null);
   return useMemo(
@@ -41,20 +41,20 @@ function useLive(): { id: string; waiting: boolean }[] {
 /** Sessions waiting for an answer: Live ones that wait (every Session), and connected ones with a card. */
 function useWaiting(): string[] {
   const live = useLive();
-  const conns = useDrive((s) => s.conns);
+  const conns = useConnect((s) => s.conns);
   return useMemo(() => waitingSessions(live.filter((l) => l.waiting).map((l) => l.id), conns), [live, conns]);
 }
 
 /**
- * Starts driving's background work (ccrpc's events; `ccrpc ls` polling while some Session is Live or driven)
+ * Starts Connect's background work (ccrpc's events; `ccrpc ls` polling while some Session is Live or connected)
  * and keeps the Dock badge. Mount once.
  */
-export function DriveRoot() {
-  const start = useDrive((s) => s.start);
-  const setWanted = useDrive((s) => s.setWanted);
+export function ConnectRoot() {
+  const start = useConnect((s) => s.start);
+  const setWanted = useConnect((s) => s.setWanted);
   useEffect(() => start(), [start]);
   const anyLive = useLive().length > 0;
-  const anyConn = useDrive((s) => Object.keys(s.conns).length > 0);
+  const anyConn = useConnect((s) => Object.keys(s.conns).length > 0);
   useEffect(() => setWanted(anyLive || anyConn), [anyLive, anyConn, setWanted]);
   const n = useWaiting().length;
   useEffect(() => {
@@ -80,7 +80,7 @@ export function ElsewhereBanner() {
       const { waiting, list } = ref.current;
       const other = waiting.find((id) => id !== cur);
       if ((cur != null && waiting.includes(cur)) || !other) return setShown(null);
-      const ls = useDrive.getState().ls.find((e) => e.session_id === other);
+      const ls = useConnect.getState().ls.find((e) => e.session_id === other);
       const title = list?.find((s) => s.id === other)?.title ?? ls?.title ?? ls?.cwd?.split("/").pop() ?? "另一个 Session";
       setShown({ id: other, title });
     };
@@ -108,7 +108,7 @@ export function ElsewhereBanner() {
 
 /** 「新建 Session」 at the top of the Session list: pick a folder, `ccrpc new`. */
 export function NewSessionButton() {
-  const newSession = useDrive((s) => s.newSession);
+  const newSession = useConnect((s) => s.newSession);
   return (
     <button
       type="button"
@@ -125,8 +125,8 @@ export function NewSessionButton() {
 
 /** Why the last 「新建 Session」 failed, under the Session list's title row; closable. */
 export function NewSessionError() {
-  const error = useDrive((s) => s.newError);
-  const setNewError = useDrive((s) => s.setNewError);
+  const error = useConnect((s) => s.newError);
+  const setNewError = useConnect((s) => s.setNewError);
   if (!error) return null;
   return (
     <div role="alert" data-testid="new-session-error" className="flex shrink-0 items-center gap-2 border-b border-border bg-error-bg px-3.5 py-1.5 text-[12px] text-error">
@@ -141,48 +141,48 @@ export function NewSessionError() {
 /** The open Session's connection when it waits on this main-line AskUserQuestion (answered on its transcript card). */
 export function useQuestionRequest(toolUseId: string): { r: QuestionEvent; c: ConnState } | null {
   const sessionId = useUi((s) => s.sessionId);
-  const c = useDrive((s) => connFor(s, sessionId));
+  const c = useConnect((s) => connFor(s, sessionId));
   const r = c?.requests.find((x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !x.agent_id);
   return c && r && !c.procExit && !c.sessionExited ? { r, c } : null;
 }
 
 /** A connected Session's turn ended and it has not been looked at since. */
 export function useUnread(sessionId: string): boolean {
-  return useDrive((s) => !!connFor(s, sessionId)?.unread);
+  return useConnect((s) => !!connFor(s, sessionId)?.unread);
 }
 
-/** The open Session is driven or in `ccrpc ls` but not in the index yet (a new one, before its first prompt). */
+/** The open Session is connected or in `ccrpc ls` but not in the index yet (a new one, before its first prompt). */
 export function useUnindexed(error: unknown): boolean {
   const sessionId = useUi((s) => s.sessionId);
-  const known = useDrive((s) => connFor(s, sessionId) != null || lsEntryFor(s, sessionId) != null);
+  const known = useConnect((s) => connFor(s, sessionId) != null || lsEntryFor(s, sessionId) != null);
   return known && !!error && typeof error === "object" && (error as { code?: unknown }).code === "notFound";
 }
 
-/** Under the transcript while the open Session is driven: banners, cards, progress, queue, input box. */
-export function DrivePanel() {
+/** Under the transcript while the open Session is connected: banners, cards, progress, queue, input box. */
+export function ConnectPanel() {
   const sessionId = useUi((s) => s.sessionId);
-  const c = useDrive((s) => connFor(s, sessionId));
+  const c = useConnect((s) => connFor(s, sessionId));
   if (!c) return null;
   return <Panel key={draftKey(c)} c={c} />;
 }
 
 function Panel({ c }: { c: ConnState }) {
-  const command = useDrive((s) => s.command);
-  const reconnect = useDrive((s) => s.reconnect);
-  const dismiss = useDrive((s) => s.dismissNotice);
-  const setError = useDrive((s) => s.setError);
+  const command = useConnect((s) => s.command);
+  const reconnect = useConnect((s) => s.reconnect);
+  const dismiss = useConnect((s) => s.dismissNotice);
+  const setError = useConnect((s) => s.setError);
   const live = !c.procExit && !c.sessionExited && c.ready;
-  const storeError = useDrive((s) => s.errors[errorKey(c)]);
+  const storeError = useConnect((s) => s.errors[errorKey(c)]);
   const floatRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = floatRef.current;
     const host = el?.parentElement;
     if (!el || !host) return;
-    const ro = new ResizeObserver(() => host.style.setProperty("--drive-h", `${el.offsetHeight}px`));
+    const ro = new ResizeObserver(() => host.style.setProperty("--connect-h", `${el.offsetHeight}px`));
     ro.observe(el);
     return () => {
       ro.disconnect();
-      host.style.removeProperty("--drive-h");
+      host.style.removeProperty("--connect-h");
     };
   }, []);
 
@@ -207,10 +207,10 @@ function Panel({ c }: { c: ConnState }) {
 
   return (
     // Floats over the foot of the transcript (Codex style): the transcript scrolls under it and keeps room for it
-    // at its end (`--drive-h`, set on the shared parent).
+    // at its end (`--connect-h`, set on the shared parent).
     <div
       ref={floatRef}
-      data-testid="drive-panel"
+      data-testid="connect-panel"
       onKeyDown={onKeyDown}
       className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
     >
@@ -226,7 +226,7 @@ function Panel({ c }: { c: ConnState }) {
           />
         )}
         {c.sessionExited && !c.procExit && (
-          <NoticeCard testId="session-exit" icon={<Unplug size={18} strokeWidth={1.7} />} title="Session 已结束" desc="在终端里 resume 后可以重新驾驶。" />
+          <NoticeCard testId="session-exit" icon={<Unplug size={18} strokeWidth={1.7} />} title="Session 已结束" desc="在终端里 resume 后可以重新 Connect。" />
         )}
         {c.notices.map((n) => (
           <NoticeCard key={n.id} testId="notice" icon={<Info size={18} strokeWidth={1.7} />} title={n.text} onClose={() => dismiss(c.conn, n.id)} />
@@ -245,12 +245,12 @@ function Panel({ c }: { c: ConnState }) {
 }
 
 /**
- * The foot of the open Session's transcript while driven: Claude Code's progress line while busy (as in the
- * terminal, under the last message), else the last turn's end. Nothing when not driven.
+ * The foot of the open Session's transcript while connected: Claude Code's progress line while busy (as in the
+ * terminal, under the last message), else the last turn's end. Nothing when not connected.
  */
-export function DriveTail() {
+export function ConnectTail() {
   const sessionId = useUi((s) => s.sessionId);
-  const c = useDrive((s) => connFor(s, sessionId));
+  const c = useConnect((s) => connFor(s, sessionId));
   if (!c || c.procExit) return null;
   if (c.state === "busy")
     return (

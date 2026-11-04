@@ -11,7 +11,7 @@ import { useUi } from "@/state/ui";
 import type { ConnState, Request } from "./conn";
 import type { AskQuestion, ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
 import { NoticeCard } from "./Notice";
-import { useDrive } from "./store";
+import { useConnect } from "./store";
 
 /** Cards for what the Session waits on, main line first. */
 export function Requests({ c }: { c: ConnState }) {
@@ -23,7 +23,7 @@ export function Requests({ c }: { c: ConnState }) {
     return null;
   }
   return (
-    <div className="flex max-h-[45vh] flex-col gap-2 overflow-y-auto" data-testid="drive-requests">
+    <div className="flex max-h-[45vh] flex-col gap-2 overflow-y-auto" data-testid="connect-requests">
       {reqs.map((r, i) => (
         <Card key={r.request_id} r={r} c={c} focus={i === 0} />
       ))}
@@ -51,7 +51,7 @@ function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
  * (`abort` while busy / waiting; otherwise ccrpc refuses it, so the key itself).
  */
 function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecognized" }>; c: ConnState }) {
-  const command = useDrive((s) => s.command);
+  const command = useConnect((s) => s.command);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const close = async () => {
@@ -117,8 +117,8 @@ function Shell({
 }
 
 function useAnswer(c: ConnState) {
-  const command = useDrive((s) => s.command);
-  const dropRequest = useDrive((s) => s.dropRequest);
+  const command = useConnect((s) => s.command);
+  const dropRequest = useConnect((s) => s.dropRequest);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const send = async (msg: Record<string, unknown>) => {
@@ -134,7 +134,7 @@ function useAnswer(c: ConnState) {
 }
 
 /**
- * Number keys pick the n-th button of the first card, only while focus is inside the drive panel (a card
+ * Number keys pick the n-th button of the first card, only while focus is inside the input area (a card
  * button, e.g. after Enter while waiting) and not in an editable field: reading the transcript with a card
  * pending must not answer it.
  */
@@ -145,7 +145,7 @@ function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
     if (!enabled) return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (!el?.closest?.("[data-testid=drive-panel]")) return;
+      if (!el?.closest?.("[data-testid=connect-panel]")) return;
       if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable) return;
       if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       const ui = useUi.getState();
@@ -176,7 +176,7 @@ function ToolInput({ r, sessionId }: { r: PermissionRequestEvent; sessionId: str
     }),
     [r.request_id, r.tool_name, r.input],
   );
-  const nodeId = `drive:${r.request_id}`;
+  const nodeId = `connect:${r.request_id}`;
   const key = toolKey(nodeId, r.request_id);
   const known = useUi((s) => key in s.expanded);
   useEffect(() => {
@@ -251,7 +251,7 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
 
 /**
  * A main-line AskUserQuestion is answered on its 「向你提问」 card in the transcript ([`QuestionForm`]); the
- * drive panel only says so, with a jump to it (the card may still be on its way while the transcript updates).
+ * input area only says so, with a jump to it (the card may still be on its way while the transcript updates).
  */
 function QuestionHint({ r }: { r: QuestionEvent }) {
   const { data } = useCurrentTranscript();

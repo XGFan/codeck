@@ -4,7 +4,7 @@
 
 ## 定位
 
-macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session，并驾驶 ToH clay 里运行中的 Session。查看的核心场景有两个：**找回某次对话**（搜索、定位）和**复盘某个 Session**（读得舒服）；统计是附加功能。除经 ccrpc 驾驶（见「驾驶」一节，ADR-0007）外不对 Session 做任何写操作；数据目录始终只读（ADR-0002）。
+macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session，并能 Connect ToH clay 里运行中的 Session。查看的核心场景有两个：**找回某次对话**（搜索、定位）和**复盘某个 Session**（读得舒服）；统计是附加功能。除经 ccrpc Connect（见「Connect」一节，ADR-0007）外不对 Session 做任何写操作；数据目录始终只读（ADR-0002）。
 
 ## 平台与分发
 
@@ -60,7 +60,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 ## 界面
 
-- 两栏布局：Session 列表 | 对话区；红绿灯右侧是 Session 列表开关和搜索图标（悬停提示 ⌘K），全屏时没有红绿灯，图标移到最左边；对话头部不另设搜索入口。没有底部状态栏：Session 列表底部一行是索引状态（已索引 N 个 Session / 进度 / 失败）、统计按钮和设置按钮（⌘,）；列表收起时统计和设置跟在左上角的列表开关、搜索图标后面。
+- 两栏布局：Session 列表 | 会话区（选中 Session 的整栏：头部、对话记录，Connected Session 的底部另有悬浮的输入区）；红绿灯右侧是 Session 列表开关和搜索图标（悬停提示 ⌘K），全屏时没有红绿灯，图标移到最左边；对话头部不另设搜索入口。没有底部状态栏：Session 列表底部一行是索引状态（已索引 N 个 Session / 进度 / 失败）、统计按钮和设置按钮（⌘,）；列表收起时统计和设置跟在左上角的列表开关、搜索图标后面。
 - 统计以大弹窗盖在窗口上显示，点弹窗外、Esc 或右上角关闭按钮关闭；从统计下钻或打开 Session 时自动关闭；打开搜索时也会关闭统计。
 - Session 列表顶部：红绿灯那一行只放上述两个图标；下一行是「全部 Session」与数量，右侧是排序（如「按时间 ↓」，菜单切换排序字段和正序/倒序）。从搜索里按 Project 筛选时，标题位置显示 Project 名，× 清除。
 - 打开 Subagent 面板时，Session 列表栏让出宽度。
@@ -69,9 +69,9 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - 窗口整体不随触摸板回弹，只有各栏内容区自身滚动。
 - 滚动条只在滚动时或指针停在滑块上时显示，不受系统"显示滚动条"设置影响。
 - Session 列表每行显示：标题、相对时间、消息数、token 数、Cost（时间、消息数、token、Cost 都可以排序）、Live 标记、git 分支；从统计下钻时，列表顶部显示可清除的筛选标签。
-- Session 头部两行：标题行是标题、「驾驶」（可驾驶时）和「···」菜单（显示系统消息、复制 resume 命令、复制 Session ID、在 Finder 中显示、驾驶时的复制排查信息）；元信息行是状态（一个词：进程在跑时圆点加「工作中 / 等待作答 / 空闲」，驾驶时取 ccrpc 的状态，否则取 Live 状态；已结束写「已结束 · 3 分钟前」）、Project · 分支、Cost（含 Subagent；悬停显示按模型的明细，有无价格的消息时后带"+"）、时长、消息数，以及 ⓘ 悬停卡片（输出、输入、缓存读取 token，工具调用次数、Subagent 数、模型；各占一行，数字右对齐）。列表行 Live 点的悬停提示用同样的词。
+- Session 头部两行：标题行是标题、「Connect」（可 Connect 时）和「···」菜单（显示系统消息、复制 Resume 命令、复制 Session ID、在 Finder 中显示、Connected Session 的复制排查信息）；元信息行是状态（一个词：进程在跑时圆点加「工作中 / 等待作答 / 空闲」，已连接时取 ccrpc 的状态，否则取 Live 状态；已结束写「已结束 · 3 分钟前」）、Project · 分支、Cost（含 Subagent；悬停显示按模型的明细，有无价格的消息时后带"+"）、时长、消息数，以及 ⓘ 悬停卡片（输出、输入、缓存读取 token，工具调用次数、Subagent 数、模型；各占一行，数字右对齐）。列表行 Live 点的悬停提示用同样的词。
 - 对话渲染（参考 Codex）：
-  - 单栏居中，最宽默认 720px：拖动列的左右边缘调节（两侧对称，480–1600px，记住上次的宽度），双击边缘恢复 720px，边缘获得焦点时 ← / → 每次 20px；悬浮的驾驶区与列同宽。你的消息是右侧气泡，下方是时间、复制（悬停时出现）和 Branch 切换器；Claude 的回复没有「Claude · 时间」抬头，只在 Branch 起点显示切换器、API 错误时显示「API 错误 · 时间」。
+  - 单栏居中，最宽默认 720px：拖动列的左右边缘调节（两侧对称，480–1600px，记住上次的宽度），双击边缘恢复 720px，边缘获得焦点时 ← / → 每次 20px；悬浮的输入区与列同宽。你的消息是右侧气泡，下方是时间、复制（悬停时出现）和 Branch 切换器；Claude 的回复没有「Claude · 时间」抬头，只在 Branch 起点显示切换器、API 错误时显示「API 错误 · 时间」。
   - 按轮折叠（参考 Codex）：最后一次工具调用、思考、Subagent 或 Workflow 之后的文字是这一轮的「回答」，最后一段下面是复制（复制整段回答）和时间。回答之前的过程（中间说明、思考、工具调用、Subagent、Workflow、提问）只要含有工作，就折叠成一行「已处理 1 分 50 秒 · 4 段说明、5 次工具调用」（用时从你的消息到回答开始；没有回答时到最后一条过程），点开后按原顺序排开；没有工作的轮次不折叠。还在进行、尚无回答的最后一轮默认展开。展开状态随 Session 记住，直到切换 Session；搜索、⌘F 或跳转命中折叠里的内容时自动展开那一轮。
   - 每个工具调用是一行字（图标、动作如「运行 / 读取 / 编辑 / 写入 / 搜索」、对象，失败或在等的才在右侧标出，另有用时），点开在下方的框里看输出、diff。展开的一轮过程里每次工具调用各占一行，不再合并（过程已按轮折叠）；没有按轮折叠的地方（Subagent 面板）连续的工具调用合并成一组，默认收起，组头一行写做了什么（「读取 1 个文件、编辑 2 个文件、运行 1 条命令」，编辑按路径去重，其他工具写「等 N 次工具调用」）、对象（文件名、命令、搜索词）和失败数。
   - 专用渲染器：Bash（终端风格，支持 ANSI；展开后先写完整命令再写输出；后台命令（`run_in_background`）在行尾标「后台」，输出处写它的任务 ID 与「跳到结束通知」）、Edit（diff）、Write、Read（默认不展开内容）、Task 清单；其他工具用通用 JSON 视图，输入里有网址（如 Artifact 的 `url`）时可点击、在浏览器中打开：摘要就是网址时摘要本身是链接，摘要是别的字段（如 `path`）时网址跟在它后面。
@@ -87,7 +87,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - 当前 Session 读取失败时显示一行错误；源文件被删除时回到空状态。
 - Subagent：主对话中显示为卡片（任务 + 结果）；"查看完整过程"在右侧面板打开，嵌套时显示面包屑；后台 agent 的卡片、后台命令的工具调用和结束通知互相链接；后台任务结束的通知（`<task-notification>`）一行显示，按 summary 的前缀标明是后台 agent、后台命令、Monitor 还是 Workflow，写出描述（没有描述的后台命令写命令本身，过长截断）、状态，以及非 0 的退出码或失败原因，认不出的写「后台任务」加原文；summary 里的 XML 转义（`&gt;` 等）还原后显示；Workflow 显示为一张总卡片。
 - 阅读便利：⌘F（会自动展开折叠的内容，包括工具组内的思考块和截断的工具输出）、`j`/`k` 按轮次跳转（对话框打开时不响应）、轮次大纲、复制消息/代码块/Bash 命令、复制 Session ID 和 `claude --resume <id>`、在 Finder 中显示。
-- 不做：导出、URL scheme、书签和笔记、汇率换算、驾驶以外任何写 Session 的操作。
+- 不做：导出、URL scheme、书签和笔记、汇率换算、Connect 以外任何写 Session 的操作。
   - 导出为 HTML 评估过，暂不做：对话列表是虚拟列表，导出要另行整页渲染；按需加载的工具输出、图片要一次性取全；Shiki 高亮是异步的，要等全部完成；折叠需改成 `<details>`；保存位置需引入对话框插件。只导出 Main Line、工具保持摘要与预览的首版约 1–2 天，带完整工具输出和 Subagent 过程会更多。
 
 ## 统计面板
@@ -111,15 +111,15 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 数据根目录按"设置中的覆盖 → `CLAUDE_CONFIG_DIR` → `~/.claude`"确定；覆盖值保存在 `~/Library/Application Support/<bundle-id>/settings.json`，切换后清空当前视图并重新扫描。
 
-## 驾驶
+## Connect
 
-经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`src-tauri/src/drive`）只管 ccrpc 子进程、转发 JSONL、写日志；协议解析与状态在前端（`src/features/drive`）。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
+经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`src-tauri/src/ccrpc`）只管 ccrpc 子进程、转发 JSONL、写日志；协议解析与状态在前端（`src/features/connect`）。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
 
-- **环境**：第一次用到驾驶时读一次登录 shell 的环境（`$SHELL -l -c env`），作为所有 ccrpc 子进程的环境，不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
-- **可驾驶的 Session**：窗口可见、且至少有一个 Live Session 或驾驶连接时运行 `ccrpc ls --json`，上一次返回后隔 2 秒再运行下一次；条件不满足时停止（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时立即查一次再继续；停止前发出、停止后才返回的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 或读取 ccrpc 信息失败时停止轮询，错误显示在「设置 › 驾驶」，可重试。
-- **标题栏**：选中的 Session 在 `ccrpc ls` 里且插件已报到时显示「驾驶」（`ccrpc attach --co-display`）；插件未报到时按钮禁用，悬停提示「ccrpc 插件未加载，重启 claude 后可驾驶」；不在列表里（不在 clay 里，或 ccrpc 不可用）时不显示。已连接时同一位置换成「断开」（关闭 ccrpc 的 stdin，Session 照常运行）与「关闭」（ccrpc `exit {close_pane, stop_tasks}`：结束 claude 与它的 Pane，再断开；忙时先 `abort`；忙或还有运行中的后台任务时先弹确认，写明将中止本轮、停掉几个后台任务；空闲或忙时可用），头部不另写「驾驶中」，状态词取 ccrpc 的状态；「···」菜单多一项「复制排查信息」（holder_id、session_id、cwd 与这个连接的日志目录）。连接保持到断开、Session 或 ccrpc 退出、应用退出。Session 结束后（`session_exit`；ccrpc 仍在运行，但不再驾驶任何东西）同一位置重新显示「驾驶」：在终端里 resume 之后可以再连，连接前先关掉这个 Session 或 Pane 上已结束的连接（等它的 ccrpc 退出）。
-- **驾驶区**：悬浮在对话区底部（参考 Codex：对话从它下面滚过，上沿渐隐；对话末尾留出它的高度），与对话栏同宽，只在当前 Session 已连接时出现。提示都是输入框上方的圆角卡片（图标、标题、一句说明，右侧动作与关闭）。自上而下：ccrpc 意外退出（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束（「在终端里 resume 后可以重新驾驶」；这两种情况只显示这一张，没有请求卡片和输入框）、通知（学会新界面、界面识别失败、被接手 / 取回，可关）、错误（标题是失败的操作，说明是原因，可关）、请求卡片、Claude Code 自己的排队（ccrpc 的 `queue`：插话和人在终端里忙时输入的，与 TUI 一致；「立即发送」= `send_now`，即终端里的 ctrl+enter，中断本轮立即发出）、输入框。
-- **对话区末尾**：已连接时，对话最后一条消息下面一行，忙时是 Claude Code 的进度（`progress`，如 `Thinking… (3s · ↓ 120 tokens)`），否则是上一轮的用时、token、Cost、错误、已中止；停在底部时随它（以及驾驶区变高）保持在底部。
+- **环境**：第一次用到 ccrpc 时读一次登录 shell 的环境（`$SHELL -l -c env`），作为所有 ccrpc 子进程的环境，不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
+- **可 Connect 的 Session**：窗口可见、且至少有一个 Live Session 或连接时运行 `ccrpc ls --json`，上一次返回后隔 2 秒再运行下一次；条件不满足时停止（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时立即查一次再继续；停止前发出、停止后才返回的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 或读取 ccrpc 信息失败时停止轮询，错误显示在「设置 › ccrpc」，可重试。
+- **标题栏**：选中的 Session 在 `ccrpc ls` 里且插件已报到时显示「Connect」（`ccrpc attach --co-display`）；插件未报到时按钮禁用，悬停提示「ccrpc 插件未加载，重启 claude 后可 Connect」；不在列表里（不在 clay 里，或 ccrpc 不可用）时不显示。已连接时同一位置换成「Disconnect」（关闭 ccrpc 的 stdin，Session 照常运行）与「关闭」（ccrpc `exit {close_pane, stop_tasks}`：结束 claude 与它的 Pane，再 Disconnect；忙时先 `abort`；忙或还有运行中的后台任务时先弹确认，写明将中止本轮、停掉几个后台任务；空闲或忙时可用），头部不另写「已连接」，状态词取 ccrpc 的状态；「···」菜单多一项「复制排查信息」（holder_id、session_id、cwd 与这个连接的日志目录）。连接保持到 Disconnect、Session 或 ccrpc 退出、应用退出。Session 结束后（`session_exit`；ccrpc 仍在运行，但不再连着任何 Session）同一位置重新显示「Connect」：在终端里 resume 之后可以再连，连接前先关掉这个 Session 或 Pane 上已结束的连接（等它的 ccrpc 退出）。
+- **输入区**：悬浮在对话记录底部（参考 Codex：对话从它下面滚过，上沿渐隐；对话末尾留出它的高度），与对话记录同宽，只在当前 Session 已连接时出现。提示都是输入框上方的圆角卡片（图标、标题、一句说明，右侧动作与关闭）。自上而下：ccrpc 意外退出（退出码与 stderr 最后一行 +「重连」，不自动重连）、Session 已结束（「在终端里 resume 后可以重新 Connect」；这两种情况只显示这一张，没有请求卡片和输入框）、通知（学会新界面、界面识别失败、被接手 / 取回，可关）、错误（标题是失败的操作，说明是原因，可关）、请求卡片、Claude Code 自己的排队（ccrpc 的 `queue`：插话和人在终端里忙时输入的，与 TUI 一致；「立即发送」= `send_now`，即终端里的 ctrl+enter，中断本轮立即发出）、输入框。
+- **对话记录末尾**：已连接时，对话最后一条消息下面一行，忙时是 Claude Code 的进度（`progress`，如 `Thinking… (3s · ↓ 120 tokens)`），否则是上一轮的用时、token、Cost、错误、已中止；停在底部时随它（以及输入区变高）保持在底部。
 - **输入框**：没有单独的提示行，占位文字按状态说明 Enter 做什么（空闲：发消息；忙：插话，⌘Enter 中断本轮、立即发送，Esc 中止；等待作答：先回答请求；连接中）。底部一行（参考 Codex）：左侧是权限模式（可点，`set_mode`；空闲或忙时可切换；自动模式用橙色）、粘贴的图片数、后台任务（只在有运行中的任务时出现，写运行中的个数；点开列出运行中的，可停止，已结束的点「显示已结束的」才列出）；右侧是上下文用量（圆环 + token 数，窗口按 200K 计，`[1m]` 模型按 1M）、模型选择器、最右是发送——忙或等待作答且输入框为空时变成「中止」（`abort`，同 Esc）。出错时输入框上方显示错误卡片。
 - **模型与思考等级**（照 Claude Code Desktop）：底栏右侧按钮写模型（`claude-opus-4-7` 显示为「Opus 4.7」，`[1m]` 加「(1M)」）和浅灰的思考等级（xhigh 写「Extra」，模型没有思考等级时不写）。点开：模型（默认、Opus、Fable、Sonnet、Haiku，当前所属的打勾）→ `set_model` 别名；「Effort ›」二级菜单（一句说明，Low / Medium / High / Extra / Max）→ `set_effort`，只在模型有思考等级时出现；「其他模型 ›」可输入模型名。只在空闲时可点（Claude Code 只在空闲时接受 `/model`、`/effort`）。与终端里直接执行 `/model X`、`/effort X` 一样，也会成为新 Session 的默认；对话中途第一次切换时 Claude Code 先问「历史要重新读一遍」，显示为选择卡片，由你作答。切换后按钮立即更新（ccrpc 从命令输出与输入框右上的思考等级标记读出）。斜杠命令补全列表底部写按键（↑↓ 选择 · Tab 补全 · Esc 收起）。
 
@@ -128,37 +128,37 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   | idle | `prompt` | |
   | busy | `steer`（与终端里忙时按 Enter 一样：进 Claude Code 的队列，TUI 里可见，当前工具调用结束后送达；没有工具调用可夹带时排到本轮之后） | ⌘Enter：`steer` 后 `send_now`（输入框为空时只 `send_now`），同终端里的 ctrl+enter |
   | waiting | 不发送，焦点移到第一张请求卡片 | |
-  | busy / waiting | | Esc `abort`（焦点在驾驶区时） |
+  | busy / waiting | | Esc `abort`（焦点在输入区时） |
 
   - 粘贴的图片存到 `~/Library/Caches/dev.joy.codeck/images/`，输入框上方以 `data:` 地址预览，路径作为 `images` 传给 `prompt`，忙时一样传给 `steer`（队列里这条以 `[Image #n]` 开头，同终端）。
   - 斜杠命令：idle 时内置命令（以及补全清单里没有、形如命令名的名字）走 `slash`——本地命令和打开面板的命令在 transcript 里不留可等的记录；自定义命令、skill、`/Users/…` 这类路径、多行或带图片的，以及取不到补全清单时，走 `prompt`。忙时照常 `steer`，但会打开界面的内置命令不发送，提示等空闲时再发（从队列里打开的界面会一直挡着本轮，要到终端里关）。
   - 补全：输入框只有 `/名字`（还没有空格、换行）时，上方列出匹配的命令（名字完全相同 > 前缀 > 命名空间 `:` 之后的前缀 > 包含）；只输入 `/` 时列出全部，列表可滚动，显示描述、来源（内置 / 用户 / 项目 / 插件），会在终端里打开界面的内置命令标「打开界面」；↑↓ 选择，Tab 补全，Enter 在选中项与输入不同时补全、相同时发送，Esc 只收起列表。清单来自内置命令表、数据根下的 `commands/`、`skills/`，Session cwd 下的 `.claude/commands`、`.claude/skills`，以及用户和项目设置里启用的插件的 commands / skills（插件的以 `插件名:` 为前缀）；只读，同名时前者优先。
   - 共显时写入会清空 TUI 输入框里没发的内容（ccrpc 的已知限制）。
-  - 没发出的输入（文字和粘贴的图片）按 Session 保留，切换 Session、重连、重启应用后仍在；存在 localStorage（`codeck.drive.drafts`，只存有 Session id 的，空的不存；图片预览超出存储上限时只存文字），发出后清掉。
-  - 输入框聚焦时 `j` / `k` 等单键快捷键不响应；Esc 在卡片里的输入框中只离开输入框，在驾驶区以外或 idle 时保持原有含义（关闭 Subagent 面板等）。
+  - 没发出的输入（文字和粘贴的图片）按 Session 保留，切换 Session、重连、重启应用后仍在；存在 localStorage（`codeck.connect.drafts`，旧版的 `codeck.drive.drafts` 读一次后删掉，只存有 Session id 的，空的不存；图片预览超出存储上限时只存文字），发出后清掉。
+  - 输入框聚焦时 `j` / `k` 等单键快捷键不响应；Esc 在卡片里的输入框中只离开输入框，在输入区以外或 idle 时保持原有含义（关闭 Subagent 面板等）。
 - **请求卡片**：
 
   | 事件 | 卡片 | 作答 |
   |---|---|---|
-  | `permission_request` | 工具名 + 工具输入（用对话区的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
-  | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用），驾驶区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在驾驶区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
+  | `permission_request` | 工具名 + 工具输入（用对话记录的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
+  | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用），输入区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在输入区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
   | `choice` | 标题 + 选项按钮 | `answer_choice`（按 label） |
   | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
 
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
   - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。
-  - 数字键 1/2/3 选第一张卡片的选项，只在焦点位于驾驶区内且不在输入框里时（例如 waiting 时在输入框按 Enter，焦点移到卡片之后）；焦点在对话区、Subagent 面板等处时按数字键不作答——卡片不是主视图，读对话时误按不能批准工具调用。
-- **Session 列表**：顶部「新建 Session」（不依赖 `ccrpc ls`）：选目录 → `ccrpc new --co-display --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件。`ccrpc ls` 里有、还没进索引的 Session（在 clay 里刚打开的，或刚新建的）以占位行列在列表最上方，不参与排序：标题「新 Session」、Live 点（按 `ccrpc ls` 的 status）、cwd 的最后一段；Project 筛选时按 cwd 所在的 Project（路径最深的那个）匹配，匹配不上不显示，从统计下钻时不显示。选中后标题栏显示「新 Session」、cwd 与「驾驶」，主区显示「新 Session，发送第一条提示词后显示对话」，驾驶区照常可用；进索引后占位行变成正常的行，主区自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
+  - 数字键 1/2/3 选第一张卡片的选项，只在焦点位于输入区内且不在输入框里时（例如 waiting 时在输入框按 Enter，焦点移到卡片之后）；焦点在对话记录、Subagent 面板等处时按数字键不作答——卡片不是主视图，读对话时误按不能批准工具调用。
+- **Session 列表**：顶部「新建 Session」（不依赖 `ccrpc ls`）：选目录 → `ccrpc new --co-display --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件。`ccrpc ls` 里有、还没进索引的 Session（在 clay 里刚打开的，或刚新建的）以占位行列在列表最上方，不参与排序：标题「新 Session」、Live 点（按 `ccrpc ls` 的 status）、cwd 的最后一段；Project 筛选时按 cwd 所在的 Project（路径最深的那个）匹配，匹配不上不显示，从统计下钻时不显示。选中后标题栏显示「新 Session」、cwd 与「Connect」，主区显示「新 Session，发送第一条提示词后显示对话」，输入区照常可用；进索引后占位行变成正常的行，主区自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
 - **`session_changed`**（在 TUI 里 `/clear` 等）：正在看旧 Session 时，选中切换到新 Session。
-- **别处在等**：切回窗口时，当前 Session 没有要作答的、而别的 Session 在等作答（与 Dock 角标同一口径），对话区顶部显示一行「<标题> 在等你作答，点此切过去」，点击选中那个 Session；切换 Session 后消失，可关闭。
+- **别处在等**：切回窗口时，当前 Session 没有要作答的、而别的 Session 在等作答（与 Dock 角标同一口径），对话记录顶部显示一行「<标题> 在等你作答，点此切过去」，点击选中那个 Session；切换 Session 后消失，可关闭。
 - **Dock 角标**：等待作答的 Session 数 = Live 状态为 waiting 的 Session（全部 Session，不限于已连接）∪ 已连接且有请求卡片的 Session，去重。
-- **与 cc-gui 不同之处**（有意不移植）：等作答的 Session 不在列表里置顶，Session 列表保持原有排序（Live 点为琥珀色）；`ccrpc doctor` 的 fail 不在启动时顶部提示，只在「设置 › 驾驶」里显示（启动时不读 ccrpc 信息）。
-- **设置 › 驾驶**：ccrpc 路径、`ccrpc doctor` 的结果（fail 醒目显示）、界面分析器、启动参数、日志目录。这些信息在打开该页时才读取。界面分析器（ccrpc 认不出的对话框交给它，Anthropic Messages 协议，`POST {Endpoint}/v1/messages`）：显示是否开启、Key 来自哪里（设置 / 登录 shell，只显示末 4 位）；可填 API Key、Endpoint、模型，存进应用的 `settings.json`（`analyzer`，文件权限 0600），启动 ccrpc 时覆盖登录 shell 的 `CCRPC_ANALYZER_API_KEY` / `_BASE_URL` / `_MODEL`，留空的项照用登录 shell 的或 ccrpc 的默认值；对之后新建的连接生效。Key 输入框留空保存不改已存的 Key，「清除保存的 Key」删掉它。
-- **启动参数**（设置 › 驾驶）：按目录追加给 claude 的参数，相当于按工作目录加 `--add-dir` 的 shell 包装函数：`toh new` 用 CoDeck 的 `$SHELL` 起 Pane，从 Finder / Dock 启动时 `$SHELL` 来自 launchd，可能不是账户的登录 shell，shell 函数不一定生效。每条是「目录（选取）+ 参数」，存进 `settings.json` 的 `launchRules`；「新建 Session」时取包含所选目录的最深一条（按路径逐级比较，`/a/b` 不包含 `/a/bc`），参数按 shell 规则拆分（引号成组；`~` 在词首或词里第一个 `=` 之后、`$VAR` / `${VAR}` 按登录 shell 的环境展开，单引号里的不展开）后以 `ccrpc new … -- <参数>` 传给 claude。保存时去掉首尾空白、丢掉参数为空的条目；原样保存所写的参数；目录不是绝对路径、重复、引号不配对或用到登录 shell 里没有的环境变量时不保存并显示原因。对之后新建的 Session 生效。
+- **与 cc-gui 不同之处**（有意不移植）：等作答的 Session 不在列表里置顶，Session 列表保持原有排序（Live 点为琥珀色）；`ccrpc doctor` 的 fail 不在启动时顶部提示，只在「设置 › ccrpc」里显示（启动时不读 ccrpc 信息）。
+- **设置 › ccrpc**：ccrpc 路径、`ccrpc doctor` 的结果（fail 醒目显示）、界面分析器、启动参数、日志目录。这些信息在打开该页时才读取。界面分析器（ccrpc 认不出的对话框交给它，Anthropic Messages 协议，`POST {Endpoint}/v1/messages`）：显示是否开启、Key 来自哪里（设置 / 登录 shell，只显示末 4 位）；可填 API Key、Endpoint、模型，存进应用的 `settings.json`（`analyzer`，文件权限 0600），启动 ccrpc 时覆盖登录 shell 的 `CCRPC_ANALYZER_API_KEY` / `_BASE_URL` / `_MODEL`，留空的项照用登录 shell 的或 ccrpc 的默认值；对之后新建的连接生效。Key 输入框留空保存不改已存的 Key，「清除保存的 Key」删掉它。
+- **启动参数**（设置 › ccrpc）：按目录追加给 claude 的参数，相当于按工作目录加 `--add-dir` 的 shell 包装函数：`toh new` 用 CoDeck 的 `$SHELL` 起 Pane，从 Finder / Dock 启动时 `$SHELL` 来自 launchd，可能不是账户的登录 shell，shell 函数不一定生效。每条是「目录（选取）+ 参数」，存进 `settings.json` 的 `launchRules`；「新建 Session」时取包含所选目录的最深一条（按路径逐级比较，`/a/b` 不包含 `/a/bc`），参数按 shell 规则拆分（引号成组；`~` 在词首或词里第一个 `=` 之后、`$VAR` / `${VAR}` 按登录 shell 的环境展开，单引号里的不展开）后以 `ccrpc new … -- <参数>` 传给 claude。保存时去掉首尾空白、丢掉参数为空的条目；原样保存所写的参数；目录不是绝对路径、重复、引号不配对或用到登录 shell 里没有的环境变量时不保存并显示原因。对之后新建的 Session 生效。
 - **日志**：常开，按连接分目录，仅本人可读写，保留 14 天：
 
   ```
-  ~/Library/Logs/dev.joy.codeck/drive/<日期>/<holder_id>-<时刻>/
+  ~/Library/Logs/dev.joy.codeck/ccrpc/<日期>/<holder_id>-<时刻>/
     wire.jsonl   与 ccrpc 之间的每一行原样（命令、响应、事件）；超过 50 MB 轮转为 wire.1.jsonl
     ccrpc.log    ccrpc --log
     gui.log      用户操作（按钮 → 命令 id）、失败的命令、ccrpc 的退出码与 stderr
@@ -168,7 +168,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 - 解析器的回归测试使用 fixture：从真实 Session 精简后脱敏（保留结构，文本替换成占位内容），覆盖 Branch、Fork、compact、Subagent、Workflow、后台 agent、失败的调用、图片等情况。
 - E2E：Playwright 驱动前端并 mock IPC（`tauri-driver` 不支持 macOS）；Rust 后端单独测试。
-- 驾驶的 E2E 用 wire 回放的 mock ccrpc：`src/mocks/data/drive/*.jsonl` 是录下（或手写）的 `wire.jsonl`，收到命令回录下的响应，事件按录下的顺序推；`meta` 行里的 `session_id` 把录制对应到 mock 数据里的 Session，`connect_delay_ms` 让连接命令晚于事件返回（复现 ccrpc 秒退时退出事件先到）。
+- Connect 的 E2E 用 wire 回放的 mock ccrpc：`src/mocks/data/connect/*.jsonl` 是录下（或手写）的 `wire.jsonl`，收到命令回录下的响应，事件按录下的顺序推；`meta` 行里的 `session_id` 把录制对应到 mock 数据里的 Session，`connect_delay_ms` 让连接命令晚于事件返回（复现 ccrpc 秒退时退出事件先到）。
 - 启动、后台调度、配置类流程必须在真实应用中验证（单测覆盖不到，例如曾出现的全文索引任务互相让位导致永不执行）。
 
 ## 技术栈

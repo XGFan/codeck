@@ -1,10 +1,10 @@
-//! The relay against real ccrpc and Claude Code, in the sandbox of scripts/drive-sandbox (own ToH /
+//! The relay against real ccrpc and Claude Code, in the sandbox of scripts/ccrpc-sandbox (own ToH /
 //! claude / ccrpc directories, the local mock model; nothing of the owner's is touched):
 //!
 //! ```sh
 //! (cargo build --release -p ccrpc)
-//! python3 -I scripts/drive-sandbox/mock_model.py 18765 &
-//! cd src-tauri && cargo test --test drive_sandbox -- --ignored --nocapture
+//! python3 -I scripts/ccrpc-sandbox/mock_model.py 18765 &
+//! cd src-tauri && cargo test --test ccrpc_sandbox -- --ignored --nocapture
 //! ```
 
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use codeck_lib::drive::relay::{App, Out};
+use codeck_lib::ccrpc::relay::{App, Out};
 use serde_json::{Value, json};
 
 struct Holder {
@@ -59,11 +59,11 @@ fn next(
 }
 
 #[test]
-#[ignore = "real ccrpc + claude in the sandbox, with scripts/drive-sandbox/mock_model.py on :18765"]
+#[ignore = "real ccrpc + claude in the sandbox, with scripts/ccrpc-sandbox/mock_model.py on :18765"]
 fn relays_a_real_session_and_logs_it() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let sandbox = PathBuf::from("/tmp/codeck-drive-sandbox-test");
-    let out = Command::new(root.join("scripts/drive-sandbox/env.sh"))
+    let sandbox = PathBuf::from("/tmp/codeck-ccrpc-sandbox-test");
+    let out = Command::new(root.join("scripts/ccrpc-sandbox/env.sh"))
         .env("CODECK_SANDBOX", &sandbox)
         .output()
         .unwrap();

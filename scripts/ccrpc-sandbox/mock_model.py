@@ -1,4 +1,4 @@
-"""Scripted Anthropic Messages endpoint on loopback (port in argv[1]) for CoDeck's drive sandbox: text
+"""Scripted Anthropic Messages endpoint on loopback (port in argv[1]) for CoDeck's ccrpc sandbox: text
 `ok`; `MOCK-TOOL` calls Bash `touch mock-tool.txt` (once per such prompt); `MOCK-SLOW` streams ~8 s."""
 import json, sys, time, itertools
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

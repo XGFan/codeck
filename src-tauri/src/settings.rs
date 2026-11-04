@@ -11,15 +11,15 @@ pub const SETTINGS_FILE: &str = "settings.json";
 pub struct Settings {
     /// Data root override; `None` = `$CLAUDE_CONFIG_DIR` or `~/.claude`.
     pub data_root: Option<String>,
-    /// ccrpc's screen analyzer, over the login shell's `CCRPC_ANALYZER_*` (see `drive::env`).
+    /// ccrpc's screen analyzer, over the login shell's `CCRPC_ANALYZER_*` (see `ccrpc::env`).
     #[serde(default)]
     pub analyzer: AnalyzerSettings,
-    /// Extra claude arguments by directory for Sessions CoDeck starts (see `drive::launch`).
+    /// Extra claude arguments by directory for Sessions CoDeck starts (see `ccrpc::launch`).
     #[serde(default)]
     pub launch_rules: Vec<LaunchRule>,
 }
 
-/// 「设置 › 驾驶 › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below.
+/// 「设置 › ccrpc › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below.
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchRule {
@@ -27,7 +27,7 @@ pub struct LaunchRule {
     pub args: String,
 }
 
-/// What 「设置 › 驾驶」 sets for ccrpc's analyzer; `None` leaves the login shell's variable (or ccrpc's
+/// What 「设置 › ccrpc」 sets for ccrpc's analyzer; `None` leaves the login shell's variable (or ccrpc's
 /// default) in place.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

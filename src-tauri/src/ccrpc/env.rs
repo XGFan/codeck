@@ -74,7 +74,7 @@ fn read_login_env() -> Option<HashMap<String, String>> {
 
 /// The ccrpc to run: `CODECK_CCRPC`, else `~/.local/bin/ccrpc` (where `ccrpc plugin install` is
 /// expected to have been run from), else `ccrpc` on PATH.
-/// The analyzer's variables set in 「设置 › 驾驶」 override the login shell's (empty ones are left out).
+/// The analyzer's variables set in 「设置 › ccrpc」 override the login shell's (empty ones are left out).
 pub fn with_analyzer(
     env: &HashMap<String, String>,
     a: &crate::settings::AnalyzerSettings,

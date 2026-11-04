@@ -26,32 +26,32 @@ export const commands = {
 	revealSessionFile: (sessionId: string, agentId: string | null) => __TAURI_INVOKE<null>("reveal_session_file", { sessionId, agentId }),
 	getStats: (req: StatsRequest) => __TAURI_INVOKE<Stats>("get_stats", { req }),
 	getDiagnostics: () => __TAURI_INVOKE<Diagnostics>("get_diagnostics"),
-	/**  Slash commands for completion while driving a Session started in `cwd`. */
+	/**  Slash commands for completion while connected to a Session started in `cwd`. */
 	listSlashCommands: (cwd: string | null) => __TAURI_INVOKE<SlashCommand[]>("list_slash_commands", { cwd }),
-	driveInfo: () => __TAURI_INVOKE<DriveInfo>("drive_info"),
+	ccrpcInfo: () => __TAURI_INVOKE<CcrpcInfo>("ccrpc_info"),
 	/**
 	 *  Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
 	 *  removes it. Applies to the connections made from now on.
 	 */
-	driveSetAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerInfo>("drive_set_analyzer", { apiKey, baseUrl, model }),
+	ccrpcSetAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerInfo>("ccrpc_set_analyzer", { apiKey, baseUrl, model }),
 	/**  Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved. */
-	driveSetLaunchRules: (rules: LaunchRule[]) => __TAURI_INVOKE<LaunchRule[]>("drive_set_launch_rules", { rules }),
+	ccrpcSetLaunchRules: (rules: LaunchRule[]) => __TAURI_INVOKE<LaunchRule[]>("ccrpc_set_launch_rules", { rules }),
 	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
-	driveList: () => __TAURI_INVOKE<string>("drive_list"),
-	driveConnect: (holderId: string) => __TAURI_INVOKE<string>("drive_connect", { holderId }),
-	driveNew: (cwd: string) => __TAURI_INVOKE<string>("drive_new", { cwd }),
-	driveSend: (conn: string, line: string) => __TAURI_INVOKE<null>("drive_send", { conn, line }),
-	driveDisconnect: (conn: string) => __TAURI_INVOKE<null>("drive_disconnect", { conn }),
-	driveGuiLog: (conn: string | null, text: string) => __TAURI_INVOKE<null>("drive_gui_log", { conn, text }),
+	ccrpcList: () => __TAURI_INVOKE<string>("ccrpc_list"),
+	ccrpcConnect: (holderId: string) => __TAURI_INVOKE<string>("ccrpc_connect", { holderId }),
+	ccrpcNew: (cwd: string) => __TAURI_INVOKE<string>("ccrpc_new", { cwd }),
+	ccrpcSend: (conn: string, line: string) => __TAURI_INVOKE<null>("ccrpc_send", { conn, line }),
+	ccrpcDisconnect: (conn: string) => __TAURI_INVOKE<null>("ccrpc_disconnect", { conn }),
+	ccrpcGuiLog: (conn: string | null, text: string) => __TAURI_INVOKE<null>("ccrpc_gui_log", { conn, text }),
 	/**  The connection's log directory, `None` once its ccrpc has exited. */
-	driveLogDir: (conn: string) => __TAURI_INVOKE<string | null>("drive_log_dir", { conn }),
-	driveSaveImage: (base64: string, ext: string) => __TAURI_INVOKE<string>("drive_save_image", { base64, ext }),
+	ccrpcLogDir: (conn: string) => __TAURI_INVOKE<string | null>("ccrpc_log_dir", { conn }),
+	ccrpcSaveImage: (base64: string, ext: string) => __TAURI_INVOKE<string>("ccrpc_save_image", { base64, ext }),
 };
 
 /** Events */
 export const events = {
-	driveExitEvent: makeEvent<DriveExitEvent>("drive-exit-event"),
-	driveLineEvent: makeEvent<DriveLineEvent>("drive-line-event"),
+	ccrpcExitEvent: makeEvent<CcrpcExitEvent>("ccrpc-exit-event"),
+	ccrpcLineEvent: makeEvent<CcrpcLineEvent>("ccrpc-line-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
@@ -79,7 +79,7 @@ export type ActivityBar = {
 export type ActivityBucket = "hour1" | "hour3" | "hour6" | "hour12" | "day" | "week" | "month";
 
 /**
- *  ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › 驾驶」 saved, and what the next
+ *  ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › ccrpc」 saved, and what the next
  *  ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
  */
 export type AnalyzerInfo = {
@@ -139,6 +139,27 @@ export type BranchPoint = {
 	options: BranchOption[],
 };
 
+/**  A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters). */
+export type CcrpcExitEvent = {
+	conn: string,
+	code: number | null,
+	stderr: string,
+};
+
+export type CcrpcInfo = {
+	ccrpcPath: string,
+	doctor: DoctorLine[],
+	analyzer: AnalyzerInfo,
+	launchRules: LaunchRule[],
+	logRoot: string,
+};
+
+/**  One line of a connection's ccrpc stdout, as it was written (not parsed). */
+export type CcrpcLineEvent = {
+	conn: string,
+	line: string,
+};
+
 export type DailyModelTokens = {
 	day: string,
 	model: string,
@@ -189,27 +210,6 @@ export type Drill =
 { kind: "day"; day: string } | { kind: "model"; model: string } | 
 /**  Main-file messages in `[from_ms, to_ms)` (an activity bar). */
 { kind: "span"; fromMs: number; toMs: number };
-
-/**  A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters). */
-export type DriveExitEvent = {
-	conn: string,
-	code: number | null,
-	stderr: string,
-};
-
-export type DriveInfo = {
-	ccrpcPath: string,
-	doctor: DoctorLine[],
-	analyzer: AnalyzerInfo,
-	launchRules: LaunchRule[],
-	logRoot: string,
-};
-
-/**  One line of a connection's ccrpc stdout, as it was written (not parsed). */
-export type DriveLineEvent = {
-	conn: string,
-	line: string,
-};
 
 export type ErrorCode = "notFound" | "invalidQuery" | "io" | "index" | "cancelled" | "internal";
 
@@ -320,7 +320,7 @@ export type JumpTarget = {
 	needsHidden: boolean,
 };
 
-/**  「设置 › 驾驶 › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below. */
+/**  「设置 › ccrpc › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below. */
 export type LaunchRule = {
 	dir: string,
 	args: string,

@@ -65,5 +65,5 @@ export function NoticeCard({
 export function ErrorNotice({ text, onClose }: { text: string; onClose: () => void }) {
   const at = text.indexOf("：");
   const [title, desc] = at > 0 && at <= 16 ? [text.slice(0, at), text.slice(at + 1)] : [text, undefined];
-  return <NoticeCard tone="error" testId="drive-error" icon={<CircleAlert size={18} strokeWidth={1.7} />} title={title} desc={desc || undefined} onClose={onClose} />;
+  return <NoticeCard tone="error" testId="connect-error" icon={<CircleAlert size={18} strokeWidth={1.7} />} title={title} desc={desc || undefined} onClose={onClose} />;
 }

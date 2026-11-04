@@ -1,4 +1,4 @@
-import type { LsEntry } from "@/features/drive/protocol";
+import type { LsEntry } from "@/features/connect/protocol";
 import type { ProjectSummary } from "@/ipc/bindings";
 
 /** A Session in `ccrpc ls` that is not in the index yet (no transcript before its first prompt): a placeholder row. */

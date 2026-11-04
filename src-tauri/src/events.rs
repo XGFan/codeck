@@ -23,14 +23,14 @@ pub struct LiveChangedEvent(pub LiveChanged);
 
 /// One line of a connection's ccrpc stdout, as it was written (not parsed).
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
-pub struct DriveLineEvent {
+pub struct CcrpcLineEvent {
     pub conn: String,
     pub line: String,
 }
 
 /// A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters).
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
-pub struct DriveExitEvent {
+pub struct CcrpcExitEvent {
     pub conn: String,
     pub code: Option<i32>,
     pub stderr: String,

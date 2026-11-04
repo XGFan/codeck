@@ -1,9 +1,9 @@
 #!/bin/sh
-# Runs the built CoDeck inside the sandbox (scripts/drive-sandbox/env.sh) with the mock model.
+# Runs the built CoDeck inside the sandbox (scripts/ccrpc-sandbox/env.sh) with the mock model.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-B=${CODECK_SANDBOX:-/tmp/codeck-drive-sandbox}; PORT=${PORT:-18765}
+B=${CODECK_SANDBOX:-/tmp/codeck-ccrpc-sandbox}; PORT=${PORT:-18765}
 python3 -I "$here/mock_model.py" "$PORT" & mock=$!
 trap 'kill $mock 2>/dev/null' EXIT
 "$here/env.sh" >/dev/null

@@ -18,7 +18,7 @@
 ## Consequences
 
 - 判断依赖当前磁盘：仓库被删除或移走后，重建索引时改动不再计入它；已不存在的启动 cwd 归入仍存在的上级目录所在的仓库，没有时按原始路径归类。
-- resume / Fork 复制进来的历史里的改动也计入新 Session，与「对话区能看到这些改动」一致。
+- resume / Fork 复制进来的历史里的改动也计入新 Session，与「对话记录里能看到这些改动」一致。
 - 用 Bash 做的修改（`sed -i`、代码生成等）不计入改动的 Project。
 - 按 Project 筛选时，列表、搜索、统计都包含改动过它的 Session；统计的 Project 排行仍按启动 Project 归属，每个 Session 只计一次，因此排行里的 Session 数可能少于按该 Project 筛选出的数量。
 - Project 身份变化需要重建索引（Schema 8）。

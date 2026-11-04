@@ -7,7 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { connFor, DriveConnect, lsEntryFor, STATE_WORD, useDrive, useDriveDebugInfo, useUnindexed } from "@/features/drive";
+import { connFor, ConnectButton, lsEntryFor, STATE_WORD, useConnect, useConnectDebugInfo, useUnindexed } from "@/features/connect";
 import { useLeadingInset } from "@/features/layout";
 import { api } from "@/ipc";
 import type { LiveState, ModelCost } from "@/ipc/bindings";
@@ -27,19 +27,19 @@ export function SessionHeader() {
   const sessionId = useUi((s) => s.sessionId);
   const inset = useLeadingInset();
   const { data: d, error } = useSession(sessionId);
-  const driven = useDrive((s) => connFor(s, sessionId));
-  const lsCwd = useDrive((s) => lsEntryFor(s, sessionId)?.cwd ?? null);
-  // A driven or `ccrpc ls` Session not in the index yet (a new one, before its first prompt).
+  const connected = useConnect((s) => connFor(s, sessionId));
+  const lsCwd = useConnect((s) => lsEntryFor(s, sessionId)?.cwd ?? null);
+  // A Connected or `ccrpc ls` Session not in the index yet (a new one, before its first prompt).
   const unindexed = useUnindexed(error);
   if (!sessionId) return null;
   if (!d) {
     if (!unindexed) return null;
-    const cwd = driven?.cwd ?? lsCwd;
+    const cwd = connected?.cwd ?? lsCwd;
     return (
       <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">新 Session</h1>
-          <DriveConnect sessionId={sessionId} />
+          <ConnectButton sessionId={sessionId} />
         </div>
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
           <StateWord sessionId={sessionId} live={null} lastActiveMs={null} />
@@ -57,7 +57,7 @@ export function SessionHeader() {
     <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
-        <DriveConnect sessionId={sessionId} />
+        <ConnectButton sessionId={sessionId} />
         <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} />
       </div>
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
@@ -110,13 +110,13 @@ export function SessionHeader() {
 }
 
 /**
- * The Session's state in one word, after a dot while its process runs: the drive connection's state while
- * driven (ccrpc sees the turn through hooks), else the Live one; 「已结束 · 3 分钟前」 once it ended.
+ * The Session's state in one word, after a dot while its process runs: the connection's state while
+ * connected (ccrpc sees the turn through hooks), else the Live one; 「已结束 · 3 分钟前」 once it ended.
  */
 function StateWord({ sessionId, live, lastActiveMs }: { sessionId: string; live: LiveState | null; lastActiveMs: number | null }) {
-  const c = useDrive((st) => connFor(st, sessionId));
-  const driven = c && c.ready && !c.procExit && !c.sessionExited ? c : null;
-  const status = driven ? driven.state : (live?.status ?? null);
+  const c = useConnect((st) => connFor(st, sessionId));
+  const connected = c && c.ready && !c.procExit && !c.sessionExited ? c : null;
+  const status = connected ? connected.state : (live?.status ?? null);
   if (!status) {
     return (
       <span data-testid="live-state">{lastActiveMs != null ? `已结束 · ${formatRelative(lastActiveMs)}` : "已结束"}</span>
@@ -126,18 +126,18 @@ function StateWord({ sessionId, live, lastActiveMs }: { sessionId: string; live:
   return (
     <span data-testid="live-state" className={cn("flex items-center gap-1.5 font-semibold", waiting ? "text-live-waiting" : "text-live")}>
       <span className={cn("size-2 rounded-full", waiting ? "bg-live-waiting" : status === "busy" ? "bg-live" : "box-border border-[1.5px] border-live")} />
-      <span data-testid={driven ? "drive-state" : undefined} data-state={status}>
+      <span data-testid={connected ? "connect-state" : undefined} data-state={status}>
         {STATE_WORD[status] ?? status}
       </span>
     </span>
   );
 }
 
-/** 「···」: what used to crowd the title row, plus the drive's debug info while driven. */
+/** 「···」: what used to crowd the title row, plus the connection's debug info while connected. */
 function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeCommand: string }) {
   const showHidden = useUi((s) => s.showHidden);
   const setShowHidden = useUi((s) => s.setShowHidden);
-  const debug = useDriveDebugInfo(sessionId);
+  const debug = useConnectDebugInfo(sessionId);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -157,7 +157,7 @@ function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeComma
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void api.copyText(resumeCommand)}>
           <Copy size={13} strokeWidth={1.5} aria-hidden />
-          复制 resume 命令
+          复制 Resume 命令
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => void api.copyText(sessionId)}>
           <Copy size={13} strokeWidth={1.5} aria-hidden />

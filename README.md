@@ -1,12 +1,12 @@
 # CoDeck
 
-macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能驾驶 ToH clay 里正在运行的 Session。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
+macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
 
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
-- **读得舒服**：参考 Codex 的排版，每轮的过程折叠成「已处理 1 分 50 秒」一行、只露出回答，展开后每次工具调用是一行字（Subagent 面板里连续的合成「读取 1 个文件、编辑 2 个文件、运行 1 条命令」一行），Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话区；对话列宽度拖动边缘即可调节。
+- **读得舒服**：参考 Codex 的排版，每轮的过程折叠成「已处理 1 分 50 秒」一行、只露出回答，展开后每次工具调用是一行字（Subagent 面板里连续的合成「读取 1 个文件、编辑 2 个文件、运行 1 条命令」一行），Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话记录；对话列宽度拖动边缘即可调节。
 - **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。
 - **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork 复制的历史不重复计算），Session 列表可按 Cost 排序，统计页汇总总额与 Session 排行。
-- **驾驶**：ToH clay 里装了 ccrpc 插件的 Session，在标题栏点「驾驶」后可以直接发提示词（可粘贴截图）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill）、忙时插话（和终端里一样进 Claude Code 的队列）、作答审批 / 提问 / 选择、切换权限模式、模型与思考等级、停止后台任务；「关闭」结束 Session 并关掉它的 Pane；也可以选目录新建 Session，并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
+- **Connect**：ToH clay 里装了 ccrpc 插件的 Session，在标题栏点「Connect」后可以直接发提示词（可粘贴截图）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill）、忙时插话（和终端里一样进 Claude Code 的队列）、作答审批 / 提问 / 选择、切换权限模式、模型与思考等级、停止后台任务；「关闭」结束 Session 并关掉它的 Pane；也可以选目录新建 Session，并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：默认看本周期（自定义每周重置时间）的用量，可切到月份或最近 7 / 30 / 90 天，周期和月份可前后翻；输入、输出 token 与缓存命中率，每日 token（全部 / 输入 / 输出，后两者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
 
 ## 快捷键
@@ -19,25 +19,25 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | ⌘↑ / ⌘↓ | 跳到对话顶部 / 底部 |
 | ↑ / ↓ | 在 Session 列表中切换（列表获得焦点时） |
 | ⌃⌘L | 收起 / 展开 Session 列表 |
-| ⌘, | 设置（数据目录、驾驶、格式兼容性诊断、重建索引） |
+| ⌘, | 设置（数据目录、ccrpc、格式兼容性诊断、重建索引） |
 | Esc | 关闭搜索、查找或 Subagent 面板 |
-| Enter / ⌘Enter | 驾驶时：空闲发送；忙时插话（当前工具调用结束后送达）/ 中断本轮立即发送（同终端里的 ctrl+enter）；等待作答时把焦点移到请求卡片 |
-| Esc（焦点在驾驶区） | 驾驶时：忙或等待作答时中止本轮；卡片里的输入框中只离开输入框 |
-| 1 / 2 / 3 | 驾驶时：选第一张请求卡片的选项（焦点在驾驶区内、不在输入框时） |
+| Enter / ⌘Enter | Connect 后：空闲发送；忙时插话（当前工具调用结束后送达）/ 中断本轮立即发送（同终端里的 ctrl+enter）；等待作答时把焦点移到请求卡片 |
+| Esc（焦点在输入区） | Connect 后：忙或等待作答时中止本轮；卡片里的输入框中只离开输入框 |
+| 1 / 2 / 3 | Connect 后：选第一张请求卡片的选项（焦点在输入区内、不在输入框时） |
 
 术语见 [CONTEXT.md](CONTEXT.md)，完整规格见 [docs/spec.md](docs/spec.md)，关键取舍见 [docs/adr/](docs/adr/)。
 
 ## 只读保证
 
-应用从不写入、移动或删除数据目录（默认 `~/.claude`）下的任何文件（[ADR-0002](docs/adr/0002-read-only.md)）。驾驶时对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
+应用从不写入、移动或删除数据目录（默认 `~/.claude`）下的任何文件（[ADR-0002](docs/adr/0002-read-only.md)）。Connect 后对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
 
 | 内容 | 位置 |
 |---|---|
 | 索引（可丢弃，随时重建） | `~/Library/Caches/dev.joy.codeck/index.sqlite` |
 | 价格表缓存 | `~/Library/Caches/dev.joy.codeck/pricing.json` |
 | 设置（数据目录覆盖） | `~/Library/Application Support/dev.joy.codeck/settings.json` |
-| 驾驶日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.codeck/drive/` |
-| 驾驶时粘贴的图片 | `~/Library/Caches/dev.joy.codeck/images/` |
+| ccrpc 日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.codeck/ccrpc/` |
+| 输入区粘贴的图片 | `~/Library/Caches/dev.joy.codeck/images/` |
 
 应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 Cost；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）。
 
