@@ -5,22 +5,14 @@
 //! each carries `#[specta(type = Number)]` to export as `number` instead of `number | null`;
 //! JSON blobs are `String` fields named `*_json`.
 
-pub mod app;
 pub mod common;
-pub mod diag;
-pub mod events;
 pub mod search;
 pub mod session;
-pub mod stats;
 pub mod transcript;
 
-pub use app::*;
 pub use common::*;
-pub use diag::*;
-pub use events::*;
 pub use search::*;
 pub use session::*;
-pub use stats::*;
 pub use transcript::*;
 
 #[cfg(test)]
@@ -63,10 +55,6 @@ mod tests {
         assert_eq!(v["kind"], "taskNotification");
         assert_eq!(v["taskId"], "x");
 
-        assert_eq!(
-            serde_json::to_value(ErrorCode::InvalidQuery).unwrap(),
-            json!("invalidQuery")
-        );
         let back: TranscriptScope = serde_json::from_value(json!({"kind": "main"})).unwrap();
         assert_eq!(back, TranscriptScope::Main);
     }

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::common::{LiveState, SessionId};
+use super::{LiveState, SessionId};
 
 /// Emitted after each debounced filesystem batch.
 #[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq)]

@@ -65,7 +65,7 @@ pnpm tauri dev          # 启动应用（读取真实数据目录）
 pnpm dev:mock           # 只启动前端，使用内置 mock 数据（浏览器打开 http://localhost:1420）
 ```
 
-Rust 侧的 IPC 类型是唯一来源，修改 `crates/transcript/src/model/*` 后重新生成前端绑定：
+Rust 侧的 IPC 类型是唯一来源，修改 `crates/transcript/src/model/*`（组装用的类型）或 `crates/codeck-core/src/model/*`（应用层类型）后重新生成前端绑定：
 
 ```sh
 pnpm bindings           # 写入 src/ipc/bindings.ts（勿手改）

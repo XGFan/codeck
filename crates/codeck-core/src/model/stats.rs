@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use specta_typescript::Number;
 
-use super::common::{SessionId, TimeRange};
+use super::{SessionId, TimeRange};
 
 /// Days and week-hours are bucketed in local time (`chrono::Local`, DST-correct).
 #[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq)]

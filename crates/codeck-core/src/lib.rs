@@ -5,16 +5,13 @@ pub mod diag;
 pub mod engine;
 pub mod error;
 pub mod index;
+pub mod model;
 pub mod paths;
 pub mod project;
 pub mod scan;
 pub mod search;
 pub mod slash;
 pub mod stats;
-
-// IPC types of the parsing layer, re-exported so src-tauri keeps `codeck_core::model::…`; the
-// rest of the `transcript` crate is used by its own paths.
-pub use transcript::model;
 
 pub use engine::{ChangeSet, Engine, EngineConfig};
 pub use error::{CoreError, CoreResult};
