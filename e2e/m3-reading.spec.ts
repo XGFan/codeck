@@ -92,6 +92,16 @@ test("大纲浮在对话左侧、滚动条浮在右侧，都不占对话区宽�
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.wheel(0, 300);
   await expect.poll(() => t.evaluate((el) => el.scrollTop)).toBeGreaterThan(before + 100);
+  // A bounce at the bottom pushes the thumb past the strip for a moment (scrollTop beyond its range, which a test
+  // cannot set): the strip clips it, so the page gets no scrollbar and the layout does not shift left.
+  const shifted = await thumb.evaluate(async (th: HTMLElement) => {
+    const width = document.documentElement.clientWidth;
+    th.style.transform = `translateY(${th.parentElement!.clientHeight}px)`;
+    th.style.height = `${th.offsetHeight + 1}px`; // a layout, as the measuring list does all the time
+    await new Promise((r) => requestAnimationFrame(r));
+    return width - document.documentElement.clientWidth;
+  });
+  expect(shifted).toBe(0);
 });
 
 test("j 在输入框内不触发轮次跳转", async ({ page }) => {

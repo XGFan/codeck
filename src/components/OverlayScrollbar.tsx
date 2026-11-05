@@ -44,7 +44,9 @@ export function OverlayScrollbar({
       bar.hidden = false;
       const h = Math.max(MIN_THUMB, (track * ch) / sh);
       th.style.height = `${h}px`;
-      th.style.transform = `translateY(${(st / (sh - ch)) * (track - h)}px)`;
+      // A bounce at either end (trackpad rubber-banding) can put scrollTop past its range; the thumb stays in the track.
+      const at = Math.min(1, Math.max(0, st / (sh - ch)));
+      th.style.transform = `translateY(${at * (track - h)}px)`;
     };
     const schedule = () => {
       if (!s.frame) s.frame = requestAnimationFrame(layout);
@@ -142,7 +144,8 @@ export function OverlayScrollbar({
         onUserScroll?.();
         scrollRef.current?.scrollBy({ top: e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY });
       }}
-      className="group/sb absolute inset-y-0 right-0 z-10 w-2.5 select-none"
+      // Clips the thumb: past the strip's end it would overflow the page, whose (10px) scrollbar then shifts the layout.
+      className="group/sb absolute inset-y-0 right-0 z-10 w-2.5 overflow-hidden select-none"
     >
       <div
         ref={thumb}
