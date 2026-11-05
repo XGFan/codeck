@@ -396,6 +396,10 @@ impl Engine {
         message: Option<&str>,
     ) -> CmdResult {
         self.check_request(WaitKind::Permission, request_id)?;
+        // A message that cannot be sent is refused before the decision goes out.
+        if let Some(msg) = message {
+            Self::clean_text(msg)?;
+        }
         let Some(idx) = self.requests.iter().position(|r| r.id == request_id) else {
             return err(
                 "unknown_request",

@@ -34,7 +34,7 @@ export const rewoundLabel = (withCode: boolean) =>
   `${withCode ? "已回退到这里，代码已恢复" : "已回退到这里"} · 发出新提示词后，下面这段成为另一个 Branch`;
 
 /**
- * The prompts the person typed on the Main Line part of a shown path, in order, and whether the whole path is the
+ * The prompts and commands the person typed on the Main Line part of a shown path, in order, and whether the whole path is the
  * Main Line (it leaves it at a branch head whose shown option is another Branch).
  */
 export function mainLinePrompts(nodes: Node[], branchPoints: BranchPoint[]): { ids: string[]; wholeMain: boolean } {
@@ -46,7 +46,9 @@ export function mainLinePrompts(nodes: Node[], branchPoints: BranchPoint[]): { i
   const ids: string[] = [];
   for (const n of nodes) {
     if (offMain.has(n.id)) return { ids, wholeMain: false };
-    if (n.body.kind === "userPrompt" && n.body.origin.kind === "human") ids.push(n.id);
+    // Typed prompts and slash / `!` commands: the terminal's Rewind picker lists them all.
+    if (n.body.kind === "userPrompt" && (n.body.origin.kind === "human" || n.body.origin.kind === "command"))
+      ids.push(n.id);
   }
   return { ids, wholeMain: true };
 }

@@ -44,20 +44,26 @@ describe("rewind", () => {
     expect(codeLine("The code will be partly restored.")).toBe("The code will be partly restored.");
   });
 
-  it("offers the prompts typed on the Main Line, before the one already rewound to", () => {
+  it("offers the prompts and commands typed on the Main Line, before the one already rewound to", () => {
     const nodes = [
       prompt("p1"),
       reply("a1"),
-      prompt("c1", { kind: "command", name: "/compact", args: "" }),
+      prompt("c1", { kind: "command", name: "/oh-my-claudecode:autopilot", args: "build it" }),
+      prompt("o1", { kind: "commandOutput" }),
+      prompt("b1", { kind: "command", name: "!", args: "echo bang" }),
       prompt("n1", { kind: "taskNotification", taskId: null, toolUseId: null, status: null, summary: null }),
       prompt("p2"),
       reply("a2"),
       prompt("p3"),
     ];
-    expect(mainLinePrompts(nodes, [])).toEqual({ ids: ["p1", "p2", "p3"], wholeMain: true });
+    // Command output and notifications are not typed: no 「回退」.
+    expect(mainLinePrompts(nodes, [])).toEqual({ ids: ["p1", "c1", "b1", "p2", "p3"], wholeMain: true });
     // A branch point on the Main Line's own head changes nothing; another Branch's head ends the Main Line part.
-    expect(mainLinePrompts(nodes, [point("p2", "p2")])).toEqual({ ids: ["p1", "p2", "p3"], wholeMain: true });
-    expect(mainLinePrompts(nodes, [point("p2", "x2")])).toEqual({ ids: ["p1"], wholeMain: false });
+    expect(mainLinePrompts(nodes, [point("p2", "p2")])).toEqual({
+      ids: ["p1", "c1", "b1", "p2", "p3"],
+      wholeMain: true,
+    });
+    expect(mainLinePrompts(nodes, [point("p2", "x2")])).toEqual({ ids: ["p1", "c1", "b1"], wholeMain: false });
 
     expect(rewindable(["p1", "p2", "p3"], null)).toEqual(["p1", "p2", "p3"]);
     expect(rewindable(["p1", "p2", "p3"], "p2")).toEqual(["p1"]);

@@ -1,7 +1,7 @@
 //! `rewind` / `answer_rewind`: the TUI's Rewind picker (`Esc Esc` on an empty input box) driven
 //! to the confirm page of a Main Line prompt, which then waits for the caller (docs/probes.md).
-//! The picker lists more than the transcript's prompts (`/compact`, `! cmd`) and shows only each
-//! one's first line, so a row is only a candidate: walking up from `(current)`, every row whose
+//! The picker lists typed prompts and slash and `!` commands (as CoDeck shows them), each by its
+//! first line only, so a row is only a candidate: walking up from `(current)`, every row whose
 //! text fits is opened, and its confirm page (the prompt quoted, when it was sent) must fit the
 //! target before anything is offered. Pages that fit another prompt are left with Esc. Prompts
 //! alike in text and time are told apart by order (the picker lists every prompt, newest last),
@@ -19,6 +19,8 @@ pub(super) struct RewindReq {
     uuid: String,
     /// The prompt's full text (it returns to the input box when the conversation is restored).
     text: String,
+    /// A `!` command (it returns to the input box in shell mode).
+    shell: bool,
     /// The confirm page as announced: the screen shows this rewind while it shows this page.
     page: Option<RewindConfirm>,
     /// What `rewind` answered (and `get_state` shows as the request).
@@ -36,6 +38,10 @@ struct Prompt {
     queued: bool,
     /// When it was sent (unix ms).
     at_ms: Option<f64>,
+    /// A `!` command: restored, it waits in the TUI's input box in shell mode.
+    shell: bool,
+    /// A slash or `!` command (whether one was typed while busy is not known).
+    command: bool,
 }
 
 /// How long the announced confirm page may be away (the Process File flickers; someone answered
@@ -80,34 +86,85 @@ fn age_fits(page: &RewindConfirm, prompt: &Prompt, now_ms: f64) -> bool {
     }
 }
 
-/// When each user entry of the transcript was written: uuid → unix ms.
-fn prompt_times(path: &Path) -> HashMap<String, f64> {
-    use std::io::BufRead;
-    let mut out = HashMap::new();
-    let Ok(f) = std::fs::File::open(path) else {
-        return out;
+/// The prompts of the Main Line as CoDeck shows them (the transcript library's assembly, no
+/// Branch chosen): what a person typed, and slash and `!` commands written as the picker lists
+/// them (`/greet world`, `! echo bang`). A typed prompt's text is the transcript's own (the
+/// assembled one may be cut short).
+fn main_line_prompts(path: &Path) -> Vec<Prompt> {
+    use ::transcript::assemble::{LoadedFile, SessionSidecar};
+    use ::transcript::model::{
+        FileRole, NodeBody, PromptOrigin, TranscriptRequest, TranscriptScope,
     };
-    for line in std::io::BufReader::new(f)
-        .lines()
-        .map_while(std::result::Result::ok)
-    {
-        if !line.contains("\"type\":\"user\"") {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let (Some(u), Some(t)) = (v["uuid"].as_str(), v["timestamp"].as_str())
-            && let Some(ms) = ::transcript::raw::parse_timestamp_ms(t)
-        {
-            out.insert(u.to_string(), ms);
-        }
+    let Ok(chunk) = ::transcript::parse::read_entries(path, 0) else {
+        return Vec::new();
+    };
+    let sid = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let file = LoadedFile {
+        path: path.to_path_buf(),
+        role: FileRole::Main,
+        agent_id: None,
+        records: chunk.records,
+    };
+    let session = ::transcript::assemble::assemble(
+        &sid,
+        &path.with_extension(""),
+        vec![file],
+        SessionSidecar::default(),
+    );
+    let req = TranscriptRequest {
+        session_id: sid,
+        scope: TranscriptScope::Main,
+        branch_choices: Vec::new(),
+        include_hidden: false,
+    };
+    let Ok(view) = ::transcript::assemble::transcript(&session, &req, None) else {
+        return Vec::new();
+    };
+    // ccrpc's own reading of the prompts: whole texts, and which were typed while busy.
+    let (blocks, _) = transcript::main_blocks(path, 0);
+    let mut typed: HashMap<String, (Option<String>, bool)> = HashMap::new();
+    for b in blocks.into_iter().filter(|b| b.kind == BlockKind::User) {
+        // A prompt's first text block is what was typed (later ones: an opened file…).
+        typed.entry(b.uuid).or_insert((b.text, b.queued));
     }
-    out
+    view.nodes
+        .into_iter()
+        .filter_map(|n| {
+            let NodeBody::UserPrompt { text, origin, .. } = n.body else {
+                return None;
+            };
+            let command = matches!(origin, PromptOrigin::Command { .. });
+            let (text, shell) = match origin {
+                PromptOrigin::Human => (
+                    typed.get(&n.id).and_then(|t| t.0.clone()).unwrap_or(text),
+                    false,
+                ),
+                PromptOrigin::Command { name, args } if name == "!" => {
+                    (format!("! {}", args.trim()), true)
+                }
+                PromptOrigin::Command { name, args } => (
+                    format!("{name} {}", args.trim()).trim_end().to_string(),
+                    false,
+                ),
+                _ => return None,
+            };
+            Some(Prompt {
+                queued: typed.get(&n.id).is_some_and(|t| t.1),
+                at_ms: n.timestamp_ms,
+                uuid: n.id,
+                text,
+                shell,
+                command,
+            })
+        })
+        .collect()
 }
 
 impl Engine {
-    /// Main Line prompts in order, read on a thread (a long transcript takes a while; reads are
+    /// Main Line prompts and commands in order, read on a thread (a long transcript takes a while; reads are
     /// served meanwhile).
     fn main_prompts(&mut self) -> std::result::Result<Vec<Prompt>, CmdErr> {
         let Some(path) = self.tailer.as_ref().map(|t| t.main_path().to_path_buf()) else {
@@ -116,21 +173,7 @@ impl Engine {
         let (tx, rx) = mpsc::channel();
         let wake = self.wake.clone();
         std::thread::spawn(move || {
-            let (blocks, _) = transcript::main_blocks(&path, 0);
-            let times = prompt_times(&path);
-            let mut prompts: Vec<Prompt> = Vec::new();
-            for b in blocks.into_iter().filter(|b| b.kind == BlockKind::User) {
-                if prompts.last().is_some_and(|p| p.uuid == b.uuid) {
-                    continue;
-                }
-                prompts.push(Prompt {
-                    at_ms: times.get(&b.uuid).copied(),
-                    uuid: b.uuid,
-                    text: b.text.unwrap_or_default(),
-                    queued: b.queued,
-                });
-            }
-            let _ = tx.send(prompts);
+            let _ = tx.send(main_line_prompts(&path));
             wake.bump();
         });
         let mut got = None;
@@ -164,6 +207,7 @@ impl Engine {
             id: None,
             uuid: uuid.to_string(),
             text: prompts[target].text.clone(),
+            shell: prompts[target].shell,
             page: None,
             event: Value::Null,
             gone_since: None,
@@ -229,8 +273,12 @@ impl Engine {
             } else if group.len() == 1 {
                 Some(target)
             } else {
-                // Typed while busy, one of them may not be listed: the order says nothing.
-                if group.iter().any(|&i| prompts[i].queued) {
+                // Typed while busy, one of them may not be listed: the order says nothing (for a
+                // command it is not known whether it was).
+                if group
+                    .iter()
+                    .any(|&i| prompts[i].queued || prompts[i].command)
+                {
                     return ambiguous();
                 }
                 let k = met.entry(group.clone()).or_default();
@@ -403,7 +451,9 @@ impl Engine {
         if !fits {
             return err("unrecognized_screen", "回退后输入框里不是这条提示词");
         }
-        Ok(json!({"state": self.state.name(), "text": r.text}))
+        // A `!` command waits in the TUI in shell mode: it cannot be sent as a prompt.
+        let text = (!r.shell).then(|| r.text.clone());
+        Ok(json!({"state": self.state.name(), "text": text}))
     }
 
     /// While ccrpc drives the picker nothing is announced; an announced rewind ends once the
@@ -448,6 +498,8 @@ mod tests {
             text: text.to_string(),
             queued: false,
             at_ms,
+            shell: false,
+            command: false,
         }
     }
 

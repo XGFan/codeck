@@ -455,8 +455,9 @@ pub fn is_input_rule(l: &str) -> bool {
     !title.trim().is_empty() && !title.contains('─') && tail <= 3 && lead >= 4
 }
 
-/// The prompt input box: the text after `❯` between the two horizontal rules at the bottom.
-/// `Some("")` when empty, `None` when no input box is visible (a dialog has the screen).
+/// The prompt input box: the text after `❯` between the two horizontal rules at the bottom; in
+/// shell mode (`!` instead of `❯`) the text starts with `!` (`"!"` when empty). `Some("")` when
+/// empty, `None` when no input box is visible (a dialog has the screen).
 pub fn input_box(lines: &[String]) -> Option<String> {
     let rules: Vec<usize> = lines
         .iter()
@@ -469,13 +470,19 @@ pub fn input_box(lines: &[String]) -> Option<String> {
     if bottom <= top + 1 {
         return None;
     }
-    let first = lines[top + 1].strip_prefix('❯')?;
+    // `❯`, or `!` in shell mode (its text then starts with `!`).
+    let row = &lines[top + 1];
+    let (shell, first) = match row.strip_prefix('❯') {
+        Some(f) => (false, f),
+        None => (true, row.strip_prefix('!')?),
+    };
     let mut s = first.trim().to_string();
     for l in &lines[top + 2..bottom] {
         s.push('\n');
         s.push_str(l.trim());
     }
-    Some(s.trim_end().to_string())
+    let s = s.trim_end().to_string();
+    Some(if shell { format!("!{s}") } else { s })
 }
 
 /// [`input_box`] without what Claude Code draws dim in it: an empty box shows a placeholder such
@@ -1447,6 +1454,21 @@ mod tests {
         assert!(!rewind_row_matches("continue", "continue later"));
         assert!(!rewind_row_matches("(current)", "first plain"));
         assert_eq!(rewind_key("[Image #12] a\tb [Image #x]"), "ab[Image#x]");
+    }
+
+    #[test]
+    fn input_box_in_shell_mode() {
+        let rule = "─".repeat(40);
+        let screen = |row: &str| vec![rule.clone(), row.to_string(), rule.clone()];
+        assert_eq!(input_box(&screen("❯ hello")).as_deref(), Some("hello"));
+        assert_eq!(
+            input_box(&screen("! echo bang")).as_deref(),
+            Some("!echo bang")
+        );
+        assert_eq!(input_box(&screen("!")).as_deref(), Some("!"));
+        assert_eq!(input_box(&screen("  something else")), None);
+        // A restored `!` command fits its prompt text.
+        assert_eq!(rewind_key("!echo bang"), rewind_key("! echo bang"));
     }
 
     #[test]

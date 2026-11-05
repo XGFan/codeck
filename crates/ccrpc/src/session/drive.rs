@@ -160,14 +160,22 @@ impl Engine {
         recognize::input_text(&s).ok_or_else(|| self.unrecognized("输入框", Some(&s)))
     }
 
-    /// Empties the prompt input box (`ctrl+u` + backspace per line), checking the screen.
+    /// Empties the prompt input box (`ctrl+u` + backspace per line) and leaves shell mode (Backspace
+    /// on its empty `!` box), checking the screen.
     pub(super) fn clear_input(&mut self) -> std::result::Result<(), CmdErr> {
         // Just after startup the Process File says idle before the TUI is drawn.
         self.await_input_box(Duration::from_secs(2));
-        for _ in 0..3 {
+        for _ in 0..4 {
             let text = self.input_box_now()?;
             if text.is_empty() {
                 return Ok(());
+            }
+            if text == "!" {
+                self.keys(key::BACKSPACE)?;
+                self.wait_screen(Duration::from_millis(500), |_, s| {
+                    recognize::input_text(s).filter(|t| t != "!")
+                });
+                continue;
             }
             let n = text.lines().count().max(1);
             let mut b = Vec::new();
@@ -220,6 +228,10 @@ impl Engine {
         let clean = pty::sanitize(text);
         if clean.trim().is_empty() {
             return err("bad_request", "去掉控制字符后正文为空");
+        }
+        // Pasted, a leading `!` puts the box in shell mode: it would run as a command.
+        if clean.trim_start().starts_with('!') {
+            return err("bad_request", "Connect 不能发 ! 命令，请在终端里输入");
         }
         Ok(clean)
     }

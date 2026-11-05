@@ -534,6 +534,13 @@ fn mock_model_add_dir() {
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_rewind() {
     let env = setup_with("mock-key", &mock_model(), "claude-opus-4-7");
+    // A project command that expands into a prompt (as a skill does).
+    std::fs::create_dir_all(env.work.join(".claude/commands")).unwrap();
+    std::fs::write(
+        env.work.join(".claude/commands/greet.md"),
+        "Say hello to $ARGUMENTS\n",
+    )
+    .unwrap();
     let mut rpc = Rpc::start(&env);
     start_session(&mut rpc, &env);
     let w = env.work.join("w.txt");
@@ -702,6 +709,71 @@ fn mock_model_rewind() {
     assert_eq!(r["error"]["code"], "unknown_request", "{r}");
     rpc.call("k2", json!({"type": "send_keys", "keys": ["esc"]}));
     wait_state(&mut rpc, "idle", 10);
+    settle_idle(&mut rpc);
+
+    // Commands rewind too: a slash command returns to the input box as typed; a `!` command
+    // returns in shell mode, not offered back as text (Connect cannot send one).
+    rpc.forget();
+    rpc.call("c1", json!({"type": "slash", "command": "greet world"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    settle_idle(&mut rpc);
+    rpc.call("c2", json!({"type": "send_keys", "keys": [{"text": "!"}]}));
+    std::thread::sleep(Duration::from_millis(400));
+    rpc.call(
+        "c3",
+        json!({"type": "send_keys", "keys": [{"text": "echo bang"}, "enter"]}),
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    settle_idle(&mut rpc);
+    let entry_uuid = |marker: &str| -> String {
+        let dir = std::fs::read_dir(env.cc_dir.join("projects")).unwrap();
+        for d in dir.flatten() {
+            for f in std::fs::read_dir(d.path()).unwrap().flatten() {
+                if f.path().extension().is_none_or(|x| x != "jsonl") {
+                    continue;
+                }
+                for line in std::fs::read_to_string(f.path()).unwrap().lines() {
+                    if !line.contains(marker) {
+                        continue;
+                    }
+                    let v: Value = serde_json::from_str(line).unwrap();
+                    if let (Some(u), Some("user" | "system")) =
+                        (v["uuid"].as_str(), v["type"].as_str())
+                    {
+                        return u.to_string();
+                    }
+                }
+            }
+        }
+        panic!("transcript 里没有 {marker}");
+    };
+    let bang = entry_uuid("<bash-input>echo bang</bash-input>");
+    let greet = entry_uuid("<command-name>/greet</command-name>");
+    let c = rpc.call("r6", json!({"type": "rewind", "uuid": bang}));
+    assert_eq!(c["text"], "! echo bang", "{c}");
+    let a = rpc.call(
+        "a6",
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "option": "conversation"}),
+    );
+    assert!(a["text"].is_null(), "{a}");
+    wait_screen(&mut rpc, "s3", |ls| {
+        ls.iter()
+            .rfind(|l| l.starts_with('!'))
+            .is_some_and(|l| l.contains("echo bang"))
+    });
+    // A `!` prompt is refused; a prompt leaves shell mode first.
+    rpc.send(json!({"type": "prompt", "text": "! ls", "id": "p9"}));
+    let r = rpc.until("p9", Duration::from_secs(10), |v| v["id"] == "p9");
+    assert_eq!(r["error"]["code"], "bad_request", "{r}");
+    run_turn_allowing(&mut rpc, "p10", "after bang");
+    settle_idle(&mut rpc);
+    let c = rpc.call("r7", json!({"type": "rewind", "uuid": greet}));
+    assert_eq!(c["text"], "/greet world", "{c}");
+    let a = rpc.call(
+        "a7",
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "option": "conversation"}),
+    );
+    assert_eq!(a["text"], "/greet world", "{a}");
 }
 
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on

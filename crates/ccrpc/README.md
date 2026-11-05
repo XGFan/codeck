@@ -113,7 +113,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `get_tool_result {tool_use_id}` | 立即返回工具结果全文（落盘过的读文件） |
 | `get_image {uuid, index?}` | 立即返回带图提示词里的一张图片（base64） |
 | `answer_choice {request_id, option}` | 按选项文字作答 `choice` |
-| `rewind {uuid}` | 在终端的 Rewind 选择器里找到 Main Line 上的这条提示词，停在确认页，返回它写明的代码变化与可选的恢复项 |
+| `rewind {uuid}` | 在终端的 Rewind 选择器里找到 Main Line 上的这条提示词（或斜杠命令、`!` 命令），停在确认页，返回它写明的代码变化与可选的恢复项 |
 | `answer_rewind {request_id, option \| cancel}` | 作答确认页：`both`（代码与对话）/ `conversation` / `code`，或取消；恢复了对话时返回放回输入框的提示词 |
 | `set_mode {mode}` | 切权限模式：`manual` / `accept_edits` / `plan` / `auto` |
 | `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
