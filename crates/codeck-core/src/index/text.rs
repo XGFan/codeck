@@ -1,4 +1,4 @@
-//! Full-text document extraction and the FTS backlog (plan §4 "What gets indexed").
+//! Full-text document extraction and the FTS backlog (what gets indexed: docs/spec.md「搜索」).
 //!
 //! Indexed: human/command prompt text and assistant `text` blocks (64 KB each), tool inputs
 //! (16 KB; per-tool fields, else every JSON string leaf), AskUserQuestion answers and notes (as
@@ -215,14 +215,14 @@ pub struct TextProgress {
 }
 
 /// Indexes `[text_offset, parsed_offset)` of every file with a backlog. `main_set` returns the
-/// Main Line uuid set of a session (A2) so `on_main_line` is set at insert time, or `None` when it
+/// Main Line uuid set of a session so `on_main_line` is set at insert time, or `None` when it
 /// cannot be built: that session's files in the batch are then skipped and stay pending.
 /// `progress` receives the coverage after every transaction.
 ///
 /// Files are parsed in parallel and written in transactions of about `batch_bytes` source bytes
 /// ([`BATCH_BYTES`] in the app). `cancel` is checked only after a transaction has committed, so
 /// every call makes forward progress even when it is asked to yield right away; `Err(Cancelled)`
-/// leaves the rest pending. Rows use `ON CONFLICT DO NOTHING` (A7), so copies of a Session index
+/// leaves the rest pending. Rows use `ON CONFLICT DO NOTHING`, so copies of a Session index
 /// each uuid once.
 pub fn index_pending(
     conn: &mut Connection,

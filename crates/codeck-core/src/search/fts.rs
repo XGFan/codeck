@@ -3,14 +3,14 @@
 //! - Positive terms of ≥ 3 characters become an FTS5 phrase expression (`Fts`); shorter terms and
 //!   exclusions become `instr(lower(body), lower(?))` predicates on the joined `msg_text`
 //!   (`Mixed`). Without any FTS-able positive term the scan runs over `msg_text` alone (`Like`),
-//!   with FTS-able exclusions as `id NOT IN (… MATCH …)` (`Mixed`, A13).
+//!   with FTS-able exclusions as `id NOT IN (… MATCH …)` (`Mixed`).
 //! - The LIKE fallback is ASCII-case-insensitive only (SQLite `lower()`); trigram FTS folds case.
 //! - Sessions are ordered by their latest hit; each keeps its newest `hits_per_session` hits.
 //! - Snippets are a ±60-character window built in Rust (FTS5 `snippet()` with a rowid list costs
 //!   ~0.3 ms per row); `snippet()` is used only for rows where the ASCII-case-insensitive window
 //!   finds no term because trigram FTS folded a non-ASCII case.
 //! - `SearchHit.node_id` is the entry uuid of the indexed fragment; `resolve_jump` maps it to the
-//!   display node (A3).
+//!   display node (a merged assistant message's first fragment).
 
 use std::collections::HashMap;
 use std::time::Instant;

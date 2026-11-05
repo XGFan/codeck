@@ -1,7 +1,7 @@
 //! Resolves a search hit to a display target (scope, branch choices, agent path, hidden flag).
 //!
 //! The hit's entry uuid (any fragment, absorbed tool_result or satellite; empty for a persisted
-//! `.txt` hit, which is located by `tool_use_id`) maps to its display node (A3). Branch choices
+//! `.txt` hit, which is located by `tool_use_id`) maps to its display node (a merged assistant message's first fragment). Branch choices
 //! select every Branch head on the target's root path that the default path does not follow.
 
 use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, skeleton, tree};

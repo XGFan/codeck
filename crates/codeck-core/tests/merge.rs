@@ -1,4 +1,4 @@
-//! §3.4 step 1: copies of one Session merge by uuid union; first occurrence wins within a file.
+//! Copies of one Session merge by uuid union; first occurrence wins within a file.
 mod common;
 
 use std::path::{Path, PathBuf};

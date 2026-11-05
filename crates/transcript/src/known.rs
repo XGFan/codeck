@@ -67,7 +67,7 @@ pub const SYSTEM_SUBTYPES: &[&str] = &[
     "bridge_status",
 ];
 
-/// System subtypes hidden unless `include_hidden` (§3.4 step 6).
+/// System subtypes hidden unless `include_hidden`.
 pub const HIDDEN_SYSTEM_SUBTYPES: &[&str] = &["stop_hook_summary", "turn_duration", "away_summary"];
 
 /// Built-in Claude Code tool names. `mcp__*` tools are a known class (see [`is_known_tool`]).

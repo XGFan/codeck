@@ -1,5 +1,5 @@
 //! Filesystem discovery under `<root>/projects`: symlink / (dev, ino) dedupe and
-//! path → (session, role, agent) mapping. Only `agent-*.jsonl` count as agent transcripts (A9).
+//! path → (session, role, agent) mapping. Only `agent-*.jsonl` count as agent transcripts.
 //!
 //! Layout (per project dir, i.e. each child of `<root>/projects`, symlinks followed):
 //! - `<sid>.jsonl`: main file;
@@ -50,7 +50,7 @@ pub enum SidecarKind {
     Journal { run_id: String },
 }
 
-/// A non-transcript file that assembly reads (A9: tracked for change detection and revisions).
+/// A non-transcript file that assembly reads (tracked for change detection and revisions).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidecarFile {
     pub path: PathBuf,

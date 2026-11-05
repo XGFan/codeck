@@ -1,4 +1,4 @@
-//! Effective parents, children, leaf, Main Line path and conversational anchors (§3.4 steps 2–5).
+//! Effective parents, children, leaf, Main Line path and conversational anchors.
 
 use std::collections::{HashMap, HashSet};
 
@@ -59,7 +59,7 @@ pub fn derive(s: &mut SessionSkeleton) {
     s.heads_by_anchor = heads_by_anchor;
 }
 
-/// §3.4 step 3: from `v`, repeatedly move to the child whose subtree holds the newest entry.
+/// From `v`, repeatedly move to the child whose subtree holds the newest entry.
 pub fn descend(s: &SessionSkeleton, mut v: usize) -> usize {
     while let Some(&c) = s.children[v].iter().max_by_key(|&&c| s.subtree_max[c]) {
         v = c;
@@ -93,7 +93,7 @@ pub fn path_through(s: &SessionSkeleton, head: usize) -> Vec<usize> {
     path
 }
 
-/// §3.4 step 5: path nodes in order, each followed by its satellites (attachment / system
+/// Path nodes in order, each followed by its satellites (attachment / system
 /// children that are off the path, and their attachment / system descendants).
 pub fn display_entries(s: &SessionSkeleton, path: &[usize]) -> Vec<usize> {
     let mut on_path = vec![false; s.nodes.len()];
@@ -132,7 +132,7 @@ pub fn chosen_result(s: &SessionSkeleton, id: &str, shown: &[bool]) -> Option<us
         .or(all.first().copied())
 }
 
-/// A2: uuids of every entry in the Main Line display set: every fragment of every merged display
+/// Uuids of every entry in the Main Line display set: every fragment of every merged display
 /// node (including fragments off the raw path whose `message.id` is on it), every absorbed
 /// tool_result entry and every satellite on the Main Line. Used for `msg_text.on_main_line`.
 pub fn main_set(s: &SessionSkeleton) -> HashSet<String> {

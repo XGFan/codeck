@@ -1,4 +1,4 @@
-//! Index (T2.1): scan dedupe, incremental appends, session-level reparses, removals and schema
+//! Index: scan dedupe, incremental appends, session-level reparses, removals and schema
 //! rebuilds. Fixture copies in temp dirs only; assertions read the index tables directly so they
 //! hold independently of assembly (`summarize` only feeds the session row's derived columns).
 mod common;
@@ -326,7 +326,7 @@ fn deleted_file_removes_session() {
 fn deleted_copy_with_surviving_sibling_keeps_session() {
     let env = scanned("copies");
     let db = env.db();
-    // Drop the superset copy: the session is reparsed from the 2-turn prefix copy (A7).
+    // Drop the superset copy: the session is reparsed from the 2-turn prefix copy (rows that cannot be merged go through a session-level reparse).
     let big = env.main_file(ids::COPIES_DIR, ids::COPIES_SUPERSET);
     fs::remove_file(&big).unwrap();
     let cs = env.apply(&big);
@@ -400,7 +400,7 @@ fn agent_files_and_sidecars_are_classified() {
         ),
         5
     );
-    // A8: session totals = main + Σ agents; the agent part comes from the index alone.
+    // Session totals = main + Σ agents; the agent part comes from the index alone.
     let (total, main): (i64, i64) = db
         .query_row(
             "SELECT out_tok, main_out_tok FROM sessions WHERE id=?1",
@@ -419,7 +419,7 @@ fn agent_files_and_sidecars_are_classified() {
     assert_eq!(total - main, agents);
 }
 
-/// Engine read API over the index. Titles/counts come from `assemble::summarize` (T2.2).
+/// Engine read API over the index. Titles/counts come from `assemble::summarize`.
 #[test]
 fn engine_lists_projects_sessions_and_detail() {
     use codeck_core::model::{SessionQuery, SessionSort};
@@ -471,7 +471,7 @@ fn engine_lists_projects_sessions_and_detail() {
 }
 
 /// Live follow: the cached parse is extended by the appended bytes and the revision changes.
-/// Node shapes come from assembly (T2.2).
+/// Node shapes come from assembly.
 #[test]
 fn transcript_follows_appends() {
     use codeck_core::model::{TranscriptRequest, TranscriptScope};
@@ -519,7 +519,7 @@ fn rebuild_rescans_and_reports_changes() {
     assert_eq!(env.engine.scan_all(&|_| {}).unwrap(), ChangeSet::default());
 }
 
-/// A9: a sidecar rewritten while the app was closed is picked up by the first scan after start.
+/// A sidecar rewritten while the app was closed is picked up by the first scan after start.
 #[test]
 fn sidecar_changed_while_closed_is_picked_up() {
     let root = fixture_root("subagents");

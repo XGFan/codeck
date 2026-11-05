@@ -1,6 +1,6 @@
 //! Snippet construction (FTS `snippet()` markers or a ±60-character LIKE window) into `SnippetPart`s.
 //!
-//! Matching outside FTS is ASCII-case-insensitive only, like SQLite's `lower()` (A13).
+//! Matching outside FTS is ASCII-case-insensitive only, like SQLite's `lower()`.
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 

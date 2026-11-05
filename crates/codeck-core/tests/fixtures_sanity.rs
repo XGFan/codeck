@@ -1,4 +1,4 @@
-//! Fixture sanity (T1.2). Plain serde_json on purpose: no codeck-core APIs, so these tests pin the fixtures
+//! Fixture sanity. Plain serde_json on purpose: no codeck-core APIs, so these tests pin the fixtures
 //! themselves. Expected numbers are documented in `tests/fixtures/README.md`.
 mod common;
 

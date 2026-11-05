@@ -18,7 +18,7 @@ use crate::raw::{RawBlock, RawEntry};
 /// `ToolDetail` cap.
 pub const DETAIL_BYTES: usize = 8 * 1024 * 1024;
 
-/// Basename of a persisted-output path (F8): only the last component counts; empty, `.`, `..`
+/// Basename of a persisted-output path: only the last component counts; empty, `.`, `..`
 /// or anything containing `..` is rejected.
 pub fn persisted_basename(path: &str) -> Option<String> {
     let base = path.trim().rsplit(['/', '\\']).next()?;

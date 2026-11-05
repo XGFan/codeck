@@ -1,4 +1,4 @@
-//! Shared test helpers (T1.2). Use from an integration test with `mod common;`.
+//! Shared test helpers. Use from an integration test with `mod common;`.
 //!
 //! Fixtures live in `tests/fixtures/<scenario>/` as mini data roots (`projects/…`, `sessions/…`);
 //! see `tests/fixtures/README.md`. `fixture_root` copies one into a temp dir so tests may mutate it.

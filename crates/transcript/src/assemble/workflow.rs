@@ -1,4 +1,4 @@
-//! `WorkflowRun` from `workflows/<runId>.json`, falling back to `journal.jsonl` (F12).
+//! `WorkflowRun` from `workflows/<runId>.json`, falling back to `journal.jsonl`.
 
 use std::collections::HashMap;
 

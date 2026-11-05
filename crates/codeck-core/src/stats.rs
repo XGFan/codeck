@@ -1,4 +1,4 @@
-//! Stats panel aggregation (local-time buckets: days and activity bars; A13).
+//! Stats panel aggregation (local-time buckets: days and activity bars).
 //!
 //! Semantics (each chart dimension has a [`Drill`](crate::model::Drill) in `index::reader` that
 //! returns exactly the contributing sessions):

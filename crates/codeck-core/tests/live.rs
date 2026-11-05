@@ -1,4 +1,4 @@
-//! Live Sessions (T2.1): process files with pid + procStart checks; nothing else makes a Session live.
+//! Live Sessions: process files with pid + procStart checks; nothing else makes a Session live.
 mod common;
 
 use std::fs::{self, File};

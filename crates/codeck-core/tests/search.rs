@@ -1,4 +1,4 @@
-//! Search (T3.3): query parsing, FTS / LIKE / Mixed search over the phase-2 text index, filters,
+//! Search: query parsing, FTS / LIKE / Mixed search over the phase-2 text index, filters,
 //! hit addressing (subagents, abandoned Branches), the tool-output scan, ⌘F and jump resolution.
 //! Fixture copies in temp dirs only.
 mod common;
@@ -216,7 +216,7 @@ fn search_hits_snippets_and_case() {
     // Mixed: FTS term + short term.
     let r = env.search("retry ok");
     assert_eq!(r.mode, SearchMode::Mixed);
-    // All-short positive + FTS-able exclusion (A13).
+    // All-short positive + FTS-able exclusion (`Mixed`).
     let only_short = env.search("it");
     let excluded = env.search("it -retry");
     assert_eq!(excluded.mode, SearchMode::Mixed);

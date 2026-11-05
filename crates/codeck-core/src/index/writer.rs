@@ -1,7 +1,7 @@
-//! Metadata upserts and incremental per-file processing (plan §4, A7).
+//! Metadata upserts and incremental per-file processing.
 //!
 //! Row derivation ([`extract_rows`]) is pure and runs in parallel; the `write_*` / `delete_*`
-//! functions run inside the single writer transaction. Row ownership (A7): `messages` merge by
+//! functions run inside the single writer transaction. Row ownership: `messages` merge by
 //! key with the max of each token field, `tool_calls` / `persisted_outputs` keep the first row,
 //! and anything that cannot be merged (a removed or rewritten file) goes through a session-level
 //! reparse (delete every row of the session, then re-ingest all its files).
@@ -100,7 +100,7 @@ pub struct FileRows {
     pub diag: HashMap<(i64, String, String), i64>,
 }
 
-/// Derives the metadata rows of `records` (light parse, A6).
+/// Derives the metadata rows of `records` (light parse).
 pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> FileRows {
     let mut rows = FileRows::default();
     let mut msg_index: HashMap<String, usize> = HashMap::new();
@@ -422,7 +422,7 @@ fn edit_target(name: &str, input: Option<&serde_json::value::RawValue>) -> Optio
     i.file_path.or(i.notebook_path).filter(|p| !p.is_empty())
 }
 
-/// Basename of an (absolute) persisted-output path; never opened as given (F8).
+/// Basename of an (absolute) persisted-output path; never opened as given.
 fn basename(p: &str) -> Option<String> {
     let name = Path::new(p).file_name()?.to_str()?;
     (!name.is_empty() && name != "..").then(|| name.to_owned())
@@ -489,7 +489,7 @@ pub fn write_file_stat(conn: &Connection, id: i64, size: u64, mtime_ns: i64) -> 
     Ok(())
 }
 
-/// Inserts the rows of one file chunk (A7 merge rules).
+/// Inserts the rows of one file chunk (merge rules in the module doc).
 pub fn write_rows(
     conn: &Connection,
     file_id: i64,
@@ -627,7 +627,7 @@ impl AgentRow {
     }
 }
 
-/// Replaces the session's `subagents` rows (A9: refreshed on every session recompute).
+/// Replaces the session's `subagents` rows (refreshed on every session recompute).
 pub fn write_subagents(conn: &Connection, session_id: &str, agents: &[AgentRow]) -> CoreResult<()> {
     conn.execute("DELETE FROM subagents WHERE session_id=?1", [session_id])?;
     let mut st = conn.prepare_cached(
@@ -796,7 +796,7 @@ pub fn write_session_projects(
     Ok(true)
 }
 
-/// A2: recomputes `msg_text.on_main_line` for a session from its Main Line set. Subagent rows
+/// Recomputes `msg_text.on_main_line` for a session from its Main Line set. Subagent rows
 /// stay on the main line (1).
 pub fn write_on_main_line(
     conn: &Connection,
@@ -820,7 +820,7 @@ pub fn write_on_main_line(
     Ok(())
 }
 
-/// Whether any `msg_text` row exists for the session (skip the A2 update otherwise).
+/// Whether any `msg_text` row exists for the session (skip the `on_main_line` update otherwise).
 pub fn has_text_rows(conn: &Connection, session_id: &str) -> CoreResult<bool> {
     Ok(conn
         .prepare_cached("SELECT 1 FROM msg_text WHERE session_id=?1 LIMIT 1")?

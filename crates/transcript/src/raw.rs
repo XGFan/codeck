@@ -3,7 +3,7 @@
 //! Every field is optional, unknown fields are ignored, and a field with an unexpected JSON type
 //! becomes `None` instead of failing the line (see [`lenient`]). Heavy payloads (`input`,
 //! tool_result `content`, `text`, `thinking`, image `source`, `toolUseResult`, `attachment`) stay
-//! as [`RawValue`] so the light parse never builds a tree for them (A6).
+//! as [`RawValue`] so the light parse never builds a tree for them.
 
 use serde::Deserialize;
 use serde::de::{self, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};

@@ -1,4 +1,4 @@
-//! Subagent meta parsing, linking (toolUseId → agentId → name) and `SubagentRun` (§3.4 step 11).
+//! Subagent meta parsing, linking (toolUseId → agentId → name) and `SubagentRun`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -83,7 +83,7 @@ pub struct Notification {
     seq: u32,
 }
 
-/// Task-notification prompts by their `<tool-use-id>` (F11) and by their `<task-id>` (for an agent,
+/// Task-notification prompts by their `<tool-use-id>` and by their `<task-id>` (for an agent,
 /// its agent id); some notifications carry only the task id.
 #[derive(Debug, Default)]
 pub struct Notices {

@@ -10,7 +10,7 @@ const TEAMMATE_PREAMBLE: &str = "Another Claude session sent a message:";
 const COORDINATOR_PREAMBLE: &str = "The coordinator sent a message while you were working:";
 const COORDINATOR_SUFFIX: &str = "Address this before completing your current task.";
 
-/// Title / first-prompt length cap in characters (§3.4 step 9).
+/// Title / first-prompt length cap in characters.
 pub const TITLE_CHARS: usize = 120;
 
 /// Text of a user message: the plain string content, or its `text` blocks joined by `\n`;

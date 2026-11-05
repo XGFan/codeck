@@ -1,4 +1,4 @@
-//! Title, counts, tokens, fork origin, git branch (§3.4 steps 8–10).
+//! Title, counts, tokens, fork origin, git branch (docs/spec.md「数据模型」: title priority, counting rules, Fork).
 
 use std::collections::HashMap;
 

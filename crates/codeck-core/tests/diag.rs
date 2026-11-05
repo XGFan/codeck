@@ -1,4 +1,4 @@
-//! Diagnostics (T4.3) on fixture copies through the Engine: failed lines, unknown entry / block /
+//! Diagnostics on fixture copies through the Engine: failed lines, unknown entry / block /
 //! system-subtype names with their versions, version table and orphan Subagent Runs.
 mod common;
 

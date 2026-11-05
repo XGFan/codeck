@@ -1,4 +1,4 @@
-//! Stats (T4.3): totals, local-day bucketing and drill-down on fixture copies through the Engine.
+//! Stats: totals, local-day bucketing and drill-down on fixture copies through the Engine.
 //! Expected values come from an independent oracle that reads the fixture JSONL directly
 //! (README counting rules: human prompts + assistant messages by `message.id`, max usage per id).
 mod common;

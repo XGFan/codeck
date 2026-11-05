@@ -1,5 +1,5 @@
 //! Normalization into `model::Node`: merge assistant fragments, pair tool calls with results,
-//! classify satellites and hidden entries, apply payload caps (§3.4 steps 5–6).
+//! classify satellites and hidden entries, apply payload caps.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -34,7 +34,7 @@ pub struct RenderCtx<'a> {
     pub subagent_by_tool: &'a HashMap<String, AgentId>,
     pub workflow_by_tool: &'a HashMap<String, String>,
     pub notification_by_tool: &'a HashMap<String, NodeId>,
-    /// Index fallback of §3.4 step 8: display entries up to this node are fork-inherited.
+    /// Fork fallback from the index (no `forkedFrom`): display entries up to this node are fork-inherited.
     pub fork_point: Option<usize>,
 }
 
@@ -313,7 +313,7 @@ pub fn persisted_output_path(text: &str) -> Option<&str> {
     Some(text[start..].lines().next()?.trim()).filter(|p| !p.is_empty())
 }
 
-/// §3.4 step 12: a `<persisted-output>` result or `toolUseResult.persistedOutputPath` gives a
+/// A `<persisted-output>` result or `toolUseResult.persistedOutputPath` gives a
 /// basename-only reference (the absolute path is never used).
 pub fn persisted_ref(e: &RawEntry, text: &str) -> Option<PersistedRef> {
     let has_field = e.tool_use_result.as_deref().is_some_and(|r| {
@@ -411,7 +411,7 @@ fn prompt_images(e: &RawEntry, node_id: &str) -> Vec<ImageRef> {
         .collect()
 }
 
-/// toolUseResult fields kept per tool (plan §3.1).
+/// toolUseResult fields kept per tool.
 fn extra_fields(tool: &str) -> &'static [&'static str] {
     match tool {
         "Bash" => &[
@@ -428,7 +428,7 @@ fn extra_fields(tool: &str) -> &'static [&'static str] {
     }
 }
 
-/// A11: the tool's subset of an object `toolUseResult`; whole fields are dropped (largest
+/// The tool's subset of an object `toolUseResult`; whole fields are dropped (largest
 /// first) until it fits [`EXTRA_BYTES`]. Strings are never sliced.
 pub fn extra_json(raw: Option<&RawValue>, tool: &str) -> Option<String> {
     let wanted = extra_fields(tool);

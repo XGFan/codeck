@@ -1,4 +1,4 @@
-//! DDL and schema version (plan §4).
+//! DDL and schema version.
 
 /// `PRAGMA user_version`; any mismatch deletes and recreates the index.
 pub const SCHEMA_VERSION: u32 = 11;
@@ -21,7 +21,7 @@ pub const DIAG_SYSTEM_SUBTYPE: i64 = 3;
 /// Bytes of a file's start kept in `files.head` for rewrite detection.
 pub const HEAD_LEN: usize = 256;
 
-/// Every table, index and trigger of the index (plan §4). `user_version` is set separately.
+/// Every table, index and trigger of the index. `user_version` is set separately.
 pub const DDL: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE files (

@@ -1,5 +1,5 @@
 //! Session assembly: turns the append-mostly event log of a Session into normalized nodes
-//! (plan §3.4). The engine loads files and sidecars; this module only computes.
+//! (rules in docs/spec.md「数据模型」). The engine loads files and sidecars; this module only computes.
 
 pub mod branch;
 pub mod content;
@@ -35,7 +35,7 @@ pub struct LoadedFile {
     pub records: Vec<EntryRecord>,
 }
 
-/// Cheap in-memory uuid graph of a Session's main file(s) (§3.4 steps 1–4 and 7): enough to
+/// Cheap in-memory uuid graph of a Session's main file(s) (merge, parents, Main Line, anchors): enough to
 /// compute aggregates, the Main Line, branch heads and `main_set` without building display nodes.
 /// All `usize` values are indexes into `nodes`; per-node vectors are parallel to `nodes`.
 #[derive(Clone, Debug, Default)]
@@ -56,11 +56,11 @@ pub struct SessionSkeleton {
     pub on_main: Vec<bool>,
     /// Children by effective parent, in merged file order.
     pub children: Vec<Vec<usize>>,
-    /// Largest node index in each node's subtree (the "newest descendant" of §3.4 step 3).
+    /// Largest node index in each node's subtree (the "newest descendant" that picks the Main Line leaf).
     pub subtree_max: Vec<usize>,
     /// Assistant heads (distinct replies) in each node's subtree, the node itself included.
     pub subtree_assistants: Vec<u32>,
-    /// Nearest conversational ancestor (§3.4 step 7 + A1); `None` = `"root"`.
+    /// Nearest conversational ancestor (Branch heads group by it); `None` = `"root"`.
     pub anchor: Vec<Option<usize>>,
     /// Branch heads grouped by anchor, in merged file order.
     pub heads_by_anchor: HashMap<Option<usize>, Vec<usize>>,
@@ -86,7 +86,7 @@ pub struct SessionSkeleton {
 #[derive(Clone, Debug, Default)]
 pub struct SkeletonNode {
     pub uuid: String,
-    /// Effective parent per §3.4 step 2 + A1 (index into `SessionSkeleton::nodes`), cycle-free.
+    /// Effective parent (`parentUuid`, else `logicalParentUuid`, else the preceding entry; index into `SessionSkeleton::nodes`), cycle-free.
     pub parent: Option<usize>,
     pub entry_type: String,
     pub subtype: Option<String>,
@@ -127,7 +127,7 @@ impl SkeletonNode {
         self.entry_type == "system" && self.subtype.as_deref() == Some("compact_boundary")
     }
 
-    /// Conversational anchor candidate (§3.4 step 7 + A1): assistant, non-meta user entries
+    /// Conversational anchor candidate: assistant, non-meta user entries
     /// (prompts, tool results, compact summaries, notifications) and compact boundaries.
     pub fn is_conversational(&self) -> bool {
         match self.entry_type.as_str() {
@@ -137,7 +137,7 @@ impl SkeletonNode {
         }
     }
 
-    /// Satellite candidate (§3.4 step 5).
+    /// Satellite candidate: shown after the path node it hangs off.
     pub fn is_satellite_type(&self) -> bool {
         matches!(self.entry_type.as_str(), "attachment" | "system") && !self.is_compact_boundary()
     }
@@ -207,7 +207,7 @@ impl SessionSkeleton {
         (&f.path, f.records[n.record as usize].offset)
     }
 
-    /// Display node id of node `i` (A3): the first fragment of a merged assistant message.
+    /// Display node id of node `i`: the first fragment of a merged assistant message.
     pub fn display_index(&self, i: usize) -> usize {
         let n = &self.nodes[i];
         if n.is_assistant()
@@ -227,8 +227,8 @@ impl SessionSkeleton {
     }
 }
 
-/// Derived facts of a Session written to the `sessions` table (§3.4 steps 8–10).
-/// Token and count figures are **main-file only** (A8); the engine adds subagent figures.
+/// Derived facts of a Session written to the `sessions` table.
+/// Token and count figures are **main-file only**; the engine adds subagent figures.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionAggregates {
     pub title: String,
@@ -322,9 +322,9 @@ pub struct WorkflowFiles {
 pub struct SessionSidecar {
     pub subagent_metas: Vec<SubagentMetaFile>,
     pub workflows: Vec<WorkflowFiles>,
-    /// A8: per-agent figures from the index.
+    /// Per-agent figures from the index (added to the main-file figures).
     pub agent_stats: HashMap<AgentId, AgentStats>,
-    /// Origin Session from the index (via `forkedFrom`, or the shared-`root_uuid` fallback of §3.4 step 8).
+    /// Origin Session from the index (via `forkedFrom`, or the shared-`root_uuid` fallback).
     pub fork_origin: Option<ForkOrigin>,
 }
 
@@ -352,12 +352,12 @@ pub struct AssembledSession {
     pub notification_by_tool: HashMap<String, NodeId>,
 }
 
-/// Builds the skeleton of the main file(s) (§3.4 steps 1–4).
+/// Builds the skeleton of the main file(s).
 pub fn build_skeleton(main_files: &[LoadedFile]) -> SessionSkeleton {
     skeleton::build(main_files)
 }
 
-/// Computes main-file aggregates (§3.4 steps 8–10).
+/// Computes main-file aggregates.
 pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
     summarize::summarize(s)
 }
@@ -400,7 +400,7 @@ pub fn transcript(
             let sk = &s.skeleton;
             let path = branch::resolve_path(sk, &r.branch_choices);
             let display = tree::display_entries(sk, &path);
-            // Index fallback (§3.4 step 8): no `forkedFrom` in the file, origin known from the index.
+            // Index fallback: no `forkedFrom` in the file, origin known from the index.
             let fork_point = if sk.fork_origin_id.is_none() {
                 s.sidecar
                     .fork_origin
@@ -479,7 +479,7 @@ pub fn transcript(
     }
 }
 
-/// §3.4 step 8: the fork-inherited prefix. Nodes carrying `forkedFrom` are inherited; without
+/// The fork-inherited prefix. Nodes carrying `forkedFrom` are inherited; without
 /// `forkedFrom`, the index fallback (`sidecar.fork_origin`) marks the path up to its fork point.
 fn inherited_range(
     sk: &SessionSkeleton,

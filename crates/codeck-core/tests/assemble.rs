@@ -1,4 +1,4 @@
-//! Assembly (§3.4 steps 5–12): fragments, pairing, hidden entries, fork, titles, subagents,
+//! Assembly: fragments, pairing, hidden entries, fork, titles, subagents,
 //! workflows, persisted output and images. Targeted asserts on fixtures; no snapshots.
 mod common;
 

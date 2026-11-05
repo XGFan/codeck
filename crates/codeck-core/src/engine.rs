@@ -1,14 +1,14 @@
 //! Engine facade: the only API src-tauri calls. Blocking; callers run it off the main thread.
 //!
-//! Index sync (phase 1, plan §4): stat-walk the data root, diff against `files`, light-parse
+//! Index sync (phase 1: metadata; phase 2 is the full-text backlog): stat-walk the data root, diff against `files`, light-parse
 //! changed files in parallel (rayon), write rows in one transaction per batch, then recompute
 //! every dirty session from its skeleton. Appends read only `[parsed_offset, EOF)`; a shrunk,
 //! replaced or rewritten file, or a removed file whose session still has other files, triggers a
-//! session-level reparse (A7).
+//! session-level reparse.
 //!
 //! Display: an LRU of assembled Sessions keyed by session id and validated by a revision hash over
-//! (path, size, mtime) of every source and sidecar file (A9). Main files are kept parsed per
-//! (dev, ino) with their consumed offset, so a live append parses only the new bytes (A14a).
+//! (path, size, mtime) of every source and sidecar file. Main files are kept parsed per
+//! (dev, ino) with their consumed offset, so a live append parses only the new bytes.
 //!
 //! Source files are only ever opened with `File::open` (read-only, ADR-0002).
 
@@ -50,7 +50,7 @@ use crate::{diag, project, search, stats};
 
 /// Bytes parsed per write transaction during a sync.
 const BATCH_BYTES: u64 = 256 << 20;
-/// Assembled Sessions kept for display (plan §5 T2.1).
+/// Assembled Sessions kept for display.
 const SESSION_CACHE_CAP: usize = 4;
 /// Parsed Subagent Run files kept for the Subagent scope.
 const AGENT_CACHE_CAP: usize = 4;
@@ -152,8 +152,8 @@ impl Engine {
         self.sync(Some(p), false)
     }
 
-    /// Phase 2: full-text backlog (`index::text`, W3). `on_main_line` is set at insert time from
-    /// the session's Main Line set (A2).
+    /// Phase 2: full-text backlog (`index::text`). `on_main_line` is set at insert time from
+    /// the session's Main Line set (`assemble::tree::main_set`).
     pub fn index_text_backlog(
         &self,
         p: &dyn Fn(&IndexStatus),
@@ -580,7 +580,7 @@ impl Engine {
         Ok(cs)
     }
 
-    /// Sessions whose sidecar files changed since the previous sync (A9), and the sidecar state
+    /// Sessions whose sidecar files changed since the previous sync, and the sidecar state
     /// to commit once this sync succeeds. Before the first sync, a sidecar newer than every
     /// indexed file of its session counts as changed (it was written while the app was closed).
     fn diff_sidecars(
@@ -620,7 +620,7 @@ impl Engine {
         (dirty, now)
     }
 
-    /// A2: the Main Line set of a session, from its main files.
+    /// The Main Line set of a session, from its main files.
     /// Reuses (and extends) a cached parse of the session, so live appends stay cheap.
     fn main_set_of(&self, sid: &str) -> CoreResult<HashSet<String>> {
         let ctx = self.session_ctx(sid)?;
@@ -864,7 +864,7 @@ impl<K: PartialEq, V> Lru<K, V> {
     }
 }
 
-/// Parse state of one cached file (A14a).
+/// Parse state of one cached file (extended in place while the file only grows).
 #[derive(Clone, Debug)]
 struct FileState {
     path: PathBuf,
@@ -1046,7 +1046,7 @@ fn cached_files(cached: Option<(Vec<FileState>, Vec<LoadedFile>)>) -> CachedFile
         .unwrap_or_default()
 }
 
-/// Parses `f`, extending its cached parse when the file only grew (A14a).
+/// Parses `f`, extending its cached parse when the file only grew.
 fn load_one(
     f: &ScannedFile,
     cached: Option<(FileState, LoadedFile)>,
@@ -1221,7 +1221,7 @@ fn plan_sync(
             },
         }
     }
-    // Rows whose file is gone: reparse the session if other files survive (A7), else remove it.
+    // Rows whose file is gone: reparse the session if other files survive, else remove it.
     let mut removed = Vec::new();
     for row in db_by_path.into_values() {
         if current.contains_key(&row.session_id) {
@@ -1548,7 +1548,7 @@ fn write_work(
                 first_error: f.first_error.as_deref(),
             },
         )?;
-        // Phase-2 hook (T3.3): text docs for `[text_offset, parsed_offset)` are extracted by
+        // Phase 2: text docs for `[text_offset, parsed_offset)` are extracted by
         // `index::text::index_pending`; `text_offset` is deliberately left untouched here.
         writer::write_rows(
             conn,

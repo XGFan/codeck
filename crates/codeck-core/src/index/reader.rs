@@ -99,7 +99,7 @@ pub fn list_projects(conn: &Connection) -> CoreResult<Vec<ProjectSummary>> {
 }
 
 /// Origin of a session: `forkedFrom`, else the latest earlier session sharing its `root_uuid`
-/// (§3.4 step 8 fallback). `s` is the alias of the session row.
+/// (the Fork fallback of docs/spec.md「数据模型」). `s` is the alias of the session row.
 fn origin_expr(s: &str) -> String {
     format!(
         "coalesce({s}.fork_origin_id, (SELECT o2.id FROM sessions o2 WHERE {s}.root_uuid IS NOT NULL
@@ -365,7 +365,7 @@ pub fn fork_origin(conn: &Connection, id: &str) -> CoreResult<Option<ForkOrigin>
         .and_then(|s| s.fork_origin))
 }
 
-/// A8: per-agent figures from `messages` / `tool_calls`.
+/// Per-agent figures from `messages` / `tool_calls`.
 pub fn agent_stats(conn: &Connection, session_id: &str) -> CoreResult<HashMap<String, AgentStats>> {
     let mut out: HashMap<String, AgentStats> = HashMap::new();
     let mut st = conn.prepare_cached(

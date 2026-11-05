@@ -1,4 +1,4 @@
-//! Tree (§3.4 steps 2–4 + A1/A1b) and Branch (step 7 + A14d) semantics.
+//! Tree (effective parents, compact relinking, Main Line) and Branch (heads, hidden resends) semantics.
 mod common;
 
 use std::path::{Path, PathBuf};
@@ -305,7 +305,7 @@ fn verbatim_resend_without_reply_is_hidden_but_never_when_selected() {
             .count(),
         1
     );
-    // A14d: selecting the unanswered resend keeps it, so the switcher appears.
+    // Selecting the unanswered resend keeps it, so the switcher appears.
     let t = main_transcript(
         &s,
         vec![BranchChoice {

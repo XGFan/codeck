@@ -32,7 +32,7 @@ pub enum Job {
     /// batches merge into the first one.
     Fs(Vec<PathBuf>),
     /// Requests the full-text backlog. Requests coalesce; the backlog runs whenever no other job
-    /// is queued and yields to any other job between transactions (A14b).
+    /// is queued and yields to any other job between transactions.
     TextBacklog,
     Rebuild,
     /// Restart the watcher and rescan (at startup).

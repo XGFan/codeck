@@ -1,4 +1,4 @@
-//! Skeleton building: merge copies by uuid (§3.4 step 1), effective parents (step 2 + A1),
+//! Skeleton building: merge copies by uuid, effective parents (compact boundaries relinked),
 //! then the derived tree facts (children, subtree maxima, anchors, heads, Main Line).
 
 use std::collections::{BTreeSet, HashMap};
@@ -19,7 +19,7 @@ struct FileFacts {
 struct ParentRefs {
     parent_uuid: Option<String>,
     logical_parent_uuid: Option<String>,
-    /// Nearest preceding uuid-bearing entry of the same file (A1 fallback).
+    /// Nearest preceding uuid-bearing entry of the same file (fallback parent of a compact boundary or a dangling `logicalParentUuid`).
     prev_in_file: Option<usize>,
 }
 
@@ -236,7 +236,7 @@ fn node_of(
     }
 }
 
-/// §3.4 step 2 + A1 + A1b: `parentUuid` if in the map; else `logicalParentUuid` if in the map
+/// Effective parent: `parentUuid` if in the map; else `logicalParentUuid` if in the map
 /// and earlier in merged order; else, for a compact boundary or any entry with a dangling
 /// `logicalParentUuid`, the nearest preceding uuid entry of the same file; else a root.
 /// A final pass breaks any remaining parent cycle so every walk terminates.
@@ -324,7 +324,7 @@ fn index_messages(s: &mut SessionSkeleton) {
     }
 }
 
-/// §3.4 step 3: the leaf of the last `last-prompt` (of the largest file that has a valid one)
+/// Main Line leaf: the leaf of the last `last-prompt` (of the largest file that has a valid one)
 /// whose leaf is in the map; else the newest node by timestamp (ties: later merged order).
 fn choose_leaf(s: &SessionSkeleton, facts: &[FileFacts]) -> Option<usize> {
     for f in facts {
@@ -342,7 +342,7 @@ fn choose_leaf(s: &SessionSkeleton, facts: &[FileFacts]) -> Option<usize> {
     best.map(|(_, i)| i)
 }
 
-/// Fragment-merged token usage: max of each field per `message.id` (§3.4 step 10).
+/// Fragment-merged token usage: max of each field per `message.id`.
 pub fn tokens_by_message(s: &SessionSkeleton) -> HashMap<&str, TokenTotals> {
     let mut out: HashMap<&str, TokenTotals> = HashMap::new();
     for n in &s.nodes {
