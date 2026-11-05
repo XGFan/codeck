@@ -88,7 +88,7 @@ pnpm exec playwright install webkit && pnpm test:e2e    # E2E（mock 模式，We
 - 真实数据探针（只读，索引写入临时目录），用于检查性能与兼容性：
 
 ```sh
-CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test assemble -- --ignored --nocapture   # 组装全部 Session
+CODECK_REAL_ROOT=~/.claude cargo test -p transcript --release --test assemble -- --ignored --nocapture    # 组装全部 Session
 CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture    # 建全文索引并测查询耗时
 ```
 
@@ -99,7 +99,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
   | cargo run -p transcript --example update_pricing
 ```
 
-`crates/codeck-core/tests/fixtures/` 是从真实 Session 精简、脱敏得到的结构样本（见其中的 README），由 `crates/codeck-core/examples/sanitize.rs` 生成。
+`crates/codeck-core/tests/fixtures/` 是从真实 Session 精简、脱敏得到的结构样本（见其中的 README），由 `crates/codeck-core/examples/sanitize.rs` 生成；`crates/transcript/tests/` 里解析层的测试也读这份 fixture。
 
 ## 构建
 

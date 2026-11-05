@@ -1,18 +1,19 @@
 //! Tree (effective parents, compact relinking, Main Line) and Branch (heads, hidden resends) semantics.
-mod common;
+#[path = "../../codeck-core/tests/common/fixtures.rs"]
+mod fixtures;
 
 use std::path::{Path, PathBuf};
 
-use codeck_core::assemble::{
+use fixtures::{fixture_dir, ids};
+use transcript::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, SessionSkeleton, assemble, build_skeleton,
     transcript, tree,
 };
-use codeck_core::model::{
+use transcript::model::{
     AssistantBlock, BranchChoice, FileRole, NodeBody, Transcript, TranscriptRequest,
     TranscriptScope,
 };
-use codeck_core::parse::{parse_bytes, read_entries};
-use common::{fixture_dir, ids};
+use transcript::parse::{parse_bytes, read_entries};
 
 fn load(path: &Path) -> LoadedFile {
     LoadedFile {
@@ -352,7 +353,7 @@ fn choosing_an_alternative_head_follows_its_newest_leaf() {
     assert_eq!(t.branch_points.len(), 1);
     assert_eq!(t.branch_points[0].selected_head_id, uuid(sk, "96ad01af"));
     // The system satellite between the anchor and the heads stays on the path (hidden).
-    let path = codeck_core::assemble::branch::resolve_path(
+    let path = transcript::assemble::branch::resolve_path(
         sk,
         &[BranchChoice {
             anchor_key: uuid(sk, "ee434cdd"),

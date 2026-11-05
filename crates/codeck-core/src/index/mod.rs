@@ -16,8 +16,8 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::CoreResult;
-use crate::pricing::{PriceTable, Usage};
 use schema::{DDL, DROP_ALL, SCHEMA_VERSION};
+use transcript::pricing::{PriceTable, Usage};
 
 const READ_POOL_MAX: usize = 4;
 

@@ -14,10 +14,10 @@ use rayon::prelude::*;
 use rusqlite::{Connection, params};
 use serde_json::Value;
 
-use crate::assemble::prompt;
 use crate::error::{CoreError, CoreResult};
-use crate::parse::{EntryRecord, parse_bytes};
-use crate::raw::RawEntry;
+use transcript::assemble::prompt;
+use transcript::parse::{EntryRecord, parse_bytes};
+use transcript::raw::RawEntry;
 
 /// Cap of a prompt or assistant text document.
 pub const TEXT_CAP: usize = 64 * 1024;

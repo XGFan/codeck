@@ -8,13 +8,13 @@ use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
 use super::schema::MSG_ASSISTANT;
 use super::writer::{role_from_db, title_source_from_db};
-use crate::assemble::AgentStats;
 use crate::error::CoreResult;
 use crate::model::{
     Drill, FileRole, ForkChild, ForkOrigin, ModelCost, ProjectSummary, SessionQuery, SessionSort,
     SessionSummary, TokenTotals,
 };
 use crate::stats;
+use transcript::assemble::AgentStats;
 
 /// A `files` row.
 #[derive(Clone, Debug, PartialEq, Eq)]

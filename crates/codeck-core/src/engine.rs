@@ -25,16 +25,11 @@ use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::assemble::{
-    self, AssembledSession, LoadedFile, SessionAggregates, SessionSidecar, SubagentMetaFile,
-    WorkflowFiles,
-};
 use crate::error::{CoreError, CoreResult};
 use crate::index::reader::{self, FileRecord};
 use crate::index::schema::{HEAD_LEN, SCHEMA_VERSION};
 use crate::index::writer::{self, AgentRow, FileRows, FileWrite, ProjectRow, SessionRow};
 use crate::index::{Index, text};
-use crate::live;
 use crate::model::{
     AppInfo, DataRootSource, Diagnostics, FileRole, FindRequest, FindResult, ImageData,
     ImageRequest, IndexPhase, IndexStatus, JumpRequest, JumpTarget, LiveChanged, LiveEntry,
@@ -42,11 +37,16 @@ use crate::model::{
     SessionSummary, SourceFile, Stats, StatsRequest, TokenTotals, ToolDetail, ToolDetailRequest,
     Transcript, TranscriptRequest, TranscriptScope,
 };
-use crate::parse::{ParsedChunk, parse_bytes};
 use crate::paths::{index_db_path, prices_cache_path, sessions_dir};
-use crate::pricing::PriceTable;
 use crate::scan::{self, ScanResult, ScannedFile, SessionDirListing, SidecarFile, SidecarKind};
 use crate::{diag, project, search, stats};
+use transcript::assemble::{
+    self, AssembledSession, LoadedFile, SessionAggregates, SessionSidecar, SubagentMetaFile,
+    WorkflowFiles,
+};
+use transcript::live;
+use transcript::parse::{ParsedChunk, parse_bytes};
+use transcript::pricing::PriceTable;
 
 /// Bytes parsed per write transaction during a sync.
 const BATCH_BYTES: u64 = 256 << 20;

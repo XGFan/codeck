@@ -25,8 +25,8 @@ pnpm tauri dev                 # 启动真实应用（读取真实数据目录�
 pnpm dev:mock                  # 只起前端 + 内置 mock 数据，http://localhost:1420
 
 cargo test --workspace
-cargo test -p codeck-core --test parse                 # 单个集成测试文件（tests/*.rs）
-cargo test -p codeck-core --test branch <name>         # 单个用例
+cargo test -p transcript --test parse                  # 单个集成测试文件（tests/*.rs）
+cargo test -p transcript --test branch <name>          # 单个用例
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all                # Rust 格式化（默认 rustfmt 配置）；提交前必须是格式化过的
 pnpm format                    # 前端格式化（Prettier，printWidth 120；范围见 .prettierignore：不含 crates、src-tauri、Markdown、bindings.ts）；提交前必须是格式化过的
@@ -45,7 +45,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 pnpm tauri build --bundles app --target aarch64-apple-darwin
 ```
 
-真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test assemble -- --ignored --nocapture`、`CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`。
+真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CODECK_REAL_ROOT=~/.claude cargo test -p transcript --release --test assemble -- --ignored --nocapture`、`CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`。
 
 ## 设计稿
 
@@ -61,7 +61,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 ### transcript 与 codeck-core
 
-- `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`、`live`（进程文件）、`pricing`。codeck-core 以原路径 `pub use` 重新导出它们（`codeck_core::model::…`、`crate::assemble::…` 照旧可用）。解析层的错误是 `TranscriptError`，codeck-core 按变体映射到 `CoreError`。
+- `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`、`live`（进程文件）、`pricing`。codeck-core 只重新导出 `model`（src-tauri 用 `codeck_core::model::…`），其余直接写 `transcript::…`。解析层的集成测试（parse / merge / branch / assemble）在 `crates/transcript/tests/`，fixture 用 codeck-core 的，经 `#[path]` 引用 `crates/codeck-core/tests/common/fixtures.rs`（该文件不能依赖 codeck-core）。解析层的错误是 `TranscriptError`，codeck-core 按变体映射到 `CoreError`。
 
 - `engine.rs` 的 `Engine` 是 src-tauri 调用的**唯一入口**，全部是阻塞调用。它负责：索引同步（stat 遍历 → 与 `files` 表比对 → rayon 并行轻解析 → 按批事务写入 → 重算受影响的 Session；追加只读 `[parsed_offset, EOF)`，文件变小/被替换则整 Session 重解析）；以及显示用的小 LRU（按 source/sidecar 的 path+size+mtime 哈希校验）。
 - 管线：`scan`（遍历数据根、按 realpath/inode 去重）→ `raw`（宽容的 serde 结构，字段全可选）→ `parse`（按行解析，坏行跳过并计数）→ `assemble/*`（把事件日志组装成节点：parentUuid 树、Branch/Main Line、compact 接续、Fork、Subagent/Workflow 关联、工具摘要、⌘F 查找、搜索跳转）→ `index/*`（SQLite + FTS5 trigram）→ `search` / `stats` / `diag`。`known.rs` 列出已知的条目类型/内容块/工具名，未知的进诊断而不是丢弃。

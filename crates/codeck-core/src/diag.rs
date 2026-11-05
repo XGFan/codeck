@@ -17,8 +17,8 @@ use rusqlite::Connection;
 
 use crate::error::CoreResult;
 use crate::index::schema::{DIAG_BLOCK, DIAG_ENTRY, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL};
-use crate::known;
 use crate::model::{Diagnostics, FileFailure, NameCount, VersionStat};
+use transcript::known;
 
 fn is_known(cat: i64, name: &str) -> bool {
     match cat {

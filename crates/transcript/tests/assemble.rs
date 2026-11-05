@@ -1,22 +1,23 @@
 //! Assembly: fragments, pairing, hidden entries, fork, titles, subagents,
 //! workflows, persisted output and images. Targeted asserts on fixtures; no snapshots.
-mod common;
+#[path = "../../codeck-core/tests/common/fixtures.rs"]
+mod fixtures;
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use codeck_core::assemble::{
+use fixtures::{fixture_dir, ids};
+use transcript::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, SubagentMetaFile, WorkflowFiles, assemble,
     build_skeleton, content, find, summarize, transcript,
 };
-use codeck_core::model::{
+use transcript::model::{
     AssistantBlock, BranchChoice, DetailSource, FileRole, FindLocation, FindRequest, ForkOrigin,
     ImageRequest, NodeBody, PromptOrigin, TitleSource, ToolCall, ToolDetailRequest, ToolPart,
     Transcript, TranscriptRequest, TranscriptScope,
 };
-use codeck_core::parse::{parse_bytes, read_entries};
-use common::{fixture_dir, ids};
+use transcript::parse::{parse_bytes, read_entries};
 
 // ---- loading (mirrors what the engine gathers; read-only) ----
 
@@ -199,7 +200,7 @@ fn fragments_merge_into_one_node_and_tokens_count_once() {
     let sk = &s.skeleton;
     let frags = &sk.fragments[sk.nodes[sk.by_uuid[&group.id]].message_id.as_ref().unwrap()];
     assert_eq!(frags.len(), 5);
-    let max = |f: fn(&codeck_core::model::TokenTotals) -> f64| {
+    let max = |f: fn(&transcript::model::TokenTotals) -> f64| {
         frags
             .iter()
             .map(|&i| f(sk.nodes[i].usage.as_ref().unwrap()))
@@ -758,13 +759,13 @@ fn workflow_run_from_its_own_files() {
         .join(ids::WORKFLOW);
     let sidecar = load_sidecar(&session_dir);
     let files = |run: &str| sidecar.workflows.iter().find(|w| w.run_id == run).unwrap();
-    let done = codeck_core::assemble::workflow::run_from_files(files("wf_6e7e94b2-011"));
+    let done = transcript::assemble::workflow::run_from_files(files("wf_6e7e94b2-011"));
     assert_eq!(done.status.as_deref(), Some("completed"));
     assert_eq!(done.phases.len(), 2);
     assert_eq!(done.agents[0].label.as_deref(), Some("core-loop"));
     assert_eq!(done.tool_use_id, None);
     // Only a journal: still a run, from the journal.
-    let running = codeck_core::assemble::workflow::run_from_files(files("wf_d83f7287-279"));
+    let running = transcript::assemble::workflow::run_from_files(files("wf_d83f7287-279"));
     assert_eq!(running.status.as_deref(), Some("running"));
     assert!(!running.agents.is_empty());
 }
@@ -843,7 +844,7 @@ fn workflow_runs_from_json_and_from_journal() {
 
 // ---- persisted output and images ----
 
-fn detail(s: &AssembledSession, id: &str, part: ToolPart) -> codeck_core::model::ToolDetail {
+fn detail(s: &AssembledSession, id: &str, part: ToolPart) -> transcript::model::ToolDetail {
     content::tool_detail(
         s,
         &ToolDetailRequest {
@@ -1246,7 +1247,7 @@ fn slash_command_images_show_on_the_command() {
 // ---- real data (read-only, opt-in) ----
 
 /// Assembles every main session under `$CODECK_REAL_ROOT/projects` (read-only) and reports timings.
-/// Run with `CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test assemble -- --ignored --nocapture`.
+/// Run with `CODECK_REAL_ROOT=~/.claude cargo test -p transcript --release --test assemble -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn real_root_assembles_every_session() {
@@ -1288,7 +1289,7 @@ fn real_root_assembles_every_session() {
             let json = serde_json::to_string(&t).unwrap();
             let elapsed = t2.elapsed();
             let total = s.skeleton.nodes.len();
-            let on_main = codeck_core::assemble::tree::main_set(&s.skeleton).len();
+            let on_main = transcript::assemble::tree::main_set(&s.skeleton).len();
             coverage
                 .lock()
                 .unwrap()

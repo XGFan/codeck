@@ -17,11 +17,11 @@ use super::schema::{
     ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT,
 };
 use crate::error::CoreResult;
-use crate::known;
 use crate::model::{FileRole, TitleSource, TokenTotals};
-use crate::parse::EntryRecord;
 use crate::project;
-use crate::raw::{RawEntry, decode_str, lenient};
+use transcript::known;
+use transcript::parse::EntryRecord;
+use transcript::raw::{RawEntry, decode_str, lenient};
 
 pub fn role_to_db(role: FileRole) -> i64 {
     match role {
@@ -193,7 +193,7 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
             "user" => {
                 collect_tool_results(e, &mut rows);
                 if let (Some(ts), Some(uuid)) = (ts, e.uuid.as_ref())
-                    && crate::assemble::prompt::is_human_prompt(e)
+                    && transcript::assemble::prompt::is_human_prompt(e)
                     && !msg_index.contains_key(uuid)
                 {
                     msg_index.insert(uuid.clone(), rows.messages.len());
@@ -233,7 +233,7 @@ fn max_cost(a: Option<f64>, b: Option<f64>) -> Option<f64> {
 }
 
 /// `cv_cost(model, in, out, cr, cc, cc1h, fast, logged_cost)` over `messages` columns: the
-/// message's USD cost, NULL when its model has no price (see [`crate::pricing`]). Registered on
+/// message's USD cost, NULL when its model has no price (see [`transcript::pricing`]). Registered on
 /// the writer connection by [`crate::index::Index::open`].
 pub const COST_EXPR: &str =
     "cv_cost(model, in_tok, out_tok, cr_tok, cc_tok, cc1h_tok, fast, logged_cost)";
@@ -832,7 +832,7 @@ pub fn has_text_rows(conn: &Connection, session_id: &str) -> CoreResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parse_bytes;
+    use transcript::parse::parse_bytes;
 
     #[test]
     fn extracts_cost_inputs_and_merges_fragments() {

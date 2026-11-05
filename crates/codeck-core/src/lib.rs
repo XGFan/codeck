@@ -12,8 +12,9 @@ pub mod search;
 pub mod slash;
 pub mod stats;
 
-// The parsing layer lives in the `transcript` crate; re-exported under its old paths.
-pub use transcript::{assemble, known, live, model, parse, pricing, raw};
+// IPC types of the parsing layer, re-exported so src-tauri keeps `codeck_core::model::…`; the
+// rest of the `transcript` crate is used by its own paths.
+pub use transcript::model;
 
 pub use engine::{ChangeSet, Engine, EngineConfig};
 pub use error::{CoreError, CoreResult};
