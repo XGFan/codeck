@@ -30,14 +30,9 @@ function toBase64(f: Blob): Promise<string> {
 
 /** Moves focus to the first request card's first answer (Enter while waiting): a card here, else a question on its transcript card. */
 function focusFirstCard() {
-  const answers = ["allow", "question-option", "choice-option"].map(
-    (t) => `[data-testid=connect-requests] [data-testid=${t}]:not(:disabled)`,
-  );
   const el =
-    document.querySelector<HTMLElement>(answers.join(", ")) ??
-    document.querySelector<HTMLElement>(
-      "[data-testid=ask][data-answering] [data-testid=question-option]:not(:disabled)",
-    );
+    document.querySelector<HTMLElement>("[data-connect-requests] [data-card-answer]:not(:disabled)") ??
+    document.querySelector<HTMLElement>("[data-answering] [data-card-answer]:not(:disabled)");
   el?.focus();
 }
 

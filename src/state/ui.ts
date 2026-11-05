@@ -54,6 +54,10 @@ const sessionDefaults = {
   expanded: {} as Record<string, boolean>,
 };
 
+/** ⌘K, the stats dialog or Settings is open: keys meant for the window behind them are not handled. */
+export const selectOverlayOpen = (s: Pick<UiState, "searchOpen" | "statsOpen" | "settingsOpen">) =>
+  s.searchOpen || s.statsOpen || s.settingsOpen;
+
 interface UiState {
   /** Session list filter; empty = all projects (matches `SessionQuery.projectIds`). */
   projectIds: string[];

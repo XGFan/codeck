@@ -4,7 +4,7 @@ import type { SubagentRun, TranscriptScope } from "@/ipc/bindings";
 import { formatTokens } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import { useCurrentTranscript, useTranscript } from "@/queries";
-import { useUi } from "@/state/ui";
+import { selectOverlayOpen, useUi } from "@/state/ui";
 import { TranscriptList } from "@/features/transcript/Transcript";
 import { elapsed } from "@/features/transcript/util";
 import { RunStatus, useSessionLive } from "@/features/transcript/nodes/Agents";
@@ -50,7 +50,7 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
 
   useHotkey("Escape", () => {
     const s = useUi.getState();
-    if (s.searchOpen || s.statsOpen || s.settingsOpen || s.findOpen) return;
+    if (selectOverlayOpen(s) || s.findOpen) return;
     close();
   });
 

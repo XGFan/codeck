@@ -1,10 +1,10 @@
 import { useHotkey } from "@/lib/hotkeys";
 import { cn } from "@/lib/cn";
-import { useUi } from "@/state/ui";
+import { selectOverlayOpen, useUi } from "@/state/ui";
 import { setCurrentTurn, type TurnInfo, useReading } from "../transcript/reading";
 import { scrollToNode } from "../transcript/Transcript";
 
-const main = () => document.querySelector<HTMLElement>('[data-testid="transcript"]');
+const main = () => document.querySelector<HTMLElement>('[data-scope="main"]');
 
 function goTo(t: TurnInfo) {
   setCurrentTurn(t.turn, true);
@@ -14,8 +14,7 @@ function goTo(t: TurnInfo) {
 /** `j` / `k` turn navigation and ⌘↑ / ⌘↓ (top / bottom); inactive while typing in an input or with ⌘K / Settings open. */
 function useTurnKeys() {
   const step = (d: 1 | -1) => {
-    const ui = useUi.getState();
-    if (ui.searchOpen || ui.statsOpen || ui.settingsOpen) return;
+    if (selectOverlayOpen(useUi.getState())) return;
     const { turns, current } = useReading.getState();
     const t = d === 1 ? turns.find((x) => x.turn > current) : [...turns].reverse().find((x) => x.turn < current);
     if (t) goTo(t);

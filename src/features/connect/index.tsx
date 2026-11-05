@@ -2,7 +2,7 @@ import { Info, Plus, Unplug, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
-import { isComposingKey } from "@/lib/hotkeys";
+import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import type { SessionQuery } from "@/ipc/bindings";
 import { useSession, useSessionList, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
@@ -215,7 +215,7 @@ function Panel({ c }: { c: ConnState }) {
   // Esc: leaves a card's text field; aborts while busy / waiting; otherwise keeps CoDeck's meaning.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "Escape" || isComposingKey(e.nativeEvent)) return;
-    if (document.querySelector("[data-radix-popper-content-wrapper], [role=dialog]")) return;
+    if (popupOpen()) return;
     const el = e.target as HTMLElement;
     if (el.tagName === "INPUT") {
       e.preventDefault();
@@ -237,6 +237,7 @@ function Panel({ c }: { c: ConnState }) {
     <div
       ref={floatRef}
       data-testid="connect-panel"
+      data-connect-panel
       onKeyDown={onKeyDown}
       className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
     >

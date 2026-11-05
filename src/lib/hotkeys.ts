@@ -28,6 +28,11 @@ export function keepOpenWhileComposing(e: KeyboardEvent) {
   if (isComposingKey(e)) e.preventDefault();
 }
 
+/** A dialog or a popup (radix menu, popover) is open. */
+export function popupOpen(): boolean {
+  return document.querySelector("[role=dialog], [data-radix-popper-content-wrapper]") != null;
+}
+
 function inEditable(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el) return false;

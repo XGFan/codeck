@@ -6,9 +6,9 @@ import { toolKey } from "@/features/transcript/keys";
 import { PendingText, ToolCallView } from "@/features/transcript/tools";
 import type { ToolCall } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
-import { isComposingKey } from "@/lib/hotkeys";
+import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useCurrentTranscript } from "@/queries";
-import { useUi } from "@/state/ui";
+import { selectOverlayOpen, useUi } from "@/state/ui";
 import type { ConnState, Request } from "./conn";
 import type { AskQuestion, ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
 import { NoticeCard } from "./Notice";
@@ -32,7 +32,11 @@ export function Requests({ c }: { c: ConnState }) {
     return null;
   }
   return (
-    <div className="flex max-h-[45vh] flex-col gap-2 overflow-y-auto" data-testid="connect-requests">
+    <div
+      className="flex max-h-[45vh] flex-col gap-2 overflow-y-auto"
+      data-testid="connect-requests"
+      data-connect-requests
+    >
       {reqs.map((r, i) => (
         <Card key={r.request_id} r={r} c={c} focus={i === 0} />
       ))}
@@ -168,18 +172,11 @@ function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
     if (!enabled) return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (!el?.closest?.("[data-testid=connect-panel]")) return;
+      if (!el?.closest?.("[data-connect-panel]")) return;
       if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable)
         return;
       if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const ui = useUi.getState();
-      if (
-        ui.searchOpen ||
-        ui.statsOpen ||
-        ui.settingsOpen ||
-        document.querySelector("[role=dialog], [data-radix-popper-content-wrapper]")
-      )
-        return;
+      if (selectOverlayOpen(useUi.getState()) || popupOpen()) return;
       const n = Number(e.key);
       if (n >= 1 && n <= ref.current.length) {
         e.preventDefault();
@@ -240,7 +237,7 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
     <Shell title={`允许 ${r.tool_name}？`} source={r.layout_source} agent={r.agent_id} testid="permission-card">
       <ToolInput r={r} sessionId={c.sessionId} />
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        <Button size="sm" disabled={busy} onClick={() => void answer("allow")} data-testid="allow">
+        <Button size="sm" disabled={busy} onClick={() => void answer("allow")} data-testid="allow" data-card-answer>
           {++n}. {label("allow", "允许")}
         </Button>
         {always && (
@@ -416,6 +413,7 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
                 key={o.label}
                 aria-pressed={on}
                 data-testid="question-option"
+                data-card-answer
                 onClick={() => toggle(i, q, o.label)}
                 className={cn(
                   "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent",
@@ -507,6 +505,7 @@ function ChoiceCard({ r, c, focus }: { r: ChoiceEvent; c: ConnState; focus: bool
             onClick={() => pick(o.label)}
             title={o.description ?? undefined}
             data-testid="choice-option"
+            data-card-answer
             className="max-w-full"
           >
             <span className="truncate">
