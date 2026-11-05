@@ -100,8 +100,11 @@ const MOCK_MODELS: Record<string, { model: string; effort: string | null }> = {
 
 type LineCb = (conn: string, msg: InMsg) => void;
 type ExitCb = (conn: string, code: number | null, stderr: string) => void;
+type LsCb = (ls: LsEntry[]) => void;
 const lineCbs = new Set<LineCb>();
 const exitCbs = new Set<ExitCb>();
+const lsCbs = new Set<LsCb>();
+const lsEndedCbs = new Set<(message: string) => void>();
 const conns = new Map<string, Conn>();
 /** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
 const closedPanes = new Set<string>();
@@ -112,8 +115,10 @@ let seq = 0;
 /** What the E2E tests look at. */
 export interface CcrpcProbe {
   sent: { conn: string; msg: Record<string, unknown> }[];
-  /** `ccrpcList` calls (each is a `ccrpc ls` process in the app). */
-  lists: number;
+  /** `ccrpcWatchSessions(true)` calls (each starts a `ccrpc ls --watch` in the app). */
+  watchStarts: number;
+  /** A `ccrpc ls --watch` is running. */
+  watching: boolean;
   guiLog: string[];
   badge: number;
   images: number;
@@ -128,7 +133,8 @@ export interface CcrpcProbe {
 }
 const probe: CcrpcProbe = {
   sent: [],
-  lists: 0,
+  watchStarts: 0,
+  watching: false,
   guiLog: [],
   badge: 0,
   images: 0,
@@ -145,6 +151,26 @@ declare global {
 }
 
 const later = (f: () => void) => setTimeout(f, 0);
+
+/** What `ccrpc ls --json` lists: the recordings that stand for a running Pane, as hidden or shown since. */
+function lsNow(): LsEntry[] {
+  return fixtures
+    .filter(
+      (f) =>
+        f.name !== "new-session" &&
+        !f.name.startsWith("resume-") &&
+        f.name !== "resume" &&
+        !closedPanes.has(f.ls.holder_id),
+    )
+    .map((f) => ({ ...f.ls, hidden: paneHidden.get(f.ls.holder_id) ?? f.ls.hidden }));
+}
+
+/** `ccrpc ls --watch` prints the list (on start and on every change). */
+function pushLs() {
+  if (!probe.watching) return;
+  const ls = lsNow();
+  for (const cb of lsCbs) cb(ls);
+}
 
 function emit(id: string, msg: InMsg) {
   const c = conns.get(id);
@@ -222,7 +248,10 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
     // `/exit`; with `close_pane` the Pane ends too and leaves `ccrpc ls`.
     case "exit":
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
-      if (msg.close_pane) closedPanes.add(c.fx.ls.holder_id);
+      if (msg.close_pane) {
+        closedPanes.add(c.fx.ls.holder_id);
+        later(pushLs);
+      }
       respond(id, msg, {});
       later(() => emit(id, { type: "state", state: "exited" } as InMsg));
       later(() => emit(id, { type: "session_exit" } as InMsg));
@@ -261,7 +290,7 @@ type CcrpcApi = Pick<
   | "ccrpcSetLaunchRules"
   | "ccrpcSetHideNewPanes"
   | "ccrpcSetPaneHidden"
-  | "ccrpcList"
+  | "ccrpcWatchSessions"
   | "ccrpcConnect"
   | "ccrpcNew"
   | "ccrpcResume"
@@ -274,6 +303,8 @@ type CcrpcApi = Pick<
   | "setBadge"
   | "onCcrpcLine"
   | "onCcrpcExit"
+  | "onCcrpcLs"
+  | "onCcrpcLsEnded"
 >;
 
 /** The Session whose Resume fails in the mock: claude cannot find it (`resume-failed.jsonl`). */
@@ -316,23 +347,19 @@ export function createMockCcrpc(): CcrpcApi {
       hideNewPanes: probe.hideNewPanes,
       logRoot: "/mock/Logs/dev.joy.codeck/ccrpc",
     }),
-    ccrpcList: async () => (
-      probe.lists++,
-      fixtures
-        .filter(
-          (f) =>
-            f.name !== "new-session" &&
-            !f.name.startsWith("resume-") &&
-            f.name !== "resume" &&
-            !closedPanes.has(f.ls.holder_id),
-        )
-        .map((f) => ({ ...f.ls, hidden: paneHidden.get(f.ls.holder_id) ?? f.ls.hidden }))
-    ),
+    ccrpcWatchSessions: async (on) => {
+      probe.watching = on;
+      if (on) {
+        probe.watchStarts++;
+        later(pushLs);
+      }
+    },
     ccrpcSetHideNewPanes: async (hide) => (probe.hideNewPanes = hide),
     ccrpcSetPaneHidden: async (holderId, hidden) => {
       probe.paneHides.push({ holderId, hidden });
       if (!fixtures.some((f) => f.ls.holder_id === holderId)) throw appError("internal", `没有会话 ${holderId}`);
       paneHidden.set(holderId, hidden);
+      later(pushLs);
     },
     ccrpcSetAnalyzer: async (apiKey, baseUrl, model) => {
       probe.analyzerSaves++;
@@ -413,5 +440,7 @@ export function createMockCcrpc(): CcrpcApi {
     },
     onCcrpcLine: (cb) => subscribe(lineCbs, cb),
     onCcrpcExit: (cb) => subscribe(exitCbs, cb),
+    onCcrpcLs: (cb) => subscribe(lsCbs, cb),
+    onCcrpcLsEnded: (cb) => subscribe(lsEndedCbs, cb),
   };
 }

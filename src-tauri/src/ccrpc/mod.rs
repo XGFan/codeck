@@ -17,9 +17,9 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
-use self::relay::{App, Out, Sink};
+use self::relay::{App, LsOut, LsSink, Out, Sink};
 use crate::commands::internal;
-use crate::events::{CcrpcExitEvent, CcrpcLineEvent};
+use crate::events::{CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent};
 use crate::state::AppState;
 
 type CmdResult<T> = Result<T, AppError>;
@@ -280,16 +280,23 @@ pub async fn ccrpc_info(state: State<'_, CcrpcState>) -> CmdResult<CcrpcInfo> {
     .await
 }
 
-/// `ccrpc ls --json`, serialized back to its text (the front end parses it).
+/// Starts (`on`) or stops `ccrpc ls --json --watch`; its lists come as `CcrpcLsEvent`, its end by
+/// itself as `CcrpcLsEndedEvent`. Starting again restarts it (the current list comes at once).
 #[tauri::command]
 #[specta::specta]
-pub async fn ccrpc_list(state: State<'_, CcrpcState>) -> CmdResult<String> {
-    with_ccrpc(&state, |app| {
-        let v = app.list_sessions()?;
-        serde_json::to_string(&v)
-            .map_err(|e| relay::failed(format!("ccrpc ls 的输出不是 JSON：{e}")))
-    })
-    .await
+pub async fn ccrpc_watch_sessions(
+    app_handle: AppHandle,
+    state: State<'_, CcrpcState>,
+    on: bool,
+) -> CmdResult<()> {
+    let handle = app_handle.clone();
+    let sink: LsSink = Arc::new(move |o| {
+        let _ = match o {
+            LsOut::List(ls) => CcrpcLsEvent { ls }.emit(&handle),
+            LsOut::Ended(message) => CcrpcLsEndedEvent { message }.emit(&handle),
+        };
+    });
+    with_ccrpc(&state, move |app| app.watch_sessions(on, sink)).await
 }
 
 #[tauri::command]

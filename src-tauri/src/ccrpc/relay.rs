@@ -76,6 +76,22 @@ pub enum Out {
 
 pub type Sink = Arc<dyn Fn(Out) + Send + Sync>;
 
+/// What `ccrpc ls --json --watch` sends on: the whole list (a JSON array, as ccrpc printed it), or
+/// why it stopped by itself (the first line of its stderr).
+#[derive(Debug, PartialEq, Eq)]
+pub enum LsOut {
+    List(String),
+    Ended(String),
+}
+
+pub type LsSink = Arc<dyn Fn(LsOut) + Send + Sync>;
+
+/// The running `ccrpc ls --json --watch`: closing its stdin ends it.
+struct LsWatch {
+    stdin: Option<ChildStdin>,
+    child: Arc<Mutex<Child>>,
+}
+
 struct Conn {
     /// Its own lock: a stalled ccrpc blocks only its own writes, not the connection table.
     stdin: Arc<Mutex<Option<ChildStdin>>>,
@@ -110,6 +126,9 @@ pub struct App {
     gui: Arc<Mutex<File>>,
     seq: Mutex<u64>,
     pub doctor: Mutex<Option<Vec<DoctorLine>>>,
+    ls_watch: Mutex<Option<LsWatch>>,
+    /// Bumped whenever the watch is started or stopped: lines of an older one are dropped.
+    ls_gen: Arc<std::sync::atomic::AtomicU64>,
     sub_timeout: Duration,
     disconnect_grace: Duration,
     kill_after: Duration,
@@ -138,6 +157,8 @@ impl App {
             gui: Arc::new(Mutex::new(gui)),
             seq: Mutex::new(0),
             doctor: Mutex::new(None),
+            ls_watch: Mutex::new(None),
+            ls_gen: Arc::default(),
             sub_timeout: SUBCOMMAND_TIMEOUT,
             disconnect_grace: DISCONNECT_GRACE,
             kill_after: KILL_AFTER,
@@ -250,13 +271,66 @@ impl App {
         d
     }
 
-    pub fn list_sessions(&self) -> R<serde_json::Value> {
-        let out = self.run(&["ls", "--json"])?;
-        if !out.status.success() {
-            return Err(self.stderr_error("ls", &out.stderr));
+    /// `on`: (re)starts `ccrpc ls --json --watch`, whose every list goes to `sink` (the first one at
+    /// once), and when it ends by itself, why. `false`: stops it. One watch at a time.
+    pub fn watch_sessions(&self, on: bool, sink: LsSink) -> R<()> {
+        use std::sync::atomic::Ordering;
+        let mut slot = self.ls_watch.lock();
+        let this = self.ls_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(old) = slot.take() {
+            stop_ls_watch(old);
         }
-        serde_json::from_slice(&out.stdout)
-            .map_err(|e| failed(format!("ccrpc ls 的输出不是 JSON：{e}")))
+        if !on {
+            return Ok(());
+        }
+        let mut cmd = self.command();
+        cmd.args(["ls", "--json", "--watch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child =
+            spawn(&mut cmd).map_err(|e| io(format!("运行不了 {}：{e}", self.ccrpc.display())))?;
+        self.gui_line(&format!("ls watch start (pid {})", child.id()));
+        let stdout = child.stdout.take().ok_or_else(|| io("没有 stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| io("没有 stderr"))?;
+        let stdin = child.stdin.take();
+        let child = Arc::new(Mutex::new(child));
+        let (ls_gen, gui, waiter) = (self.ls_gen.clone(), self.gui.clone(), child.clone());
+        std::thread::spawn(move || {
+            let current = || ls_gen.load(Ordering::SeqCst) == this;
+            let errs = std::thread::spawn(move || {
+                let mut e = String::new();
+                let _ = BufReader::new(stderr).read_to_string(&mut e);
+                e
+            });
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if !current() {
+                    break;
+                }
+                sink(LsOut::List(line));
+            }
+            let err = errs.join().unwrap_or_default();
+            let code = waiter.lock().wait().ok().and_then(|s| s.code());
+            if !current() {
+                return;
+            }
+            logs::line(
+                &mut gui.lock(),
+                &format!(
+                    "ls watch exit code={code:?} stderr: {}",
+                    err.trim().replace('\n', " | ")
+                ),
+            );
+            let first = err.lines().map(str::trim).find(|l| !l.is_empty());
+            let why = first.map_or_else(
+                || "ccrpc ls 意外退出".to_string(),
+                |l| l.trim_start_matches("ccrpc: ").to_string(),
+            );
+            sink(LsOut::Ended(why));
+        });
+        *slot = Some(LsWatch { stdin, child });
+        Ok(())
     }
 
     /// `ccrpc hide|show <holder>`: hides the Pane on the ToH Mac Client, or shows it again (ToH ADR-0050).
@@ -530,6 +604,9 @@ impl App {
     /// Closes every connection (the app is quitting); a ccrpc whose stdin is held by a stuck
     /// `send` gets SIGTERM.
     pub fn disconnect_all(&self) {
+        if let Some(w) = self.ls_watch.lock().take() {
+            stop_ls_watch(w);
+        }
         let all: Vec<_> = self
             .conns
             .lock()
@@ -711,6 +788,20 @@ fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output>
     }
 }
 
+/// Closes the watch's stdin (ccrpc then exits, and its `toh` child with it); killed if it has
+/// not gone after a moment. Reaped by the watch's own thread.
+fn stop_ls_watch(mut w: LsWatch) {
+    drop(w.stdin.take());
+    let child = w.child;
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        let mut c = child.lock();
+        if matches!(c.try_wait(), Ok(None)) {
+            let _ = c.kill();
+        }
+    });
+}
+
 fn valid_holder_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
@@ -848,24 +939,54 @@ mod tests {
         App::new(HashMap::new(), fake, dir.join("logs"), dir.join("img")).unwrap()
     }
 
-    /// A hung `ccrpc ls` is killed and reported instead of stalling the Live poll for good.
+    /// A hung subcommand (`ccrpc hide`) is killed and reported instead of stalling for good.
     #[test]
     fn a_hung_subcommand_is_killed_after_the_timeout() {
         let d = tempfile::tempdir().unwrap();
         let mut app = fake_ccrpc(d.path(), "sleep 30");
         app.sub_timeout = Duration::from_millis(300);
         let t = Instant::now();
-        let err = app.list_sessions().unwrap_err();
+        let err = app.set_pane_hidden("m1", true).unwrap_err();
         assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
         assert_eq!(err.code, ErrorCode::Io);
         assert!(err.message.contains("没有在"), "{err}");
         assert_eq!(app.doctor()[0].level, "fail");
 
-        let app = fake_ccrpc(d.path(), r#"echo '{"sessions":[]}'"#);
-        assert_eq!(
-            app.list_sessions().unwrap(),
-            serde_json::json!({"sessions": []})
+        let app = fake_ccrpc(d.path(), "exit 0");
+        app.set_pane_hidden("m1", true).unwrap();
+    }
+
+    /// `ls --json --watch`: every list goes on as printed; stopping it drops what an older watch
+    /// still prints; a watch that ends by itself says why (the first line of its stderr).
+    #[test]
+    fn the_ls_watch_relays_lists_until_stopped() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(
+            d.path(),
+            r#"[ "$*" = "ls --json --watch" ] || exit 2
+echo '[]'
+echo '[{"holder_id":"m1"}]'
+read _ || { echo 'ccrpc: toh ls --json --watch 退出了' >&2; exit 1; }"#,
         );
+        let (tx, rx) = mpsc::channel();
+        let sink: LsSink = Arc::new(move |o| {
+            let _ = tx.send(o);
+        });
+        let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        app.watch_sessions(true, sink.clone()).unwrap();
+        assert_eq!(next(), LsOut::List("[]".into()));
+        assert_eq!(next(), LsOut::List(r#"[{"holder_id":"m1"}]"#.into()));
+        // Stopped on purpose (stdin closed): no `Ended`.
+        app.watch_sessions(false, sink.clone()).unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
+
+        let app = fake_ccrpc(
+            d.path(),
+            "echo '[]'\necho 'ccrpc: toh 版本太旧' >&2\nexit 1",
+        );
+        app.watch_sessions(true, sink).unwrap();
+        assert_eq!(next(), LsOut::List("[]".into()));
+        assert_eq!(next(), LsOut::Ended("toh 版本太旧".into()));
     }
 
     /// What a hung subcommand started goes with it: nothing keeps the pipes (and a reader
@@ -880,7 +1001,7 @@ mod tests {
         );
         // Long enough for the script to start its child under load.
         app.sub_timeout = Duration::from_millis(1500);
-        assert!(app.list_sessions().is_err());
+        assert!(app.set_pane_hidden("m1", true).is_err());
         let pid: i32 = std::fs::read_to_string(&pidfile)
             .unwrap()
             .trim()
@@ -949,8 +1070,6 @@ printf '{"model":"%s","elapsed_ms":1234,"kind":"choice","options":2}\n' "$CCRPC_
         assert_eq!(err.message, "找不到 Holder m1");
         let log = std::fs::read_to_string(d.path().join("logs/gui.log")).unwrap();
         assert!(log.contains("caused by: no such file"), "{log}");
-        let err = app.list_sessions().unwrap_err();
-        assert_eq!(err.message, "找不到 Holder m1");
 
         assert_eq!(
             app.set_pane_hidden("x; rm", true).unwrap_err().code,

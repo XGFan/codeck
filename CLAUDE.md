@@ -75,8 +75,8 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `commands.rs`：每个命令都是 async，通过 `with_engine` 把 Engine 调用丢到 blocking pool，错误转成 `AppError`（`message` 是面向用户的中文文案）。新增命令要同时登记到 `lib.rs` 的 `specta_builder()`。
 - `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次（排队中的合并成一个）/ TextBacklog / Rebuild / SetRoot / SwapRoot（切换数据根：在两个任务之间换 Engine，命令等它回复）/ Rescan / RefreshPrices / ApplyPrices）。Live 轮询不排进 worker：计时线程每 3 秒直接读进程文件，免得排在索引后面、又打断全文积压。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
 - `prices.rs`：下载 LiteLLM 价格表；worker 的 `RefreshPrices` 在独立线程里下载，结果以 `ApplyPrices` 交回 worker 写库，价格有变化时发 `PricesChanged` 事件。
-- `watcher.rs`（FSEvents，debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖，存于 Application Support）、`events.rs`（IndexStatus / SessionsChanged / LiveChanged / PricesChanged，以及 ccrpc 的 CcrpcLine / CcrpcExit 事件）。
-- `ccrpc/`：Connect（ADR-0007）。每个连接一个 `ccrpc attach|new` 子进程，stdout 逐行原样转发为 `CcrpcLine` 事件（协议解析与状态都在前端 `features/connect`），三层日志在 `~/Library/Logs/dev.joy.codeck/ccrpc/`。状态在第一个 ccrpc 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
+- `watcher.rs`（FSEvents，debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖，存于 Application Support）、`events.rs`（IndexStatus / SessionsChanged / LiveChanged / PricesChanged，以及 ccrpc 的 CcrpcLine / CcrpcExit / CcrpcLs / CcrpcLsEnded 事件）。
+- `ccrpc/`：Connect（ADR-0007）。每个连接一个 `ccrpc attach|new` 子进程，stdout 逐行原样转发为 `CcrpcLine` 事件（协议解析与状态都在前端 `features/connect`），三层日志在 `~/Library/Logs/dev.joy.codeck/ccrpc/`。状态在第一个 ccrpc 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。可 Connect 的 Session 列表由常驻的 `ccrpc ls --json --watch` 推来（`relay.rs` 的 `watch_sessions`，一次只有一个）。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
 
 ### src（前端）
 
@@ -84,7 +84,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `src/queries/`：TanStack Query hooks 与 `queryKeys`；`events.ts` 订阅后端事件并做节流失效（实时追随、统计刷新）。
 - `src/state/ui.ts`：zustand 的 UI 状态；按 Session 的状态（branchChoices、panelStack、⌘F、展开状态等）在切换 Session 时重置；展开状态的键统一由 `features/transcript/keys.ts` 生成；栏的收起状态（`collapsed`）是全局的，存 localStorage。
 - 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
-- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls` 轮询在 `lsPoller.ts`，草稿持久化在 `drafts.ts`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
+- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls --watch` 的启停在 `lsWatch.ts`，草稿持久化在 `drafts.ts`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
 
 ## 约束
 

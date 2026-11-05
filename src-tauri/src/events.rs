@@ -28,6 +28,18 @@ pub struct CcrpcLineEvent {
     pub line: String,
 }
 
+/// `ccrpc ls --json --watch` printed the list again: its JSON array as printed (the front end parses it).
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct CcrpcLsEvent {
+    pub ls: String,
+}
+
+/// `ccrpc ls --json --watch` ended by itself; `message` is why.
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct CcrpcLsEndedEvent {
+    pub message: String,
+}
+
 /// A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters).
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
 pub struct CcrpcExitEvent {

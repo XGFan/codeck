@@ -32,7 +32,8 @@ const REFUSED = "Longhorn 卷扩容与备份策略";
 
 type Probe = {
   sent: { msg: Record<string, unknown> }[];
-  lists: number;
+  watchStarts: number;
+  watching: boolean;
   guiLog: string[];
   badge: number;
   analyzerSaves: number;
@@ -605,7 +606,7 @@ test("设置 › ccrpc › 新开的 Pane：默认显示，选「隐藏」即保
   expect((await probe(page)).hideNewPanes).toBe(true);
 });
 
-test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一次", async ({ page }) => {
+test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立即重新开始", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH);
   await expect(page.getByTestId("connect-button")).toBeVisible();
@@ -618,11 +619,10 @@ test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一
   expect(ids.length).toBeGreaterThan(0);
   await page.evaluate((list) => list.forEach((id) => window.__cvMock!.setLive(id, null)), ids);
   await expect(page.getByTestId("live-dot")).toHaveCount(0);
-  // The last `ccrpc ls` is dropped with nothing Live, and no more are run.
+  // With nothing Live the watch stops and what it said last is dropped.
   await expect(page.getByTestId("connect-button")).toHaveCount(0);
-  const before = (await probe(page)).lists;
-  await page.waitForTimeout(4500);
-  expect((await probe(page)).lists).toBe(before);
+  await expect.poll(async () => (await probe(page)).watching).toBe(false);
+  const before = (await probe(page)).watchStarts;
   // 「新建 Session」 works without an `ccrpc ls` answer.
   await expect(page.getByTestId("new-session")).toBeVisible();
 
@@ -630,7 +630,8 @@ test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一
     (id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1 }),
     ids[0]!,
   );
-  await expect.poll(async () => (await probe(page)).lists, { timeout: 1500 }).toBe(before + 1);
+  await expect.poll(async () => (await probe(page)).watchStarts, { timeout: 1500 }).toBe(before + 1);
+  expect((await probe(page)).watching).toBe(true);
   await expect(page.getByTestId("connect-button")).toBeVisible();
 });
 

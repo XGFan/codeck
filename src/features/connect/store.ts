@@ -5,7 +5,7 @@ import { useUi } from "@/state/ui";
 import { createCcrpcClient } from "./client";
 import { apply, initial, type ConnState } from "./conn";
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
-import { createLsPoller } from "./lsPoller";
+import { createLsWatch } from "./lsWatch";
 import { resumeFailure } from "./resume";
 import type { InMsg, LsEntry, ResponseMsg, Task } from "./protocol";
 import { errorText } from "@/lib/errors";
@@ -114,12 +114,12 @@ export const useConnect = create<ConnectStore>((set, get) => {
   const failingResumes = new Set<string>();
   /** New Sessions to select once they have a session id. */
   const selectOnReady = new Set<string>();
-  const poller = createLsPoller({
-    list: () => api.ccrpcList(),
+  const lsWatch = createLsWatch({
+    watch: (on) => api.ccrpcWatchSessions(on),
     onLs: (ls) => set({ ls }),
     onError: (e) => set({ lsError: `ccrpc ls 失败：${errorText(e)}` }),
-    // Polled only while the window is visible, and not after ccrpc failed.
-    canPoll: () => document.visibilityState === "visible" && !get().lsError && !get().infoError,
+    // Watched only while the window is visible, and not after ccrpc failed.
+    canWatch: () => document.visibilityState === "visible" && !get().lsError && !get().infoError,
   });
 
   const update = (conn: string, f: (c: ConnState) => ConnState) =>
@@ -271,8 +271,10 @@ export const useConnect = create<ConnectStore>((set, get) => {
       keep(api.onCcrpcLine((conn, msg) => onLine(conn, msg)));
       keep(api.onCcrpcExit((conn, code, stderr) => onExit(conn, code, stderr)));
       keep(api.onLiveChanged((p) => set({ live: p.live })));
+      keep(api.onCcrpcLs((ls) => lsWatch.list(ls)));
+      keep(api.onCcrpcLsEnded((message) => lsWatch.ended(message)));
       const onVisible = () => {
-        poller.sync();
+        lsWatch.sync();
         if (document.visibilityState === "visible") markSeen();
       };
       document.addEventListener("visibilitychange", onVisible);
@@ -284,18 +286,18 @@ export const useConnect = create<ConnectStore>((set, get) => {
         offs.forEach((f) => f());
         document.removeEventListener("visibilitychange", onVisible);
         unUi();
-        poller.stop();
+        lsWatch.stop();
       };
     },
 
     setWanted(w) {
       // Nothing Live and nothing connected: what `ccrpc ls` said last is stale.
-      poller.setWanted(w);
+      lsWatch.setWanted(w);
     },
 
     retry() {
       set({ lsError: null, infoError: null });
-      poller.sync();
+      lsWatch.sync();
     },
 
     async saveAnalyzer(apiKey, baseUrl, model) {
@@ -317,10 +319,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
       setErr(sessionId, null);
       try {
         await api.ccrpcSetPaneHidden(holderId, hidden);
-        // Shown at once; a `ccrpc ls` already under way may have read the old state, so its answer is dropped and
-        // the next one asked at once.
+        // Shown at once; the watch reports it too.
         set((s) => ({ ls: s.ls.map((e) => (e.holder_id === holderId ? { ...e, hidden } : e)) }));
-        poller.restart();
       } catch (e) {
         setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errorText(e)}`);
       }
@@ -333,7 +333,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       } catch (e) {
         const why = `读取 ccrpc 信息失败：${errorText(e)}`;
         set({ infoError: why });
-        poller.sync();
+        lsWatch.sync();
       }
     },
 

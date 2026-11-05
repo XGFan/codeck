@@ -13,24 +13,34 @@ use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use codeck_lib::ccrpc::relay::{App, Out};
+use codeck_lib::ccrpc::relay::{App, LsOut, LsSink, Out};
 use serde_json::{Value, json};
 
 struct Holder {
-    toh: PathBuf,
+    /// `TOH_STATE_DIR` and `PATH` for `toh`.
+    env: (String, String),
     id: Option<String>,
 }
 
 impl Drop for Holder {
     fn drop(&mut self) {
-        // Only the Holder this test started.
+        // Only the Pane this test started: its shell, as `toh ls --json` lists it, is hung up.
         let Some(id) = &self.id else { return };
-        let Ok(b) = std::fs::read(self.toh.join("holders").join(format!("{id}.json"))) else {
+        let Ok(out) = Command::new("toh")
+            .args(["ls", "--json"])
+            .env("TOH_STATE_DIR", &self.env.0)
+            .env("PATH", &self.env.1)
+            .env_remove("TOH_CONFIG")
+            .output()
+        else {
             return;
         };
-        let v: Value = serde_json::from_slice(&b).unwrap_or(Value::Null);
-        if let Some(pid) = v["holder_pid"].as_i64() {
-            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+        let pane = v
+            .as_array()
+            .and_then(|a| a.iter().find(|p| p["id"] == id.as_str()));
+        if let Some(pid) = pane.and_then(|p| p["shell_pid"].as_i64()) {
+            unsafe { libc::kill(pid as i32, libc::SIGHUP) };
         }
     }
 }
@@ -97,6 +107,7 @@ fn relays_a_real_session_and_logs_it() {
         env.insert("PATH".into(), format!("{}:{path}", toh.display()));
     }
     let logs = tempfile::tempdir().unwrap();
+    let path = env.get("PATH").cloned().unwrap_or_default();
     let app = App::new(
         env,
         sandbox.join("ccrpc-wrap"),
@@ -110,31 +121,50 @@ fn relays_a_real_session_and_logs_it() {
         let _ = tx.lock().unwrap().send(o);
     });
 
-    // 「新开的 Pane：隐藏」 (ToH ADR-0050): the Pane opens in the hidden window, at ccrpc's size.
+    // 「新开的 Pane：隐藏」 (ToH ADR-0050): the Pane opens in the hidden window, at ccrpc's work size.
     let conn = app.new_session(sink, &work, &[], true).unwrap();
     let mut holder = Holder {
-        toh: sandbox.join("toh"),
+        env: (s("toh"), path),
         id: None,
     };
     let ready = next(&rx, "ready", 60, |v| v["type"] == "ready");
     let hid = ready["holder_id"].as_str().unwrap().to_string();
     holder.id = Some(hid.clone());
-    assert_eq!(ready["co_display"], true);
-    assert_eq!(ready["size"], json!([160, 48]));
-    let hidden = |app: &App| {
-        app.list_sessions()
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e["holder_id"] == hid.as_str())
-            .map(|e| e["hidden"].clone())
+    assert_eq!(ready["size"], json!([120, 40]));
+    // `ccrpc ls --json --watch` follows hiding and showing.
+    let (ls_tx, ls_rx) = mpsc::channel();
+    let ls_tx = std::sync::Mutex::new(ls_tx);
+    let ls_sink: LsSink = Arc::new(move |o| {
+        let _ = ls_tx.lock().unwrap().send(o);
+    });
+    app.watch_sessions(true, ls_sink.clone()).unwrap();
+    let hidden_becomes = |want: bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match ls_rx.recv_timeout(left) {
+                Ok(LsOut::List(line)) => {
+                    let v: Value = serde_json::from_str(&line).unwrap();
+                    let e = v
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|e| e["holder_id"] == hid.as_str());
+                    if e.is_some_and(|e| e["hidden"] == want) {
+                        return;
+                    }
+                }
+                Ok(LsOut::Ended(why)) => panic!("ls --watch 退出了：{why}"),
+                Err(_) => panic!("ls --watch 没有报来 hidden = {want}"),
+            }
+        }
     };
-    assert_eq!(hidden(&app), Some(json!(true)));
+    hidden_becomes(true);
     app.set_pane_hidden(&hid, false).unwrap();
-    assert_eq!(hidden(&app), Some(json!(false)));
+    hidden_becomes(false);
     app.set_pane_hidden(&hid, true).unwrap();
-    assert_eq!(hidden(&app), Some(json!(true)));
+    hidden_becomes(true);
+    app.watch_sessions(false, ls_sink).unwrap();
     assert!(app.set_pane_hidden("x; rm", true).is_err());
     // A new Session's log directory is renamed after its Holder ID.
     let dir = app.log_dir(&conn).unwrap();

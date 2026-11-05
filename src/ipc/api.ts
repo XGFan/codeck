@@ -74,8 +74,8 @@ export interface Api {
   ccrpcSetHideNewPanes(hide: boolean): Promise<boolean>;
   /** `ccrpc hide|show <holderId>`: hides a clay Session's Pane on the ToH Mac Client, or shows it again. */
   ccrpcSetPaneHidden(holderId: string, hidden: boolean): Promise<void>;
-  /** `ccrpc ls --json`. */
-  ccrpcList(): Promise<LsEntry[]>;
+  /** Starts (`on`) or stops `ccrpc ls --json --watch`; starting again restarts it, its first list comes at once. */
+  ccrpcWatchSessions(on: boolean): Promise<void>;
   /** `ccrpc attach`; returns the connection id. */
   ccrpcConnect(holderId: string): Promise<string>;
   /** `ccrpc new --cwd`; returns the connection id. */
@@ -98,4 +98,8 @@ export interface Api {
   onCcrpcLine(cb: (conn: string, msg: InMsg) => void): Promise<Unlisten>;
   /** ccrpc exited; `code` is null when killed by a signal. */
   onCcrpcExit(cb: (conn: string, code: number | null, stderr: string) => void): Promise<Unlisten>;
+  /** `ccrpc ls --json --watch` printed the list (again). */
+  onCcrpcLs(cb: (ls: LsEntry[]) => void): Promise<Unlisten>;
+  /** `ccrpc ls --json --watch` ended by itself. */
+  onCcrpcLsEnded(cb: (message: string) => void): Promise<Unlisten>;
 }

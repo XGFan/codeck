@@ -35,7 +35,7 @@ export function createRealApi(): Api {
     ccrpcSetLaunchRules: commands.ccrpcSetLaunchRules,
     ccrpcSetHideNewPanes: commands.ccrpcSetHideNewPanes,
     ccrpcSetPaneHidden: async (holderId, hidden) => void (await commands.ccrpcSetPaneHidden(holderId, hidden)),
-    ccrpcList: async () => JSON.parse(await commands.ccrpcList()) as LsEntry[],
+    ccrpcWatchSessions: async (on) => void (await commands.ccrpcWatchSessions(on)),
     ccrpcConnect: commands.ccrpcConnect,
     ccrpcNew: commands.ccrpcNew,
     ccrpcResume: commands.ccrpcResume,
@@ -60,5 +60,16 @@ export function createRealApi(): Api {
         cb(payload.conn, msg);
       }),
     onCcrpcExit: (cb) => events.ccrpcExitEvent.listen(({ payload }) => cb(payload.conn, payload.code, payload.stderr)),
+    onCcrpcLs: (cb) =>
+      events.ccrpcLsEvent.listen(({ payload }) => {
+        let ls: LsEntry[];
+        try {
+          ls = JSON.parse(payload.ls) as LsEntry[];
+        } catch {
+          return;
+        }
+        cb(ls);
+      }),
+    onCcrpcLsEnded: (cb) => events.ccrpcLsEndedEvent.listen(({ payload }) => cb(payload.message)),
   };
 }

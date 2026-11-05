@@ -45,8 +45,11 @@ export const commands = {
 	ccrpcSetHideNewPanes: (hide: boolean) => __TAURI_INVOKE<boolean>("ccrpc_set_hide_new_panes", { hide }),
 	/**  Hides a clay Session's Pane on the ToH Mac Client, or shows it again (`ccrpc hide|show`). */
 	ccrpcSetPaneHidden: (holderId: string, hidden: boolean) => __TAURI_INVOKE<null>("ccrpc_set_pane_hidden", { holderId, hidden }),
-	/**  `ccrpc ls --json`, serialized back to its text (the front end parses it). */
-	ccrpcList: () => __TAURI_INVOKE<string>("ccrpc_list"),
+	/**
+	 *  Starts (`on`) or stops `ccrpc ls --json --watch`; its lists come as `CcrpcLsEvent`, its end by
+	 *  itself as `CcrpcLsEndedEvent`. Starting again restarts it (the current list comes at once).
+	 */
+	ccrpcWatchSessions: (on: boolean) => __TAURI_INVOKE<null>("ccrpc_watch_sessions", { on }),
 	ccrpcConnect: (holderId: string) => __TAURI_INVOKE<string>("ccrpc_connect", { holderId }),
 	ccrpcNew: (cwd: string) => __TAURI_INVOKE<string>("ccrpc_new", { cwd }),
 	/**  Resume: starts the ended Session `session_id` again in a new Pane (`claude --resume`) and connects to it. */
@@ -63,6 +66,8 @@ export const commands = {
 export const events = {
 	ccrpcExitEvent: makeEvent<CcrpcExitEvent>("ccrpc-exit-event"),
 	ccrpcLineEvent: makeEvent<CcrpcLineEvent>("ccrpc-line-event"),
+	ccrpcLsEndedEvent: makeEvent<CcrpcLsEndedEvent>("ccrpc-ls-ended-event"),
+	ccrpcLsEvent: makeEvent<CcrpcLsEvent>("ccrpc-ls-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
@@ -177,6 +182,16 @@ export type CcrpcInfo = {
 export type CcrpcLineEvent = {
 	conn: string,
 	line: string,
+};
+
+/**  `ccrpc ls --json --watch` ended by itself; `message` is why. */
+export type CcrpcLsEndedEvent = {
+	message: string,
+};
+
+/**  `ccrpc ls --json --watch` printed the list again: its JSON array as printed (the front end parses it). */
+export type CcrpcLsEvent = {
+	ls: string,
 };
 
 export type DailyModelTokens = {

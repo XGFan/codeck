@@ -13,8 +13,8 @@ use tauri::Manager;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
 
 use crate::events::{
-    CcrpcExitEvent, CcrpcLineEvent, IndexStatusEvent, LiveChangedEvent, PricesChangedEvent,
-    SessionsChangedEvent,
+    CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent, IndexStatusEvent,
+    LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent,
 };
 use crate::state::{AppState, open_engine};
 
@@ -45,7 +45,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ccrpc::ccrpc_set_launch_rules,
             ccrpc::ccrpc_set_hide_new_panes,
             ccrpc::ccrpc_set_pane_hidden,
-            ccrpc::ccrpc_list,
+            ccrpc::ccrpc_watch_sessions,
             ccrpc::ccrpc_connect,
             ccrpc::ccrpc_new,
             ccrpc::ccrpc_resume,
@@ -61,7 +61,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             LiveChangedEvent,
             PricesChangedEvent,
             CcrpcLineEvent,
-            CcrpcExitEvent
+            CcrpcExitEvent,
+            CcrpcLsEvent,
+            CcrpcLsEndedEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
 }

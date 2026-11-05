@@ -62,6 +62,8 @@ beforeEach(async () => {
     onCcrpcLine: (cb: typeof line) => ((line = cb), Promise.resolve(() => {})),
     onCcrpcExit: (cb: typeof exit) => ((exit = cb), Promise.resolve(() => {})),
     onLiveChanged: () => Promise.resolve(() => {}),
+    onCcrpcLs: () => Promise.resolve(() => {}),
+    onCcrpcLsEnded: () => Promise.resolve(() => {}),
     ccrpcGuiLog: async () => {},
     ccrpcSend: async (conn: string, msg: Record<string, unknown>) => {
       sent.push({ conn, msg });
