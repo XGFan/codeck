@@ -1,7 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { RICH_TITLE } from "./helpers";
 import { composeEnd, composeStart, escWhileComposing, queriesOf } from "./ime";
-
-const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 
 async function openSearch(page: Page) {
   await page.goto("/");

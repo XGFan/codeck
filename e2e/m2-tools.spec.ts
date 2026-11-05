@@ -1,57 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { unfoldAll } from "./unfold";
+import { openRich, reveal as revealIn } from "./helpers";
 
-const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
-
-async function openRich(page: Page) {
-  await page.goto("/");
-  await page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).click();
-  await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
-  await unfoldAll(page);
-}
-
-/** Scrolls `scroller` by `dy` and resolves after the scroll event (and the virtualizer's re-render); false at the end. */
-const scrollBy = (scroller: Locator, dy: number) =>
-  scroller.evaluate(
-    (e, dy) =>
-      new Promise<boolean>((done) => {
-        const onScroll = () => requestAnimationFrame(() => done(true));
-        e.addEventListener("scroll", onScroll, { once: true });
-        const before = e.scrollTop;
-        e.scrollTop = before + dy;
-        if (e.scrollTop === before) {
-          e.removeEventListener("scroll", onScroll);
-          done(false);
-        }
-      }),
-    dy,
-  );
-
-/** Scrolls the virtualized transcript from the top, opening collapsed tool groups, until `target` is rendered. */
-async function reveal(page: Page, target: Locator) {
-  const transcript = page.getByTestId("transcript");
-  await expect(transcript.locator("[data-row]").first()).toBeVisible();
-  // Resolve only once the scroll event has fired: the virtualizer re-renders in its scroll handler, so until
-  // then the rows of the previous position (the session opens at the bottom) are still mounted and
-  // `target.count()` would match a row that unmounts right after.
-  await transcript.evaluate(
-    (e) =>
-      new Promise<void>((done) => {
-        if (e.scrollTop === 0) return done();
-        e.addEventListener("scroll", () => done(), { once: true });
-        e.scrollTop = 0;
-      }),
-  );
-  for (let i = 0; i < 200 && (await target.count()) === 0; i++) {
-    const closed = transcript.locator('[data-testid="tool-group"]:not([data-open]) > button');
-    if ((await closed.count()) > 0) {
-      const button = (await closed.first().elementHandle())!;
-      await button.click();
-      await expect.poll(() => button.getAttribute("aria-expanded")).toBe("true");
-    } else if (!(await scrollBy(transcript, 400))) break;
-  }
-  await target.first().scrollIntoViewIfNeeded();
-}
+/** Scrolls the transcript down from the top, opening collapsed tool groups, until `target` is rendered. */
+const reveal = (page: Page, target: Locator) => revealIn(page.getByTestId("transcript"), target, "top");
 
 test("失败的 Bash 默认收起，展开后渲染 ANSI 颜色", async ({ page }) => {
   await openRich(page);

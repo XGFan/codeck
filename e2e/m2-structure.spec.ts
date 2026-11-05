@@ -1,46 +1,8 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { unfoldAll } from "./unfold";
+import { expect, test, type Page } from "@playwright/test";
+import { openSession, RICH_TITLE, reveal, scrollBy } from "./helpers";
 import type { JumpTarget } from "../src/ipc/bindings";
 
-const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 const FORK_TITLE = "认证模块重构（改用 JWT 轮换）";
-
-/** Opens a Session with every turn's process unfolded (most tests look inside it); `folded` leaves it as it opens. */
-async function openSession(page: Page, title: string, { folded = false } = {}) {
-  await page.goto("/");
-  const row = page.getByTestId("session-row").filter({ hasText: title });
-  await row.click();
-  await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
-  if (!folded) await unfoldAll(page);
-  return (await row.getAttribute("data-session-id"))!;
-}
-
-/** Scrolls `scroller` by `dy` and resolves after the scroll event (and the virtualizer's re-render); false at the end. */
-const scrollBy = (scroller: Locator, dy: number) =>
-  scroller.evaluate(
-    (e, dy) =>
-      new Promise<boolean>((done) => {
-        const onScroll = () => requestAnimationFrame(() => done(true));
-        e.addEventListener("scroll", onScroll, { once: true });
-        const before = e.scrollTop;
-        e.scrollTop = before + dy;
-        if (e.scrollTop === before) {
-          e.removeEventListener("scroll", onScroll);
-          done(false);
-        }
-      }),
-    dy,
-  );
-
-/** Scrolls a virtualized list upward from the bottom until `target` is rendered. */
-async function reveal(scroller: Locator, target: Locator) {
-  await expect(scroller.locator("[data-row]").first()).toBeVisible();
-  await scrollBy(scroller, 1e7);
-  for (let i = 0; i < 40 && (await target.count()) === 0; i++) {
-    if (!(await scrollBy(scroller, -300))) break;
-  }
-  await target.first().scrollIntoViewIfNeeded();
-}
 
 async function jump(
   page: Page,

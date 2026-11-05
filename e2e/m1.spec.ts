@@ -1,16 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { unfoldAll } from "./unfold";
-
-const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
-
-async function openRich(page: Page) {
-  await page.goto("/");
-  const row = page.getByTestId("session-row").filter({ hasText: RICH_TITLE });
-  await row.click();
-  await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
-  await unfoldAll(page);
-  return (await row.getAttribute("data-session-id"))!;
-}
+import { openRich, RICH_TITLE } from "./helpers";
 
 /** Filters the session list by a Project picked in the search dialog. */
 async function filterProject(page: Page, name: string) {

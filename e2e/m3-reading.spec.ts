@@ -1,20 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 import { composeEnd, composeStart, enterCommittingComposition, queriesOf } from "./ime";
+import { openRich } from "./helpers";
 import { unfoldAll } from "./unfold";
 
-const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
-
-async function openRich(page: Page) {
-  await page.goto("/");
-  await page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).click();
-  await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
+/** Opens the rich Session as it opens (folded), once its rows are there. */
+async function openRichFolded(page: Page) {
+  await openRich(page, { folded: true });
   await expect(page.getByTestId("transcript").locator("[data-row]").first()).toBeVisible();
 }
 
 const calls = (page: Page) => page.evaluate(() => window.__cvCalls ?? []);
 
 test("⌘F 命中折叠的工具输出：自动展开并高亮，Enter 步进，计数更新，esc 关闭", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   await page.keyboard.press("Meta+f");
   const input = page.getByTestId("find-input");
   await expect(input).toBeFocused();
@@ -44,7 +42,7 @@ test("⌘F 命中折叠的工具输出：自动展开并高亮，Enter 步进，
 });
 
 test("j/k 按轮次跳转，大纲高亮当前轮；点击大纲刻度跳转", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   const ticks = page.getByTestId("outline-tick");
   expect(await ticks.count()).toBeGreaterThan(2);
   // Jump to the first turn via the outline, then walk with j / k.
@@ -64,7 +62,7 @@ test("j/k 按轮次跳转，大纲高亮当前轮；点击大纲刻度跳转", a
 });
 
 test("大纲浮在对话左侧、滚动条浮在右侧，都不占对话区宽度；拖动滚动条滑块滚动", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   await unfoldAll(page);
   const t = page.getByTestId("transcript");
   const pane = (await page.getByTestId("pane-conversation").boundingBox())!;
@@ -113,14 +111,14 @@ test("大纲浮在对话左侧、滚动条浮在右侧，都不占对话区宽�
 });
 
 test("j 在输入框内不触发轮次跳转", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   await page.keyboard.press("Meta+f");
   await page.getByTestId("find-input").fill("j");
   await expect(page.getByTestId("find-input")).toHaveValue("j");
 });
 
 test("复制：resume 命令、Session ID、消息；在 Finder 中显示", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   await page.getByTestId("header-more").click();
   await page.getByRole("menuitem", { name: "复制 Resume 命令" }).click();
   const id = await page.evaluate(() => window.__cvCalls!.find((c) => c.method === "copyText")!.args[0] as string);
@@ -147,7 +145,7 @@ test("复制：resume 命令、Session ID、消息；在 Finder 中显示", asyn
 });
 
 test("⌘F 输入法组字期间不查找，确认后才查找", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   await page.keyboard.press("Meta+f");
   const input = page.getByTestId("find-input");
   await expect(input).toBeFocused();
@@ -163,7 +161,7 @@ test("⌘F 输入法组字期间不查找，确认后才查找", async ({ page }
 });
 
 test("⌘F 用回车确认候选词时不步进到下一处", async ({ page }) => {
-  await openRich(page);
+  await openRichFolded(page);
   await page.keyboard.press("Meta+f");
   const input = page.getByTestId("find-input");
   const count = page.getByTestId("find-count");
