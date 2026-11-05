@@ -44,6 +44,18 @@ export async function escWhileComposing(input: Locator) {
   });
 }
 
+/**
+ * The Enter that picks a candidate, as WebKit delivers it: after compositionend, with `isComposing`
+ * false but keyCode 229.
+ */
+export async function enterCommittingComposition(input: Locator) {
+  await input.evaluate((el) => {
+    const e = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true });
+    Object.defineProperty(e, "keyCode", { get: () => 229 });
+    el.dispatchEvent(e);
+  });
+}
+
 /** Queries passed to the mock `search` / `findInSession`. */
 export const queriesOf = (page: Page, method: "search" | "findInSession") =>
   page.evaluate((m) => (window.__cvCalls ?? []).filter((c) => c.method === m).map((c) => c.args[0] as string), method);

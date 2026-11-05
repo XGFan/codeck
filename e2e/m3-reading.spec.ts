@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { composeEnd, composeStart, queriesOf } from "./ime";
+import { composeEnd, composeStart, enterCommittingComposition, queriesOf } from "./ime";
 import { unfoldAll } from "./unfold";
 
 const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
@@ -160,4 +160,17 @@ test("⌘F 输入法组字期间不查找，确认后才查找", async ({ page }
   await composeEnd(input, "case_0007");
   await expect(page.getByTestId("find-count")).toHaveText("1 / 1");
   expect(await queriesOf(page, "findInSession")).toEqual(["case_0007"]);
+});
+
+test("⌘F 用回车确认候选词时不步进到下一处", async ({ page }) => {
+  await openRich(page);
+  await page.keyboard.press("Meta+f");
+  const input = page.getByTestId("find-input");
+  const count = page.getByTestId("find-count");
+  await composeStart(input, ["has"]);
+  await composeEnd(input, "has been updated");
+  await expect(count).toHaveText(/^1 \/ [2-9]\d*$/);
+  await enterCommittingComposition(input);
+  await input.press("Enter");
+  await expect(count).toHaveText(/^2 \/ /);
 });

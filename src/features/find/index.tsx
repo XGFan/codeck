@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FindMatch, FindRequest, TranscriptScope } from "@/ipc/bindings";
-import { useHotkey } from "@/lib/hotkeys";
+import { isComposingKey, useHotkey } from "@/lib/hotkeys";
 import { useFind } from "@/queries";
 import { useUi } from "@/state/ui";
 import { scrollToNode } from "../transcript/Transcript";
@@ -151,7 +151,7 @@ export function FindBar() {
         onCompositionStart={() => setComposing(true)}
         onCompositionEnd={() => setComposing(false)}
         onKeyDown={(e) => {
-          if (e.nativeEvent.isComposing) return;
+          if (isComposingKey(e.nativeEvent)) return;
           if (e.key === "Enter") {
             e.preventDefault();
             step(e.shiftKey ? -1 : 1);

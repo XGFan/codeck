@@ -17,7 +17,7 @@ import type {
 } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/format";
-import { keepOpenWhileComposing, useHotkey } from "@/lib/hotkeys";
+import { isComposingKey, keepOpenWhileComposing, useHotkey } from "@/lib/hotkeys";
 import { queryKeys, useIndexStatus, useProjects, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
 import { highlight, matchProjects, matchSessions, parseQuery, sessionProjectIds } from "./match";
@@ -378,7 +378,7 @@ export function SearchOverlay() {
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (isComposingKey(e.nativeEvent)) return;
     if (e.key === "Tab" && sections.length > 0) {
       e.preventDefault();
       const at = sections.findIndex((keys) => keys.includes(selected));
