@@ -41,13 +41,12 @@ pub fn login_env() -> HashMap<String, String> {
 
 fn read_login_env() -> Option<HashMap<String, String>> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let mut child = Command::new(shell)
-        .args(["-l", "-c", "/usr/bin/env -0"])
+    let mut cmd = Command::new(shell);
+    cmd.args(["-l", "-c", "/usr/bin/env -0"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    let mut child = super::relay::spawn(&mut cmd).ok()?;
     let mut out = child.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

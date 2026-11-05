@@ -314,9 +314,8 @@ impl App {
             &mut gui.lock(),
             &format!("spawn {} {sub} {}", self.ccrpc.display(), args.join(" ")),
         );
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| io(format!("运行不了 {}：{e}", self.ccrpc.display())))?;
+        let mut child =
+            spawn(&mut cmd).map_err(|e| io(format!("运行不了 {}：{e}", self.ccrpc.display())))?;
         let stdout = child.stdout.take().ok_or_else(|| io("没有 stdout"))?;
         let stderr = child.stderr.take().ok_or_else(|| io("没有 stderr"))?;
         self.gui_line(&format!(
@@ -614,15 +613,24 @@ fn last_chars(s: &str, n: usize) -> &str {
 /// `cmd`'s output, without stdin; killed (`TimedOut`) with everything it started when it has not
 /// finished within `timeout`. It runs in its own process group, so a hung `toh` it launched goes
 /// too (and with it the pipes the reader threads wait on).
+/// Every child of this process is spawned here: on macOS std creates a pipe and marks it
+/// close-on-exec in a second step, so a fork on another thread in between would hand this
+/// child's pipe ends to that child (a long-lived attach then holds them open, and a reader here
+/// never sees EOF). The lock keeps pipe creation and fork from interleaving.
+pub(crate) fn spawn(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    static SPAWN: Mutex<()> = Mutex::new(());
+    let _g = SPAWN.lock();
+    cmd.spawn()
+}
+
 fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
     use std::os::unix::process::CommandExt;
     let deadline = std::time::Instant::now() + timeout;
-    let mut child = cmd
-        .stdin(Stdio::null())
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()?;
+        .process_group(0);
+    let mut child = spawn(&mut cmd)?;
     let group = child.id() as libc::pid_t;
     let kill_group = |child: &mut std::process::Child| {
         // SAFETY: plain syscall on the group this function created.
@@ -1012,5 +1020,47 @@ mod tests {
         assert_eq!(last_chars("ab令牌桶", 3), "令牌桶");
         assert_eq!(last_chars("ab", 5), "ab");
         assert_eq!(last_chars("ab", 0), "");
+    }
+
+    /// Spawning from several threads at once must not leak one child's pipes into another: on
+    /// macOS std creates a pipe and only then marks it close-on-exec, so a fork in between hands
+    /// the write end to the other child, and a long-lived one (an attach) keeps the reader from
+    /// ever seeing EOF.
+    #[test]
+    fn concurrent_spawns_do_not_hold_each_others_pipes() {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let spawner = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut kids = Vec::new();
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let mut c = Command::new("/bin/sleep");
+                    c.arg("3").stdout(Stdio::piped()).stdin(Stdio::null());
+                    if let Ok(k) = spawn(&mut c) {
+                        kids.push(k);
+                    }
+                }
+                for mut k in kids {
+                    let _ = k.kill();
+                    let _ = k.wait();
+                }
+            })
+        };
+        let mut slow = 0;
+        for _ in 0..500 {
+            let mut c = Command::new("/bin/echo");
+            c.arg("hi");
+            let t = Instant::now();
+            let out = output_within(c, Duration::from_secs(2));
+            if out.is_err() || t.elapsed() > Duration::from_secs(1) {
+                slow += 1;
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        spawner.join().unwrap();
+        assert_eq!(
+            slow, 0,
+            "{slow} of 500 `echo`s waited for a pipe held by another child"
+        );
     }
 }
