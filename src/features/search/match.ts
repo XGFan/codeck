@@ -40,17 +40,26 @@ export function parseQuery(query: string): ParsedQuery {
 /** Every included term in some field, no excluded term in any; nothing matches without an included term. */
 function matches(fields: string[], q: ParsedQuery): boolean {
   if (q.include.length === 0) return false;
-  return q.include.every((t) => fields.some((f) => f.includes(t))) && !q.exclude.some((t) => fields.some((f) => f.includes(t)));
+  return (
+    q.include.every((t) => fields.some((f) => f.includes(t))) &&
+    !q.exclude.some((t) => fields.some((f) => f.includes(t)))
+  );
 }
 
 /**
  * Sessions matching on the title, a Project name or the git branch. Sessions with more terms in a Project
  * name or the branch come first; ties keep the input order (newest first).
  */
-export function matchSessions(sessions: SessionSummary[], names: Map<string, string>, q: ParsedQuery): SessionSummary[] {
+export function matchSessions(
+  sessions: SessionSummary[],
+  names: Map<string, string>,
+  q: ParsedQuery,
+): SessionSummary[] {
   const scored: { s: SessionSummary; score: number }[] = [];
   for (const s of sessions) {
-    const tags = [...sessionProjectIds(s).map((id) => names.get(id) ?? ""), s.gitBranch ?? ""].map((t) => t.toLowerCase());
+    const tags = [...sessionProjectIds(s).map((id) => names.get(id) ?? ""), s.gitBranch ?? ""].map((t) =>
+      t.toLowerCase(),
+    );
     if (!matches([s.title.toLowerCase(), ...tags], q)) continue;
     scored.push({ s, score: q.include.filter((t) => tags.some((tag) => tag.includes(t))).length });
   }

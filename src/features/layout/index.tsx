@@ -61,12 +61,28 @@ export function useLeadingInset(): string | undefined {
 const TOOL_CLASS =
   "flex size-7 items-center justify-center rounded-md text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:hover:bg-transparent aria-pressed:bg-selection aria-pressed:text-accent";
 
-function Toggle({ pane, label, keys, icon }: { pane: CollapsiblePane; label: string; keys: string; icon: React.ReactNode }) {
+function Toggle({
+  pane,
+  label,
+  keys,
+  icon,
+}: {
+  pane: CollapsiblePane;
+  label: string;
+  keys: string;
+  icon: React.ReactNode;
+}) {
   const collapsed = useUi((s) => s.collapsed[pane]);
   const toggle = useUi((s) => s.toggleCollapsed);
   const action = `${collapsed ? "显示" : "隐藏"} ${label}`;
   return (
-    <button type="button" aria-label={action} title={`${action}（${keys}）`} onClick={() => toggle(pane)} className={TOOL_CLASS}>
+    <button
+      type="button"
+      aria-label={action}
+      title={`${action}（${keys}）`}
+      onClick={() => toggle(pane)}
+      className={TOOL_CLASS}
+    >
       {icon}
     </button>
   );
@@ -101,7 +117,10 @@ export function Toolbar({ children }: { children?: React.ReactNode }) {
   useHotkey("Ctrl+Meta+L", () => toggle("sessions"), { enableInInputs: true });
 
   return (
-    <div data-testid="toolbar" className={cn("fixed top-[4px] z-10 flex gap-0.5", fullScreen ? "left-3" : "left-[78px]")}>
+    <div
+      data-testid="toolbar"
+      className={cn("fixed top-[4px] z-10 flex gap-0.5", fullScreen ? "left-3" : "left-[78px]")}
+    >
       <Toggle pane="sessions" label="Session 列表" keys="⌃⌘L" icon={<List size={16} strokeWidth={1.6} aria-hidden />} />
       <button
         type="button"

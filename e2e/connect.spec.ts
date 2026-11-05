@@ -40,7 +40,11 @@ type Probe = {
   hideNewPanes: boolean;
 };
 const probe = (page: Page) => page.evaluate(() => window.__cvCcrpc as unknown as Probe);
-const lastSent = async (page: Page, type: string) => (await probe(page)).sent.map((s) => s.msg).filter((m) => m.type === type).pop();
+const lastSent = async (page: Page, type: string) =>
+  (await probe(page)).sent
+    .map((s) => s.msg)
+    .filter((m) => m.type === type)
+    .pop();
 
 async function open(page: Page, title: string) {
   await page.getByTestId("session-row").filter({ hasText: title }).click();
@@ -66,7 +70,10 @@ const state = (page: Page) => page.getByTestId("connect-state");
 async function pasteImage(page: Page) {
   await page.getByTestId("connect-input").focus();
   await page.evaluate(() => {
-    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+    const png = Uint8Array.from(
+      atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="),
+      (c) => c.charCodeAt(0),
+    );
     const dt = new DataTransfer();
     dt.items.add(new File([png], "dot.png", { type: "image/png" }));
     const ev = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: DataTransfer };
@@ -83,7 +90,10 @@ test("标题栏：ccrpc ls 里的 Live Session 可 Connect，插件未报到时�
 
   await open(page, NO_PLUGIN);
   await expect(page.getByTestId("connect-button")).toBeDisabled();
-  await expect(page.getByTestId("connect-button")).toHaveAttribute("title", "ccrpc 插件未加载，重启 claude 后可 Connect");
+  await expect(page.getByTestId("connect-button")).toHaveAttribute(
+    "title",
+    "ccrpc 插件未加载，重启 claude 后可 Connect",
+  );
 
   await open(page, NOT_LISTED);
   await expect(page.getByTestId("header-more")).toBeVisible();
@@ -150,7 +160,19 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await expect(page.getByTestId("question-card")).toHaveCount(0);
   await page.evaluate(() => {
     const sid = "a7c63e92-0008-4000-8000-000000000008";
-    const input = { questions: [{ question: "Which color?", header: "Color", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] };
+    const input = {
+      questions: [
+        {
+          question: "Which color?",
+          header: "Color",
+          multiSelect: false,
+          options: [
+            { label: "Red", description: "warm" },
+            { label: "Blue", description: "cool" },
+          ],
+        },
+      ],
+    };
     window.__cvMock!.appendNode(sid, {
       id: "e2e-ask",
       timestampMs: Date.now(),
@@ -162,7 +184,19 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
         model: null,
         usage: null,
         isApiError: false,
-        blocks: [{ kind: "toolCall", toolUseId: "toolu_mock0002", name: "AskUserQuestion", inputJson: JSON.stringify(input), inputTruncated: false, result: null, subagentId: null, workflowRunId: null, notificationNodeId: null }],
+        blocks: [
+          {
+            kind: "toolCall",
+            toolUseId: "toolu_mock0002",
+            name: "AskUserQuestion",
+            inputJson: JSON.stringify(input),
+            inputTruncated: false,
+            result: null,
+            subagentId: null,
+            workflowRunId: null,
+            notificationNodeId: null,
+          },
+        ],
       },
     });
     window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
@@ -187,7 +221,9 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   expect(await lastSent(page, "answer_question")).toMatchObject({ answers: [{ options: ["Blue"] }] });
 });
 
-test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({ page }) => {
+test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({
+  page,
+}) => {
   await connectTo(page, RICH);
   await expect(state(page)).toContainText("空闲");
   // The header says the state once, in one word, with 「Disconnect」 where 「Connect」 was; the other connection controls sit at
@@ -224,7 +260,9 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   // A Subagent opens its Subagent Run in the side panel.
   await tasks.nth(1).getByTestId("task-open").click();
   await expect(page.getByTestId("tasks-list")).toHaveCount(0);
-  await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText(["test-engineer · 为限流中间件补集成测试"]);
+  await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText([
+    "test-engineer · 为限流中间件补集成测试",
+  ]);
   await page.getByTestId("panel-close").click();
   // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);
@@ -315,7 +353,9 @@ test("Pane 里换了 Session（/clear）时选中跟着切换；复制排查信�
   await page.getByTestId("header-more").click();
   await page.getByRole("menuitem", { name: "复制排查信息" }).click();
   const copied = await page.evaluate(() => window.__cvCalls!.filter((c) => c.method === "copyText").pop()?.args[0]);
-  expect(copied).toMatch(/^holder_id: mclear0000001\nsession_id: c04e77a2-0003-4000-8000-000000000003\ncwd: \/work\/lumen\nlogs: \S+$/);
+  expect(copied).toMatch(
+    /^holder_id: mclear0000001\nsession_id: c04e77a2-0003-4000-8000-000000000003\ncwd: \/work\/lumen\nlogs: \S+$/,
+  );
 
   await page.getByTestId("connect-disconnect").click();
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
@@ -375,7 +415,9 @@ test("新建 Session：选目录后选中它，进索引前显示占位且可以
   expect((await probe(page)).guiLog).toContain("new /tmp/mock-new");
 });
 
-test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，可选中、Connect，按 cwd 参与 Project 筛选", async ({ page }) => {
+test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，可选中、Connect，按 cwd 参与 Project 筛选", async ({
+  page,
+}) => {
   const id = "c1a70000-0000-4000-8000-0000000000c1";
   await page.goto("/");
   const row = page.getByTestId("session-row").first();
@@ -408,7 +450,9 @@ test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，
   await expect(placeholder).toHaveCount(0);
 });
 
-test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash，自定义命令走 prompt，打开的面板可关闭", async ({ page }) => {
+test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash，自定义命令走 prompt，打开的面板可关闭", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.locator('[data-testid=session-row][data-session-id="c1a70000-0000-4000-8000-0000000000c1"]').click();
   await page.getByTestId("connect-button").click();
@@ -463,7 +507,9 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   await expect(state(page)).toContainText("空闲");
 });
 
-test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分析器的 Key、Endpoint、模型可在这里设置", async ({ page }) => {
+test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分析器的 Key、Endpoint、模型可在这里设置", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "ccrpc" }).click();
@@ -475,7 +521,10 @@ test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分
   // The analyzer: a key from the login shell until one is saved here, with an endpoint and model.
   const status = page.getByTestId("analyzer-status");
   await expect(status).toHaveText("已开启 · Key 来自登录 shell 的 CCRPC_ANALYZER_API_KEY（…abcd）");
-  await expect(page.getByTestId("analyzer-base-url")).toHaveAttribute("placeholder", "https://api.deepseek.com/anthropic");
+  await expect(page.getByTestId("analyzer-base-url")).toHaveAttribute(
+    "placeholder",
+    "https://api.deepseek.com/anthropic",
+  );
   await page.getByTestId("analyzer-key").fill("sk-ant-test-9876");
   await page.getByTestId("analyzer-base-url").fill("https://api.anthropic.com");
   await page.getByTestId("analyzer-model").fill("claude-haiku-4-5");
@@ -555,7 +604,10 @@ test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一
   // 「新建 Session」 works without an `ccrpc ls` answer.
   await expect(page.getByTestId("new-session")).toBeVisible();
 
-  await page.evaluate((id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1 }), ids[0]!);
+  await page.evaluate(
+    (id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1 }),
+    ids[0]!,
+  );
   await expect.poll(async () => (await probe(page)).lists, { timeout: 1500 }).toBe(before + 1);
   await expect(page.getByTestId("connect-button")).toBeVisible();
 });
@@ -569,7 +621,9 @@ test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一�
   await expect(page.getByTestId("reconnect")).toBeVisible();
 });
 
-test("Session 在终端里退出后：输入区只剩一行提示，头部重新出现「Connect」，resume 后可再次 Connect", async ({ page }) => {
+test("Session 在终端里退出后：输入区只剩一行提示，头部重新出现「Connect」，resume 后可再次 Connect", async ({
+  page,
+}) => {
   await connectTo(page, "（无标题）");
   await expect(page.getByTestId("session-exit")).toContainText("Session 已结束");
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
@@ -621,7 +675,9 @@ test("Resume 失败：claude 找不到 Session 时标题栏写明原因，新开
   await expect(page.getByTestId("resume-pending")).toBeVisible();
   await expect(page.getByTestId("resume-button")).toHaveCount(0);
   const error = page.getByTestId("header").getByTestId("connect-error");
-  await expect(error).toHaveText("Resume 失败：No conversation found with session ID: c04e77a2-0003-4000-8000-000000000003");
+  await expect(error).toHaveText(
+    "Resume 失败：No conversation found with session ID: c04e77a2-0003-4000-8000-000000000003",
+  );
   // Read from the Pane, then the Pane closed and the connection dropped: Resume can be tried again.
   expect(await lastSent(page, "get_screen")).toBeTruthy();
   expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true });

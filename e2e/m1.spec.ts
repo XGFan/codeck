@@ -63,7 +63,14 @@ test("实时追加消息后新内容出现且停留在底部", async ({ page }) 
       timestampMs: Date.now(),
       hidden: false,
       inherited: false,
-      body: { kind: "assistant", messageId: "m-e2e", model: null, usage: null, isApiError: false, blocks: [{ kind: "text", text: "E2E 追加的新消息" }] },
+      body: {
+        kind: "assistant",
+        messageId: "m-e2e",
+        model: null,
+        usage: null,
+        isApiError: false,
+        blocks: [{ kind: "text", text: "E2E 追加的新消息" }],
+      },
     });
     window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
   }, id);
@@ -83,7 +90,14 @@ test("离开底部时出现新消息提示", async ({ page }) => {
       timestampMs: Date.now(),
       hidden: false,
       inherited: false,
-      body: { kind: "assistant", messageId: "m-e2e2", model: null, usage: null, isApiError: false, blocks: [{ kind: "text", text: "另一条新消息" }] },
+      body: {
+        kind: "assistant",
+        messageId: "m-e2e2",
+        model: null,
+        usage: null,
+        isApiError: false,
+        blocks: [{ kind: "text", text: "另一条新消息" }],
+      },
     });
     window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
   }, id);
@@ -105,7 +119,10 @@ test("setLive 切换进行中标记", async ({ page }) => {
   const id = await openRich(page);
   const dot = page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).getByTestId("live-dot");
   await expect(dot).toHaveAttribute("data-state", "busy");
-  await page.evaluate((sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 4242 }), id);
+  await page.evaluate(
+    (sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 4242 }),
+    id,
+  );
   await expect(dot).toHaveAttribute("data-state", "idle");
   await expect(page.getByTestId("live-state")).toHaveText("空闲");
   await page.evaluate((sid) => window.__cvMock!.setLive(sid, null), id);
@@ -137,7 +154,10 @@ test("斜杠命令只显示一个斜杠，命令名高亮", async ({ page }) => 
   await expect(name).toHaveText("/review");
   await expect(name.locator("..")).toHaveText("/review 订单列表页");
   // Highlighted like the terminal: the command token is coloured differently from its arguments.
-  const [cmdColor, argColor] = await name.evaluate((e) => [getComputedStyle(e).color, getComputedStyle(e.parentElement!).color]);
+  const [cmdColor, argColor] = await name.evaluate((e) => [
+    getComputedStyle(e).color,
+    getComputedStyle(e.parentElement!).color,
+  ]);
   expect(cmdColor).not.toBe(argColor);
 });
 
@@ -217,12 +237,16 @@ test("Session 列表可按 Cost 排序", async ({ page }) => {
   await page.getByRole("button", { name: "排序方式" }).click();
   await page.getByRole("menuitem", { name: "Cost" }).click();
   const values = async () =>
-    (await page.getByTestId("row-cost").allTextContents()).map((c) => (c.startsWith("<") ? 0.005 : Number(c.replace(/[$,]/g, ""))));
+    (await page.getByTestId("row-cost").allTextContents()).map((c) =>
+      c.startsWith("<") ? 0.005 : Number(c.replace(/[$,]/g, "")),
+    );
   // The list refetches after the sort changes; wait for the new order.
-  await expect.poll(async () => {
-    const v = await values();
-    return v.length > 3 && v.every((x, i) => i === 0 || v[i - 1] >= x);
-  }).toBe(true);
+  await expect
+    .poll(async () => {
+      const v = await values();
+      return v.length > 3 && v.every((x, i) => i === 0 || v[i - 1] >= x);
+    })
+    .toBe(true);
   const costs = await page.getByTestId("row-cost").allTextContents();
   // A session whose model has no price shows $0 (the untitled one has no model).
   expect(costs).toContain("$0");

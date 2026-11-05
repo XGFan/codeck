@@ -14,7 +14,9 @@ const components: Components = {
   ul: (p) => <ul className="my-1 list-disc space-y-0.5 pl-5" {...strip(p)} />,
   ol: (p) => <ol className="my-1 list-decimal space-y-0.5 pl-5" {...strip(p)} />,
   blockquote: (p) => <blockquote className="my-2 border-l-2 border-border pl-3 text-secondary" {...strip(p)} />,
-  a: (p) => <a className="text-accent underline-offset-2 hover:underline" target="_blank" rel="noreferrer" {...strip(p)} />,
+  a: (p) => (
+    <a className="text-accent underline-offset-2 hover:underline" target="_blank" rel="noreferrer" {...strip(p)} />
+  ),
   hr: () => <hr className="my-3 border-border" />,
   table: (p) => (
     <div className="my-2 overflow-x-auto">

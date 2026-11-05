@@ -8,12 +8,53 @@ export const MAX_HIGHLIGHT_CHARS = 150_000;
 const MAX_LINES = 3000;
 
 const EXT: Record<string, string> = {
-  rs: "rust", ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
-  json: "json", jsonc: "jsonc", toml: "toml", yaml: "yaml", yml: "yaml", md: "markdown", mdx: "mdx", py: "python",
-  go: "go", java: "java", kt: "kotlin", swift: "swift", rb: "ruby", php: "php", c: "c", h: "c", cc: "cpp", cpp: "cpp",
-  hpp: "cpp", cs: "csharp", sh: "bash", bash: "bash", zsh: "bash", fish: "fish", css: "css", scss: "scss",
-  html: "html", vue: "vue", svelte: "svelte", sql: "sql", xml: "xml", conf: "nginx", ini: "ini", lua: "lua",
-  dockerfile: "docker", tf: "terraform", graphql: "graphql", proto: "proto", diff: "diff", lock: "toml",
+  rs: "rust",
+  ts: "typescript",
+  tsx: "tsx",
+  js: "javascript",
+  jsx: "jsx",
+  mjs: "javascript",
+  cjs: "javascript",
+  json: "json",
+  jsonc: "jsonc",
+  toml: "toml",
+  yaml: "yaml",
+  yml: "yaml",
+  md: "markdown",
+  mdx: "mdx",
+  py: "python",
+  go: "go",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  rb: "ruby",
+  php: "php",
+  c: "c",
+  h: "c",
+  cc: "cpp",
+  cpp: "cpp",
+  hpp: "cpp",
+  cs: "csharp",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "fish",
+  css: "css",
+  scss: "scss",
+  html: "html",
+  vue: "vue",
+  svelte: "svelte",
+  sql: "sql",
+  xml: "xml",
+  conf: "nginx",
+  ini: "ini",
+  lua: "lua",
+  dockerfile: "docker",
+  tf: "terraform",
+  graphql: "graphql",
+  proto: "proto",
+  diff: "diff",
+  lock: "toml",
 };
 
 /** Shiki language id from a file path (by extension / well-known names), or null. */
@@ -50,7 +91,8 @@ function getWorker(): Worker | null {
 
 /** Highlights `code` in the Shiki worker; resolves null when unsupported / too large / failed. */
 export function highlight(code: string, lang: string): Promise<HlLines | null> {
-  if (code.length > MAX_HIGHLIGHT_CHARS || code.split("\n", MAX_LINES + 1).length > MAX_LINES) return Promise.resolve(null);
+  if (code.length > MAX_HIGHLIGHT_CHARS || code.split("\n", MAX_LINES + 1).length > MAX_LINES)
+    return Promise.resolve(null);
   const key = `${lang}\u0000${code}`;
   if (cache.has(key)) return Promise.resolve(cache.get(key)!);
   const w = getWorker();

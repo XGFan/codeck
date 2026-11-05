@@ -18,7 +18,11 @@ const ok = { text: "ok" };
 
 const nodes = [
   userNode("u1", 1_000, "go"),
-  asstNode("a1", 2_000, [text("先看看"), call("t1", "Read", { file_path: "/r/a.rs" }, ok), call("t2", "Bash", { command: "cargo test" }, ok)]),
+  asstNode("a1", 2_000, [
+    text("先看看"),
+    call("t1", "Read", { file_path: "/r/a.rs" }, ok),
+    call("t2", "Bash", { command: "cargo test" }, ok),
+  ]),
   asstNode("a2", 111_000, [text("改好了。")]),
   userNode("u2", 120_000, "谢谢"),
   asstNode("a3", 121_000, [text("不客气")]),
@@ -31,7 +35,17 @@ describe("按轮折叠", () => {
 
   it("a turn's process folds into one line with its time and counts; the answer and turns without work stay out", () => {
     const g = foldTurns(built, {});
-    expect(g.rows.map((r) => r.kind)).toEqual(["prompt", "fold", "text", "prompt", "text", "prompt", "fold", "text", "tool"]);
+    expect(g.rows.map((r) => r.kind)).toEqual([
+      "prompt",
+      "fold",
+      "text",
+      "prompt",
+      "text",
+      "prompt",
+      "fold",
+      "text",
+      "tool",
+    ]);
     expect(g.rows[1]).toMatchObject({ key: "fold:u1", open: false, ms: 110_000, texts: 1, calls: 2 });
     // Rows it hides point at it, so a jump lands on it.
     expect(rowIndexOf(g, "a1", "t1")).toBe(1);
@@ -41,8 +55,16 @@ describe("按轮折叠", () => {
   it("the last turn without an answer (still running) starts open; a click decides after that", () => {
     const g = foldTurns(built, {});
     expect(g.rows[6]).toMatchObject({ key: "fold:u3", open: true });
-    expect(foldTurns(built, { "fold:u3": false }).rows.map((r) => r.kind).slice(5)).toEqual(["prompt", "fold"]);
-    expect(foldTurns(built, { "fold:u1": true }).rows.map((r) => r.kind).slice(0, 6)).toEqual(["prompt", "fold", "text", "tool", "tool", "text"]);
+    expect(
+      foldTurns(built, { "fold:u3": false })
+        .rows.map((r) => r.kind)
+        .slice(5),
+    ).toEqual(["prompt", "fold"]);
+    expect(
+      foldTurns(built, { "fold:u1": true })
+        .rows.map((r) => r.kind)
+        .slice(0, 6),
+    ).toEqual(["prompt", "fold", "text", "tool", "tool", "text"]);
   });
 
   it("opened, a run of calls is not grouped: each call has its own row, and a jump to it lands there", () => {

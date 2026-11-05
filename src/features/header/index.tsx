@@ -7,7 +7,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { connFor, ConnectButton, lsEntryFor, PaneButton, STATE_WORD, useConnect, useConnectDebugInfo, useUnindexed } from "@/features/connect";
+import {
+  connFor,
+  ConnectButton,
+  lsEntryFor,
+  PaneButton,
+  STATE_WORD,
+  useConnect,
+  useConnectDebugInfo,
+  useUnindexed,
+} from "@/features/connect";
 import { useLeadingInset } from "@/features/layout";
 import { api } from "@/ipc";
 import type { LiveState, ModelCost } from "@/ipc/bindings";
@@ -36,7 +45,11 @@ export function SessionHeader() {
     if (!unindexed) return null;
     const cwd = connected?.cwd ?? lsCwd;
     return (
-      <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
+      <header
+        data-testid="header"
+        data-tauri-drag-region="deep"
+        className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}
+      >
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">新 Session</h1>
           <PaneButton sessionId={sessionId} />
@@ -55,7 +68,11 @@ export function SessionHeader() {
   const project = d.projectPath.split("/").filter(Boolean).pop() ?? d.projectPath;
 
   return (
-    <header data-testid="header" data-tauri-drag-region="deep" className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}>
+    <header
+      data-testid="header"
+      data-tauri-drag-region="deep"
+      className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}
+    >
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
         <PaneButton sessionId={sessionId} />
@@ -75,7 +92,11 @@ export function SessionHeader() {
         <span>{formatDuration(d.durationMs)}</span>
         <span>{s.messageCount} 条消息</span>
         <span className="group/info relative flex items-center">
-          <button type="button" aria-label="更多统计" className="flex items-center rounded text-secondary outline-none hover:text-text focus-visible:outline-2 focus-visible:outline-accent">
+          <button
+            type="button"
+            aria-label="更多统计"
+            className="flex items-center rounded text-secondary outline-none hover:text-text focus-visible:outline-2 focus-visible:outline-accent"
+          >
             <Info size={13} strokeWidth={1.7} aria-hidden />
           </button>
           <span
@@ -115,19 +136,37 @@ export function SessionHeader() {
  * The Session's state in one word, after a dot while its process runs: the connection's state while
  * connected (ccrpc sees the turn through hooks), else the Live one; 「已结束 · 3 分钟前」 once it ended.
  */
-function StateWord({ sessionId, live, lastActiveMs }: { sessionId: string; live: LiveState | null; lastActiveMs: number | null }) {
+function StateWord({
+  sessionId,
+  live,
+  lastActiveMs,
+}: {
+  sessionId: string;
+  live: LiveState | null;
+  lastActiveMs: number | null;
+}) {
   const c = useConnect((st) => connFor(st, sessionId));
   const connected = c && c.ready && !c.procExit && !c.sessionExited ? c : null;
   const status = connected ? connected.state : (live?.status ?? null);
   if (!status) {
     return (
-      <span data-testid="live-state">{lastActiveMs != null ? `已结束 · ${formatRelative(lastActiveMs)}` : "已结束"}</span>
+      <span data-testid="live-state">
+        {lastActiveMs != null ? `已结束 · ${formatRelative(lastActiveMs)}` : "已结束"}
+      </span>
     );
   }
   const waiting = status === "waiting";
   return (
-    <span data-testid="live-state" className={cn("flex items-center gap-1.5 font-semibold", waiting ? "text-live-waiting" : "text-live")}>
-      <span className={cn("size-2 rounded-full", waiting ? "bg-live-waiting" : status === "busy" ? "bg-live" : "box-border border-[1.5px] border-live")} />
+    <span
+      data-testid="live-state"
+      className={cn("flex items-center gap-1.5 font-semibold", waiting ? "text-live-waiting" : "text-live")}
+    >
+      <span
+        className={cn(
+          "size-2 rounded-full",
+          waiting ? "bg-live-waiting" : status === "busy" ? "bg-live" : "box-border border-[1.5px] border-live",
+        )}
+      />
       <span data-testid={connected ? "connect-state" : undefined} data-state={status}>
         {STATE_WORD[status] ?? status}
       </span>
@@ -166,8 +205,7 @@ function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeComma
           复制 Session ID
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => void api.revealSessionFile(sessionId, null)}>
-          <FolderOpen size={13} strokeWidth={1.5} aria-hidden />
-          在 Finder 中显示
+          <FolderOpen size={13} strokeWidth={1.5} aria-hidden />在 Finder 中显示
         </DropdownMenuItem>
         {debug && (
           <DropdownMenuItem onSelect={() => void api.copyText(debug)}>

@@ -84,7 +84,10 @@ test("Enter 打开 Session；不在当前 Project 筛选里时清除筛选", asy
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("project-chip")).toHaveCount(0);
   await expect(page.getByTestId("header").getByRole("heading", { name: "排查 Redis 连接池泄漏" })).toBeVisible();
-  await expect(page.getByTestId("session-row").filter({ hasText: "排查 Redis 连接池泄漏" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("session-row").filter({ hasText: "排查 Redis 连接池泄漏" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("⌘↵ 把 Project 设为搜索范围，三段都只在其中；输入为空时 ⌫ 移除范围", async ({ page }) => {
@@ -119,7 +122,10 @@ test("⌘↵ 把 Project 设为搜索范围，三段都只在其中；输入为�
 test("点「只搜这个 Project」后焦点仍在输入框，可以直接打字", async ({ page }) => {
   await openSearch(page);
   await input(page).fill("lumen");
-  await page.getByTestId("search-project").getByRole("button", { name: /只搜这个 Project/ }).click();
+  await page
+    .getByTestId("search-project")
+    .getByRole("button", { name: /只搜这个 Project/ })
+    .click();
   await expect(page.getByTestId("search-scope")).toContainText("lumen-api");
   await page.keyboard.type("zod");
   await expect(input(page)).toHaveValue("zod");

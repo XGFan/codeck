@@ -97,7 +97,9 @@ describe("tool-call groups", () => {
     const one = buildRows(input([asstNode("a1", 1, [call("t1", "Bash", {}, ok())])]));
     expect(kinds(one.rows)).toEqual(["tool"]);
     const expanded = { "tool:a1|t1": true };
-    const two = buildRows(input([asstNode("a1", 1, [call("t1", "Bash", {}, ok())]), asstNode("a2", 2, [call("t2", "Read", {}, ok())])]));
+    const two = buildRows(
+      input([asstNode("a1", 1, [call("t1", "Bash", {}, ok())]), asstNode("a2", 2, [call("t2", "Read", {}, ok())])]),
+    );
     const [g] = groups(two.rows);
     expect(isGroupOpen(g!, expanded)).toBe(true);
     expect(isGroupOpen(g!, {})).toBe(false);
@@ -107,15 +109,23 @@ describe("tool-call groups", () => {
 
   it("counts failed calls but keeps the group collapsed by default", () => {
     const rich = buildRows(input(richMain, { subagents: richSubagents, workflows: richWorkflows }));
-    const failedGroup = groups(rich.rows).find((g) => g.items.some((i) => i.type === "call" && i.call.toolUseId === "tu_bash_fail"));
+    const failedGroup = groups(rich.rows).find((g) =>
+      g.items.some((i) => i.type === "call" && i.call.toolUseId === "tu_bash_fail"),
+    );
     expect(failedGroup?.failedCount).toBe(1);
     expect(isGroupOpen(failedGroup!, {})).toBe(false);
-    expect(groups(rich.rows).filter((g) => g !== failedGroup).every((g) => g.failedCount === 0)).toBe(true);
+    expect(
+      groups(rich.rows)
+        .filter((g) => g !== failedGroup)
+        .every((g) => g.failedCount === 0),
+    ).toBe(true);
   });
 });
 
 describe("subagent and workflow cards", () => {
-  const rich = buildRows(input(richMain, { subagents: richSubagents, workflows: richWorkflows, orphanSubagentIds: ["ag-orphan"] }));
+  const rich = buildRows(
+    input(richMain, { subagents: richSubagents, workflows: richWorkflows, orphanSubagentIds: ["ag-orphan"] }),
+  );
 
   it("groups parallel Agent calls of one message and renders the workflow as its own card", () => {
     const par = rich.rows.find((r): r is Extract<Row, { kind: "parallel" }> => r.kind === "parallel");
@@ -124,7 +134,13 @@ describe("subagent and workflow cards", () => {
     expect(rich.rows[wfAt - 1]).toBe(par);
     const after = rich.rows[wfAt + 1] as Extract<Row, { kind: "group" }>;
     expect(after.kind).toBe("group");
-    expect(after.items.map((i) => (i.type === "call" ? i.call.toolUseId : null))).toEqual(["tu_mcp", "tu_bg_build", "tu_artifact", "tu_artifact_file", "tu_artifact_publish"]);
+    expect(after.items.map((i) => (i.type === "call" ? i.call.toolUseId : null))).toEqual([
+      "tu_mcp",
+      "tu_bg_build",
+      "tu_artifact",
+      "tu_artifact_file",
+      "tu_artifact_publish",
+    ]);
   });
 
   it("links the task notification and lists orphans at the end", () => {
@@ -134,15 +150,15 @@ describe("subagent and workflow cards", () => {
   });
 
   it("an Agent call without a linked run renders as a plain tool call", () => {
-    const { rows } = buildRows(input([asstNode("a1", 1, [call("t1", "Agent", { prompt: "x" }, ok(), { subagentId: "missing" })])]));
+    const { rows } = buildRows(
+      input([asstNode("a1", 1, [call("t1", "Agent", { prompt: "x" }, ok(), { subagentId: "missing" })])]),
+    );
     expect(kinds(rows)).toEqual(["tool"]);
   });
 
   it("subagent scope shows the task prompt card and the final result", () => {
     const agent: SubagentRun = richSubagents[0]!;
-    const { rows } = buildRows(
-      input([userNode("s-u1", 1, "task"), asstNode("s-a1", 2, [text("done")])], { agent }),
-    );
+    const { rows } = buildRows(input([userNode("s-u1", 1, "task"), asstNode("s-a1", 2, [text("done")])], { agent }));
     expect(kinds(rows)).toEqual(["taskPrompt", "text", "finalResult"]);
   });
 });
@@ -156,7 +172,10 @@ describe("compact and hidden", () => {
   });
 
   it("skips hidden nodes unless shown", () => {
-    const nodes = [userNode("u1", 1, "a"), otherNode("h1", 2, { kind: "attachment", attachmentType: "x", text: "t" }, { hidden: true })];
+    const nodes = [
+      userNode("u1", 1, "a"),
+      otherNode("h1", 2, { kind: "attachment", attachmentType: "x", text: "t" }, { hidden: true }),
+    ];
     expect(buildRows(input(nodes)).rows).toHaveLength(1);
     expect(buildRows(input(nodes, { showHidden: true })).rows).toHaveLength(2);
   });
@@ -206,8 +225,16 @@ describe("回答与工具组的摘要", () => {
   const { rows } = buildRows(
     input([
       userNode("u1", 1_000, "go"),
-      asstNode("a1", 2_000, [text("先看看"), call("t1", "Read", { file_path: "/r/src/a.rs" }, ok()), call("t2", "Edit", { file_path: "/r/src/a.rs" }, ok())]),
-      asstNode("a2", 3_000, [call("t3", "Write", { file_path: "/r/src/a.rs" }, ok()), call("t4", "Bash", { command: "cargo test\n--all" }, { text: "x", isError: true }), call("t5", "mcp__gh__list", {}, ok())]),
+      asstNode("a1", 2_000, [
+        text("先看看"),
+        call("t1", "Read", { file_path: "/r/src/a.rs" }, ok()),
+        call("t2", "Edit", { file_path: "/r/src/a.rs" }, ok()),
+      ]),
+      asstNode("a2", 3_000, [
+        call("t3", "Write", { file_path: "/r/src/a.rs" }, ok()),
+        call("t4", "Bash", { command: "cargo test\n--all" }, { text: "x", isError: true }),
+        call("t5", "mcp__gh__list", {}, ok()),
+      ]),
       asstNode("a3", 65_000, [text("改好了。"), text("测试有一处失败。")]),
       userNode("u2", 70_000, "thanks"),
       asstNode("a4", 71_000, [text("不客气")]),

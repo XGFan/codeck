@@ -19,7 +19,8 @@ export const useReading = create<{ turns: TurnInfo[]; current: number; locked: b
 
 export function setTurns(turns: TurnInfo[]) {
   const prev = useReading.getState().turns;
-  if (prev.length === turns.length && prev.every((t, i) => t.nodeId === turns[i]!.nodeId && t.text === turns[i]!.text)) return;
+  if (prev.length === turns.length && prev.every((t, i) => t.nodeId === turns[i]!.nodeId && t.text === turns[i]!.text))
+    return;
   useReading.setState({ turns });
 }
 

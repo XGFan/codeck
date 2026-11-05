@@ -72,9 +72,16 @@ export function Shell({
   const pendingText = useContext(PendingText);
   const result = call.result;
   const dur =
-    result?.timestampMs != null && startMs != null && result.timestampMs >= startMs ? result.timestampMs - startMs : null;
+    result?.timestampMs != null && startMs != null && result.timestampMs >= startMs
+      ? result.timestampMs - startMs
+      : null;
   return (
-    <div data-testid="tool-call" data-tool={call.name} data-failed={failed || undefined} className="flex w-full flex-col gap-1">
+    <div
+      data-testid="tool-call"
+      data-tool={call.name}
+      data-failed={failed || undefined}
+      className="flex w-full flex-col gap-1"
+    >
       <button
         type="button"
         aria-expanded={open}
@@ -101,11 +108,19 @@ export function Shell({
         {open ? (
           <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
         ) : (
-          <ChevronRight size={12} strokeWidth={1.8} className="shrink-0 opacity-0 group-hover/tool:opacity-100" aria-hidden />
+          <ChevronRight
+            size={12}
+            strokeWidth={1.8}
+            className="shrink-0 opacity-0 group-hover/tool:opacity-100"
+            aria-hidden
+          />
         )}
       </button>
       {open && (
-        <div data-testid="tool-body" className={cn("ml-[22px] overflow-hidden rounded-lg border", failed ? "border-error/30" : "border-border")}>
+        <div
+          data-testid="tool-body"
+          className={cn("ml-[22px] overflow-hidden rounded-lg border", failed ? "border-error/30" : "border-border")}
+        >
           {children}
         </div>
       )}
@@ -144,7 +159,10 @@ function LoadBar({ out, dark }: { out: OutputState; dark: boolean }) {
           type="button"
           onClick={out.load}
           disabled={out.loading}
-          className={cn("flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium", dark ? "text-[#8ab4f8] hover:bg-white/10" : "text-accent hover:bg-selection")}
+          className={cn(
+            "flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium",
+            dark ? "text-[#8ab4f8] hover:bg-white/10" : "text-accent hover:bg-selection",
+          )}
         >
           {out.loading && <Loader2 size={11} className="animate-spin" aria-hidden />}
           加载完整输出{out.totalBytes > 0 ? `（共 ${formatBytes(out.totalBytes)}）` : ""}
@@ -221,7 +239,15 @@ export function Terminal({ text, stderr }: { text: string; stderr?: string }) {
 }
 
 /** Output of a tool: terminal-styled or plain, plus the load-full-output bar. */
-export function OutputView({ out, terminal = false, empty = "（无输出）" }: { out: OutputState; terminal?: boolean; empty?: string }) {
+export function OutputView({
+  out,
+  terminal = false,
+  empty = "（无输出）",
+}: {
+  out: OutputState;
+  terminal?: boolean;
+  empty?: string;
+}) {
   return (
     <div data-testid="tool-output">
       {terminal ? (
@@ -258,10 +284,15 @@ export function CodeView({
   const shown = lines.slice(0, MAX_CODE_LINES);
   return (
     <div>
-      <div data-testid="code-view" className="max-h-96 overflow-auto bg-code py-1.5 font-mono text-[12px] leading-[1.6]">
+      <div
+        data-testid="code-view"
+        className="max-h-96 overflow-auto bg-code py-1.5 font-mono text-[12px] leading-[1.6]"
+      >
         {shown.map((l, i) => (
           <div key={i} className="flex px-3">
-            <span className="w-9 shrink-0 pr-2 text-right text-secondary/70 select-none">{numbers?.[i] ?? startLine + i}</span>
+            <span className="w-9 shrink-0 pr-2 text-right text-secondary/70 select-none">
+              {numbers?.[i] ?? startLine + i}
+            </span>
             <span className="min-w-0 whitespace-pre-wrap break-all">
               <TokenSpans tokens={l} />
               {l.length === 0 && "​"}
@@ -288,7 +319,9 @@ export function ImageThumb({ image, ctx }: { image: ImageRef; ctx: ToolCtx | nul
     const el = ref.current;
     if (!el || seen) return;
     if (typeof IntersectionObserver === "undefined") return setSeen(true);
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setSeen(true), { rootMargin: "200px" });
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setSeen(true), {
+      rootMargin: "200px",
+    });
     io.observe(el);
     return () => io.disconnect();
   }, [seen]);
@@ -316,7 +349,9 @@ export function ImageThumb({ image, ctx }: { image: ImageRef; ctx: ToolCtx | nul
         <DialogContent className="flex max-h-[90vh] w-auto max-w-[90vw] items-center justify-center p-2">
           <DialogTitle className="sr-only">图片预览</DialogTitle>
           <DialogDescription className="sr-only">{image.mediaType}</DialogDescription>
-          {src && <img data-testid="image-large" src={src} alt="" className="max-h-[85vh] max-w-[88vw] object-contain" />}
+          {src && (
+            <img data-testid="image-large" src={src} alt="" className="max-h-[85vh] max-w-[88vw] object-contain" />
+          )}
           <button
             type="button"
             aria-label="关闭"

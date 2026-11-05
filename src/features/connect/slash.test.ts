@@ -2,8 +2,21 @@ import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "@/ipc/bindings";
 import { matchCommands, slashCommand, typedCommand } from "./slash";
 
-const cmd = (name: string, source: SlashCommand["source"] = "builtin"): SlashCommand => ({ name, description: null, source, interactive: false });
-const LIST = [cmd("clear"), cmd("compact"), cmd("cost"), cmd("release-notes"), cmd("release", "project"), cmd("kit:review", "plugin"), cmd("review")];
+const cmd = (name: string, source: SlashCommand["source"] = "builtin"): SlashCommand => ({
+  name,
+  description: null,
+  source,
+  interactive: false,
+});
+const LIST = [
+  cmd("clear"),
+  cmd("compact"),
+  cmd("cost"),
+  cmd("release-notes"),
+  cmd("release", "project"),
+  cmd("kit:review", "plugin"),
+  cmd("review"),
+];
 
 describe("typedCommand", () => {
   it("is the name while only `/name` is typed", () => {

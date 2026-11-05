@@ -42,7 +42,10 @@ async function reveal(scroller: Locator, target: Locator) {
   await target.first().scrollIntoViewIfNeeded();
 }
 
-async function jump(page: Page, target: Omit<JumpTarget, "inSubagent" | "inAbandonedBranch" | "needsHidden"> & Partial<JumpTarget>) {
+async function jump(
+  page: Page,
+  target: Omit<JumpTarget, "inSubagent" | "inAbandonedBranch" | "needsHidden"> & Partial<JumpTarget>,
+) {
   await page.evaluate(
     (t) =>
       window.__cvStore!.getState().jumpTo({
@@ -113,9 +116,14 @@ test("打开 Subagent 面板，嵌套卡片推入面包屑，Esc 关闭", async 
   await expect(panel.getByTestId("panel-meta").getByTestId("run-status")).toHaveText("已完成");
 
   await panel.locator('[data-agent-id="ag-nested1"]').getByTestId("open-subagent").click();
-  await expect(crumbs.getByTestId("crumb")).toHaveText(["Explore · 梳理现有中间件注册方式", "general-purpose · 核对 cors 层的配置来源"]);
+  await expect(crumbs.getByTestId("crumb")).toHaveText([
+    "Explore · 梳理现有中间件注册方式",
+    "general-purpose · 核对 cors 层的配置来源",
+  ]);
   await expect(panel.getByTestId("panel-meta")).toContainText("嵌套深度 2");
-  await expect(panel.getByTestId("panel-transcript").getByText("来自 config.toml 的 [cors] allowed_origins。").first()).toBeVisible();
+  await expect(
+    panel.getByTestId("panel-transcript").getByText("来自 config.toml 的 [cors] allowed_origins。").first(),
+  ).toBeVisible();
 
   await crumbs.getByTestId("crumb").first().click();
   await expect(crumbs.getByTestId("crumb")).toHaveCount(1);
@@ -146,14 +154,30 @@ test("后台 agent 卡片与结果通知互相跳转", async ({ page }) => {
   await expect(page.locator('[data-anchor="n12|tu_agent_tests"][data-highlighted]')).toBeVisible();
 });
 
-test("SendMessage 续接后的结束通知：派出位置仍是 Agent 调用，另有续接位置；面板里显示主对话发来的消息", async ({ page }) => {
+test("SendMessage 续接后的结束通知：派出位置仍是 Agent 调用，另有续接位置；面板里显示主对话发来的消息", async ({
+  page,
+}) => {
   const sid = await openSession(page, RICH_TITLE);
-  await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n-notify2", toolUseId: null, agentPath: [] });
+  await jump(page, {
+    sessionId: sid,
+    scope: { kind: "main" },
+    branchChoices: [],
+    nodeId: "n-notify2",
+    toolUseId: null,
+    agentPath: [],
+  });
   const note = page.locator('[data-anchor="n-notify2"]');
   await expect(note).toBeVisible();
   await note.getByTestId("notification-to-resume").click();
   await expect(page.locator('[data-anchor="n14|tu_sendmsg"][data-highlighted]')).toBeVisible();
-  await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n-notify2", toolUseId: null, agentPath: [] });
+  await jump(page, {
+    sessionId: sid,
+    scope: { kind: "main" },
+    branchChoices: [],
+    nodeId: "n-notify2",
+    toolUseId: null,
+    agentPath: [],
+  });
   await note.getByTestId("notification-to-card").click();
   await expect(page.locator('[data-anchor="n12|tu_agent_tests"][data-highlighted]')).toBeVisible();
 
@@ -169,7 +193,9 @@ test("后台命令的结束通知写「后台命令」和命令本身，不当�
   await openSession(page, RICH_TITLE);
   const row = page.locator('[data-anchor="n-notify-bash"]');
   await reveal(page.getByTestId("transcript"), row);
-  await expect(row.getByTestId("task-notification")).toHaveText(/^后台命令 cargo build --release > build\.log 2>&1 已完成/);
+  await expect(row.getByTestId("task-notification")).toHaveText(
+    /^后台命令 cargo build --release > build\.log 2>&1 已完成/,
+  );
   await expect(row).not.toContainText("agent");
   await expect(page.locator('[data-anchor="n-notify"]').getByTestId("task-notification")).toContainText("后台 agent");
 });
@@ -196,8 +222,11 @@ test("思考：一行写「思考 · N 行」，首尾空行不计也不显示�
   await reveal(t, lines);
   await expect(lines).toHaveText("2 行");
   await t.getByRole("button", { name: /思考/ }).first().click();
-  await expect(t.getByTestId("thinking-text").first()).toHaveText("需要先看现有中间件的注册方式，\n再决定是 tower Layer 还是 axum from_fn。");
-  const size = (text: string) => t.getByText(text, { exact: true }).evaluate((el) => getComputedStyle(el.closest(".min-w-0")!).fontSize);
+  await expect(t.getByTestId("thinking-text").first()).toHaveText(
+    "需要先看现有中间件的注册方式，\n再决定是 tower Layer 还是 axum from_fn。",
+  );
+  const size = (text: string) =>
+    t.getByText(text, { exact: true }).evaluate((el) => getComputedStyle(el.closest(".min-w-0")!).fontSize);
   expect(await size("先看一下现有中间件的组织方式。")).toBe("14px");
 });
 
@@ -206,16 +235,23 @@ test("折叠行的箭头大小不随摘要长短变化", async ({ page }) => {
   await openSession(page, RICH_TITLE, { folded: true });
   const folds = page.getByTestId("turn-fold");
   await expect(folds.first()).toBeVisible();
-  const widths = await folds.evaluateAll((els) => els.map((el) => el.querySelector("svg")!.getBoundingClientRect().width));
+  const widths = await folds.evaluateAll((els) =>
+    els.map((el) => el.querySelector("svg")!.getBoundingClientRect().width),
+  );
   expect(widths.length).toBeGreaterThan(1);
   for (const w of widths) expect(w).toBe(13);
 });
 
-test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点击不展开这次调用；摘要是别的字段时网址跟在后面", async ({ page }) => {
+test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点击不展开这次调用；摘要是别的字段时网址跟在后面", async ({
+  page,
+}) => {
   await openSession(page, RICH_TITLE);
   const calls = page.locator('[data-testid="tool-call"][data-tool="Artifact"]');
   await reveal(page.getByTestId("transcript"), calls);
-  const [byUrl, byPath] = [calls.filter({ hasNotText: "canvas.json" }), calls.filter({ hasText: "project/canvas.json" }).filter({ hasNotText: "/private/" })];
+  const [byUrl, byPath] = [
+    calls.filter({ hasNotText: "canvas.json" }),
+    calls.filter({ hasText: "project/canvas.json" }).filter({ hasNotText: "/private/" }),
+  ];
   for (const call of [byUrl, byPath]) {
     await expect(call.getByTestId("tool-link")).toHaveAttribute("href", "https://claude.ai/artifact/M0ckDesignCanvas");
     await expect(call.getByTestId("tool-link")).toHaveAttribute("target", "_blank");
@@ -234,7 +270,9 @@ test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点
   }
 });
 
-test("对话宽度：拖动列的边缘调节（两侧对称、居中），重开后保持；双击恢复 720px；键盘 ← / → 也可调", async ({ page }) => {
+test("对话宽度：拖动列的边缘调节（两侧对称、居中），重开后保持；双击恢复 720px；键盘 ← / → 也可调", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await openSession(page, RICH_TITLE, { folded: true });
   const col = page.getByTestId("conversation-column");
@@ -320,11 +358,20 @@ test("pendingJump 进入嵌套 Subagent 时打开面板并高亮目标", async (
 
 test("pendingJump 展开折叠的那一轮并切换到被放弃的 Branch", async ({ page }) => {
   const sid = await openSession(page, RICH_TITLE);
-  await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n08", toolUseId: "tu_edit2", agentPath: [] });
+  await jump(page, {
+    sessionId: sid,
+    scope: { kind: "main" },
+    branchChoices: [],
+    nodeId: "n08",
+    toolUseId: "tu_edit2",
+    agentPath: [],
+  });
   const hit = page.locator('[data-anchor="n08|tu_edit2"][data-highlighted]');
   await expect(hit).toBeVisible();
   await expect(hit).toBeInViewport();
-  await expect(page.locator('[data-row="tool"]').filter({ has: page.locator('[data-anchor="n08|tu_edit2"]') })).toHaveCount(1);
+  await expect(
+    page.locator('[data-row="tool"]').filter({ has: page.locator('[data-anchor="n08|tu_edit2"]') }),
+  ).toHaveCount(1);
 
   await jump(page, {
     sessionId: sid,
@@ -343,7 +390,14 @@ test("从其他 Session 发起 pendingJump 时打开目标 Session 并定位", a
   const sid = await openSession(page, RICH_TITLE);
   await page.getByTestId("session-row").filter({ hasText: FORK_TITLE }).click();
   await expect(page.getByTestId("fork-banner")).toBeVisible();
-  await jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId: "n04", toolUseId: "tu_bash1", agentPath: [] });
+  await jump(page, {
+    sessionId: sid,
+    scope: { kind: "main" },
+    branchChoices: [],
+    nodeId: "n04",
+    toolUseId: "tu_bash1",
+    agentPath: [],
+  });
   await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
   const hit = page.locator('[data-anchor="n04|tu_bash1"][data-highlighted]');
   await expect(hit).toBeVisible();
@@ -368,12 +422,17 @@ test("Teammate 消息显示为可折叠卡片而非用户提问", async ({ page 
 test("当前 Session 被移除后会话区回到空状态", async ({ page }) => {
   const sid = await openSession(page, RICH_TITLE);
   await expect(page.getByTestId("transcript").locator("[data-row]").first()).toBeVisible();
-  await page.evaluate((id) => window.__cvMock!.emit("sessionsChanged", { changed: [], removed: [id], projectsChanged: false }), sid);
+  await page.evaluate(
+    (id) => window.__cvMock!.emit("sessionsChanged", { changed: [], removed: [id], projectsChanged: false }),
+    sid,
+  );
   await expect(page.getByTestId("transcript-empty")).toBeVisible();
   expect(await page.evaluate(() => window.__cvStore!.getState().sessionId)).toBeNull();
 });
 
-test("按轮折叠：每轮的过程收成「已处理 … · N 段说明、N 次工具调用」，点开按顺序排开；回答在外面，下方是复制与时间；你的消息时间在气泡下方", async ({ page }) => {
+test("按轮折叠：每轮的过程收成「已处理 … · N 段说明、N 次工具调用」，点开按顺序排开；回答在外面，下方是复制与时间；你的消息时间在气泡下方", async ({
+  page,
+}) => {
   await openSession(page, RICH_TITLE, { folded: true });
   const t = page.getByTestId("transcript");
   await scrollBy(t, 1e7);
@@ -404,8 +463,21 @@ test("提问卡片：题目很长折行时，第二行从标签下方的最左�
   await page.setViewportSize({ width: 1100, height: 900 });
   const sid = await openSession(page, RICH_TITLE);
   await page.evaluate((sid) => {
-    const question = "模型与思考等级的选择器，按画布上这版（参考 Claude Code Desktop 文档）实现，还是你先发一张 Desktop 的截图我照着改？这一句要足够长才能折行。";
-    const input = { questions: [{ question, header: "选择器", multiSelect: false, options: [{ label: "按这版实现", description: "一个选择器" }, { label: "我发截图再调", description: "先改画布" }] }] };
+    const question =
+      "模型与思考等级的选择器，按画布上这版（参考 Claude Code Desktop 文档）实现，还是你先发一张 Desktop 的截图我照着改？这一句要足够长才能折行。";
+    const input = {
+      questions: [
+        {
+          question,
+          header: "选择器",
+          multiSelect: false,
+          options: [
+            { label: "按这版实现", description: "一个选择器" },
+            { label: "我发截图再调", description: "先改画布" },
+          ],
+        },
+      ],
+    };
     window.__cvMock!.appendNode(sid, {
       id: "e2e-long-ask",
       timestampMs: Date.now(),
@@ -417,7 +489,19 @@ test("提问卡片：题目很长折行时，第二行从标签下方的最左�
         model: null,
         usage: null,
         isApiError: false,
-        blocks: [{ kind: "toolCall", toolUseId: "toolu_long_ask", name: "AskUserQuestion", inputJson: JSON.stringify(input), inputTruncated: false, result: null, subagentId: null, workflowRunId: null, notificationNodeId: null }],
+        blocks: [
+          {
+            kind: "toolCall",
+            toolUseId: "toolu_long_ask",
+            name: "AskUserQuestion",
+            inputJson: JSON.stringify(input),
+            inputTruncated: false,
+            result: null,
+            subagentId: null,
+            workflowRunId: null,
+            notificationNodeId: null,
+          },
+        ],
       },
     });
     window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });

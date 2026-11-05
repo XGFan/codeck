@@ -2,7 +2,12 @@ import { ChevronDown, Eye, EyeOff, Power, RotateCcw, ShieldCheck, ShipWheel, Unl
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
@@ -27,10 +32,12 @@ export const STATE_WORD: Record<string, string> = {
   exited: "已结束",
 };
 
-const pill = "flex h-7 items-center gap-1.5 rounded-md border border-border bg-ground px-2.5 text-[12px] hover:bg-selection disabled:opacity-50 disabled:hover:bg-ground";
+const pill =
+  "flex h-7 items-center gap-1.5 rounded-md border border-border bg-ground px-2.5 text-[12px] hover:bg-selection disabled:opacity-50 disabled:hover:bg-ground";
 
 /** A quiet button in the input box's foot. */
-export const footBtn = "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-selection/60 hover:text-text disabled:opacity-50 disabled:hover:bg-transparent";
+export const footBtn =
+  "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-selection/60 hover:text-text disabled:opacity-50 disabled:hover:bg-transparent";
 
 /**
  * 「Connect」 in the header's title row, for a Session in `ccrpc ls` that is not connected (disabled until its ccrpc
@@ -38,7 +45,13 @@ export const footBtn = "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-s
  * 「关闭」 in its place while connected; the other controls are at the foot of the input box ([`ConnectFooter`]).
  * An ended Session not in clay gets 「Resume」 instead (`resume`: what the index knows of it).
  */
-export function ConnectButton({ sessionId, resume }: { sessionId: string; resume?: { cwd: string | null; cwdMissing: boolean; live: boolean } }) {
+export function ConnectButton({
+  sessionId,
+  resume,
+}: {
+  sessionId: string;
+  resume?: { cwd: string | null; cwdMissing: boolean; live: boolean };
+}) {
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
   const c = useConnect((s) => connFor(s, sessionId));
   const taken = useConnect((s) => (entry ? holderConnected(s, entry.holder_id) : false));
@@ -62,7 +75,13 @@ export function ConnectButton({ sessionId, resume }: { sessionId: string; resume
   if (c && isLive(c))
     return (
       <>
-        <button type="button" data-testid="connect-disconnect" onClick={() => void disconnect(c.conn)} className={pill} title="Disconnect 后 Session 照常运行">
+        <button
+          type="button"
+          data-testid="connect-disconnect"
+          onClick={() => void disconnect(c.conn)}
+          className={pill}
+          title="Disconnect 后 Session 照常运行"
+        >
           <Unlink size={13} strokeWidth={1.6} aria-hidden />
           Disconnect
         </button>
@@ -80,7 +99,11 @@ export function ConnectButton({ sessionId, resume }: { sessionId: string; resume
           type="button"
           data-testid="resume-button"
           disabled={offer.kind === "disabled"}
-          title={offer.kind === "disabled" ? offer.why : "在新的 clay Pane 里 claude --resume，从 Main Line 末尾继续，然后 Connect"}
+          title={
+            offer.kind === "disabled"
+              ? offer.why
+              : "在新的 clay Pane 里 claude --resume，从 Main Line 末尾继续，然后 Connect"
+          }
           onClick={() => resume?.cwd && void startResume(sessionId, resume.cwd)}
           className={pill}
         >
@@ -99,7 +122,9 @@ export function ConnectButton({ sessionId, resume }: { sessionId: string; resume
         type="button"
         data-testid="connect-button"
         disabled={!entry.plugin || connecting}
-        title={entry.plugin ? "经 ccrpc Connect，在这里发提示词、作答审批" : "ccrpc 插件未加载，重启 claude 后可 Connect"}
+        title={
+          entry.plugin ? "经 ccrpc Connect，在这里发提示词、作答审批" : "ccrpc 插件未加载，重启 claude 后可 Connect"
+        }
         onClick={async () => {
           setConnecting(true);
           await connect(entry.holder_id, sessionId);
@@ -131,7 +156,11 @@ export function PaneButton({ sessionId }: { sessionId: string }) {
       data-testid="pane-visibility"
       data-hidden={hidden}
       disabled={busy}
-      title={hidden ? "Pane 在 ToH Mac 的隐藏窗口里，点击放回普通窗口" : "把 Pane 收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示"}
+      title={
+        hidden
+          ? "Pane 在 ToH Mac 的隐藏窗口里，点击放回普通窗口"
+          : "把 Pane 收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示"
+      }
       onClick={async () => {
         setBusy(true);
         await setPaneHidden(entry.holder_id, sessionId, !hidden);
@@ -178,7 +207,9 @@ function ConnectClose({ c }: { c: ConnState }) {
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent data-testid="connect-close-confirm" className="w-[400px]">
           <DialogTitle>关闭 Session？</DialogTitle>
-          <DialogDescription className="text-[13px] text-secondary">将{ends}，结束 Session 并关闭它的 Pane。</DialogDescription>
+          <DialogDescription className="text-[13px] text-secondary">
+            将{ends}，结束 Session 并关闭它的 Pane。
+          </DialogDescription>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setConfirming(false)}>
               取消
@@ -197,7 +228,13 @@ function ConnectClose({ c }: { c: ConnState }) {
 function ConnectError({ errKey, text }: { errKey: string; text: string }) {
   const setError = useConnect((s) => s.setError);
   return (
-    <button type="button" data-testid="connect-error" title="关闭" onClick={() => setError(errKey, null)} className="max-w-72 truncate text-[12px] text-error">
+    <button
+      type="button"
+      data-testid="connect-error"
+      title="关闭"
+      onClick={() => setError(errKey, null)}
+      className="max-w-72 truncate text-[12px] text-error"
+    >
       {text}
     </button>
   );
@@ -211,10 +248,23 @@ function ContextRing({ tokens, model }: { tokens: number; model: string | null }
   const f = Math.min(1, tokens / windowOf(model));
   const c = 2 * Math.PI * 9;
   return (
-    <span className="flex shrink-0 items-center gap-1.5 text-secondary" title={`上下文 ${formatTokens(tokens)} / ${formatTokens(windowOf(model))}`} data-testid="connect-context">
+    <span
+      className="flex shrink-0 items-center gap-1.5 text-secondary"
+      title={`上下文 ${formatTokens(tokens)} / ${formatTokens(windowOf(model))}`}
+      data-testid="connect-context"
+    >
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
         <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3" />
-        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 12 12)" />
+        <circle
+          cx="12"
+          cy="12"
+          r="9"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeDasharray={`${f * c} ${c}`}
+          transform="rotate(-90 12 12)"
+        />
       </svg>
       {formatTokens(tokens)}
     </span>
@@ -252,7 +302,11 @@ export function ConnectFooter({ c, children }: { c: ConnState; children?: React.
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
           {MODES.map((m) => (
-            <DropdownMenuItem key={m.id} onSelect={() => void setMode(m.id)} className={cn(m.id === c.mode && "font-semibold")}>
+            <DropdownMenuItem
+              key={m.id}
+              onSelect={() => void setMode(m.id)}
+              className={cn(m.id === c.mode && "font-semibold")}
+            >
               {m.label}
             </DropdownMenuItem>
           ))}
@@ -273,7 +327,12 @@ export function useConnectDebugInfo(sessionId: string | null): string | null {
   const logDir = useLogDir(c);
   if (!c || c.procExit) return null;
   const cwd = c.cwd ?? entry?.cwd ?? null;
-  return [`holder_id: ${c.holderId ?? "-"}`, `session_id: ${c.sessionId ?? "-"}`, `cwd: ${cwd ?? "-"}`, `logs: ${logDir ?? "-"}`].join("\n");
+  return [
+    `holder_id: ${c.holderId ?? "-"}`,
+    `session_id: ${c.sessionId ?? "-"}`,
+    `cwd: ${cwd ?? "-"}`,
+    `logs: ${logDir ?? "-"}`,
+  ].join("\n");
 }
 
 /** The connection's log directory; asked again once a new Session's directory is renamed after `ready`. */

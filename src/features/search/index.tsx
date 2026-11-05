@@ -38,7 +38,8 @@ const asAppError = (e: unknown): AppError | null =>
   e && typeof e === "object" && "message" in e ? (e as AppError) : null;
 
 /** `i` (the hit's place in its group) keeps two hits in different blocks of one entry apart. */
-const hitKey = (sessionId: string, h: SearchHit, i: number) => `h:${sessionId}|${h.nodeId}|${h.agentId ?? ""}|${h.toolUseId ?? ""}|${h.role}|${i}`;
+const hitKey = (sessionId: string, h: SearchHit, i: number) =>
+  `h:${sessionId}|${h.nodeId}|${h.agentId ?? ""}|${h.toolUseId ?? ""}|${h.role}|${i}`;
 
 /** Keeps focus in the input when a button inside the dialog is clicked. */
 const keepFocus = (e: MouseEvent) => e.preventDefault();
@@ -65,13 +66,32 @@ function Hint({ children }: { children: ReactNode }) {
 }
 
 function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded border border-b-2 border-border bg-ground px-1 font-sans text-[11px] text-text">{children}</kbd>;
+  return (
+    <kbd className="rounded border border-b-2 border-border bg-ground px-1 font-sans text-[11px] text-text">
+      {children}
+    </kbd>
+  );
 }
 
-function ProjectItem({ p, terms, onFilter, onScope }: { p: ProjectSummary; terms: string[]; onFilter: () => void; onScope: () => void }) {
+function ProjectItem({
+  p,
+  terms,
+  onFilter,
+  onScope,
+}: {
+  p: ProjectSummary;
+  terms: string[];
+  onFilter: () => void;
+  onScope: () => void;
+}) {
   return (
     <Command.Item value={`p:${p.id}`} onSelect={onFilter} data-testid="search-project" className={cn(ITEM, "py-2")}>
-      <Folder size={15} strokeWidth={1.5} className="shrink-0 text-secondary group-data-[selected=true]:text-accent" aria-hidden />
+      <Folder
+        size={15}
+        strokeWidth={1.5}
+        className="shrink-0 text-secondary group-data-[selected=true]:text-accent"
+        aria-hidden
+      />
       <span className="shrink-0 font-semibold">
         <Marked text={p.displayName} terms={terms} />
       </span>
@@ -99,7 +119,17 @@ function ProjectItem({ p, terms, onFilter, onScope }: { p: ProjectSummary; terms
   );
 }
 
-function SessionItem({ s, names, terms, onSelect }: { s: SessionSummary; names: Map<string, string>; terms: string[]; onSelect: () => void }) {
+function SessionItem({
+  s,
+  names,
+  terms,
+  onSelect,
+}: {
+  s: SessionSummary;
+  names: Map<string, string>;
+  terms: string[];
+  onSelect: () => void;
+}) {
   const tags = sessionProjectIds(s).map((id) => names.get(id) ?? id);
   const liveStatus = s.live?.status;
   return (
@@ -111,7 +141,8 @@ function SessionItem({ s, names, terms, onSelect }: { s: SessionSummary; names: 
               className={cn(
                 "size-2 shrink-0 rounded-full",
                 liveStatus === "busy" && "bg-live",
-                liveStatus === "waiting" && "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
+                liveStatus === "waiting" &&
+                  "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
                 liveStatus !== "busy" && liveStatus !== "waiting" && "box-border border-[1.5px] border-live",
               )}
             />
@@ -141,7 +172,17 @@ function SessionItem({ s, names, terms, onSelect }: { s: SessionSummary; names: 
 }
 
 /** `disabled`: a result of an earlier query, shown until the current one returns but not selectable. */
-function HitRow({ value, hit, disabled, onOpen }: { value: string; hit: SearchHit; disabled: boolean; onOpen: () => void }) {
+function HitRow({
+  value,
+  hit,
+  disabled,
+  onOpen,
+}: {
+  value: string;
+  hit: SearchHit;
+  disabled: boolean;
+  onOpen: () => void;
+}) {
   const agentType = hit.agentId ? hit.agentType : null;
   const role = hit.agentId
     ? (agentType ?? "Subagent")
@@ -172,12 +213,18 @@ function HitRow({ value, hit, disabled, onOpen }: { value: string; hit: SearchHi
         )}
       </span>
       {hit.agentId && (
-        <span data-testid="tag-subagent" className="shrink-0 rounded border border-[#f5d4a6] bg-[#fff1dd] px-1.5 text-[11px] text-[#7a3e00]">
+        <span
+          data-testid="tag-subagent"
+          className="shrink-0 rounded border border-[#f5d4a6] bg-[#fff1dd] px-1.5 text-[11px] text-[#7a3e00]"
+        >
           Subagent{agentType ? ` · ${agentType}` : ""}
         </span>
       )}
       {!hit.onMainLine && (
-        <span data-testid="tag-branch" className="shrink-0 rounded border border-[#f5d4a6] bg-[#fff1dd] px-1.5 text-[11px] text-[#7a3e00]">
+        <span
+          data-testid="tag-branch"
+          className="shrink-0 rounded border border-[#f5d4a6] bg-[#fff1dd] px-1.5 text-[11px] text-[#7a3e00]"
+        >
           已回退的分支
         </span>
       )}
@@ -302,7 +349,12 @@ export function SearchOverlay() {
   };
   const openHit = async (g: SearchGroup, hit: SearchHit) => {
     try {
-      const target = await api.resolveJump({ sessionId: g.session.id, nodeId: hit.nodeId, agentId: hit.agentId, toolUseId: hit.toolUseId });
+      const target = await api.resolveJump({
+        sessionId: g.session.id,
+        nodeId: hit.nodeId,
+        agentId: hit.agentId,
+        toolUseId: hit.toolUseId,
+      });
       // Closed meanwhile: the jump is no longer wanted.
       if (!useUi.getState().searchOpen) return;
       showSession(g.session);
@@ -342,7 +394,9 @@ export function SearchOverlay() {
   };
 
   const textProgress =
-    status && !status.textReady && status.filesTotal > 0 ? `${nf.format(status.filesDone)} / ${nf.format(status.filesTotal)} 个文件` : null;
+    status && !status.textReady && status.filesTotal > 0
+      ? `${nf.format(status.filesDone)} / ${nf.format(status.filesTotal)} 个文件`
+      : null;
   const indexIncomplete = (status != null && !status.textReady) || data?.indexComplete === false;
   const totalHits = data?.totalHits ?? 0;
   const errMsg = (active ? search.error?.message : null) ?? jumpError;
@@ -376,7 +430,10 @@ export function SearchOverlay() {
             <div className="flex items-center gap-2.5 border-b border-border px-4 py-3.5">
               <Search size={18} strokeWidth={1.6} className="shrink-0 text-secondary" aria-hidden />
               {scopeName && (
-                <span data-testid="search-scope" className="flex h-[26px] shrink-0 items-center gap-1 rounded-md bg-selection pr-1 pl-2 text-[13px] font-semibold text-accent">
+                <span
+                  data-testid="search-scope"
+                  className="flex h-[26px] shrink-0 items-center gap-1 rounded-md bg-selection pr-1 pl-2 text-[13px] font-semibold text-accent"
+                >
                   <Folder size={13} strokeWidth={1.8} aria-hidden />
                   {scopeName}
                   <button
@@ -408,18 +465,28 @@ export function SearchOverlay() {
               <span className="shrink-0 text-[12px] text-secondary">esc 关闭</span>
             </div>
             {indexIncomplete && !blank && (
-              <div data-testid="search-incomplete" className="flex items-center gap-3 border-b border-border bg-list px-4 py-1.5 text-[11px] text-secondary">
+              <div
+                data-testid="search-incomplete"
+                className="flex items-center gap-3 border-b border-border bg-list px-4 py-1.5 text-[11px] text-secondary"
+              >
                 <span>{textProgress ? `全文索引未完成 · ${textProgress}` : "全文索引未完成"}</span>
                 {status && status.filesTotal > 0 && (
                   <span className="h-1 w-28 overflow-hidden rounded-full bg-border">
-                    <span className="block h-full rounded-full bg-accent" style={{ width: `${Math.min(100, (status.filesDone / status.filesTotal) * 100)}%` }} />
+                    <span
+                      className="block h-full rounded-full bg-accent"
+                      style={{ width: `${Math.min(100, (status.filesDone / status.filesTotal) * 100)}%` }}
+                    />
                   </span>
                 )}
                 <span className="ml-auto">Session 与 Project 的匹配不受影响</span>
               </div>
             )}
             {errMsg && (
-              <div role="alert" data-testid="search-error" className="border-b border-border px-4 py-1.5 text-[12px] text-error">
+              <div
+                role="alert"
+                data-testid="search-error"
+                className="border-b border-border px-4 py-1.5 text-[12px] text-error"
+              >
                 {errMsg}
               </div>
             )}
@@ -428,7 +495,13 @@ export function SearchOverlay() {
               {projectHits.length > 0 && (
                 <Command.Group heading={<div className={SECTION}>Project</div>}>
                   {projectHits.map((p) => (
-                    <ProjectItem key={p.id} p={p} terms={parsed.include} onFilter={() => filterProject(p.id)} onScope={() => scopeTo(p.id)} />
+                    <ProjectItem
+                      key={p.id}
+                      p={p}
+                      terms={parsed.include}
+                      onFilter={() => filterProject(p.id)}
+                      onScope={() => scopeTo(p.id)}
+                    />
                   ))}
                 </Command.Group>
               )}
@@ -438,12 +511,22 @@ export function SearchOverlay() {
                   heading={
                     <div className={SECTION}>
                       {blank ? (scopeName ? `${scopeName} 最近的 Session` : "最近的 Session") : "Session"}
-                      {!blank && <span className="font-normal">· {scopeName ? `在 ${scopeName} 中` : "标题、Project、分支"}</span>}
+                      {!blank && (
+                        <span className="font-normal">
+                          · {scopeName ? `在 ${scopeName} 中` : "标题、Project、分支"}
+                        </span>
+                      )}
                     </div>
                   }
                 >
                   {sessionHits.map((s) => (
-                    <SessionItem key={s.id} s={s} names={names} terms={parsed.include} onSelect={() => openSession(s)} />
+                    <SessionItem
+                      key={s.id}
+                      s={s}
+                      names={names}
+                      terms={parsed.include}
+                      onSelect={() => openSession(s)}
+                    />
                   ))}
                   {sessionHits.length === 0 && (
                     <div data-testid="search-session-empty" className="px-4 pt-1 pb-1.5 text-[12px] text-secondary">
@@ -463,10 +546,15 @@ export function SearchOverlay() {
                           · {nf.format(data.totalSessions)} 个 Session，共 {nf.format(totalHits)} 处
                         </span>
                       )}
-                      {data?.mode && MODE_HINT[data.mode] && <span className="font-normal">· {MODE_HINT[data.mode]}</span>}
+                      {data?.mode && MODE_HINT[data.mode] && (
+                        <span className="font-normal">· {MODE_HINT[data.mode]}</span>
+                      )}
                       {searching && (
                         <>
-                          <span className="size-[11px] animate-spin rounded-full border-[1.5px] border-border border-t-accent" aria-hidden />
+                          <span
+                            className="size-[11px] animate-spin rounded-full border-[1.5px] border-border border-t-accent"
+                            aria-hidden
+                          />
                           <span className="font-normal">搜索中…</span>
                         </>
                       )}
@@ -479,13 +567,21 @@ export function SearchOverlay() {
                   {contentSettled && groups.length === 0 && (
                     <div role="status" data-testid="search-empty" className="flex flex-col gap-1.5 px-4 pt-1 pb-2">
                       <div className="font-semibold">没有找到 “{ftsQuery}”</div>
-                      {indexIncomplete && <div className="text-[12px] text-text/80">全文索引未完成，建好后可能有结果。</div>}
+                      {indexIncomplete && (
+                        <div className="text-[12px] text-text/80">全文索引未完成，建好后可能有结果。</div>
+                      )}
                     </div>
                   )}
                   {groups.map((g) => (
-                    <div key={g.session.id} data-testid="search-group" className="flex flex-col gap-0.5 border-t border-border/70 py-2">
+                    <div
+                      key={g.session.id}
+                      data-testid="search-group"
+                      className="flex flex-col gap-0.5 border-t border-border/70 py-2"
+                    >
                       <div className="flex items-center gap-2 px-4 pb-0.5">
-                        {g.session.live && <span data-testid="search-live" className="size-2 shrink-0 rounded-full bg-live" />}
+                        {g.session.live && (
+                          <span data-testid="search-live" className="size-2 shrink-0 rounded-full bg-live" />
+                        )}
                         <span className="min-w-0 truncate font-semibold">{g.session.title}</span>
                         <span className="shrink-0 text-[12px] text-secondary">
                           {sessionProjectIds(g.session)
@@ -498,7 +594,9 @@ export function SearchOverlay() {
                       </div>
                       {g.hits.slice(0, HITS_PER_SESSION).map((h, i) => {
                         const key = hitKey(g.session.id, h, i);
-                        return <HitRow key={key} value={key} hit={h} disabled={stale} onOpen={() => void openHit(g, h)} />;
+                        return (
+                          <HitRow key={key} value={key} hit={h} disabled={stale} onOpen={() => void openHit(g, h)} />
+                        );
                       })}
                     </div>
                   ))}

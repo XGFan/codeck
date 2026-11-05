@@ -1,7 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, Folder, GitBranch, X } from "lucide-react";
 import { useMemo, useRef, type KeyboardEvent } from "react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { NewSessionButton, NewSessionError, useConnect, useUnread } from "@/features/connect";
 import type { Drill, ProjectSummary, SessionQuery, SessionSort, SessionSummary } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
@@ -22,7 +28,13 @@ const SORTS: { value: SessionSort; menu: string; order: string }[] = [
 ];
 
 /** Every Session, unfiltered: which ones are indexed while a Project filter hides some. */
-const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
+const ALL_SESSIONS: SessionQuery = {
+  projectIds: [],
+  sort: "lastActive",
+  descending: true,
+  timeRange: null,
+  drill: null,
+};
 
 /**
  * Sessions in `ccrpc ls` that are not indexed yet (opened in clay, no prompt sent): placeholder rows at the top.
@@ -61,7 +73,10 @@ export function SessionList() {
   const pending = usePending(data, projects);
   const list = data ?? [];
   const items = useMemo<Item[]>(
-    () => [...pending.map((p) => ({ kind: "pending" as const, p })), ...list.map((s) => ({ kind: "session" as const, s }))],
+    () => [
+      ...pending.map((p) => ({ kind: "pending" as const, p })),
+      ...list.map((s) => ({ kind: "session" as const, s })),
+    ],
     [pending, list],
   );
   const itemId = (i: Item) => (i.kind === "pending" ? i.p.id : i.s.id);
@@ -99,12 +114,20 @@ export function SessionList() {
         className="flex h-[30px] shrink-0 items-center gap-1.5 border-b border-border pr-2 pl-4 text-[12px] text-secondary"
       >
         {projectIds.length > 0 ? (
-          <span data-testid="project-chip" className="flex h-5 min-w-0 items-center gap-1 rounded-[5px] bg-selection pr-0.5 pl-1.5 font-semibold text-accent">
+          <span
+            data-testid="project-chip"
+            className="flex h-5 min-w-0 items-center gap-1 rounded-[5px] bg-selection pr-0.5 pl-1.5 font-semibold text-accent"
+          >
             <Folder size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
             <span data-testid="list-title" className="truncate">
               {projectIds.map((id) => names.get(id) ?? id).join("、")}
             </span>
-            <button type="button" aria-label="清除 Project 筛选" onClick={() => setProjectIds([])} className="rounded-full p-0.5 hover:bg-black/10">
+            <button
+              type="button"
+              aria-label="清除 Project 筛选"
+              onClick={() => setProjectIds([])}
+              className="rounded-full p-0.5 hover:bg-black/10"
+            >
               <X size={11} strokeWidth={2} aria-hidden />
             </button>
           </span>
@@ -124,7 +147,11 @@ export function SessionList() {
             className="flex h-[22px] shrink-0 items-center gap-0.5 rounded-md px-1.5 text-[12px] text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent"
           >
             按{sortInfo.menu}
-            {descending ? <ArrowDown size={11} strokeWidth={2} aria-hidden /> : <ArrowUp size={11} strokeWidth={2} aria-hidden />}
+            {descending ? (
+              <ArrowDown size={11} strokeWidth={2} aria-hidden />
+            ) : (
+              <ArrowUp size={11} strokeWidth={2} aria-hidden />
+            )}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {SORTS.map((s) => (
@@ -183,9 +210,22 @@ export function SessionList() {
   );
 }
 
-function FilterChip({ testId, label, onClear, children }: { testId: string; label: string; onClear: () => void; children: React.ReactNode }) {
+function FilterChip({
+  testId,
+  label,
+  onClear,
+  children,
+}: {
+  testId: string;
+  label: string;
+  onClear: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <span data-testid={testId} className="flex min-w-0 items-center gap-1 rounded-full bg-selection px-2 py-0.5 text-text">
+    <span
+      data-testid={testId}
+      className="flex min-w-0 items-center gap-1 rounded-full bg-selection px-2 py-0.5 text-text"
+    >
       {children}
       <button type="button" aria-label={label} onClick={onClear} className="rounded-full p-0.5 hover:bg-black/10">
         <X size={11} strokeWidth={2} aria-hidden />
@@ -221,7 +261,9 @@ function SessionRow({
         {s.live && <LiveDot state={state} />}
         <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
         {unread && <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />}
-        <span className="shrink-0 text-[11px] text-secondary">{formatRelative(byCreated ? s.createdMs : s.lastActiveMs)}</span>
+        <span className="shrink-0 text-[11px] text-secondary">
+          {formatRelative(byCreated ? s.createdMs : s.lastActiveMs)}
+        </span>
       </div>
       <div className="flex items-center gap-2.5 text-[11px] text-secondary">
         {s.gitBranch && (
@@ -244,7 +286,9 @@ function SessionRow({
 const rowClass = (selected: boolean) =>
   cn(
     "flex h-full cursor-default flex-col justify-center gap-[3px] border-b border-border/70 px-3.5",
-    selected ? "bg-selection shadow-[inset_3px_0_0_var(--color-accent)]" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
+    selected
+      ? "bg-selection shadow-[inset_3px_0_0_var(--color-accent)]"
+      : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
   );
 
 function LiveDot({ state }: { state: "busy" | "waiting" | "idle" }) {
@@ -256,7 +300,8 @@ function LiveDot({ state }: { state: "busy" | "waiting" | "idle" }) {
       className={cn(
         "size-2 shrink-0 rounded-full",
         state === "busy" && "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]",
-        state === "waiting" && "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
+        state === "waiting" &&
+          "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
         state === "idle" && "box-border border-[1.5px] border-live",
       )}
     />

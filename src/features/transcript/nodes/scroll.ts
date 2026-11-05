@@ -55,7 +55,9 @@ export function useHighlighted(nodeId: string, toolUseId?: string | null): boole
   });
 }
 
-export const anchorAttr = (nodeId: string, toolUseId?: string | null) => ({ "data-anchor": anchorKey(nodeId, toolUseId) });
+export const anchorAttr = (nodeId: string, toolUseId?: string | null) => ({
+  "data-anchor": anchorKey(nodeId, toolUseId),
+});
 
 /** Shared by every row of one transcript list (main or Subagent panel). */
 export interface TranscriptCtx {

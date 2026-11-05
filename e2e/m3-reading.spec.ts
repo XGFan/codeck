@@ -32,7 +32,10 @@ test("⌘F 命中折叠的工具输出：自动展开并高亮，Enter 步进，
   const first = await hit.getAttribute("data-anchor");
   await page.keyboard.press("Enter");
   await expect(count).toHaveText(/^2 \//);
-  await expect(page.locator('[data-testid="transcript"] [data-highlighted]')).not.toHaveAttribute("data-anchor", first!);
+  await expect(page.locator('[data-testid="transcript"] [data-highlighted]')).not.toHaveAttribute(
+    "data-anchor",
+    first!,
+  );
   await page.keyboard.press("Shift+Enter");
   await expect(count).toHaveText(/^1 \//);
   await page.keyboard.press("Escape");

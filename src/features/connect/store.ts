@@ -53,14 +53,19 @@ function flushDrafts() {
   const drafts = pendingDrafts;
   pendingDrafts = null;
   if (!drafts) return;
-  const keep = Object.fromEntries(Object.entries(drafts).filter(([k, d]) => SESSION_ID.test(k) && (d.text.trim() || d.images.length)));
+  const keep = Object.fromEntries(
+    Object.entries(drafts).filter(([k, d]) => SESSION_ID.test(k) && (d.text.trim() || d.images.length)),
+  );
   try {
     localStorage.removeItem(OLD_DRAFTS_KEY);
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(keep));
   } catch {
     // Over the storage quota with the images' previews: keep the text at least.
     try {
-      localStorage.setItem(DRAFTS_KEY, JSON.stringify(Object.fromEntries(Object.entries(keep).map(([k, d]) => [k, { text: d.text, images: [] }]))));
+      localStorage.setItem(
+        DRAFTS_KEY,
+        JSON.stringify(Object.fromEntries(Object.entries(keep).map(([k, d]) => [k, { text: d.text, images: [] }]))),
+      );
     } catch {
       // Storage unavailable: the drafts last until the app quits.
     }
@@ -160,7 +165,8 @@ let pollGen = 0;
 let lastLs = "";
 let wanted = false;
 
-const errText = (e: unknown) => (e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e));
+const errText = (e: unknown) =>
+  e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
 
 type Lookup = { ls: LsEntry[]; conns: Record<string, ConnState> };
 
@@ -175,7 +181,11 @@ export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
   if (!sessionId) return null;
   const holder = lsEntryFor(s, sessionId)?.holder_id;
   const all = Object.values(s.conns).filter((c) =>
-    c.resumeOf === sessionId && c.sessionId == null ? true : c.ready ? c.sessionId === sessionId : holder != null && c.holderId === holder,
+    c.resumeOf === sessionId && c.sessionId == null
+      ? true
+      : c.ready
+        ? c.sessionId === sessionId
+        : holder != null && c.holderId === holder,
   );
   return all.find((c) => !c.procExit) ?? all[all.length - 1] ?? null;
 }
@@ -229,7 +239,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
       case "session_changed": {
         // `/clear` and the like: follow the Pane to its new Session if the old one is on screen.
         const open = useUi.getState().sessionId;
-        if (selectOnReady.delete(conn) || (open != null && (open === msg.previous || open === before.sessionId))) select(msg.session_id);
+        if (selectOnReady.delete(conn) || (open != null && (open === msg.previous || open === before.sessionId)))
+          select(msg.session_id);
         break;
       }
       case "session_exit":
@@ -237,7 +248,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
         if (before.resumeOf && !before.sessionId) void failResume(conn, null);
         break;
       case "turn_end":
-        if (useUi.getState().sessionId !== after.sessionId || document.hidden) update(conn, (c) => ({ ...c, unread: true }));
+        if (useUi.getState().sessionId !== after.sessionId || document.hidden)
+          update(conn, (c) => ({ ...c, unread: true }));
         void get().refreshTasks(conn);
         break;
     }
@@ -272,7 +284,13 @@ export const useConnect = create<ConnectStore>((set, get) => {
     for (const [id, p] of pending) {
       if (p.conn !== conn) continue;
       pending.delete(id);
-      p.resolve({ type: "response", id, command: "", success: false, error: { code: "exited", message: "ccrpc 已退出" } });
+      p.resolve({
+        type: "response",
+        id,
+        command: "",
+        success: false,
+        error: { code: "exited", message: "ccrpc 已退出" },
+      });
     }
   };
   const removeConn = (conn: string) => {
@@ -485,7 +503,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
       void api.ccrpcGuiLog(null, `connect ${holderId}`);
       // Connections on nothing any more (ccrpc exited, or the Session ended and was resumed since) are
       // replaced; a ccrpc still attached must be gone first, a second attach to the Session is refused.
-      const stale = Object.values(get().conns).filter((c) => (c.holderId === holderId || c.sessionId === sessionId) && !isLive(c));
+      const stale = Object.values(get().conns).filter(
+        (c) => (c.holderId === holderId || c.sessionId === sessionId) && !isLive(c),
+      );
       await Promise.all(stale.map((c) => closeAndWait(c.conn)));
       try {
         addConn(await api.ccrpcConnect(holderId), holderId);
@@ -515,7 +535,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
       setErr(sessionId, null);
       void api.ccrpcGuiLog(null, `resume ${sessionId}`);
       // An ended connection on this Session (its ccrpc may still run, driving nothing) goes first.
-      const stale = Object.values(get().conns).filter((c) => (c.sessionId === sessionId || c.resumeOf === sessionId) && !isLive(c));
+      const stale = Object.values(get().conns).filter(
+        (c) => (c.sessionId === sessionId || c.resumeOf === sessionId) && !isLive(c),
+      );
       await Promise.all(stale.map((c) => closeAndWait(c.conn)));
       // claude continues from the end of the Main Line: show that, not a Branch picked earlier.
       if (useUi.getState().sessionId === sessionId) useUi.setState({ branchChoices: [] });
@@ -549,13 +571,20 @@ export const useConnect = create<ConnectStore>((set, get) => {
         pending.set(id, {
           conn,
           resolve: (r) => {
-            if (!r.success) void api.ccrpcGuiLog(conn, `failed ${String(msg.type)} id=${id} ${r.error?.code}: ${r.error?.message}`);
+            if (!r.success)
+              void api.ccrpcGuiLog(conn, `failed ${String(msg.type)} id=${id} ${r.error?.code}: ${r.error?.message}`);
             resolve(r);
           },
         });
         api.ccrpcSend(conn, full).catch((e: unknown) => {
           pending.delete(id);
-          resolve({ type: "response", id, command: String(msg.type), success: false, error: { code: "io", message: errText(e) } });
+          resolve({
+            type: "response",
+            id,
+            command: String(msg.type),
+            success: false,
+            error: { code: "io", message: errText(e) },
+          });
         });
       });
     },

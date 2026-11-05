@@ -19,7 +19,15 @@ export function Requests({ c }: { c: ConnState }) {
   if (reqs.length === 0) {
     // Waiting with nothing to show yet: the analyzer may be looking at the screen.
     if (c.state === "waiting" && c.waiting?.kind !== "question")
-      return <NoticeCard testId="analyzing" tone="wait" icon={<ScanSearch size={18} strokeWidth={1.7} />} title="正在识别界面…" desc="Claude Code 弹出了认不出的对话框，分析器在看屏幕。" />;
+      return (
+        <NoticeCard
+          testId="analyzing"
+          tone="wait"
+          icon={<ScanSearch size={18} strokeWidth={1.7} />}
+          title="正在识别界面…"
+          desc="Claude Code 弹出了认不出的对话框，分析器在看屏幕。"
+        />
+      );
     return null;
   }
   return (
@@ -63,7 +71,10 @@ function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecogn
     if (!r.success) setError(`关闭失败：${r.error?.message ?? r.error?.code ?? ""}`);
   };
   return (
-    <Shell title={r.type === "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : `认不出的屏幕（${r.context}）`} testid="screen-card">
+    <Shell
+      title={r.type === "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : `认不出的屏幕（${r.context}）`}
+      testid="screen-card"
+    >
       <pre className="max-h-64 overflow-auto rounded bg-terminal p-2 font-mono text-[11px] leading-[1.45] text-[#e4e4e6]">
         {trimLines(r.lines).join("\n")}
       </pre>
@@ -104,9 +115,15 @@ function Shell({
       <div className="mb-2 flex items-center gap-2">
         <span className="size-2 shrink-0 rounded-full bg-live-waiting" />
         <h3 className="m-0 min-w-0 flex-1 truncate text-[13px] font-semibold">{title}</h3>
-        {agent && <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {agent.slice(0, 8)}</span>}
+        {agent && (
+          <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {agent.slice(0, 8)}</span>
+        )}
         {source === "learned" && (
-          <span className="flex items-center gap-1 rounded bg-selection px-1.5 text-[11px] text-accent" title="分析器学到的布局" data-testid="ai-badge">
+          <span
+            className="flex items-center gap-1 rounded bg-selection px-1.5 text-[11px] text-accent"
+            title="分析器学到的布局"
+            data-testid="ai-badge"
+          >
             <Sparkles size={11} aria-hidden /> AI 识别
           </span>
         )}
@@ -128,7 +145,12 @@ function useAnswer(c: ConnState) {
     setBusy(false);
     // Answered: off screen now, so the next card gets the keys (ccrpc ends it on the tool's result).
     if (r.success) dropRequest(c.conn, String(msg.request_id));
-    else setError(r.error?.code === "not_offered" ? "这次审批没有“总是允许”选项" : `作答失败：${r.error?.message ?? r.error?.code ?? ""}`);
+    else
+      setError(
+        r.error?.code === "not_offered"
+          ? "这次审批没有“总是允许”选项"
+          : `作答失败：${r.error?.message ?? r.error?.code ?? ""}`,
+      );
   };
   return { busy, error, send };
 }
@@ -146,10 +168,17 @@ function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (!el?.closest?.("[data-testid=connect-panel]")) return;
-      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable) return;
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable)
+        return;
       if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       const ui = useUi.getState();
-      if (ui.searchOpen || ui.statsOpen || ui.settingsOpen || document.querySelector("[role=dialog], [data-radix-popper-content-wrapper]")) return;
+      if (
+        ui.searchOpen ||
+        ui.statsOpen ||
+        ui.settingsOpen ||
+        document.querySelector("[role=dialog], [data-radix-popper-content-wrapper]")
+      )
+        return;
       const n = Number(e.key);
       if (n >= 1 && n <= ref.current.length) {
         e.preventDefault();
@@ -199,7 +228,11 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
     r.layout_source === "learned" ? (r.options?.find((o) => o.meaning === meaning)?.label ?? fallback) : fallback;
   const answer = (decision: string, message?: string) =>
     send({ type: "answer_permission", request_id: r.request_id, decision, ...(message ? { message } : {}) });
-  const actions = [() => void answer("allow"), ...(always ? [() => void answer("allow_always")] : []), () => void answer("deny")];
+  const actions = [
+    () => void answer("allow"),
+    ...(always ? [() => void answer("allow_always")] : []),
+    () => void answer("deny"),
+  ];
   useNumberKeys(focus && feedback == null && !busy, actions);
   let n = 0;
   return (
@@ -210,7 +243,15 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
           {++n}. {label("allow", "允许")}
         </Button>
         {always && (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void answer("allow_always")} title={always.label} data-testid="allow-always" className="max-w-[28rem]">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void answer("allow_always")}
+            title={always.label}
+            data-testid="allow-always"
+            className="max-w-[28rem]"
+          >
             <span className="truncate">
               {++n}. {always.label}
             </span>
@@ -219,7 +260,13 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void answer("deny")} data-testid="deny">
           {++n}. {label("deny", "拒绝")}
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setFeedback(feedback == null ? "" : null)} data-testid="deny-with-message">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => setFeedback(feedback == null ? "" : null)}
+          data-testid="deny-with-message"
+        >
           拒绝，并告诉 Claude…
         </Button>
       </div>
@@ -255,7 +302,14 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
  */
 function QuestionHint({ r }: { r: QuestionEvent }) {
   const { data } = useCurrentTranscript();
-  const node = data?.scope.kind === "main" ? data.nodes.find((n) => n.body.kind === "assistant" && n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.request_id)) : undefined;
+  const node =
+    data?.scope.kind === "main"
+      ? data.nodes.find(
+          (n) =>
+            n.body.kind === "assistant" &&
+            n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.request_id),
+        )
+      : undefined;
   const qs = Array.isArray(r.questions) ? r.questions : [];
   return (
     <NoticeCard
@@ -263,10 +317,20 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
       tone="wait"
       icon={<MessageCircleQuestionMark size={18} strokeWidth={1.7} />}
       title="Claude 在问你"
-      desc={qs.length ? `${qs[0]!.question}${qs.length > 1 ? ` 等 ${qs.length} 个问题` : ""} · 在对话里那张卡片上作答` : "在对话里那张卡片上作答"}
+      desc={
+        qs.length
+          ? `${qs[0]!.question}${qs.length > 1 ? ` 等 ${qs.length} 个问题` : ""} · 在对话里那张卡片上作答`
+          : "在对话里那张卡片上作答"
+      }
       action={
         node
-          ? { label: "跳到提问", primary: true, testId: "question-jump", onClick: () => scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.request_id, flashMs: 2000 }) }
+          ? {
+              label: "跳到提问",
+              primary: true,
+              testId: "question-jump",
+              onClick: () =>
+                scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.request_id, flashMs: 2000 }),
+            }
           : undefined
       }
     />
@@ -277,12 +341,17 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
 function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const qs = Array.isArray(r.questions) ? r.questions : [];
   return (
-    <section data-testid="question-card" className="w-full overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm">
+    <section
+      data-testid="question-card"
+      className="w-full overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm"
+    >
       <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
         <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
         <span className="font-semibold">向你提问</span>
         {qs.length > 1 && <span className="text-secondary">{qs.length} 个问题</span>}
-        {r.agent_id && <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {r.agent_id.slice(0, 8)}</span>}
+        {r.agent_id && (
+          <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {r.agent_id.slice(0, 8)}</span>
+        )}
         <span className="ml-auto text-live-waiting">等待回答</span>
       </div>
       <div className="bg-ground px-3 py-2.5">
@@ -330,7 +399,11 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
         <fieldset key={i} className="m-0 flex flex-col gap-1.5 border-0 p-0">
           {/* One paragraph: a long question wraps back to the left edge, under the tag. */}
           <legend className="mb-1.5 p-0 text-[12px] leading-[1.6]">
-            {q.header && <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">{q.header}</span>}
+            {q.header && (
+              <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">
+                {q.header}
+              </span>
+            )}
             <span className="font-medium">{q.question}</span>
             {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
           </legend>

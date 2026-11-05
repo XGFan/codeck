@@ -21,14 +21,14 @@ export default function App() {
 
   return (
     <div className="grid h-full grid-rows-[1fr]" style={{ "--conv-w": `${convWidth}px` } as React.CSSProperties}>
-      <div
-        className="grid min-h-0"
-        style={{ gridTemplateColumns: `${hideList ? 0 : 320}px 1fr` }}
-      >
+      <div className="grid min-h-0" style={{ gridTemplateColumns: `${hideList ? 0 : 320}px 1fr` }}>
         <section
           data-testid="pane-sessions"
           aria-hidden={hideList || undefined}
-          className={cn("flex min-h-0 flex-col border-r border-border bg-list", hideList && "invisible overflow-hidden border-r-0")}
+          className={cn(
+            "flex min-h-0 flex-col border-r border-border bg-list",
+            hideList && "invisible overflow-hidden border-r-0",
+          )}
         >
           <SessionList />
           {!hideList && <StatusBar />}

@@ -4,11 +4,7 @@ import { cn } from "@/lib/cn";
 
 export const Dialog = DialogPrimitive.Root;
 
-export function DialogContent({
-  className,
-  children,
-  ...props
-}: ComponentProps<typeof DialogPrimitive.Content>) {
+export function DialogContent({ className, children, ...props }: ComponentProps<typeof DialogPrimitive.Content>) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />

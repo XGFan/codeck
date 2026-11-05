@@ -3,7 +3,8 @@ import type { LsEntry } from "@/features/connect/protocol";
 import type { ProjectSummary } from "@/ipc/bindings";
 import { pendingSessions, projectOfCwd } from "./pending";
 
-const project = (id: string, path: string): ProjectSummary => ({ id, path, displayName: id, missing: false }) as ProjectSummary;
+const project = (id: string, path: string): ProjectSummary =>
+  ({ id, path, displayName: id, missing: false }) as ProjectSummary;
 const PROJECTS = [project("mono", "/w/mono"), project("pkg", "/w/mono/packages/pkg"), project("other", "/w/other")];
 
 const entry = (session_id: string | null, cwd: string | null, status: string | null = "idle"): LsEntry => ({
@@ -42,8 +43,14 @@ describe("pendingSessions", () => {
   });
 
   it("under a Project filter keeps only those whose cwd is in a filtered Project", () => {
-    const ls = [entry("a", "/w/mono/packages/pkg"), entry("b", "/w/other/x"), entry("c", "/elsewhere"), entry("d", null)];
-    const ids = (projectIds: string[]) => pendingSessions(ls, new Set(), { projectIds, drill: false }, PROJECTS).map((p) => p.id);
+    const ls = [
+      entry("a", "/w/mono/packages/pkg"),
+      entry("b", "/w/other/x"),
+      entry("c", "/elsewhere"),
+      entry("d", null),
+    ];
+    const ids = (projectIds: string[]) =>
+      pendingSessions(ls, new Set(), { projectIds, drill: false }, PROJECTS).map((p) => p.id);
     expect(ids(["pkg"])).toEqual(["a"]);
     expect(ids(["mono"])).toEqual([]);
     expect(ids(["other", "pkg"])).toEqual(["a", "b"]);

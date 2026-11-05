@@ -39,7 +39,9 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
   // How the run went is read from the file that launched it: its parent's transcript (cached, the panel showed it).
   const parentId = stack.length > 1 ? stack[stack.length - 2]! : null;
   const parentScope = useMemo<TranscriptScope>(() => ({ kind: "subagent", agentId: parentId ?? "" }), [parentId]);
-  const { data: parent } = useTranscript(parentId ? { sessionId, scope: parentScope, branchChoices, includeHidden } : null);
+  const { data: parent } = useTranscript(
+    parentId ? { sessionId, scope: parentScope, branchChoices, includeHidden } : null,
+  );
   const run = (parentId ? parent?.subagents.find((r) => r.agentId === agentId) : undefined) ?? runs.get(agentId);
   const live = useSessionLive(sessionId);
   // A nested run's entry in main knows only its meta: no status until the parent's transcript is in.
@@ -52,7 +54,8 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
     close();
   });
 
-  const loaded = data && data.sessionId === sessionId && data.scope.kind === "subagent" && data.scope.agentId === agentId;
+  const loaded =
+    data && data.sessionId === sessionId && data.scope.kind === "subagent" && data.scope.agentId === agentId;
   const dur = run?.startedMs != null && run.endedMs != null ? run.endedMs - run.startedMs : null;
   const meta = run
     ? [
@@ -73,7 +76,11 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
       className="flex w-[min(560px,50%)] min-w-[360px] shrink-0 flex-col border-l border-border bg-list shadow-[-8px_0_24px_rgba(0,0,0,0.04)]"
     >
       <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-4 py-2.5">
-        <nav aria-label="面包屑" data-testid="panel-breadcrumb" className="flex flex-wrap items-center gap-1.5 text-[12px]">
+        <nav
+          aria-label="面包屑"
+          data-testid="panel-breadcrumb"
+          className="flex flex-wrap items-center gap-1.5 text-[12px]"
+        >
           <button type="button" onClick={close} className="text-accent hover:underline">
             主对话
           </button>
@@ -115,7 +122,9 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
         </div>
       </div>
       {error && !loaded ? (
-        <div className="flex flex-1 items-center justify-center px-6 text-[12px] text-secondary">无法读取该 Subagent 的记录</div>
+        <div className="flex flex-1 items-center justify-center px-6 text-[12px] text-secondary">
+          无法读取该 Subagent 的记录
+        </div>
       ) : loaded ? (
         <TranscriptList
           key={agentId}

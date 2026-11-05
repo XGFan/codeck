@@ -38,7 +38,8 @@ export function FindBar() {
 
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
-      if (e.target instanceof Element && e.target.closest("[data-scope]")) lastScope.current = scopeFromTarget(e.target);
+      if (e.target instanceof Element && e.target.closest("[data-scope]"))
+        lastScope.current = scopeFromTarget(e.target);
     };
     window.addEventListener("pointerdown", onDown, true);
     return () => window.removeEventListener("pointerdown", onDown, true);
@@ -72,7 +73,13 @@ export function FindBar() {
       const toolUseId = loc.kind === "toolInput" || loc.kind === "toolOutput" ? loc.toolUseId : undefined;
       // A14e: output previews may be truncated; make the renderer load the full text before we point at it.
       if (loc.kind === "toolOutput") requestFullOutput(m.nodeId, loc.toolUseId);
-      scrollToNode({ scope: activeScope, nodeId: m.nodeId, toolUseId, thinking: loc.kind === "thinking", flashMs: null });
+      scrollToNode({
+        scope: activeScope,
+        nodeId: m.nodeId,
+        toolUseId,
+        thinking: loc.kind === "thinking",
+        flashMs: null,
+      });
     },
     [activeScope],
   );
@@ -124,7 +131,9 @@ export function FindBar() {
   };
 
   if (!show) return null;
-  const errorText = error ? `查找失败：${typeof error === "object" && "message" in error ? String(error.message) : String(error)}` : "";
+  const errorText = error
+    ? `查找失败：${typeof error === "object" && "message" in error ? String(error.message) : String(error)}`
+    : "";
   return (
     <div
       data-testid="find"
@@ -173,7 +182,12 @@ export function FindBar() {
       <button type="button" aria-label="下一个" disabled={!matches.length} onClick={() => step(1)} className={iconBtn}>
         <ChevronDown size={14} strokeWidth={1.8} aria-hidden />
       </button>
-      <button type="button" aria-label="关闭查找" onClick={() => useUi.getState().setFindOpen(false)} className={iconBtn}>
+      <button
+        type="button"
+        aria-label="关闭查找"
+        onClick={() => useUi.getState().setFindOpen(false)}
+        className={iconBtn}
+      >
         <X size={14} strokeWidth={1.8} aria-hidden />
       </button>
     </div>
@@ -186,7 +200,8 @@ const iconBtn =
 /** Marks every occurrence of `query` in the rendered transcript text via the CSS Custom Highlight API (no DOM edits). */
 function useTextMarks(query: string) {
   useEffect(() => {
-    const reg = typeof CSS !== "undefined" ? (CSS as unknown as { highlights?: Map<string, unknown> }).highlights : undefined;
+    const reg =
+      typeof CSS !== "undefined" ? (CSS as unknown as { highlights?: Map<string, unknown> }).highlights : undefined;
     const HL = (globalThis as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
     if (!reg || !HL) return;
     const q = query.trim().toLowerCase();

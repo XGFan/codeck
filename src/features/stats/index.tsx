@@ -67,9 +67,27 @@ function Segmented<T extends string>({
   );
 }
 
-function Card({ title, aside, className, children, testId }: { title: ReactNode; aside?: ReactNode; className?: string; children: ReactNode; testId?: string }) {
+function Card({
+  title,
+  aside,
+  className,
+  children,
+  testId,
+}: {
+  title: ReactNode;
+  aside?: ReactNode;
+  className?: string;
+  children: ReactNode;
+  testId?: string;
+}) {
   return (
-    <section data-testid={testId} className={cn("flex min-h-0 min-w-0 flex-col gap-2 rounded-[10px] border border-border bg-ground px-3.5 py-3", className)}>
+    <section
+      data-testid={testId}
+      className={cn(
+        "flex min-h-0 min-w-0 flex-col gap-2 rounded-[10px] border border-border bg-ground px-3.5 py-3",
+        className,
+      )}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="m-0 flex-1 text-[13px] font-semibold">{title}</h2>
         {aside}
@@ -109,8 +127,18 @@ function TokenCard({ stats }: { stats: Stats }) {
   const totalIn = t.input + t.read + t.write;
   const pct = (v: number) => (totalIn ? (v / totalIn) * 100 : 0);
   const parts = [
-    { label: "缓存读取", value: t.read, className: "bg-accent", hint: "已在缓存中的前缀（系统提示词、之前的对话），约按 0.1 倍输入单价计费" },
-    { label: "缓存写入", value: t.write, className: "bg-accent/45", hint: "本次写入缓存、下一轮可按缓存读取复用的内容，按 1.25 倍（5 分钟）或 2 倍（1 小时）输入单价计费" },
+    {
+      label: "缓存读取",
+      value: t.read,
+      className: "bg-accent",
+      hint: "已在缓存中的前缀（系统提示词、之前的对话），约按 0.1 倍输入单价计费",
+    },
+    {
+      label: "缓存写入",
+      value: t.write,
+      className: "bg-accent/45",
+      hint: "本次写入缓存、下一轮可按缓存读取复用的内容，按 1.25 倍（5 分钟）或 2 倍（1 小时）输入单价计费",
+    },
     { label: "未缓存输入", value: t.input, className: "bg-text/20", hint: "既未读取也未写入缓存的输入，按原价计费" },
   ];
   return (
@@ -129,7 +157,9 @@ function TokenCard({ stats }: { stats: Stats }) {
           <span className="text-[12px] text-secondary">输入</span>
         </div>
         <div data-testid="token-output" className="flex min-w-0 items-baseline gap-1.5">
-          <span className="text-[24px] leading-tight font-semibold tracking-tight">{formatTokens(stats.overview.outputTokens)}</span>
+          <span className="text-[24px] leading-tight font-semibold tracking-tight">
+            {formatTokens(stats.overview.outputTokens)}
+          </span>
           <span className="text-[12px] text-secondary">输出</span>
         </div>
       </div>
@@ -162,13 +192,28 @@ function Overview({ stats, rangeDays }: { stats: Stats; rangeDays: number | null
   const activeDays = daily.map((d) => d.day);
   const span = rangeDays ?? Math.max(o.activeDays, stats.heatDaily.length);
   const cards = [
-    { id: "sessions", label: "Session", value: num(o.sessions), sub: o.activeDays ? `日均 ${perDay(o.sessions / o.activeDays)} 个` : "—" },
-    { id: "messages", label: "消息", value: num(o.messages), sub: o.activeDays ? `日均 ${num(Math.round(o.messages / o.activeDays))} 条` : "—" },
+    {
+      id: "sessions",
+      label: "Session",
+      value: num(o.sessions),
+      sub: o.activeDays ? `日均 ${perDay(o.sessions / o.activeDays)} 个` : "—",
+    },
+    {
+      id: "messages",
+      label: "消息",
+      value: num(o.messages),
+      sub: o.activeDays ? `日均 ${num(Math.round(o.messages / o.activeDays))} 条` : "—",
+    },
     {
       id: "cost",
       label: "Cost",
       value: formatCost(o.cost),
-      sub: o.unpricedMessages > 0 ? `${num(o.unpricedMessages)} 条消息无价格，未计入` : o.activeDays ? `日均 ${formatCost(o.cost / o.activeDays)}` : "—",
+      sub:
+        o.unpricedMessages > 0
+          ? `${num(o.unpricedMessages)} 条消息无价格，未计入`
+          : o.activeDays
+            ? `日均 ${formatCost(o.cost / o.activeDays)}`
+            : "—",
     },
     {
       id: "active",
@@ -230,7 +275,11 @@ function RangePicker({ sel, onChange }: { sel: RangeSel; onChange: (s: RangeSel)
               {gi > 0 && <DropdownMenuSeparator />}
               {g.group && <div className="px-2 pt-1 pb-0.5 text-[11px] text-secondary">{g.group}</div>}
               {g.items.map((it) => (
-                <DropdownMenuCheckboxItem key={it.label} checked={sameRange(it.sel, sel)} onCheckedChange={() => onChange(it.sel)}>
+                <DropdownMenuCheckboxItem
+                  key={it.label}
+                  checked={sameRange(it.sel, sel)}
+                  onCheckedChange={() => onChange(it.sel)}
+                >
                   {it.label}
                 </DropdownMenuCheckboxItem>
               ))}
@@ -238,7 +287,13 @@ function RangePicker({ sel, onChange }: { sel: RangeSel; onChange: (s: RangeSel)
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <button type="button" aria-label={`上一${unit}`} disabled={!steps} onClick={() => onChange({ ...sel, offset: sel.offset - 1 })} className={ARROW}>
+      <button
+        type="button"
+        aria-label={`上一${unit}`}
+        disabled={!steps}
+        onClick={() => onChange({ ...sel, offset: sel.offset - 1 })}
+        className={ARROW}
+      >
         <ChevronLeft size={14} strokeWidth={1.8} aria-hidden />
       </button>
       <button
@@ -355,17 +410,22 @@ function StatsPanel() {
                       ))}
                     {metric !== "all" &&
                       present.map((f) => (
-                      <button
-                        key={f}
-                        type="button"
-                        data-testid="legend-item"
-                        title="查看该模型的 Session"
-                        onClick={() => drill({ kind: "model", model: stats.daily.find((d) => family(d.model) === f)!.model })}
-                        className="flex items-center gap-1 text-[11px] hover:underline"
-                      >
-                        <span className="size-[9px] rounded-[2px]" style={{ background: theme.series[f as ModelFamily] }} />
-                        {FAMILY_LABEL[f]}
-                      </button>
+                        <button
+                          key={f}
+                          type="button"
+                          data-testid="legend-item"
+                          title="查看该模型的 Session"
+                          onClick={() =>
+                            drill({ kind: "model", model: stats.daily.find((d) => family(d.model) === f)!.model })
+                          }
+                          className="flex items-center gap-1 text-[11px] hover:underline"
+                        >
+                          <span
+                            className="size-[9px] rounded-[2px]"
+                            style={{ background: theme.series[f as ModelFamily] }}
+                          />
+                          {FAMILY_LABEL[f]}
+                        </button>
                       ))}
                     <Segmented
                       small
@@ -394,7 +454,11 @@ function StatsPanel() {
                 )}
               </Card>
 
-              <Card className="@3xl:row-span-2" title="Session 排行" aside={<span className="text-[11px] text-secondary">按 Cost</span>}>
+              <Card
+                className="@3xl:row-span-2"
+                title="Session 排行"
+                aside={<span className="text-[11px] text-secondary">按 Cost</span>}
+              >
                 {stats.sessions.length === 0 && <Empty />}
                 {stats.sessions.map((s) => (
                   <button
@@ -422,7 +486,11 @@ function StatsPanel() {
                 testId="stats-activity"
                 aside={
                   stats.activity.bars.length > 0 && (
-                    <span data-testid="activity-bucket" title="每根柱子的时长" className="rounded border border-border px-1.5 text-[10px] text-secondary tabular-nums">
+                    <span
+                      data-testid="activity-bucket"
+                      title="每根柱子的时长"
+                      className="rounded border border-border px-1.5 text-[10px] text-secondary tabular-nums"
+                    >
                       {BUCKET_LABEL[stats.activity.bucket]}
                     </span>
                   )

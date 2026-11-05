@@ -8,7 +8,9 @@ export async function composeStart(input: Locator, steps: string[]) {
     field.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
     for (const s of steps) {
       setValue.call(field, s);
-      field.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertCompositionText", data: s }));
+      field.dispatchEvent(
+        new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertCompositionText", data: s }),
+      );
       field.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: s }));
     }
   }, steps);
@@ -20,7 +22,9 @@ export async function composeEnd(input: Locator, text: string) {
     const field = el as HTMLInputElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     setValue.call(field, text);
-    field.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertFromComposition", data: text }));
+    field.dispatchEvent(
+      new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertFromComposition", data: text }),
+    );
     field.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: text }));
   }, text);
 }
@@ -28,7 +32,15 @@ export async function composeEnd(input: Locator, text: string) {
 /** Esc pressed while composing, as WebKit delivers it (the IME consumes it to cancel the candidates). */
 export async function escWhileComposing(input: Locator) {
   await input.evaluate((el) => {
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", isComposing: true, bubbles: true, cancelable: true }));
+    el.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        code: "Escape",
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
   });
 }
 

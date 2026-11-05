@@ -24,7 +24,10 @@ const SHAPE = /^(Background command|Agent|Monitor|Dynamic workflow|Workflow) "([
 
 export function describeNotice(summary: string | null, agent: string | null): Notice {
   const m = summary ? SHAPE.exec(summary.trim()) : null;
-  if (!m) return agent ? { kind: "后台 agent", name: agent, detail: summary } : { kind: "后台任务", name: null, detail: summary };
+  if (!m)
+    return agent
+      ? { kind: "后台 agent", name: agent, detail: summary }
+      : { kind: "后台任务", name: null, detail: summary };
   const [, k, name, rest] = m;
   const code = /\(exit(?: code)? (\d+)\)/.exec(rest)?.[1];
   const reason = /^failed: ([\s\S]+)$/.exec(rest)?.[1];

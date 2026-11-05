@@ -21,15 +21,23 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
   if (o.kind === "coordinator") return <CoordinatorCard node={node} body={body} />;
   if (o.kind !== "human" && o.kind !== "command") {
     return (
-      <div data-testid={o.kind === "commandOutput" ? "command-output" : undefined} className="flex items-baseline gap-2 text-[12px] text-secondary">
-        <span className="shrink-0">{o.kind === "meta" ? "元消息" : o.kind === "taskNotification" ? "任务通知" : "命令输出"}</span>
+      <div
+        data-testid={o.kind === "commandOutput" ? "command-output" : undefined}
+        className="flex items-baseline gap-2 text-[12px] text-secondary"
+      >
+        <span className="shrink-0">
+          {o.kind === "meta" ? "元消息" : o.kind === "taskNotification" ? "任务通知" : "命令输出"}
+        </span>
         <span className="min-w-0 truncate">{o.kind === "commandOutput" ? outputText(body.text) : body.text}</span>
       </div>
     );
   }
   return (
     <Anchor nodeId={node.id} className="group/copy flex flex-col items-end gap-1">
-      <div data-testid="user-bubble" className="max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap">
+      <div
+        data-testid="user-bubble"
+        className="max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap"
+      >
         {o.kind === "command" ? (
           <>
             {/* Like the terminal: the command token stands out, its arguments read as prose. */}
@@ -57,20 +65,30 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
 function CoordinatorCard({ node, body }: { node: Node; body: UserBody }) {
   const { scope, runs } = useTranscriptCtx();
   const parent = scope.kind === "subagent" ? runs.get(scope.agentId)?.parentAgentId : null;
-  return <TaskPromptCard node={node} text={body.text} title={parent ? "上级 Subagent 发来的消息" : "主对话发来的消息"} />;
+  return (
+    <TaskPromptCard node={node} text={body.text} title={parent ? "上级 Subagent 发来的消息" : "主对话发来的消息"} />
+  );
 }
 
 /** A command output without its `<local-command-stdout>`-style tags and ANSI codes. */
 const outputText = (text: string) => stripAnsi(text.replace(/<\/?(?:local-command|bash)-std(?:out|err)>/g, "")).trim();
 
-const STATUS_TEXT: Record<string, string> = { completed: "已完成", failed: "失败", killed: "已终止", stopped: "已停止", error: "失败" };
+const STATUS_TEXT: Record<string, string> = {
+  completed: "已完成",
+  failed: "失败",
+  killed: "已终止",
+  stopped: "已停止",
+  error: "失败",
+};
 
 /** Task-notification prompt: a compact row for a background task's end, linking back to where it was started. */
 export function NotificationRow({ node, body }: { node: Node; body: UserBody }) {
   const { runs, toolNode, scope } = useTranscriptCtx();
   const o = body.origin;
   if (o.kind !== "taskNotification") return null;
-  const run = [...runs.values()].find((r) => (o.toolUseId && r.toolUseId === o.toolUseId) || (o.taskId && r.agentId === o.taskId));
+  const run = [...runs.values()].find(
+    (r) => (o.toolUseId && r.toolUseId === o.toolUseId) || (o.taskId && r.agentId === o.taskId),
+  );
   // The launch is the run's Agent call; after a SendMessage resumed the agent, the notification names that call instead.
   const launch = run?.toolUseId ?? o.toolUseId;
   const cardNode = launch ? toolNode.get(launch) : undefined;
@@ -88,7 +106,11 @@ export function NotificationRow({ node, body }: { node: Node; body: UserBody }) 
         {n.kind}{" "}
         {n.name && (
           <>
-            <strong data-testid="task-notification-name" title={n.name} className="inline-block max-w-[40ch] truncate align-bottom font-medium text-text/80">
+            <strong
+              data-testid="task-notification-name"
+              title={n.name}
+              className="inline-block max-w-[40ch] truncate align-bottom font-medium text-text/80"
+            >
               {n.name}
             </strong>{" "}
           </>
@@ -146,7 +168,12 @@ function previewOf(body: string): string {
   } catch {
     /* plain text */
   }
-  return body.split("\n").find((l) => l.trim())?.trim() ?? "";
+  return (
+    body
+      .split("\n")
+      .find((l) => l.trim())
+      ?.trim() ?? ""
+  );
 }
 
 const isJson = (body: string) => /^[[{]/.test(body) && prettyJson(body) !== body;
@@ -167,7 +194,11 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
         onClick={() => toggle(key)}
         className="flex w-full items-center gap-2 text-left text-[12px] text-secondary hover:text-text"
       >
-        {open ? <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />}
+        {open ? (
+          <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        )}
         {o.color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: o.color }} />}
         <span className="shrink-0 font-medium text-text/80">Teammate · {o.teammateId ?? "未知"}</span>
         {messages.length > 1 && <span className="shrink-0 text-secondary">{messages.length} 条</span>}
@@ -177,7 +208,10 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
         <span className="shrink-0 text-secondary">{clock(node.timestampMs)}</span>
       </button>
       {open && (
-        <div data-testid="teammate-body" className="ml-1.5 flex flex-col gap-2 border-l-2 border-border pl-4 text-[12px]">
+        <div
+          data-testid="teammate-body"
+          className="ml-1.5 flex flex-col gap-2 border-l-2 border-border pl-4 text-[12px]"
+        >
           {messages.map((m, i) => (
             <div key={i} className="flex flex-col gap-1">
               {messages.length > 1 && <span className="text-[11px] text-secondary">{m.id ?? "未知"}</span>}

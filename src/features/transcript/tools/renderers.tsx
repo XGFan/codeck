@@ -1,5 +1,16 @@
 import { useUi } from "@/state/ui";
-import { ArrowDown, Check, Circle, CircleDot, FileText, Globe, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
+import {
+  ArrowDown,
+  Check,
+  Circle,
+  CircleDot,
+  FileText,
+  Globe,
+  Pencil,
+  Search,
+  SquareTerminal,
+  Wrench,
+} from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
 import { CopyButton } from "@/components/ui/copy-button";
@@ -10,7 +21,18 @@ import { cn } from "@/lib/cn";
 import { scrollToNode } from "../nodes/scroll";
 import { prettyJson } from "../util";
 import { parseJson, useFullInput, useOutput, type ToolCtx } from "./data";
-import { CodeView, ImageRefs, Label, LoadBar, Mono, OutputView, PendingSpinner, Shell, Spinner, Terminal } from "./parts";
+import {
+  CodeView,
+  ImageRefs,
+  Label,
+  LoadBar,
+  Mono,
+  OutputView,
+  PendingSpinner,
+  Shell,
+  Spinner,
+  Terminal,
+} from "./parts";
 
 export interface RenderProps {
   nodeId: string;
@@ -40,14 +62,18 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
   const input = parseJson(call.inputJson) ?? {};
   const extra = parseJson<BashExtra>(call.result?.extraJson);
   const r = call.result;
-  const split = !!extra && !r?.truncated && !r?.persisted && (typeof extra.stdout === "string" || typeof extra.stderr === "string");
+  const split =
+    !!extra && !r?.truncated && !r?.persisted && (typeof extra.stdout === "string" || typeof extra.stderr === "string");
   const out = useOutput(call, ctx, split ? (extra!.stdout ?? "") : undefined);
   const stderr = split && !out.loaded ? (extra!.stderr ?? "") : "";
   const code = /(\d+)/.exec(extra?.returnCodeInterpretation ?? "")?.[1];
   const bg = extra?.backgroundTaskId ?? (input.run_in_background === true ? "" : null);
   const status =
     r == null ? undefined : bg != null && !failed ? (
-      <span data-testid="bash-background" className="shrink-0 rounded border border-border px-1.5 text-[11px] leading-[18px] text-secondary">
+      <span
+        data-testid="bash-background"
+        className="shrink-0 rounded border border-border px-1.5 text-[11px] leading-[18px] text-secondary"
+      >
         后台
       </span>
     ) : extra?.interrupted ? (
@@ -73,23 +99,27 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
       }
     >
       <div className="group/copy relative">
-        <CopyButton text={command} label="复制命令" className="absolute top-1 right-1.5 z-10 bg-terminal text-[#a1a1a6]" />
-      {command && (
-        <pre className="m-0 overflow-auto bg-terminal px-3 pt-2.5 font-mono text-[12px] leading-[1.55] whitespace-pre-wrap break-words text-[#e4e4e6]">
-          <span className="text-[#a1a1a6] select-none">$ </span>
-          {command}
-        </pre>
-      )}
-      {r == null ? (
-        <PendingSpinner />
-      ) : bg != null && !failed && out.text === "" && !stderr ? (
-        <BackgroundNote taskId={bg} noticeId={call.notificationNodeId} ctx={ctx} />
-      ) : (
-        <div data-testid="tool-output">
-          <Terminal text={out.text} stderr={stderr} />
-          <LoadBar out={out} dark />
-        </div>
-      )}
+        <CopyButton
+          text={command}
+          label="复制命令"
+          className="absolute top-1 right-1.5 z-10 bg-terminal text-[#a1a1a6]"
+        />
+        {command && (
+          <pre className="m-0 overflow-auto bg-terminal px-3 pt-2.5 font-mono text-[12px] leading-[1.55] whitespace-pre-wrap break-words text-[#e4e4e6]">
+            <span className="text-[#a1a1a6] select-none">$ </span>
+            {command}
+          </pre>
+        )}
+        {r == null ? (
+          <PendingSpinner />
+        ) : bg != null && !failed && out.text === "" && !stderr ? (
+          <BackgroundNote taskId={bg} noticeId={call.notificationNodeId} ctx={ctx} />
+        ) : (
+          <div data-testid="tool-output">
+            <Terminal text={out.text} stderr={stderr} />
+            <LoadBar out={out} dark />
+          </div>
+        )}
       </div>
       <ImageRefs images={r?.images ?? []} ctx={ctx} />
     </Shell>
@@ -99,7 +129,10 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
 /** In place of the output of a command sent to the background: its task and a jump to the notice of its end. */
 function BackgroundNote({ taskId, noticeId, ctx }: { taskId: string; noticeId: string | null; ctx: ToolCtx | null }) {
   return (
-    <div data-testid="bash-background-note" className="flex items-center gap-3 bg-terminal px-3 py-2.5 font-mono text-[12px] text-[#a1a1a6]">
+    <div
+      data-testid="bash-background-note"
+      className="flex items-center gap-3 bg-terminal px-3 py-2.5 font-mono text-[12px] text-[#a1a1a6]"
+    >
       <span className="flex-1">在后台运行{taskId && `（任务 ${taskId}）`}</span>
       {noticeId && ctx ? (
         <button
@@ -137,9 +170,16 @@ function DiffBody({ diff }: { diff: DiffResult }) {
           <div
             key={i}
             data-diff={r.kind}
-            className={cn("flex px-3", add && "bg-diff-add text-diff-add-text", del && "bg-diff-del text-diff-del-text", !add && !del && "bg-list text-secondary")}
+            className={cn(
+              "flex px-3",
+              add && "bg-diff-add text-diff-add-text",
+              del && "bg-diff-del text-diff-del-text",
+              !add && !del && "bg-list text-secondary",
+            )}
           >
-            <span className={cn("w-8 shrink-0 select-none", add && "text-diff-add-text/80", del && "text-diff-del-text/80")}>
+            <span
+              className={cn("w-8 shrink-0 select-none", add && "text-diff-add-text/80", del && "text-diff-del-text/80")}
+            >
               {add ? r.newNo : (r.oldNo ?? "")}
             </span>
             <span className="w-3.5 shrink-0 select-none">{add ? "+" : del ? "−" : ""}</span>
@@ -165,8 +205,13 @@ export function EditView({ nodeId, call, startMs, ctx }: RenderProps) {
   const { input, loading, truncated } = useFullInput(call, ctx, expanded);
   const hasPatch = !!parseJson<{ structuredPatch?: unknown[] }>(call.result?.extraJson)?.structuredPatch?.length;
   const ready = hasPatch || !call.inputTruncated || !loading;
-  const diff = useMemo(() => (ready && (hasPatch || !truncated) ? editDiff(input, call.result?.extraJson) : null), [ready, hasPatch, truncated, input, call.result?.extraJson]);
-  const replaceAll = input.replace_all === true || (Array.isArray(input.edits) && (input.edits as Record<string, unknown>[]).some((e) => e.replace_all === true));
+  const diff = useMemo(
+    () => (ready && (hasPatch || !truncated) ? editDiff(input, call.result?.extraJson) : null),
+    [ready, hasPatch, truncated, input, call.result?.extraJson],
+  );
+  const replaceAll =
+    input.replace_all === true ||
+    (Array.isArray(input.edits) && (input.edits as Record<string, unknown>[]).some((e) => e.replace_all === true));
   return (
     <Shell
       nodeId={nodeId}
@@ -178,7 +223,9 @@ export function EditView({ nodeId, call, startMs, ctx }: RenderProps) {
       summary={
         <>
           <Mono className="flex-1">{str(input.file_path) || str(input.notebook_path)}</Mono>
-          {replaceAll && <span className="shrink-0 rounded bg-black/5 px-1.5 text-[11px] dark:bg-white/10">全部替换</span>}
+          {replaceAll && (
+            <span className="shrink-0 rounded bg-black/5 px-1.5 text-[11px] dark:bg-white/10">全部替换</span>
+          )}
           {diff && !failed && (
             <>
               <span className="shrink-0 font-semibold text-diff-add-text">+{diff.added}</span>
@@ -195,7 +242,11 @@ export function EditView({ nodeId, call, startMs, ctx }: RenderProps) {
 }
 
 function FailText({ text }: { text: string }) {
-  return <div className="border-b border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">{text}</div>;
+  return (
+    <div className="border-b border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">
+      {text}
+    </div>
+  );
 }
 
 export function WriteView({ nodeId, call, startMs, ctx }: RenderProps) {
@@ -223,7 +274,11 @@ export function WriteView({ nodeId, call, startMs, ctx }: RenderProps) {
       }
     >
       {failed && call.result && <FailText text={call.result.text} />}
-      {loading ? <Spinner text="正在加载完整输入" /> : <CodeView code={content.replace(/\n$/, "")} lang={langFromPath(path)} />}
+      {loading ? (
+        <Spinner text="正在加载完整输入" />
+      ) : (
+        <CodeView code={content.replace(/\n$/, "")} lang={langFromPath(path)} />
+      )}
     </Shell>
   );
 }
@@ -248,7 +303,14 @@ export function ReadView({ nodeId, call, startMs, ctx }: RenderProps) {
   const path = str(input.file_path);
   const offset = num(input.offset);
   const limit = num(input.limit);
-  const range = offset != null && limit != null ? `L${offset}–${offset + limit - 1}` : offset != null ? `从 L${offset}` : limit != null ? `前 ${limit} 行` : "";
+  const range =
+    offset != null && limit != null
+      ? `L${offset}–${offset + limit - 1}`
+      : offset != null
+        ? `从 L${offset}`
+        : limit != null
+          ? `前 ${limit} 行`
+          : "";
   const out = useOutput(call, ctx);
   const imgOnly = (call.result?.images.length ?? 0) > 0 && /^\[image\]\s*$/.test(out.text);
   const numbered = useMemo(() => splitNumbered(out.text), [out.text]);
@@ -272,7 +334,12 @@ export function ReadView({ nodeId, call, startMs, ctx }: RenderProps) {
       ) : (
         !imgOnly &&
         (numbered ? (
-          <CodeView code={numbered.code} numbers={numbered.numbers} lang={langFromPath(path)} footer={<LoadBar out={out} dark={false} />} />
+          <CodeView
+            code={numbered.code}
+            numbers={numbered.numbers}
+            lang={langFromPath(path)}
+            footer={<LoadBar out={out} dark={false} />}
+          />
         ) : (
           <OutputView out={out} />
         ))
@@ -292,11 +359,17 @@ interface TaskItem {
 
 function StatusIcon({ status }: { status: string }) {
   if (status === "completed") return <Check size={13} strokeWidth={2.2} className="text-live" aria-label="已完成" />;
-  if (status === "in_progress") return <CircleDot size={13} strokeWidth={1.8} className="text-accent" aria-label="进行中" />;
+  if (status === "in_progress")
+    return <CircleDot size={13} strokeWidth={1.8} className="text-accent" aria-label="进行中" />;
   return <Circle size={13} strokeWidth={1.6} className="text-secondary" aria-label="待办" />;
 }
 
-const STATUS_TEXT: Record<string, string> = { pending: "待办", in_progress: "进行中", completed: "已完成", deleted: "已删除" };
+const STATUS_TEXT: Record<string, string> = {
+  pending: "待办",
+  in_progress: "进行中",
+  completed: "已完成",
+  deleted: "已删除",
+};
 
 function Checklist({ items }: { items: TaskItem[] }) {
   return (
@@ -304,7 +377,14 @@ function Checklist({ items }: { items: TaskItem[] }) {
       {items.map((t, i) => (
         <li key={i} className="flex items-center gap-2">
           <StatusIcon status={t.status} />
-          <span className={cn(t.status === "completed" && "text-secondary line-through", t.status === "in_progress" && "font-medium")}>{t.subject}</span>
+          <span
+            className={cn(
+              t.status === "completed" && "text-secondary line-through",
+              t.status === "in_progress" && "font-medium",
+            )}
+          >
+            {t.subject}
+          </span>
         </li>
       ))}
     </ul>
@@ -314,7 +394,9 @@ function Checklist({ items }: { items: TaskItem[] }) {
 export function TaskView({ nodeId, call, startMs, ctx }: RenderProps) {
   const failed = isErr(call);
   const input = parseJson(call.inputJson) ?? {};
-  const extra = parseJson<{ task?: { id?: string; subject?: string }; statusChange?: { from?: string; to?: string } }>(call.result?.extraJson);
+  const extra = parseJson<{ task?: { id?: string; subject?: string }; statusChange?: { from?: string; to?: string } }>(
+    call.result?.extraJson,
+  );
   const out = useOutput(call, ctx);
   let items: TaskItem[] = [];
   let summary = "";
@@ -378,7 +460,9 @@ export function CompactView({ nodeId, call, startMs, ctx }: RenderProps) {
     default:
       main = str(input.query);
   }
-  const extras = Object.entries(input).filter(([k, v]) => !["pattern", "url", "query"].includes(k) && v != null && v !== "");
+  const extras = Object.entries(input).filter(
+    ([k, v]) => !["pattern", "url", "query"].includes(k) && v != null && v !== "",
+  );
   return (
     <Shell
       nodeId={nodeId}
@@ -419,7 +503,13 @@ export function GenericView({ nodeId, call, startMs, ctx, summary }: RenderProps
   // A web address in the input (an Artifact's `url`, …) opens on a click, also when the summary is another field.
   const url = [summary, str(parseJson(call.inputJson)?.url)].find((u) => /^https?:\/\/\S+$/.test(u));
   const link = url && (
-    <a href={url} target="_blank" rel="noreferrer" data-testid="tool-link" className="min-w-0 truncate font-mono text-[12px] text-accent hover:underline">
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      data-testid="tool-link"
+      className="min-w-0 truncate font-mono text-[12px] text-accent hover:underline"
+    >
       {url}
     </a>
   );
@@ -448,7 +538,12 @@ export function GenericView({ nodeId, call, startMs, ctx, summary }: RenderProps
       {loading ? (
         <Spinner text="正在加载完整输入" />
       ) : (
-        <CodeView code={pretty} lang="json" startLine={1} footer={truncated ? <div className="bg-code px-3 pb-1.5 text-[11px] text-secondary">… 输入已截断</div> : null} />
+        <CodeView
+          code={pretty}
+          lang="json"
+          startLine={1}
+          footer={truncated ? <div className="bg-code px-3 pb-1.5 text-[11px] text-secondary">… 输入已截断</div> : null}
+        />
       )}
       {call.result && (
         <>

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { SubagentRun, ToolCall } from "@/ipc/bindings";
 import { runState } from "./runState";
 
-const run = (over: Partial<SubagentRun>): SubagentRun => ({ toolUseId: "tu1", isAsync: false, status: null, ...over }) as SubagentRun;
+const run = (over: Partial<SubagentRun>): SubagentRun =>
+  ({ toolUseId: "tu1", isAsync: false, status: null, ...over }) as SubagentRun;
 const call = (result: ToolCall["result"]): ToolCall => ({ toolUseId: "tu1", result }) as ToolCall;
 const ok = { text: "done", isError: false } as ToolCall["result"];
 

@@ -97,7 +97,12 @@ export function resolveRange(sel: RangeSel, now: Date, reset: WeeklyReset): Reso
     case "last30":
     case "last90": {
       const days = Number(sel.kind.slice(4));
-      return { timeRange: { fromMs: now.getTime() - days * DAY, toMs: null }, days, label: `最近 ${days} 天`, detail: "" };
+      return {
+        timeRange: { fromMs: now.getTime() - days * DAY, toMs: null },
+        days,
+        label: `最近 ${days} 天`,
+        detail: "",
+      };
     }
     case "all":
       return { timeRange: null, days: null, label: "全部", detail: "" };

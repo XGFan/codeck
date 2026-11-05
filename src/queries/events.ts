@@ -67,8 +67,7 @@ export function useBackendEvents() {
     const stats = createThrottle(() => void qc.invalidateQueries({ queryKey: ["stats"] }), STATS_THROTTLE_MS);
     const unlisten: Array<() => void> = [];
     let disposed = false;
-    const keep = (p: Promise<() => void>) =>
-      void p.then((fn) => (disposed ? fn() : unlisten.push(fn)));
+    const keep = (p: Promise<() => void>) => void p.then((fn) => (disposed ? fn() : unlisten.push(fn)));
 
     keep(
       api.onSessionsChanged((p) => {

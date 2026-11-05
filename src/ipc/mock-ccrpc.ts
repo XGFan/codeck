@@ -34,7 +34,11 @@ interface Fixture {
   tasks: Task[];
 }
 
-const raw = import.meta.glob("/src/mocks/data/connect/*.jsonl", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const raw = import.meta.glob("/src/mocks/data/connect/*.jsonl", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
 
 function parse(name: string, text: string): Fixture {
   const lines = text
@@ -60,7 +64,13 @@ function parse(name: string, text: string): Fixture {
     title: name,
     ...meta,
   };
-  return { name, lines: lines.filter((l) => l.dir !== "meta"), ls, connectDelayMs: metaLine?.connect_delay_ms ?? 0, tasks: metaLine?.tasks ?? [] };
+  return {
+    name,
+    lines: lines.filter((l) => l.dir !== "meta"),
+    ls,
+    connectDelayMs: metaLine?.connect_delay_ms ?? 0,
+    tasks: metaLine?.tasks ?? [],
+  };
 }
 
 const fixtures: Fixture[] = Object.entries(raw)
@@ -113,7 +123,16 @@ export interface CcrpcProbe {
   /** Set by a test: the next Resume's `ready` names the Session already (the plugin checked in first). */
   resumeNamedInReady?: boolean;
 }
-const probe: CcrpcProbe = { sent: [], lists: 0, guiLog: [], badge: 0, images: 0, analyzerSaves: 0, paneHides: [], hideNewPanes: false };
+const probe: CcrpcProbe = {
+  sent: [],
+  lists: 0,
+  guiLog: [],
+  badge: 0,
+  images: 0,
+  analyzerSaves: 0,
+  paneHides: [],
+  hideNewPanes: false,
+};
 
 declare global {
   interface Window {
@@ -260,7 +279,11 @@ export const RESUME_FAILS = "c04e77a2-0003-4000-8000-000000000003";
 let launchRules: LaunchRule[] = [];
 
 /** The analyzer as the mock app has it: a key from the login shell, nothing saved in the settings. */
-const analyzer: { apiKey: string | null; baseUrl: string | null; model: string | null } = { apiKey: null, baseUrl: null, model: null };
+const analyzer: { apiKey: string | null; baseUrl: string | null; model: string | null } = {
+  apiKey: null,
+  baseUrl: null,
+  model: null,
+};
 const SHELL_KEY = "sk-shell-0000abcd";
 function analyzerInfo(): AnalyzerInfo {
   const key = analyzer.apiKey ?? SHELL_KEY;
@@ -289,7 +312,18 @@ export function createMockCcrpc(): CcrpcApi {
       hideNewPanes: probe.hideNewPanes,
       logRoot: "/mock/Logs/dev.joy.codeck/ccrpc",
     }),
-    ccrpcList: async () => (probe.lists++, fixtures.filter((f) => f.name !== "new-session" && !f.name.startsWith("resume-") && f.name !== "resume" && !closedPanes.has(f.ls.holder_id)).map((f) => ({ ...f.ls, hidden: paneHidden.get(f.ls.holder_id) ?? f.ls.hidden }))),
+    ccrpcList: async () => (
+      probe.lists++,
+      fixtures
+        .filter(
+          (f) =>
+            f.name !== "new-session" &&
+            !f.name.startsWith("resume-") &&
+            f.name !== "resume" &&
+            !closedPanes.has(f.ls.holder_id),
+        )
+        .map((f) => ({ ...f.ls, hidden: paneHidden.get(f.ls.holder_id) ?? f.ls.hidden }))
+    ),
     ccrpcSetHideNewPanes: async (hide) => (probe.hideNewPanes = hide),
     ccrpcSetPaneHidden: async (holderId, hidden) => {
       probe.paneHides.push({ holderId, hidden });
@@ -327,7 +361,9 @@ export function createMockCcrpc(): CcrpcApi {
       const lines = fx.lines
         .filter((l) => !(inReady && l.msg?.type === "session_changed"))
         .map((l) =>
-          l.msg?.type === "session_changed" || (inReady && l.msg?.type === "ready") ? { ...l, msg: { ...l.msg, session_id: sessionId } } : l,
+          l.msg?.type === "session_changed" || (inReady && l.msg?.type === "ready")
+            ? { ...l, msg: { ...l.msg, session_id: sessionId } }
+            : l,
         );
       return open({ ...fx, lines });
     },

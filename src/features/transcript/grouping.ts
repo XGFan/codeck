@@ -35,7 +35,6 @@ interface RowBase {
   fold?: string;
 }
 
-
 export type Row = RowBase &
   (
     | { kind: "prompt"; node: Node; body: Body<"userPrompt">; branch: BranchPoint | null }
@@ -69,7 +68,13 @@ export type Row = RowBase &
     | { kind: "unknownBlock"; node: Node; blockType: string; rawJson: string; role: RoleInfo | null }
     | { kind: "compact"; boundary: Node; summary: Node | null }
     | { kind: "node"; node: Node }
-    | { kind: "inheritedBanner"; range: InheritedRange | null; count: number; expanded: boolean; lastTimestampMs: number | null }
+    | {
+        kind: "inheritedBanner";
+        range: InheritedRange | null;
+        count: number;
+        expanded: boolean;
+        lastTimestampMs: number | null;
+      }
     | { kind: "inheritedDivider" }
     | { kind: "orphanHeader"; count: number }
     /** A turn's process folded into one line (`fold.ts`); `key` is its expansion key. */
@@ -120,7 +125,8 @@ const thinkingKey = (nodeId: string) => `thinking:${nodeId}`;
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
 
 // A coordinator message (SendMessage to a Subagent Run) starts the agent's next round of work.
-const isTurnStart = (b: Body<"userPrompt">) => b.origin.kind === "human" || b.origin.kind === "command" || b.origin.kind === "coordinator";
+const isTurnStart = (b: Body<"userPrompt">) =>
+  b.origin.kind === "human" || b.origin.kind === "command" || b.origin.kind === "coordinator";
 
 export function buildRows(input: GroupingInput): Grouping {
   const { branchPoints, showHidden, inheritedExpanded, agent } = input;
@@ -168,7 +174,18 @@ export function buildRows(input: GroupingInput): Grouping {
 
   const emitThinking = (items: GroupItem[]) => {
     for (const it of items)
-      if (it.type === "thinking") push({ kind: "thinking", key: `${it.node.id}#${it.blockIndex}`, turn, node: it.node, text: it.text, role: takeRole() }, [[it.node.id]]);
+      if (it.type === "thinking")
+        push(
+          {
+            kind: "thinking",
+            key: `${it.node.id}#${it.blockIndex}`,
+            turn,
+            node: it.node,
+            text: it.text,
+            role: takeRole(),
+          },
+          [[it.node.id]],
+        );
   };
 
   const flushGroup = () => {
@@ -177,7 +194,9 @@ export function buildRows(input: GroupingInput): Grouping {
       group = null;
       if (g.calls.length === 1) {
         const { node, call } = g.calls[0]!;
-        push({ kind: "tool", key: `${node.id}|${call.toolUseId}`, turn, node, call, role: takeRole() }, [[node.id, call.toolUseId]]);
+        push({ kind: "tool", key: `${node.id}|${call.toolUseId}`, turn, node, call, role: takeRole() }, [
+          [node.id, call.toolUseId],
+        ]);
       } else {
         const first = g.calls[0]!;
         const key = groupKey(first.node.id, first.call.toolUseId);
@@ -242,11 +261,23 @@ export function buildRows(input: GroupingInput): Grouping {
         case "thinking":
           if (!b.text.trim()) break;
           if (group) heldThinking.push({ type: "thinking", node, text: b.text, blockIndex: i });
-          else push({ kind: "thinking", key: `${node.id}#${i}`, turn, node, text: b.text, role: takeRole() }, [[node.id]]);
+          else
+            push({ kind: "thinking", key: `${node.id}#${i}`, turn, node, text: b.text, role: takeRole() }, [[node.id]]);
           break;
         case "unknown":
           flushGroup();
-          push({ kind: "unknownBlock", key: `${node.id}#${i}`, turn, node, blockType: b.blockType, rawJson: b.rawJson, role: takeRole() }, [[node.id]]);
+          push(
+            {
+              kind: "unknownBlock",
+              key: `${node.id}#${i}`,
+              turn,
+              node,
+              blockType: b.blockType,
+              rawJson: b.rawJson,
+              role: takeRole(),
+            },
+            [[node.id]],
+          );
           break;
         case "toolCall": {
           const run = agentRun(b, runs);
@@ -269,17 +300,30 @@ export function buildRows(input: GroupingInput): Grouping {
             flushGroup();
             for (const c of cards) cardCalls.add(c.call.toolUseId);
             const anchors = cards.map((c): [string, string] => [node.id, c.call.toolUseId]);
-            if (cards.length === 1) push({ kind: "subagent", key: `${node.id}|${b.toolUseId}`, turn, ...cards[0]!, role: takeRole() }, anchors);
-            else push({ kind: "parallel", key: `${node.id}|${b.toolUseId}|par`, turn, node, cards, role: takeRole() }, anchors);
+            if (cards.length === 1)
+              push(
+                { kind: "subagent", key: `${node.id}|${b.toolUseId}`, turn, ...cards[0]!, role: takeRole() },
+                anchors,
+              );
+            else
+              push(
+                { kind: "parallel", key: `${node.id}|${b.toolUseId}|par`, turn, node, cards, role: takeRole() },
+                anchors,
+              );
           } else if (wf) {
             flushGroup();
             cardCalls.add(b.toolUseId);
-            push({ kind: "workflow", key: `${node.id}|${b.toolUseId}`, turn, node, call: b, run: wf, role: takeRole() }, [[node.id, b.toolUseId]]);
+            push(
+              { kind: "workflow", key: `${node.id}|${b.toolUseId}`, turn, node, call: b, run: wf, role: takeRole() },
+              [[node.id, b.toolUseId]],
+            );
           } else if (b.name === "AskUserQuestion") {
             // Shown on its own as the question and the user's answer, never folded into a tool group.
             flushGroup();
             cardCalls.add(b.toolUseId);
-            push({ kind: "ask", key: `${node.id}|${b.toolUseId}`, turn, node, call: b, role: takeRole() }, [[node.id, b.toolUseId]]);
+            push({ kind: "ask", key: `${node.id}|${b.toolUseId}`, turn, node, call: b, role: takeRole() }, [
+              [node.id, b.toolUseId],
+            ]);
           } else if (group) {
             group.items.push(...heldThinking, { type: "call", node, call: b });
             heldThinking = [];
@@ -302,7 +346,8 @@ export function buildRows(input: GroupingInput): Grouping {
       if (bannerAt < 0) {
         endRun();
         const lastId = input.inherited?.lastInheritedId;
-        const last = input.nodes.find((n) => n.id === lastId) ?? [...input.nodes].reverse().find((n) => inheritedIds.has(n.id));
+        const last =
+          input.nodes.find((n) => n.id === lastId) ?? [...input.nodes].reverse().find((n) => inheritedIds.has(n.id));
         bannerAt = push({
           kind: "inheritedBanner",
           key: INHERITED_KEY,
@@ -315,7 +360,8 @@ export function buildRows(input: GroupingInput): Grouping {
       }
       if (!inheritedExpanded) {
         mark(node.id, bannerAt);
-        if (b.kind === "assistant") for (const blk of b.blocks) if (blk.kind === "toolCall") toolNode.set(blk.toolUseId, node.id);
+        if (b.kind === "assistant")
+          for (const blk of b.blocks) if (blk.kind === "toolCall") toolNode.set(blk.toolUseId, node.id);
         continue;
       }
     } else if (bannerAt >= 0 && !dividerDone) {
@@ -334,7 +380,9 @@ export function buildRows(input: GroupingInput): Grouping {
         }
         if (isTurnStart(b)) {
           turn++;
-          push({ kind: "prompt", key: node.id, turn, node, body: b, branch: branchByHead.get(node.id) ?? null }, [[node.id]]);
+          push({ kind: "prompt", key: node.id, turn, node, body: b, branch: branchByHead.get(node.id) ?? null }, [
+            [node.id],
+          ]);
         } else if (b.origin.kind === "taskNotification") {
           push({ kind: "notification", key: node.id, turn, node, body: b }, [[node.id]]);
         } else {
@@ -348,7 +396,10 @@ export function buildRows(input: GroupingInput): Grouping {
       case "compactBoundary": {
         endRun();
         const next = nodes[i + 1];
-        const summary = next && next.body.kind === "compactSummary" && inheritedIds.has(next.id) === inheritedIds.has(node.id) ? next : null;
+        const summary =
+          next && next.body.kind === "compactSummary" && inheritedIds.has(next.id) === inheritedIds.has(node.id)
+            ? next
+            : null;
         const anchors: Array<[string, string?]> = [[node.id]];
         if (summary) {
           anchors.push([summary.id]);
@@ -375,7 +426,8 @@ export function buildRows(input: GroupingInput): Grouping {
     push({ kind: "orphanHeader", key: "orphans", turn, count: orphans.length });
     for (const run of orphans) push({ kind: "orphan", key: `orphan:${run.agentId}`, turn, run });
   }
-  if (agent?.finalText) push({ kind: "finalResult", key: `final:${agent.agentId}`, turn, run: agent, text: agent.finalText });
+  if (agent?.finalText)
+    push({ kind: "finalResult", key: `final:${agent.agentId}`, turn, run: agent, text: agent.finalText });
 
   const liveFold = markAnswers(rows);
   return { rows, index, groupOf, toolNode, cardCalls, inheritedIds, compactKeyOf, liveFold };
@@ -470,7 +522,9 @@ export function describeCalls(calls: ToolCallBlock[]): { text: string; targets: 
     commands && `运行 ${commands} 条命令`,
     searches && `搜索 ${searches} 次`,
   ].filter(Boolean);
-  const text = parts.length ? parts.join("、") + (other ? ` 等 ${calls.length} 次工具调用` : "") : `${calls.length} 次工具调用`;
+  const text = parts.length
+    ? parts.join("、") + (other ? ` 等 ${calls.length} 次工具调用` : "")
+    : `${calls.length} 次工具调用`;
   return { text, targets };
 }
 

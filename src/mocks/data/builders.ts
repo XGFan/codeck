@@ -13,7 +13,10 @@ export const tok = (input: number, output: number, cacheRead = 0, cacheCreation 
 });
 
 export const sumTok = (...t: TokenTotals[]): TokenTotals =>
-  t.reduce((a, b) => tok(a.input + b.input, a.output + b.output, a.cacheRead + b.cacheRead, a.cacheCreation + b.cacheCreation), tok(0, 0));
+  t.reduce(
+    (a, b) => tok(a.input + b.input, a.output + b.output, a.cacheRead + b.cacheRead, a.cacheCreation + b.cacheCreation),
+    tok(0, 0),
+  );
 
 /** USD per MTok: input, output, cache read, cache write (5-minute). */
 const RATES: Record<string, [number, number, number, number]> = {

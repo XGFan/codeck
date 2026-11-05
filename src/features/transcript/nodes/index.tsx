@@ -61,7 +61,14 @@ export function RowView({ row }: { row: Row }) {
     case "node":
       return <NodeView node={row.node} />;
     case "inheritedBanner":
-      return <InheritedBanner range={row.range} count={row.count} expanded={row.expanded} lastTimestampMs={row.lastTimestampMs} />;
+      return (
+        <InheritedBanner
+          range={row.range}
+          count={row.count}
+          expanded={row.expanded}
+          lastTimestampMs={row.lastTimestampMs}
+        />
+      );
     case "inheritedDivider":
       return <InheritedDivider />;
     case "orphanHeader":
@@ -86,7 +93,11 @@ function FoldRow({ row }: { row: Extract<Row, { kind: "fold" }> }) {
       onClick={() => useUi.getState().setExpanded(row.key, !row.open)}
       className="flex min-h-7 w-full items-center gap-2 text-[13px] text-secondary hover:text-text"
     >
-      {row.open ? <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />}
+      {row.open ? (
+        <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
+      ) : (
+        <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
+      )}
       <span className="shrink-0">{row.ms != null ? `已处理 ${elapsed(row.ms)}` : "过程"}</span>
       {parts && <span className="shrink-0 text-secondary/80">· {parts}</span>}
       <span className="h-px flex-1 bg-border" />

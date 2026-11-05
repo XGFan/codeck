@@ -66,13 +66,19 @@ export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; 
           data-testid="ask"
           data-failed={failed || undefined}
           data-answering={answering ? "" : undefined}
-          className={cn("w-full overflow-hidden rounded-lg border", failed ? "border-error/30" : answering ? "border-live-waiting/60 shadow-sm" : "border-border")}
+          className={cn(
+            "w-full overflow-hidden rounded-lg border",
+            failed ? "border-error/30" : answering ? "border-live-waiting/60 shadow-sm" : "border-border",
+          )}
         >
           <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
             <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
             <span className="font-semibold">向你提问</span>
             {questions.length > 1 && <span className="text-secondary">{questions.length} 个问题</span>}
-            <span data-testid="ask-status" className={cn("ml-auto", failed ? "text-error" : answering ? "text-live-waiting" : "text-secondary")}>
+            <span
+              data-testid="ask-status"
+              className={cn("ml-auto", failed ? "text-error" : answering ? "text-live-waiting" : "text-secondary")}
+            >
               {status}
             </span>
           </div>
@@ -80,11 +86,22 @@ export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; 
             {answering ? (
               <QuestionForm r={answering.r} c={answering.c} />
             ) : (
-              questions.map((q, i) => <QuestionView key={`${i}|${q.question}`} q={q} answer={answers[q.question]} note={notes[q.question]?.notes} />)
+              questions.map((q, i) => (
+                <QuestionView
+                  key={`${i}|${q.question}`}
+                  q={q}
+                  answer={answers[q.question]}
+                  note={notes[q.question]?.notes}
+                />
+              ))
             )}
             {fallback && <div className="text-[12px] whitespace-pre-wrap text-secondary">{fallback}</div>}
           </div>
-          {failed && <div className="border-t border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">{result.text}</div>}
+          {failed && (
+            <div className="border-t border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">
+              {result.text}
+            </div>
+          )}
         </div>
       </Anchor>
     </AssistantSegment>
@@ -101,7 +118,11 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
     <div data-testid="ask-question" className="flex flex-col gap-1.5">
       {/* One paragraph: a long question wraps back to the left edge, under the tag. */}
       <div data-testid="ask-legend" className="text-[12px] leading-[1.6]">
-        {q.header && <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">{q.header}</span>}
+        {q.header && (
+          <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">
+            {q.header}
+          </span>
+        )}
         <span className="font-medium">{q.question}</span>
         {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
       </div>
@@ -111,16 +132,25 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
           <div
             key={`${i}|${o.label}`}
             data-chosen={on || undefined}
-            className={cn("flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-[12px]", on ? "border-accent/50 bg-selection" : "border-border")}
+            className={cn(
+              "flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-[12px]",
+              on ? "border-accent/50 bg-selection" : "border-border",
+            )}
           >
             <div className="flex items-start gap-2">
-              <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">{on && <Check size={13} strokeWidth={2.2} />}</span>
+              <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">
+                {on && <Check size={13} strokeWidth={2.2} />}
+              </span>
               <span className={cn(answer && !on && "text-secondary")}>
                 <span className="font-medium">{o.label}</span>
                 {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
               </span>
             </div>
-            {on && o.preview && <pre className="m-0 ml-5.5 overflow-x-auto font-mono text-[11.5px] leading-snug text-text/80">{o.preview}</pre>}
+            {on && o.preview && (
+              <pre className="m-0 ml-5.5 overflow-x-auto font-mono text-[11.5px] leading-snug text-text/80">
+                {o.preview}
+              </pre>
+            )}
           </div>
         );
       })}

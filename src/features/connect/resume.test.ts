@@ -30,13 +30,19 @@ describe("resumeFailure", () => {
   ];
 
   it("takes claude's error line", () => {
-    expect(resumeFailure(screen, 3)).toBe("No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3");
+    expect(resumeFailure(screen, 3)).toBe(
+      "No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3",
+    );
   });
 
   it("finds it under a two-line prompt, or before the prompt is drawn", () => {
     const twoLine = [...screen.slice(0, 3), "~/work on main", "❯", ""];
-    expect(resumeFailure(twoLine, 4)).toBe("No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3");
-    expect(resumeFailure(screen.slice(0, 3), 3)).toBe("No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3");
+    expect(resumeFailure(twoLine, 4)).toBe(
+      "No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3",
+    );
+    expect(resumeFailure(screen.slice(0, 3), 3)).toBe(
+      "No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3",
+    );
   });
 
   it("else the last line above the cursor (the prompt starts there)", () => {

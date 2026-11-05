@@ -41,7 +41,8 @@ export const EFFORTS = [
   { level: "max", label: "Max" },
 ] as const;
 
-export const effortLabel = (effort: string) => EFFORTS.find((e) => e.level === effort)?.label ?? effort.charAt(0).toUpperCase() + effort.slice(1);
+export const effortLabel = (effort: string) =>
+  EFFORTS.find((e) => e.level === effort)?.label ?? effort.charAt(0).toUpperCase() + effort.slice(1);
 
 /** The aliases `/model` takes; 默认 follows the account's default. */
 const MODELS = [
@@ -94,7 +95,11 @@ export function ModelPicker({ c }: { c: ConnState }) {
       <DropdownMenuContent align="end" side="top" className="min-w-56" data-testid="model-menu">
         <DropdownMenuLabel>模型 · 也会成为新 Session 的默认</DropdownMenuLabel>
         {MODELS.map((m) => (
-          <DropdownMenuCheckboxItem key={m.alias} checked={m.alias === family} onCheckedChange={() => setModel(m.alias)}>
+          <DropdownMenuCheckboxItem
+            key={m.alias}
+            checked={m.alias === family}
+            onCheckedChange={() => setModel(m.alias)}
+          >
             {m.label}
           </DropdownMenuCheckboxItem>
         ))}
@@ -107,7 +112,9 @@ export function ModelPicker({ c }: { c: ConnState }) {
                 <span className="ml-auto text-secondary">{effortLabel(c.effort)}</span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-64" data-testid="effort-menu">
-                <div className="px-2 pt-1 pb-1.5 text-[12px] leading-snug text-secondary">思考等级越高，回答越周全，但更慢、更耗用量。</div>
+                <div className="px-2 pt-1 pb-1.5 text-[12px] leading-snug text-secondary">
+                  思考等级越高，回答越周全，但更慢、更耗用量。
+                </div>
                 {EFFORTS.map((e) => (
                   <DropdownMenuCheckboxItem
                     key={e.level}

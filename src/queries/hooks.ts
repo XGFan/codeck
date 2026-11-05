@@ -37,7 +37,12 @@ export const useIndexStatus = () =>
 export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryFn: () => api.listProjects() });
 
 export const useSessions = (query: SessionQuery, enabled = true) =>
-  useQuery({ queryKey: queryKeys.sessions(query), queryFn: () => api.listSessions(query), placeholderData: keepPreviousData, enabled });
+  useQuery({
+    queryKey: queryKeys.sessions(query),
+    queryFn: () => api.listSessions(query),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
 
 /** Session list for the current project / sort selection in the UI store. */
 export function useSessionList() {
@@ -104,4 +109,9 @@ export const useDiagnostics = () => useQuery({ queryKey: queryKeys.diagnostics, 
 
 /** Slash commands for a Connected Session started in `cwd`; asked again when stale (commands are files that change). */
 export const useSlashCommands = (cwd: string | null, enabled = true) =>
-  useQuery({ queryKey: queryKeys.slashCommands(cwd), queryFn: () => api.listSlashCommands(cwd), staleTime: 30_000, enabled });
+  useQuery({
+    queryKey: queryKeys.slashCommands(cwd),
+    queryFn: () => api.listSlashCommands(cwd),
+    staleTime: 30_000,
+    enabled,
+  });

@@ -27,7 +27,11 @@ const end: TurnEndEvent = {
 
 describe("conn reducer", () => {
   it("ends main-line requests when waiting ends, a background Subagent's when its tool ran", () => {
-    const waiting: InMsg = { type: "state", state: "waiting", waiting: { kind: "permission", waiting_for: "permission prompt" } };
+    const waiting: InMsg = {
+      type: "state",
+      state: "waiting",
+      waiting: { kind: "permission", waiting_for: "permission prompt" },
+    };
     let s = fold([waiting, perm("t1"), perm("t2", "agent-1")]);
     expect(s.requests.map((r) => r.request_id)).toEqual(["t1", "t2"]);
     s = apply(s, { type: "state", state: "busy" });
@@ -42,14 +46,26 @@ describe("conn reducer", () => {
     let s = fold([perm("t1"), { ...perm("t1"), options: [{ label: "Yes", meaning: "allow" }] }]);
     expect(s.requests).toHaveLength(1);
     expect((s.requests[0] as PermissionRequestEvent).options).toHaveLength(1);
-    s = fold([{ type: "dialog", waiting_for: "x", lines: ["a"] }, { type: "unrecognized", context: "c", lines: ["b"] }], s);
+    s = fold(
+      [
+        { type: "dialog", waiting_for: "x", lines: ["a"] },
+        { type: "unrecognized", context: "c", lines: ["b"] },
+      ],
+      s,
+    );
     expect(s.requests.map((r) => r.type)).toEqual(["permission_request", "unrecognized"]);
   });
 
   it("keeps the last turn's end and shows progress only while busy", () => {
     let s = fold([{ type: "progress", text: "Thinking…", verb: "Thinking", elapsed_s: 1, tokens: null }]);
     expect(s.progress).toBeNull();
-    s = fold([{ type: "state", state: "busy" }, { type: "progress", text: "Thinking…", verb: "Thinking", elapsed_s: 1, tokens: null }], s);
+    s = fold(
+      [
+        { type: "state", state: "busy" },
+        { type: "progress", text: "Thinking…", verb: "Thinking", elapsed_s: 1, tokens: null },
+      ],
+      s,
+    );
     expect(s.progress?.text).toBe("Thinking…");
     s = apply(s, end);
     expect(s.progress).toBeNull();

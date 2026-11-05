@@ -12,7 +12,9 @@ type Body<K extends Node["body"]["kind"]> = Extract<Node["body"], { kind: K }>;
 export function SystemLine({ body }: { body: Body<"system"> }) {
   const warn = body.level === "error" || body.level === "warning";
   return (
-    <div className={cn("flex items-baseline gap-2 text-[12px]", body.level === "error" ? "text-error" : "text-secondary")}>
+    <div
+      className={cn("flex items-baseline gap-2 text-[12px]", body.level === "error" ? "text-error" : "text-secondary")}
+    >
       <span className="shrink-0 rounded border border-border px-1 text-[11px]">{warn ? "警告" : "系统"}</span>
       <span className="min-w-0 break-words whitespace-pre-wrap">{body.text}</span>
     </div>
@@ -44,7 +46,12 @@ export function CompactRow({ boundary, summary }: { boundary: Node; summary: Nod
           {pre != null && <span> · 压缩前 {formatTokens(pre)}</span>}
         </span>
         {summary && (
-          <button type="button" aria-expanded={open} onClick={() => toggle(key)} className="text-accent hover:underline">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => toggle(key)}
+            className="text-accent hover:underline"
+          >
             {open ? "收起摘要" : "查看摘要"}
           </button>
         )}
@@ -52,7 +59,10 @@ export function CompactRow({ boundary, summary }: { boundary: Node; summary: Nod
       </div>
       {summary && open && summary.body.kind === "compactSummary" && (
         <Anchor nodeId={summary.id}>
-          <Markdown text={summary.body.text} className="rounded-lg border border-border bg-list px-3 py-2 text-[12px]" />
+          <Markdown
+            text={summary.body.text}
+            className="rounded-lg border border-border bg-list px-3 py-2 text-[12px]"
+          />
         </Anchor>
       )}
     </Anchor>

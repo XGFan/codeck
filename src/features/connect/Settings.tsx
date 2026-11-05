@@ -48,7 +48,9 @@ export function CcrpcSettings() {
       )}
       <Row label="ccrpc" testId="set-ccrpc">
         <code className="break-all font-mono text-[13px]">{info?.ccrpcPath ?? (infoError ? "-" : "…")}</code>
-        <div className="mt-1 text-[12px] text-secondary">依次取登录 shell 环境变量 CODECK_CCRPC、~/.local/bin/ccrpc、PATH 里的 ccrpc。</div>
+        <div className="mt-1 text-[12px] text-secondary">
+          依次取登录 shell 环境变量 CODECK_CCRPC、~/.local/bin/ccrpc、PATH 里的 ccrpc。
+        </div>
       </Row>
       <Row label="ccrpc doctor" testId="set-doctor">
         {info ? (
@@ -59,7 +61,11 @@ export function CcrpcSettings() {
                 <li
                   key={d.text}
                   data-level={d.level}
-                  className={cn("flex gap-2", d.level === "fail" && "rounded bg-error-bg px-2 py-1 font-semibold text-error", d.level === "warn" && "text-live-waiting")}
+                  className={cn(
+                    "flex gap-2",
+                    d.level === "fail" && "rounded bg-error-bg px-2 py-1 font-semibold text-error",
+                    d.level === "warn" && "text-live-waiting",
+                  )}
                 >
                   <span className="w-10 shrink-0 font-mono text-[12px] uppercase">{d.level}</span>
                   <span className="min-w-0 break-all">{[name, rest.join(" ")].filter(Boolean).join("：")}</span>
@@ -110,7 +116,10 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
       setKey("");
       setResult({ ok: true, text: "已保存，之后新建的连接生效" });
     } catch (e) {
-      setResult({ ok: false, text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}` });
+      setResult({
+        ok: false,
+        text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`,
+      });
     }
     setBusy(false);
   };
@@ -145,25 +154,45 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
       </label>
       <label className={field}>
         <span className="text-secondary">Endpoint</span>
-        <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={a.shellBaseUrl ?? DEFAULT_BASE_URL} data-testid="analyzer-base-url" />
+        <Input
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder={a.shellBaseUrl ?? DEFAULT_BASE_URL}
+          data-testid="analyzer-base-url"
+        />
       </label>
       <label className={field}>
         <span className="text-secondary">模型</span>
-        <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={a.shellModel ?? DEFAULT_MODEL} data-testid="analyzer-model" />
+        <Input
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder={a.shellModel ?? DEFAULT_MODEL}
+          data-testid="analyzer-model"
+        />
       </label>
       <div className="flex items-center gap-2">
         <Button type="submit" className="h-8" disabled={busy} data-testid="analyzer-save">
           保存
         </Button>
         {a.keySource === "settings" && (
-          <Button type="button" variant="outline" className="h-8" disabled={busy} onClick={() => void submit("")} data-testid="analyzer-clear-key">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-8"
+            disabled={busy}
+            onClick={() => void submit("")}
+            data-testid="analyzer-clear-key"
+          >
             清除保存的 Key
           </Button>
         )}
-        {result && <span className={cn("text-[12px]", result.ok ? "text-secondary" : "text-error")}>{result.text}</span>}
+        {result && (
+          <span className={cn("text-[12px]", result.ok ? "text-secondary" : "text-error")}>{result.text}</span>
+        )}
       </div>
       <div className="text-[12px] text-secondary">
-        Anthropic Messages 协议（POST Endpoint/v1/messages），留空的项用登录 shell 的 CCRPC_ANALYZER_* 或 ccrpc 的默认值。Key 存在本机设置文件，仅本人可读。
+        Anthropic Messages 协议（POST Endpoint/v1/messages），留空的项用登录 shell 的 CCRPC_ANALYZER_* 或 ccrpc
+        的默认值。Key 存在本机设置文件，仅本人可读。
       </div>
     </form>
   );
@@ -193,20 +222,28 @@ function HideNewPanes({ saved }: { saved: boolean }) {
       disabled={busy}
       data-testid={hide ? "hide-new-panes-hide" : "hide-new-panes-show"}
       onClick={() => void choose(hide)}
-      className={cn("h-7 rounded-md px-3 text-[13px]", saved === hide ? "bg-selection font-semibold text-text" : "text-secondary hover:bg-selection/60")}
+      className={cn(
+        "h-7 rounded-md px-3 text-[13px]",
+        saved === hide ? "bg-selection font-semibold text-text" : "text-secondary hover:bg-selection/60",
+      )}
     >
       {label}
     </button>
   );
   return (
     <div className="flex flex-col gap-2 text-[13px]">
-      <div role="radiogroup" aria-label="新开的 Pane" className="flex w-fit gap-1 rounded-lg border border-border p-0.5">
+      <div
+        role="radiogroup"
+        aria-label="新开的 Pane"
+        className="flex w-fit gap-1 rounded-lg border border-border p-0.5"
+      >
         {opt(false, "显示")}
         {opt(true, "隐藏")}
       </div>
       {error && <span className="text-[12px] text-error">{error}</span>}
       <div className="text-[12px] text-secondary">
-        新建与 Resume 的 Session 在 clay 里新开一个 Pane。选「隐藏」时它收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示；之后可在标题栏切换。
+        新建与 Resume 的 Session 在 clay 里新开一个 Pane。选「隐藏」时它收进 ToH Mac 的隐藏窗口，iOS 与 web
+        照常显示；之后可在标题栏切换。
       </div>
     </div>
   );
@@ -233,7 +270,10 @@ function LaunchRulesForm({ saved }: { saved: LaunchRule[] }) {
       await save(rules);
       setResult({ ok: true, text: "已保存，之后新建的 Session 生效" });
     } catch (e) {
-      setResult({ ok: false, text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}` });
+      setResult({
+        ok: false,
+        text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`,
+      });
     }
     setBusy(false);
   };
@@ -241,11 +281,21 @@ function LaunchRulesForm({ saved }: { saved: LaunchRule[] }) {
   return (
     <div className="flex flex-col gap-2 text-[13px]">
       {rules.map((r, i) => (
-        <div key={r.dir} data-testid="launch-rule" className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2">
+        <div
+          key={r.dir}
+          data-testid="launch-rule"
+          className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2"
+        >
           <code className="truncate font-mono text-[12px]" title={r.dir}>
             {r.dir}
           </code>
-          <Input value={r.args} onChange={(e) => edit(i, e.target.value)} placeholder="--add-dir=/path/to/dir" aria-label={`${r.dir} 的启动参数`} data-testid="launch-rule-args" />
+          <Input
+            value={r.args}
+            onChange={(e) => edit(i, e.target.value)}
+            placeholder="--add-dir=/path/to/dir"
+            aria-label={`${r.dir} 的启动参数`}
+            data-testid="launch-rule-args"
+          />
           <Button
             type="button"
             variant="ghost"
@@ -260,16 +310,32 @@ function LaunchRulesForm({ saved }: { saved: LaunchRule[] }) {
         </div>
       ))}
       <div className="flex items-center gap-2">
-        <Button type="button" variant="outline" className="h-8" disabled={busy} onClick={() => void add()} data-testid="launch-rule-add">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-8"
+          disabled={busy}
+          onClick={() => void add()}
+          data-testid="launch-rule-add"
+        >
           添加目录…
         </Button>
-        <Button type="button" className="h-8" disabled={busy} onClick={() => void submit()} data-testid="launch-rules-save">
+        <Button
+          type="button"
+          className="h-8"
+          disabled={busy}
+          onClick={() => void submit()}
+          data-testid="launch-rules-save"
+        >
           保存
         </Button>
-        {result && <span className={cn("text-[12px]", result.ok ? "text-secondary" : "text-error")}>{result.text}</span>}
+        {result && (
+          <span className={cn("text-[12px]", result.ok ? "text-secondary" : "text-error")}>{result.text}</span>
+        )}
       </div>
       <div className="text-[12px] text-secondary">
-        在目录或其子目录里新建 Session 时，把参数追加给 claude；多个目录都包含它时用最深的那个。参数按 shell 规则拆分，~ 与 $VAR 按登录 shell 的环境展开（单引号里的不展开）；参数为空的目录保存时去掉。
+        在目录或其子目录里新建 Session 时，把参数追加给 claude；多个目录都包含它时用最深的那个。参数按 shell 规则拆分，~
+        与 $VAR 按登录 shell 的环境展开（单引号里的不展开）；参数为空的目录保存时去掉。
       </div>
     </div>
   );

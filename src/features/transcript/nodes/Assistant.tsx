@@ -97,7 +97,10 @@ function Tool({ node, call }: { node: Node; call: ToolCallBlock }) {
 function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
   const failed = row.failedCount > 0;
   const open = useUi((s) => isGroupOpen(row, s.expanded, toolKey));
-  const { text, targets } = useMemo(() => describeCalls(row.items.flatMap((it) => (it.type === "call" ? [it.call] : []))), [row.items]);
+  const { text, targets } = useMemo(
+    () => describeCalls(row.items.flatMap((it) => (it.type === "call" ? [it.call] : []))),
+    [row.items],
+  );
   return (
     <div data-testid="tool-group" data-open={open || undefined} className="flex w-full flex-col items-start gap-1.5">
       <button
@@ -106,7 +109,11 @@ function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
         onClick={() => useUi.getState().setExpanded(row.key, !open)}
         className="flex min-h-7 max-w-full items-center gap-2 text-[13px] text-secondary hover:text-text"
       >
-        {open ? <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />}
+        {open ? (
+          <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        )}
         <span className="shrink-0 text-text/90">{text}</span>
         <span className="min-w-0 truncate font-mono text-[12px] text-secondary">{targets.join(" · ")}</span>
         {failed && (
@@ -157,10 +164,17 @@ function Thinking({ nodeId, text }: { nodeId: string; text: string }) {
         <span data-testid="thinking-lines" className="text-[12px]">
           {lines} 行
         </span>
-        {open ? <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden /> : <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />}
+        {open ? (
+          <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        )}
       </button>
       {open && (
-        <div data-testid="thinking-text" className="mt-0.5 mb-1 ml-[22px] rounded-lg bg-list px-3 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap text-secondary">
+        <div
+          data-testid="thinking-text"
+          className="mt-0.5 mb-1 ml-[22px] rounded-lg bg-list px-3 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap text-secondary"
+        >
           {body}
         </div>
       )}

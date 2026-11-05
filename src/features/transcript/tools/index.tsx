@@ -60,4 +60,3 @@ export function ToolCallView({ nodeId, call, startMs, sessionId, scope }: ToolCa
       return <GenericView {...p} summary={summarizeInput(call.inputJson)} />;
   }
 }
-

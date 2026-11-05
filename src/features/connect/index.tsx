@@ -24,7 +24,13 @@ export { connFor, lsEntryFor, useConnect } from "./store";
  * arrives, from the Session list it already loaded (unfiltered at startup) — no query of its own.
  */
 /** Every Session, unfiltered: the Live set until the first `LiveChanged` snapshot arrives. */
-const ALL_SESSIONS: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
+const ALL_SESSIONS: SessionQuery = {
+  projectIds: [],
+  sort: "lastActive",
+  descending: true,
+  timeRange: null,
+  drill: null,
+};
 
 function useLive(): { id: string; waiting: boolean }[] {
   const live = useConnect((s) => s.live);
@@ -43,7 +49,14 @@ function useLive(): { id: string; waiting: boolean }[] {
 function useWaiting(): string[] {
   const live = useLive();
   const conns = useConnect((s) => s.conns);
-  return useMemo(() => waitingSessions(live.filter((l) => l.waiting).map((l) => l.id), conns), [live, conns]);
+  return useMemo(
+    () =>
+      waitingSessions(
+        live.filter((l) => l.waiting).map((l) => l.id),
+        conns,
+      ),
+    [live, conns],
+  );
 }
 
 /**
@@ -82,7 +95,8 @@ export function ElsewhereBanner() {
       const other = waiting.find((id) => id !== cur);
       if ((cur != null && waiting.includes(cur)) || !other) return setShown(null);
       const ls = useConnect.getState().ls.find((e) => e.session_id === other);
-      const title = list?.find((s) => s.id === other)?.title ?? ls?.title ?? ls?.cwd?.split("/").pop() ?? "另一个 Session";
+      const title =
+        list?.find((s) => s.id === other)?.title ?? ls?.title ?? ls?.cwd?.split("/").pop() ?? "另一个 Session";
       setShown({ id: other, title });
     };
     window.addEventListener("focus", check);
@@ -97,7 +111,12 @@ export function ElsewhereBanner() {
   if (!shown) return null;
   return (
     <div className="flex shrink-0 items-center gap-2 bg-selection px-6 py-1.5 text-[12px] text-accent">
-      <button type="button" data-testid="elsewhere" onClick={() => select(shown.id)} className="min-w-0 flex-1 truncate text-left">
+      <button
+        type="button"
+        data-testid="elsewhere"
+        onClick={() => select(shown.id)}
+        className="min-w-0 flex-1 truncate text-left"
+      >
         {shown.title} 在等你作答，点此切过去
       </button>
       <button type="button" aria-label="关闭" onClick={() => setShown(null)}>
@@ -130,7 +149,11 @@ export function NewSessionError() {
   const setNewError = useConnect((s) => s.setNewError);
   if (!error) return null;
   return (
-    <div role="alert" data-testid="new-session-error" className="flex shrink-0 items-center gap-2 border-b border-border bg-error-bg px-3.5 py-1.5 text-[12px] text-error">
+    <div
+      role="alert"
+      data-testid="new-session-error"
+      className="flex shrink-0 items-center gap-2 border-b border-border bg-error-bg px-3.5 py-1.5 text-[12px] text-error"
+    >
       <span className="min-w-0 flex-1">{error}</span>
       <button type="button" aria-label="关闭" onClick={() => setNewError(null)}>
         <X size={12} aria-hidden />
@@ -143,7 +166,9 @@ export function NewSessionError() {
 export function useQuestionRequest(toolUseId: string): { r: QuestionEvent; c: ConnState } | null {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
-  const r = c?.requests.find((x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !x.agent_id);
+  const r = c?.requests.find(
+    (x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !x.agent_id,
+  );
   return c && r && !c.procExit && !c.sessionExited ? { r, c } : null;
 }
 
@@ -223,12 +248,22 @@ function Panel({ c }: { c: ConnState }) {
             icon={<Unplug size={18} strokeWidth={1.7} />}
             title={`ccrpc 已退出（${c.procExit.code == null ? "被信号终止" : `退出码 ${c.procExit.code}`}）`}
             desc={c.procExit.stderr ? lastLine(c.procExit.stderr) : undefined}
-            action={c.holderId ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" } : undefined}
+            action={
+              c.holderId
+                ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" }
+                : undefined
+            }
           />
         )}
         {c.sessionExited && !c.procExit && <SessionExited c={c} />}
         {c.notices.map((n) => (
-          <NoticeCard key={n.id} testId="notice" icon={<Info size={18} strokeWidth={1.7} />} title={n.text} onClose={() => dismiss(c.conn, n.id)} />
+          <NoticeCard
+            key={n.id}
+            testId="notice"
+            icon={<Info size={18} strokeWidth={1.7} />}
+            title={n.text}
+            onClose={() => dismiss(c.conn, n.id)}
+          />
         ))}
         {storeError && <ErrorNotice text={storeError} onClose={() => setError(errorKey(c), null)} />}
         {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
@@ -252,7 +287,10 @@ function SessionExited({ c }: { c: ConnState }) {
   // Back in clay already (resumed in the terminal): 「Connect」 in the header, not a second claude.
   const inLs = useConnect((s) => lsEntryFor(s, sessionId) != null);
   const busy = useConnect((s) => (sessionId ? !!s.resuming[sessionId] : false));
-  const offer = d && sessionId ? resumeOffer({ live: d.summary.live != null || inLs, cwd: d.cwd, cwdMissing: d.cwdMissing, ccrpcError }) : null;
+  const offer =
+    d && sessionId
+      ? resumeOffer({ live: d.summary.live != null || inLs, cwd: d.cwd, cwdMissing: d.cwdMissing, ccrpcError })
+      : null;
   return (
     <NoticeCard
       testId="session-exit"
@@ -264,7 +302,10 @@ function SessionExited({ c }: { c: ConnState }) {
               label: "Resume",
               primary: true,
               disabled: offer.kind === "disabled" || busy,
-              title: offer.kind === "disabled" ? offer.why : "在新的 clay Pane 里 claude --resume，从 Main Line 末尾继续，然后 Connect",
+              title:
+                offer.kind === "disabled"
+                  ? offer.why
+                  : "在新的 clay Pane 里 claude --resume，从 Main Line 末尾继续，然后 Connect",
               testId: "session-exit-resume",
               onClick: () => void startResume(sessionId, d.cwd!),
             }
@@ -285,7 +326,10 @@ export function ConnectTail() {
   if (c.state === "busy")
     return (
       <div className="flex items-center gap-2 pt-[18px] text-[13px] text-claude" data-testid="progress">
-        <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-claude/25 border-t-claude" aria-hidden />
+        <span
+          className="size-3 shrink-0 animate-spin rounded-full border-2 border-claude/25 border-t-claude"
+          aria-hidden
+        />
         <span className="min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
       </div>
     );
@@ -301,7 +345,11 @@ function LastTurn({ ev }: { ev: TurnEndEvent }) {
     ev.api_cost != null ? `Cost ${formatCost(ev.api_cost)}` : null,
   ].filter(Boolean);
   return (
-    <div data-testid="turn-end" data-prompt-id={ev.prompt_id ?? ""} className="flex flex-wrap items-center gap-x-3 pt-3 text-[11px] text-secondary">
+    <div
+      data-testid="turn-end"
+      data-prompt-id={ev.prompt_id ?? ""}
+      className="flex flex-wrap items-center gap-x-3 pt-3 text-[11px] text-secondary"
+    >
       <span>上一轮</span>
       {parts.length > 0 && <span>{parts.join(" · ")}</span>}
       {ev.aborted && <span className="font-semibold">已中止</span>}

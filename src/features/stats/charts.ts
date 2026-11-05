@@ -42,7 +42,12 @@ export const themes: Record<"light" | "dark", Theme> = {
   },
 };
 
-export const FAMILY_LABEL: Record<ModelFamily, string> = { opus: "opus", sonnet: "sonnet", haiku: "haiku", other: "其他" };
+export const FAMILY_LABEL: Record<ModelFamily, string> = {
+  opus: "opus",
+  sonnet: "sonnet",
+  haiku: "haiku",
+  other: "其他",
+};
 
 export function family(model: string): ModelFamily {
   const m = model.toLowerCase();
@@ -53,7 +58,8 @@ export type Metric = "all" | "input" | "output";
 
 /** Input counts everything the model read: new input plus cache reads and writes. */
 const inputOf = (d: DailyModelTokens) => d.input + d.cacheRead + d.cacheCreation;
-const metricValue = (d: DailyModelTokens, m: Metric) => (m === "output" ? d.output : m === "input" ? inputOf(d) : inputOf(d) + d.output);
+const metricValue = (d: DailyModelTokens, m: Metric) =>
+  m === "output" ? d.output : m === "input" ? inputOf(d) : inputOf(d) + d.output;
 
 /** The two bars per day of the "all" view; `color` is a theme key. */
 export const IO_SERIES = [
@@ -226,7 +232,12 @@ export function activityOption(activity: Activity, t: Theme): ChartOption {
       data: bars.map((b) => String(b.startMs)),
       axisTick: { show: false },
       axisLine: { lineStyle: { color: t.axis } },
-      axisLabel: { color: t.muted, interval: 0, hideOverlap: true, formatter: (v: string) => activityAxisLabel(bucket, Number(v)) },
+      axisLabel: {
+        color: t.muted,
+        interval: 0,
+        hideOverlap: true,
+        formatter: (v: string) => activityAxisLabel(bucket, Number(v)),
+      },
     },
     yAxis: {
       type: "value",

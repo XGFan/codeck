@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createEarlyBuffer, type Early } from "./early";
 
-const line = (n: number): Early => ({ kind: "line", msg: { type: "progress", text: String(n), verb: "", elapsed_s: n, tokens: null } });
+const line = (n: number): Early => ({
+  kind: "line",
+  msg: { type: "progress", text: String(n), verb: "", elapsed_s: n, tokens: null },
+});
 const exit: Early = { kind: "exit", code: 1, stderr: "refused" };
 
 describe("early buffer", () => {

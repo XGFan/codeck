@@ -54,7 +54,9 @@ test("Session 排行按金额倒序，点击打开该 Session", async ({ page })
   await page.getByTestId("nav-stats").click();
   await expect(page.getByTestId("stats-project-filter")).toHaveCount(0);
   const ranks = page.getByTestId("session-rank-row");
-  const costs = await ranks.evaluateAll((rows) => rows.map((r) => Number(/\$([\d,.]+)/.exec(r.textContent ?? "")![1]!.replace(/,/g, ""))));
+  const costs = await ranks.evaluateAll((rows) =>
+    rows.map((r) => Number(/\$([\d,.]+)/.exec(r.textContent ?? "")![1]!.replace(/,/g, ""))),
+  );
   expect(costs).toEqual([...costs].sort((a, b) => b - a));
   const title = (await ranks.first().getAttribute("title"))!;
   await ranks.first().click();
@@ -266,7 +268,8 @@ test("切换时间范围时页面不移动：标题栏、卡片与 Token 卡片�
     page.getByTestId("stat-card").first(),
     page.getByTestId("token-output"),
   ];
-  const positions = async () => Promise.all(watched.map(async (l) => (await l.boundingBox())!).map(async (b) => [(await b).x, (await b).y]));
+  const positions = async () =>
+    Promise.all(watched.map(async (l) => (await l.boundingBox())!).map(async (b) => [(await b).x, (await b).y]));
   const before = await positions();
   for (const name of ["最近 30 天", "全部", "上月", "本周期"]) {
     await pickRange(page, name);
@@ -282,9 +285,12 @@ test("卡片高度随自身内容，不被同行更高的卡片撑高", async ({
   await page.getByTestId("nav-stats").click();
   await page.getByTestId("daily-chart").locator("canvas").first().waitFor();
   // Blank space below each card's last child: its 12px bottom padding plus the border, nothing more.
-  const slack = await page.getByTestId("stats").locator("section").evaluateAll((cards) =>
-    cards.map((c) => c.getBoundingClientRect().bottom - c.lastElementChild!.getBoundingClientRect().bottom),
-  );
+  const slack = await page
+    .getByTestId("stats")
+    .locator("section")
+    .evaluateAll((cards) =>
+      cards.map((c) => c.getBoundingClientRect().bottom - c.lastElementChild!.getBoundingClientRect().bottom),
+    );
   expect(slack.length).toBeGreaterThanOrEqual(3);
   for (const s of slack) expect(s).toBeLessThanOrEqual(14);
 });

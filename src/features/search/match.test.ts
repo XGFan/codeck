@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { ProjectSummary, SessionSummary } from "@/ipc/bindings";
 import { highlight, matchProjects, matchSessions, parseQuery, sessionProjectIds } from "./match";
 
-const session = (id: string, title: string, projectId: string, editedProjectIds: string[] = [], gitBranch: string | null = null) =>
-  ({ id, title, projectId, editedProjectIds, gitBranch }) as SessionSummary;
+const session = (
+  id: string,
+  title: string,
+  projectId: string,
+  editedProjectIds: string[] = [],
+  gitBranch: string | null = null,
+) => ({ id, title, projectId, editedProjectIds, gitBranch }) as SessionSummary;
 
 const names = new Map([
   ["/w", "richemont"],
@@ -25,7 +30,10 @@ describe("parseQuery", () => {
 
 describe("sessionProjectIds", () => {
   it("启动 Project 在前，改动过的其他 Project 随后且不重复", () => {
-    expect(sessionProjectIds(session("a", "", "/w/identity", ["/w/task", "/w/identity"]))).toEqual(["/w/identity", "/w/task"]);
+    expect(sessionProjectIds(session("a", "", "/w/identity", ["/w/task", "/w/identity"]))).toEqual([
+      "/w/identity",
+      "/w/task",
+    ]);
   });
 });
 

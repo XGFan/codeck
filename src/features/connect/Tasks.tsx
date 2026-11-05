@@ -25,7 +25,8 @@ export function Tasks({ c }: { c: ConnState }) {
   // A nested run opens under its parents, as its card's 「进入」 would.
   const stackOf = (agentId: string) => {
     const stack: string[] = [];
-    for (let id: string | null | undefined = agentId; id && !stack.includes(id); id = runs.get(id)?.parentAgentId) stack.unshift(id);
+    for (let id: string | null | undefined = agentId; id && !stack.includes(id); id = runs.get(id)?.parentAgentId)
+      stack.unshift(id);
     return stack;
   };
   const running = c.tasks.filter((t) => t.status === "running");
@@ -38,7 +39,11 @@ export function Tasks({ c }: { c: ConnState }) {
         <Layers size={14} strokeWidth={1.7} aria-hidden /> {running.length} 个后台任务
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content align="end" sideOffset={4} className="z-50 w-96 rounded-md border border-border bg-ground p-2 shadow-lg">
+        <Popover.Content
+          align="end"
+          sideOffset={4}
+          className="z-50 w-96 rounded-md border border-border bg-ground p-2 shadow-lg"
+        >
           <ul className="max-h-80 space-y-1 overflow-y-auto" data-testid="tasks-list">
             {shown.map((t) => (
               <li key={t.id} className="flex items-center gap-2 rounded px-2 py-1 text-[12px]">
@@ -78,7 +83,12 @@ export function Tasks({ c }: { c: ConnState }) {
             ))}
           </ul>
           {done > 0 && (
-            <button type="button" onClick={() => setShowDone((v) => !v)} className="mt-1 px-2 text-[11px] text-secondary hover:text-text" data-testid="tasks-done">
+            <button
+              type="button"
+              onClick={() => setShowDone((v) => !v)}
+              className="mt-1 px-2 text-[11px] text-secondary hover:text-text"
+              data-testid="tasks-done"
+            >
               {showDone ? "隐藏已结束的" : `显示已结束的（${done}）`}
             </button>
           )}

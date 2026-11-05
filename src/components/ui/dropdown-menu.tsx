@@ -15,20 +15,14 @@ export function DropdownMenuContent({
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
-        className={cn(
-          "z-50 min-w-36 rounded-md border border-border bg-ground p-1 shadow-lg",
-          className,
-        )}
+        className={cn("z-50 min-w-36 rounded-md border border-border bg-ground p-1 shadow-lg", className)}
         {...props}
       />
     </DropdownMenuPrimitive.Portal>
   );
 }
 
-export function DropdownMenuItem({
-  className,
-  ...props
-}: ComponentProps<typeof DropdownMenuPrimitive.Item>) {
+export function DropdownMenuItem({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Item>) {
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
@@ -86,7 +80,10 @@ export function DropdownMenuSubTrigger({
   );
 }
 
-export function DropdownMenuSubContent({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+export function DropdownMenuSubContent({
+  className,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.SubContent
@@ -99,12 +96,14 @@ export function DropdownMenuSubContent({ className, ...props }: ComponentProps<t
 
 /** A small grey heading inside a menu. */
 export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Label>) {
-  return <DropdownMenuPrimitive.Label className={cn("px-2 pt-1 pb-0.5 text-[11.5px] text-secondary", className)} {...props} />;
+  return (
+    <DropdownMenuPrimitive.Label
+      className={cn("px-2 pt-1 pb-0.5 text-[11.5px] text-secondary", className)}
+      {...props}
+    />
+  );
 }
 
-export function DropdownMenuSeparator({
-  className,
-  ...props
-}: ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
+export function DropdownMenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
   return <DropdownMenuPrimitive.Separator className={cn("my-1 h-px bg-border", className)} {...props} />;
 }

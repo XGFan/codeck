@@ -9,7 +9,8 @@ const nf = new Intl.NumberFormat("en-US");
 
 const cmpVersion = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
-const errText = (e: unknown) => (e && typeof e === "object" && "message" in e ? String((e as AppError).message) : String(e));
+const errText = (e: unknown) =>
+  e && typeof e === "object" && "message" in e ? String((e as AppError).message) : String(e);
 
 function versionRange(d: Diagnostics): string | null {
   const vs = d.versions.map((v) => v.version).sort(cmpVersion);
@@ -19,11 +20,7 @@ function versionRange(d: Diagnostics): string | null {
 
 function nameCountRows(title: string, rows: NameCount[]): string[] {
   if (rows.length === 0) return [];
-  return [
-    `## ${title}`,
-    ...rows.map((r) => `- \`${r.name}\` × ${r.count}（${r.versions.join(", ")}）`),
-    "",
-  ];
+  return [`## ${title}`, ...rows.map((r) => `- \`${r.name}\` × ${r.count}（${r.versions.join(", ")}）`), ""];
 }
 
 export function diagnosticsReport(d: Diagnostics): string {
@@ -43,10 +40,7 @@ export function diagnosticsReport(d: Diagnostics): string {
     ),
     "",
     ...(d.filesWithFailures.length
-      ? [
-          "## 解析失败的文件",
-          ...d.filesWithFailures.map((f) => `- ${f.path}：${f.failedLines} 行，${f.firstError}`),
-        ]
+      ? ["## 解析失败的文件", ...d.filesWithFailures.map((f) => `- ${f.path}：${f.failedLines} 行，${f.firstError}`)]
       : []),
   ].join("\n");
 }
@@ -154,7 +148,8 @@ export function DiagnosticsContent() {
         <div className="min-w-60 flex-1">
           <h2 className="m-0 text-[15px] font-semibold">格式兼容性</h2>
           <div className="text-xs text-secondary">
-            {nf.format(d.filesScanned)} 个文件 · {nf.format(d.sessions)} 个 Session（空 {nf.format(d.emptySessions)} 个）
+            {nf.format(d.filesScanned)} 个文件 · {nf.format(d.sessions)} 个 Session（空 {nf.format(d.emptySessions)}{" "}
+            个）
             {range ? ` · 涉及 Claude Code ${range}` : ""}
           </div>
         </div>
@@ -173,9 +168,24 @@ export function DiagnosticsContent() {
 
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <Card testId="diag-card-parsed" label="已扫描文件" tone="neutral" value={nf.format(d.filesScanned)} />
-        <Card testId="diag-card-failed" label="解析失败" tone={d.failedLines ? "error" : "neutral"} value={`${nf.format(d.failedLines)} 行`} />
-        <Card testId="diag-card-types" label="未知类型" tone={unknownTypes ? "warn" : "neutral"} value={`${unknownTypes} 种`} />
-        <Card testId="diag-card-tools" label="未知工具" tone={d.unknownTools.length ? "warn" : "neutral"} value={`${d.unknownTools.length} 个`} />
+        <Card
+          testId="diag-card-failed"
+          label="解析失败"
+          tone={d.failedLines ? "error" : "neutral"}
+          value={`${nf.format(d.failedLines)} 行`}
+        />
+        <Card
+          testId="diag-card-types"
+          label="未知类型"
+          tone={unknownTypes ? "warn" : "neutral"}
+          value={`${unknownTypes} 种`}
+        />
+        <Card
+          testId="diag-card-tools"
+          label="未知工具"
+          tone={d.unknownTools.length ? "warn" : "neutral"}
+          value={`${d.unknownTools.length} 个`}
+        />
       </div>
 
       <NameCountSection testId="diag-entry-types" title="未知条目类型" rows={d.unknownEntryTypes} />
@@ -186,19 +196,21 @@ export function DiagnosticsContent() {
       <section data-testid="diag-versions" className="flex flex-col gap-1.5">
         <h3 className="m-0 text-[13px] font-semibold">Claude Code 版本</h3>
         <Table head={["版本", "Session 数", "失败行", "未知项", "最后出现"]}>
-          {[...d.versions].sort((a, b) => cmpVersion(b.version, a.version)).map((v) => (
-            <div
-              key={v.version}
-              className="grid gap-3 border-b border-border px-3 py-1.5 text-xs tabular-nums last:border-b-0"
-              style={{ gridTemplateColumns: "2fr repeat(4, 1fr)" }}
-            >
-              <code className="font-mono">{v.version}</code>
-              <span className="text-right">{nf.format(v.sessions)}</span>
-              <span className={`text-right ${v.failedLines ? "text-error" : ""}`}>{nf.format(v.failedLines)}</span>
-              <span className="text-right">{nf.format(v.unknownItems)}</span>
-              <span className="text-right text-secondary">{new Date(v.lastSeenMs).toLocaleDateString("zh-CN")}</span>
-            </div>
-          ))}
+          {[...d.versions]
+            .sort((a, b) => cmpVersion(b.version, a.version))
+            .map((v) => (
+              <div
+                key={v.version}
+                className="grid gap-3 border-b border-border px-3 py-1.5 text-xs tabular-nums last:border-b-0"
+                style={{ gridTemplateColumns: "2fr repeat(4, 1fr)" }}
+              >
+                <code className="font-mono">{v.version}</code>
+                <span className="text-right">{nf.format(v.sessions)}</span>
+                <span className={`text-right ${v.failedLines ? "text-error" : ""}`}>{nf.format(v.failedLines)}</span>
+                <span className="text-right">{nf.format(v.unknownItems)}</span>
+                <span className="text-right text-secondary">{new Date(v.lastSeenMs).toLocaleDateString("zh-CN")}</span>
+              </div>
+            ))}
         </Table>
       </section>
 
@@ -218,11 +230,7 @@ export function DiagnosticsContent() {
                 </code>
                 <span className="w-16 text-right tabular-nums">{nf.format(f.failedLines)} 行</span>
                 <span className="min-w-40 flex-[2] text-error">{f.firstError}</span>
-                <button
-                  type="button"
-                  className="text-accent hover:underline"
-                  onClick={() => void copy(f.path, f.path)}
-                >
+                <button type="button" className="text-accent hover:underline" onClick={() => void copy(f.path, f.path)}>
                   {copied === f.path ? "已复制" : "复制路径"}
                 </button>
               </div>

@@ -35,7 +35,11 @@ describe("mock list_sessions", () => {
     expect(main.hiddenCount).toBeGreaterThan(0);
     expect(main.nodes.some((n) => n.hidden)).toBe(false);
     expect(main.branchPoints).toHaveLength(1);
-    const alt = await api.getTranscript({ ...req, includeHidden: true, branchChoices: [{ anchorKey: main.branchPoints[0]!.anchorKey, headId: "n05x" }] });
+    const alt = await api.getTranscript({
+      ...req,
+      includeHidden: true,
+      branchChoices: [{ anchorKey: main.branchPoints[0]!.anchorKey, headId: "n05x" }],
+    });
     expect(alt.nodes.some((n) => n.id === "n05x")).toBe(true);
     expect(alt.nodes.some((n) => n.id === "n05")).toBe(false);
   });

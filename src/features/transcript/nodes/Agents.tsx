@@ -10,7 +10,12 @@ import { clock, elapsed, shortModel } from "../util";
 import { Anchor } from "./Anchor";
 import { scrollToNode, useTranscriptCtx } from "./scroll";
 
-const STATE_LABEL: Record<RunState, string> = { running: "运行中", done: "已完成", failed: "失败", noNotice: "未收到完成通知" };
+const STATE_LABEL: Record<RunState, string> = {
+  running: "运行中",
+  done: "已完成",
+  failed: "失败",
+  noNotice: "未收到完成通知",
+};
 
 /** Whether the Subagent Run has ended: running / done / failed, or a background run whose notification never came. */
 export function RunStatus({ state }: { state: RunState | null }) {
@@ -146,8 +151,10 @@ export function ParallelAgents({ cards }: { cards: AgentCardData[] }) {
 }
 
 function stateIcon(state: string | null) {
-  if (FAILED.has(state ?? "")) return <X size={12} strokeWidth={2.2} className="shrink-0 text-error" aria-label="失败" />;
-  if (DONE.has(state ?? "")) return <Check size={12} strokeWidth={2.2} className="shrink-0 text-live" aria-label="完成" />;
+  if (FAILED.has(state ?? ""))
+    return <X size={12} strokeWidth={2.2} className="shrink-0 text-error" aria-label="失败" />;
+  if (DONE.has(state ?? ""))
+    return <Check size={12} strokeWidth={2.2} className="shrink-0 text-live" aria-label="完成" />;
   return <Loader size={12} strokeWidth={2} className="shrink-0 animate-spin text-secondary" aria-label="运行中" />;
 }
 
@@ -176,7 +183,10 @@ export function WorkflowCard({ run, node, call }: { run: WorkflowRun; node: Node
 
   return (
     <Anchor nodeId={node.id} toolUseId={call.toolUseId} className="w-full rounded-[10px]">
-      <div data-testid="workflow-card" className="flex w-full flex-col gap-2 rounded-[10px] border border-border px-3 py-2.5">
+      <div
+        data-testid="workflow-card"
+        className="flex w-full flex-col gap-2 rounded-[10px] border border-border px-3 py-2.5"
+      >
         <div className="flex flex-wrap items-center gap-2">
           <Workflow size={14} strokeWidth={1.5} className="text-text/80" aria-hidden />
           <span className="font-semibold">Workflow</span>
@@ -237,9 +247,14 @@ export function TaskPromptCard({ node, text, title = "任务 PROMPT" }: { node: 
     <Anchor nodeId={node.id}>
       <div data-testid="task-prompt" className="rounded-lg border border-border bg-ground px-3 py-2.5">
         <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold text-secondary">
-          {title}<span className="font-normal">{clock(node.timestampMs)}</span>
+          {title}
+          <span className="font-normal">{clock(node.timestampMs)}</span>
         </div>
-        <div className={cn("text-[12px] break-words whitespace-pre-wrap text-text/80", !open && long && "line-clamp-4")}>{text}</div>
+        <div
+          className={cn("text-[12px] break-words whitespace-pre-wrap text-text/80", !open && long && "line-clamp-4")}
+        >
+          {text}
+        </div>
         {long && (
           <button type="button" onClick={() => toggle(key)} className="mt-1 text-[12px] text-accent hover:underline">
             {open ? "收起" : "展开全部"}

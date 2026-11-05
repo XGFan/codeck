@@ -35,7 +35,13 @@ import type {
 import type { Api, Unlisten } from "./api";
 import { createMockCcrpc } from "./mock-ccrpc";
 import { DAY, NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
-import { appInfo, diagnostics, indexStatus as indexStatusSeed, slashCommands, stats as statsSeed } from "@/mocks/data/misc";
+import {
+  appInfo,
+  diagnostics,
+  indexStatus as indexStatusSeed,
+  slashCommands,
+  stats as statsSeed,
+} from "@/mocks/data/misc";
 import { parseQuery } from "@/features/search/match";
 import { projectBase } from "@/mocks/data/projects";
 import {
@@ -99,7 +105,17 @@ interface AskExtra {
 function docsOf(sessionId: string, nodes: Node[], agentId: string | null, onMainLine: boolean): Doc[] {
   const out: Doc[] = [];
   const push = (n: Node, role: SearchRole, text: string, toolUseId: string | null = null) =>
-    out.push({ sessionId, nodeId: n.id, agentId, toolUseId, role, timestampMs: n.timestampMs, onMainLine, text, hidden: n.hidden });
+    out.push({
+      sessionId,
+      nodeId: n.id,
+      agentId,
+      toolUseId,
+      role,
+      timestampMs: n.timestampMs,
+      onMainLine,
+      text,
+      hidden: n.hidden,
+    });
   for (const n of nodes) {
     const b = n.body;
     if (b.kind === "userPrompt") push(n, "user", b.text);
@@ -198,7 +214,12 @@ function agentChain(agentId: string): string[] {
   return chain;
 }
 
-function buildTranscript(req: { sessionId: string; scope: TranscriptScope; branchChoices: BranchChoice[]; includeHidden: boolean }): Transcript {
+function buildTranscript(req: {
+  sessionId: string;
+  scope: TranscriptScope;
+  branchChoices: BranchChoice[];
+  includeHidden: boolean;
+}): Transcript {
   const d = findData(req.sessionId);
   const revision = (revisions.get(req.sessionId) ?? 0) + 1;
   const isRich = req.sessionId === RICH_ID;
@@ -212,7 +233,9 @@ function buildTranscript(req: { sessionId: string; scope: TranscriptScope; branc
     const sel = selectPath(req.sessionId, req.branchChoices);
     nodes = sel.nodes;
     if (isRich && sel.selectedHeadId) {
-      branchPoints = [{ anchorKey: richBranch.anchorKey, selectedHeadId: sel.selectedHeadId, options: richBranch.options }];
+      branchPoints = [
+        { anchorKey: richBranch.anchorKey, selectedHeadId: sel.selectedHeadId, options: richBranch.options },
+      ];
     }
   }
   const hiddenCount = nodes.filter((n) => n.hidden).length;
@@ -294,7 +317,11 @@ function searchGroups(req: SearchRequest): SearchGroup[] {
     bySession.set(doc.sessionId, hits);
   }
   return [...bySession.entries()]
-    .map(([id, hits]) => ({ session: summaryOf(id), hitCount: hits.length, hits: hits.slice(0, req.hitsPerSession || 5) }))
+    .map(([id, hits]) => ({
+      session: summaryOf(id),
+      hitCount: hits.length,
+      hits: hits.slice(0, req.hitsPerSession || 5),
+    }))
     .sort((a, b) => b.session.lastActiveMs - a.session.lastActiveMs)
     .slice(0, req.maxSessions || 50);
 }
@@ -322,7 +349,8 @@ function findIn(req: FindRequest): FindResult {
   };
   for (const n of tr.nodes) {
     const b = n.body;
-    if (b.kind === "userPrompt" || b.kind === "compactSummary" || b.kind === "system" || b.kind === "attachment") add(n.id, { kind: "text" }, b.text);
+    if (b.kind === "userPrompt" || b.kind === "compactSummary" || b.kind === "system" || b.kind === "attachment")
+      add(n.id, { kind: "text" }, b.text);
     else if (b.kind === "assistant")
       for (const blk of b.blocks) {
         if (blk.kind === "text") add(n.id, { kind: "text" }, blk.text);
@@ -340,7 +368,12 @@ function resolveJump(req: JumpRequest): JumpTarget {
   const alias = richAliases[req.nodeId];
   const nodeId = alias?.nodeId ?? req.nodeId;
   const toolUseId = req.toolUseId ?? alias?.toolUseId ?? null;
-  const doc = allDocs().find((d) => d.sessionId === req.sessionId && d.nodeId === nodeId && (req.agentId ? d.agentId === req.agentId : d.agentId === null));
+  const doc = allDocs().find(
+    (d) =>
+      d.sessionId === req.sessionId &&
+      d.nodeId === nodeId &&
+      (req.agentId ? d.agentId === req.agentId : d.agentId === null),
+  );
   if (!doc) throw appError("notFound", "找不到目标消息");
   const agentPath = doc.agentId ? agentChain(doc.agentId) : [];
   const abandoned = !doc.onMainLine;
@@ -367,7 +400,9 @@ function listSessions(q: SessionQuery): SessionSummary[] {
   if (q.projectIds.length) rows = rows.filter(({ s }) => relatedProjects(s).some((p) => q.projectIds.includes(p)));
   if (q.timeRange) {
     const { fromMs, toMs } = q.timeRange;
-    rows = rows.filter(({ s }) => (fromMs == null || s.lastActiveMs >= fromMs) && (toMs == null || s.lastActiveMs <= toMs));
+    rows = rows.filter(
+      ({ s }) => (fromMs == null || s.lastActiveMs >= fromMs) && (toMs == null || s.lastActiveMs <= toMs),
+    );
   }
   const drill = q.drill;
   if (drill) {
@@ -420,8 +455,17 @@ function sessionDetail(sessionId: string): SessionDetail {
     projectPath: p.path,
     projectMissing: p.missing,
     durationMs: s.lastActiveMs - s.createdMs,
-    models: [...new Set([s.primaryModel, ...(isRich ? richSubagents.map((a) => a.model) : [])].filter((m): m is string => !!m))],
-    tokensMain: { input: s.tokens.input - sub.input, output: s.tokens.output - sub.output, cacheRead: s.tokens.cacheRead - sub.cacheRead, cacheCreation: s.tokens.cacheCreation - sub.cacheCreation },
+    models: [
+      ...new Set(
+        [s.primaryModel, ...(isRich ? richSubagents.map((a) => a.model) : [])].filter((m): m is string => !!m),
+      ),
+    ],
+    tokensMain: {
+      input: s.tokens.input - sub.input,
+      output: s.tokens.output - sub.output,
+      cacheRead: s.tokens.cacheRead - sub.cacheRead,
+      cacheCreation: s.tokens.cacheCreation - sub.cacheCreation,
+    },
     tokensSubagents: sub,
     modelCosts: isRich
       ? richModelCosts()
@@ -433,7 +477,13 @@ function sessionDetail(sessionId: string): SessionDetail {
     versions: ["2.1.91"],
     files: [
       { path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}.jsonl`, size: 1_482_112, role: "main" },
-      ...(isRich ? richSubagents.map((a) => ({ path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}/subagents/agent-${a.agentId}.jsonl`, size: 48_210, role: a.workflowRunId ? ("workflowSubagent" as const) : ("subagent" as const) })) : []),
+      ...(isRich
+        ? richSubagents.map((a) => ({
+            path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}/subagents/agent-${a.agentId}.jsonl`,
+            size: 48_210,
+            role: a.workflowRunId ? ("workflowSubagent" as const) : ("subagent" as const),
+          }))
+        : []),
     ],
     forks: sessionData
       .filter((x) => x.forkOf?.id === sessionId)
@@ -458,7 +508,8 @@ const ACTIVITY_BUCKETS: [ActivityBucket, number][] = [
 function mockActivity(fromMs: number | null, toMs: number | null): Activity {
   const to = toMs ?? NOW;
   const from = fromMs ?? NOW - 400 * DAY;
-  const [bucket, len] = ACTIVITY_BUCKETS.find(([, l]) => Math.floor((to - from) / l) + 2 <= 170) ?? ACTIVITY_BUCKETS[6]!;
+  const [bucket, len] =
+    ACTIVITY_BUCKETS.find(([, l]) => Math.floor((to - from) / l) + 2 <= 170) ?? ACTIVITY_BUCKETS[6]!;
   const t = new Date(from);
   t.setMinutes(0, 0, 0);
   if (len < DAY) t.setHours(t.getHours() - (t.getHours() % (len / HOUR)));
@@ -473,7 +524,11 @@ function mockActivity(fromMs: number | null, toMs: number | null): Activity {
     else t.setHours(t.getHours() + len / HOUR);
     const h = new Date(start).getHours();
     const awake = len >= DAY || (h >= 9 && h <= 23) ? 1 : 0.05;
-    bars.push({ startMs: start, endMs: t.getTime(), messages: Math.round(awake * (Math.abs(Math.sin(i * 12.9898)) * 40) * (len / HOUR) ** 0.5) });
+    bars.push({
+      startMs: start,
+      endMs: t.getTime(),
+      messages: Math.round(awake * (Math.abs(Math.sin(i * 12.9898)) * 40) * (len / HOUR) ** 0.5),
+    });
   }
   return { bucket, bars };
 }
@@ -491,7 +546,13 @@ function getStats(req: StatsRequest): Stats {
     .filter((s) => s.messageCount > 0)
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 10)
-    .map((s) => ({ sessionId: s.id, title: s.title, messages: s.messageCount, outputTokens: s.tokens.output, cost: s.cost }));
+    .map((s) => ({
+      sessionId: s.id,
+      title: s.title,
+      messages: s.messageCount,
+      outputTokens: s.tokens.output,
+      cost: s.cost,
+    }));
   return {
     ...statsSeed,
     // Fixed totals: the seeded charts are not derived from the mock sessions.
@@ -529,7 +590,12 @@ function toolDetail(sessionId: string, toolUseId: string, part: "input" | "outpu
     return { text, truncated: false, totalBytes: text.length, source: "inline" };
   }
   if (call.result?.persisted) {
-    return { text: PERSISTED_FULL, truncated: false, totalBytes: call.result.persisted.sizeBytes, source: "persistedFile" };
+    return {
+      text: PERSISTED_FULL,
+      truncated: false,
+      totalBytes: call.result.persisted.sizeBytes,
+      source: "persistedFile",
+    };
   }
   if (!call.result) return { text: "", truncated: false, totalBytes: 0, source: "missing" };
   return { text: call.result.text, truncated: false, totalBytes: call.result.totalBytes, source: "inline" };
@@ -570,12 +636,22 @@ export function createMockApi(): Api {
 
   return {
     getAppInfo: () => later((): AppInfo => appInfo),
-    setDataRoot: (path) => later((): AppInfo => ({ ...appInfo, dataRoot: path ?? appInfo.dataRoot, dataRootSource: path ? "settings" : "default" })),
+    setDataRoot: (path) =>
+      later((): AppInfo => ({
+        ...appInfo,
+        dataRoot: path ?? appInfo.dataRoot,
+        dataRootSource: path ? "settings" : "default",
+      })),
     getIndexStatus: () => later(() => currentIndexStatus),
     rebuildIndex: () =>
       later(() => {
         const total = indexStatusSeed.filesTotal;
-        dispatch("indexStatus", { ...indexStatusSeed, phase: "scanning", filesDone: 0, textReady: false } satisfies IndexStatus);
+        dispatch("indexStatus", {
+          ...indexStatusSeed,
+          phase: "scanning",
+          filesDone: 0,
+          textReady: false,
+        } satisfies IndexStatus);
         setTimeout(() => {
           currentIndexStatus = { ...indexStatusSeed, filesDone: total };
           dispatch("indexStatus", currentIndexStatus);

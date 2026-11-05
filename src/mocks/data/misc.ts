@@ -27,7 +27,11 @@ export const diagnostics = {
   emptySessions: 2,
   failedLines: 3,
   filesWithFailures: [
-    { path: "/Users/dev/.claude/projects/-Users-dev-Developer-orbit-web/5e1c0b7a-0006-4000-8000-000000000006.jsonl", failedLines: 3, firstError: "EOF while parsing a string at line 412 column 18" },
+    {
+      path: "/Users/dev/.claude/projects/-Users-dev-Developer-orbit-web/5e1c0b7a-0006-4000-8000-000000000006.jsonl",
+      failedLines: 3,
+      firstError: "EOF while parsing a string at line 412 column 18",
+    },
   ],
   unknownEntryTypes: [{ name: "frame-link", count: 14, versions: ["2.1.88", "2.1.91"] }],
   unknownBlockTypes: [{ name: "server_tool_use", count: 5, versions: ["2.1.91"] }],
@@ -70,9 +74,19 @@ const daily = Array.from({ length: 30 }, (_, i) => 29 - i).flatMap((back) =>
 );
 
 export const stats = {
-  overview: { sessions: 10, messages: 1286, outputTokens: daily.reduce((s, d) => s + d.output, 0), activeDays: 24, cost: 412.37, unpricedMessages: 0 },
+  overview: {
+    sessions: 10,
+    messages: 1286,
+    outputTokens: daily.reduce((s, d) => s + d.output, 0),
+    activeDays: 24,
+    cost: 412.37,
+    unpricedMessages: 0,
+  },
   daily,
-  heatDaily: Array.from({ length: 90 }, (_, i) => ({ day: localDay(NOW - (89 - i) * DAY), messages: Math.round(rnd(i + 7) * 80) })),
+  heatDaily: Array.from({ length: 90 }, (_, i) => ({
+    day: localDay(NOW - (89 - i) * DAY),
+    messages: Math.round(rnd(i + 7) * 80),
+  })),
   // Filled per request by `getStats`.
   activity: { bucket: "day", bars: [] },
   // Filled from the mock sessions by `getStats`.

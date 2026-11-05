@@ -46,7 +46,10 @@ export function parseJson<T = Record<string, unknown>>(text: string | null | und
 export function useFullInput(call: ToolCall, ctx: ToolCtx | null, enabled: boolean) {
   const base = parseJson(call.inputJson) ?? {};
   const need = call.inputTruncated && enabled && ctx != null;
-  const q = useToolDetail(need ? { sessionId: ctx.sessionId, scope: ctx.scope, toolUseId: call.toolUseId, part: "input" } : null, need);
+  const q = useToolDetail(
+    need ? { sessionId: ctx.sessionId, scope: ctx.scope, toolUseId: call.toolUseId, part: "input" } : null,
+    need,
+  );
   const full = q.data ? parseJson(q.data.text) : null;
   return {
     input: (full ?? base) as Record<string, unknown>,
@@ -77,7 +80,9 @@ export function useOutput(call: ToolCall, ctx: ToolCtx | null, preview?: string)
   const requested = useRequested((s) => !!s.requested[key]);
   const canLoad = !!result && (result.truncated || result.persisted != null) && ctx != null;
   const q = useToolDetail(
-    canLoad && requested ? { sessionId: ctx.sessionId, scope: ctx.scope, toolUseId: call.toolUseId, part: "output" } : null,
+    canLoad && requested
+      ? { sessionId: ctx.sessionId, scope: ctx.scope, toolUseId: call.toolUseId, part: "output" }
+      : null,
     canLoad && requested,
   );
   const persistedName = result?.persisted?.fileName;

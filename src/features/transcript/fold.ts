@@ -23,7 +23,8 @@ function callCount(rows: Row[]): number {
 }
 
 /** Whether a fold is open: as the user left it (`expanded`), else only the running last turn's. */
-export const foldOpen = (g: Grouping, expanded: Record<string, boolean>, key: string) => expanded[key] ?? key === g.liveFold;
+export const foldOpen = (g: Grouping, expanded: Record<string, boolean>, key: string) =>
+  expanded[key] ?? key === g.liveFold;
 
 /** A group of a folded process as its own rows: each call and thinking in order, the group's role on the first. */
 function ungroup(g: Extract<Row, { kind: "group" }>): Row[] {

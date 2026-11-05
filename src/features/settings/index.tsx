@@ -19,7 +19,8 @@ const SOURCE_LABEL: Record<DataRootSource, string> = {
   env: "环境变量 CLAUDE_CONFIG_DIR",
   default: "默认",
 };
-const errText = (e: unknown) => (e && typeof e === "object" && "message" in e ? String((e as AppError).message) : String(e));
+const errText = (e: unknown) =>
+  e && typeof e === "object" && "message" in e ? String((e as AppError).message) : String(e);
 
 const TABS = [
   { id: "general", label: "通用" },
@@ -44,12 +45,18 @@ function Row({ label, children, testId }: { label: string; children: React.React
 function WeeklyResetField() {
   const reset = useUi((s) => s.weeklyReset);
   const setReset = useUi((s) => s.setWeeklyReset);
-  const field = "h-8 rounded-md border border-border bg-ground px-2 text-[14px] text-text outline-none focus-visible:ring-2 focus-visible:ring-accent";
+  const field =
+    "h-8 rounded-md border border-border bg-ground px-2 text-[14px] text-text outline-none focus-visible:ring-2 focus-visible:ring-accent";
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <span>每周</span>
-        <select aria-label="重置日" className={field} value={reset.weekday} onChange={(e) => setReset({ ...reset, weekday: Number(e.target.value) })}>
+        <select
+          aria-label="重置日"
+          className={field}
+          value={reset.weekday}
+          onChange={(e) => setReset({ ...reset, weekday: Number(e.target.value) })}
+        >
           {WEEKDAY_NAMES.map((n, i) => (
             <option key={n} value={i}>
               {n}
@@ -188,7 +195,13 @@ function DataTab() {
           <span data-testid="set-index-status" className={status?.phase === "error" ? "text-error" : ""}>
             {statusText}
           </span>
-          <Button variant="outline" className="h-8" disabled={busy} onClick={() => rebuild.mutate()} data-testid="set-rebuild">
+          <Button
+            variant="outline"
+            className="h-8"
+            disabled={busy}
+            onClick={() => rebuild.mutate()}
+            data-testid="set-rebuild"
+          >
             重建索引
           </Button>
         </div>
@@ -216,7 +229,9 @@ export function SettingsDialog() {
         aria-describedby={undefined}
         className="flex max-h-[85vh] w-[920px] max-w-[94vw] flex-col overflow-hidden rounded-xl p-0"
       >
-        <DialogTitle className="m-0 border-b border-border bg-sidebar py-3 text-center text-[15px] font-semibold">设置</DialogTitle>
+        <DialogTitle className="m-0 border-b border-border bg-sidebar py-3 text-center text-[15px] font-semibold">
+          设置
+        </DialogTitle>
         <DialogDescription className="sr-only">应用设置</DialogDescription>
         <Tabs.Root value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex min-h-0 flex-1 flex-col">
           <Tabs.List className="flex justify-center gap-1 border-b border-border bg-sidebar p-2">
@@ -254,7 +269,15 @@ export function SettingsDialog() {
 export function SettingsButton({ className }: { className?: string }) {
   const setOpen = useUi((s) => s.setSettingsOpen);
   return (
-    <Button variant="ghost" size="icon" aria-label="设置" title="设置 (⌘,)" className={className} onClick={() => setOpen(true)} data-testid="settings-button">
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label="设置"
+      title="设置 (⌘,)"
+      className={className}
+      onClick={() => setOpen(true)}
+      data-testid="settings-button"
+    >
       <Settings size={15} />
     </Button>
   );

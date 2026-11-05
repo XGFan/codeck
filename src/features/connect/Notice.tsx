@@ -20,7 +20,14 @@ export function NoticeCard({
   title: ReactNode;
   desc?: ReactNode;
   /** A button: `primary` is filled, else outlined. */
-  action?: { label: string; onClick: () => void; primary?: boolean; disabled?: boolean; title?: string; testId?: string };
+  action?: {
+    label: string;
+    onClick: () => void;
+    primary?: boolean;
+    disabled?: boolean;
+    title?: string;
+    testId?: string;
+  };
   onClose?: () => void;
   testId?: string;
 }) {
@@ -29,7 +36,14 @@ export function NoticeCard({
       data-testid={testId}
       className="flex w-full items-center gap-3 rounded-2xl border border-border bg-ground py-2.5 pr-3 pl-4 shadow-[0_2px_10px_rgba(0,0,0,0.04)]"
     >
-      <span className={cn("flex shrink-0", tone === "error" ? "text-error" : tone === "wait" ? "text-live-waiting" : "text-secondary")}>{icon}</span>
+      <span
+        className={cn(
+          "flex shrink-0",
+          tone === "error" ? "text-error" : tone === "wait" ? "text-live-waiting" : "text-secondary",
+        )}
+      >
+        {icon}
+      </span>
       <div className="flex min-w-0 flex-1 flex-col">
         <span className={cn("truncate text-[13px] font-semibold", tone === "error" && "text-error")}>{title}</span>
         {desc && <span className="truncate text-[12.5px] text-secondary">{desc}</span>}
@@ -53,7 +67,12 @@ export function NoticeCard({
         </>
       )}
       {onClose && (
-        <button type="button" aria-label="关闭" onClick={onClose} className="flex size-6 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-selection/60 hover:text-text">
+        <button
+          type="button"
+          aria-label="关闭"
+          onClick={onClose}
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-selection/60 hover:text-text"
+        >
           <X size={14} aria-hidden />
         </button>
       )}
@@ -65,5 +84,14 @@ export function NoticeCard({
 export function ErrorNotice({ text, onClose }: { text: string; onClose: () => void }) {
   const at = text.indexOf("：");
   const [title, desc] = at > 0 && at <= 16 ? [text.slice(0, at), text.slice(at + 1)] : [text, undefined];
-  return <NoticeCard tone="error" testId="connect-error" icon={<CircleAlert size={18} strokeWidth={1.7} />} title={title} desc={desc || undefined} onClose={onClose} />;
+  return (
+    <NoticeCard
+      tone="error"
+      testId="connect-error"
+      icon={<CircleAlert size={18} strokeWidth={1.7} />}
+      title={title}
+      desc={desc || undefined}
+      onClose={onClose}
+    />
+  );
 }

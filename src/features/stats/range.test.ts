@@ -39,7 +39,11 @@ describe("resolveRange", () => {
     const r = resolveRange({ kind: "last30", offset: 0 }, now, reset);
     expect(r.timeRange).toEqual({ fromMs: now.getTime() - 30 * 86_400_000, toMs: null });
     expect(r.label).toBe("最近 30 天");
-    expect(resolveRange({ kind: "all", offset: 0 }, now, reset)).toMatchObject({ timeRange: null, days: null, label: "全部" });
+    expect(resolveRange({ kind: "all", offset: 0 }, now, reset)).toMatchObject({
+      timeRange: null,
+      days: null,
+      label: "全部",
+    });
     expect(pageable("last7")).toBe(false);
     expect(pageable("cycle")).toBe(true);
   });

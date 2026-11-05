@@ -15,7 +15,8 @@ import { Tasks } from "./Tasks";
 
 const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
 
-const extOf = (type: string) => ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" })[type];
+const extOf = (type: string) =>
+  ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" })[type];
 
 function toBase64(f: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -28,10 +29,14 @@ function toBase64(f: Blob): Promise<string> {
 
 /** Moves focus to the first request card's first answer (Enter while waiting): a card here, else a question on its transcript card. */
 function focusFirstCard() {
-  const answers = ["allow", "question-option", "choice-option"].map((t) => `[data-testid=connect-requests] [data-testid=${t}]:not(:disabled)`);
+  const answers = ["allow", "question-option", "choice-option"].map(
+    (t) => `[data-testid=connect-requests] [data-testid=${t}]:not(:disabled)`,
+  );
   const el =
     document.querySelector<HTMLElement>(answers.join(", ")) ??
-    document.querySelector<HTMLElement>("[data-testid=ask][data-answering] [data-testid=question-option]:not(:disabled)");
+    document.querySelector<HTMLElement>(
+      "[data-testid=ask][data-answering] [data-testid=question-option]:not(:disabled)",
+    );
   el?.focus();
 }
 
@@ -48,8 +53,10 @@ export function Composer({ c }: { c: ConnState }) {
   const key = draftKey(c);
   const { text, images } = useConnect((s) => s.drafts[key]) ?? EMPTY_DRAFT;
   const setDraft = useConnect((s) => s.setDraft);
-  const setText = (f: string | ((t: string) => string)) => setDraft(key, (d) => ({ ...d, text: typeof f === "function" ? f(d.text) : f }));
-  const setImages = (f: (x: Draft["images"]) => Draft["images"]) => setDraft(key, (d) => ({ ...d, images: f(d.images) }));
+  const setText = (f: string | ((t: string) => string)) =>
+    setDraft(key, (d) => ({ ...d, text: typeof f === "function" ? f(d.text) : f }));
+  const setImages = (f: (x: Draft["images"]) => Draft["images"]) =>
+    setDraft(key, (d) => ({ ...d, images: f(d.images) }));
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const live = !c.procExit && !c.sessionExited && c.ready;
@@ -60,7 +67,13 @@ export function Composer({ c }: { c: ConnState }) {
   // Sent before the list arrived (pasted and Enter at once): wait for it; without it, a `prompt`.
   const commandList = async () =>
     commands ??
-    (await qc.fetchQuery({ queryKey: queryKeys.slashCommands(c.cwd), queryFn: () => api.listSlashCommands(c.cwd), staleTime: 30_000 }).catch(() => undefined));
+    (await qc
+      .fetchQuery({
+        queryKey: queryKeys.slashCommands(c.cwd),
+        queryFn: () => api.listSlashCommands(c.cwd),
+        staleTime: 30_000,
+      })
+      .catch(() => undefined));
   const [pick, setPick] = useState(0);
   /** The pick moved by a key (not the pointer): scroll it into view. */
   const keyMoved = useRef(false);
@@ -104,7 +117,8 @@ export function Composer({ c }: { c: ConnState }) {
     } else if (state === "busy") {
       // A panel opened from the queue would hold the turn until someone closes it in the terminal.
       const panel = commandOf(body, list);
-      if (panel?.source === "builtin" && panel.interactive) return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
+      if (panel?.source === "builtin" && panel.interactive)
+        return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
       msg = { type: "steer", text: body, ...withImages };
     } else return setError("Session 还没准备好");
     setSending(true);
@@ -122,7 +136,9 @@ export function Composer({ c }: { c: ConnState }) {
   };
 
   const onPaste = async (e: React.ClipboardEvent) => {
-    const files = [...e.clipboardData.items].filter((i) => i.kind === "file" && extOf(i.type)).map((i) => i.getAsFile()!);
+    const files = [...e.clipboardData.items]
+      .filter((i) => i.kind === "file" && extOf(i.type))
+      .map((i) => i.getAsFile()!);
     if (files.length === 0) return;
     e.preventDefault();
     for (const f of files) {
@@ -132,7 +148,9 @@ export function Composer({ c }: { c: ConnState }) {
         // A data: URL: the app's CSP allows data: images, not blob:.
         setImages((x) => [...x, { path, url: `data:${f.type};base64,${b64}` }]);
       } catch (err) {
-        setError(`图片保存失败：${err && typeof err === "object" && "message" in err ? String(err.message) : String(err)}`);
+        setError(
+          `图片保存失败：${err && typeof err === "object" && "message" in err ? String(err.message) : String(err)}`,
+        );
       }
     }
   };
@@ -180,42 +198,53 @@ export function Composer({ c }: { c: ConnState }) {
         )}
       >
         {matches.length > 0 && (
-          <div data-testid="slash-menu" className="absolute right-0 bottom-full left-0 mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-ground shadow-lg">
-          <ul role="listbox" aria-label="斜杠命令" className="max-h-72 overflow-y-auto py-1">
-            {matches.map((m) => (
-              <li
-                key={m.name}
-                role="option"
-                aria-selected={m === picked}
-                data-testid="slash-option"
-                // Arrow keys move past the visible rows: keep the picked one in view.
-                ref={
-                  m === picked
-                    ? (el) => {
-                        if (el && keyMoved.current) el.scrollIntoView({ block: "nearest" });
-                        keyMoved.current = false;
-                      }
-                    : undefined
-                }
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  complete(m);
-                }}
-                onMouseEnter={() => setPick(matches.indexOf(m))}
-                className={cn("flex cursor-default items-baseline gap-2 px-3 py-1 text-[12px]", m === picked && "bg-selection")}
-              >
-                <span className="shrink-0 font-mono text-accent">/{m.name}</span>
-                <span className="min-w-0 flex-1 truncate text-secondary">{m.description}</span>
-                {m.interactive && (
-                  <span className="shrink-0 text-[11px] text-secondary" title="会在终端里打开界面；可在请求卡片上按「关闭」退出">
-                    打开界面
-                  </span>
-                )}
-                <span className="shrink-0 text-[11px] text-secondary">{SOURCE_LABEL[m.source]}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="border-t border-border px-3 py-1 text-[11px] text-secondary">↑↓ 选择 · Tab 补全 · Esc 收起</div>
+          <div
+            data-testid="slash-menu"
+            className="absolute right-0 bottom-full left-0 mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-ground shadow-lg"
+          >
+            <ul role="listbox" aria-label="斜杠命令" className="max-h-72 overflow-y-auto py-1">
+              {matches.map((m) => (
+                <li
+                  key={m.name}
+                  role="option"
+                  aria-selected={m === picked}
+                  data-testid="slash-option"
+                  // Arrow keys move past the visible rows: keep the picked one in view.
+                  ref={
+                    m === picked
+                      ? (el) => {
+                          if (el && keyMoved.current) el.scrollIntoView({ block: "nearest" });
+                          keyMoved.current = false;
+                        }
+                      : undefined
+                  }
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    complete(m);
+                  }}
+                  onMouseEnter={() => setPick(matches.indexOf(m))}
+                  className={cn(
+                    "flex cursor-default items-baseline gap-2 px-3 py-1 text-[12px]",
+                    m === picked && "bg-selection",
+                  )}
+                >
+                  <span className="shrink-0 font-mono text-accent">/{m.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-secondary">{m.description}</span>
+                  {m.interactive && (
+                    <span
+                      className="shrink-0 text-[11px] text-secondary"
+                      title="会在终端里打开界面；可在请求卡片上按「关闭」退出"
+                    >
+                      打开界面
+                    </span>
+                  )}
+                  <span className="shrink-0 text-[11px] text-secondary">{SOURCE_LABEL[m.source]}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="border-t border-border px-3 py-1 text-[11px] text-secondary">
+              ↑↓ 选择 · Tab 补全 · Esc 收起
+            </div>
           </div>
         )}
         {images.length > 0 && (
@@ -254,7 +283,10 @@ export function Composer({ c }: { c: ConnState }) {
                 setPick((matches.indexOf(picked) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
                 return;
               }
-              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && picked.name !== typed)) {
+              if (
+                e.key === "Tab" ||
+                (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && picked.name !== typed)
+              ) {
                 e.preventDefault();
                 complete(picked);
                 return;

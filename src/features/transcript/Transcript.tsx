@@ -10,7 +10,14 @@ import { CONV_WIDTH, useUi } from "@/state/ui";
 import { foldTurns } from "./fold";
 import { anchorKey, buildRows, type GroupingInput, INHERITED_KEY, locate, rowIndexOf } from "./grouping";
 import { isContinuation, RowView } from "./nodes";
-import { clearScroll, type PendingScroll, scrollToNode, TranscriptContext, type TranscriptCtx, usePendingScroll } from "./nodes/scroll";
+import {
+  clearScroll,
+  type PendingScroll,
+  scrollToNode,
+  TranscriptContext,
+  type TranscriptCtx,
+  usePendingScroll,
+} from "./nodes/scroll";
 import { resetReading, setCurrentTurn, setTurns, useReading } from "./reading";
 import { toolKey } from "./tools";
 
@@ -63,14 +70,20 @@ export function TranscriptView() {
 
   if (!sessionId) {
     return (
-      <div data-testid="transcript-empty" className="flex flex-1 items-center justify-center text-[13px] text-secondary">
+      <div
+        data-testid="transcript-empty"
+        className="flex flex-1 items-center justify-center text-[13px] text-secondary"
+      >
         选择一个 Session 查看对话
       </div>
     );
   }
   if (unindexed && data?.sessionId !== sessionId) {
     return (
-      <div data-testid="transcript-new" className="flex flex-1 flex-col items-center justify-center px-6 text-[13px] text-secondary">
+      <div
+        data-testid="transcript-new"
+        className="flex flex-1 flex-col items-center justify-center px-6 text-[13px] text-secondary"
+      >
         新 Session，发送第一条提示词后显示对话
         <ConnectTail />
       </div>
@@ -79,7 +92,11 @@ export function TranscriptView() {
   if (error && data?.sessionId !== sessionId) {
     const message = typeof error === "object" && "message" in error ? String(error.message) : String(error);
     return (
-      <div data-testid="transcript-error" role="alert" className="flex flex-1 items-center justify-center px-6 text-[13px] text-error">
+      <div
+        data-testid="transcript-error"
+        role="alert"
+        className="flex flex-1 items-center justify-center px-6 text-[13px] text-error"
+      >
         无法读取该 Session：{message}
       </div>
     );
@@ -88,7 +105,16 @@ export function TranscriptView() {
   if (!data || data.sessionId !== sessionId) {
     return <div data-testid="transcript" className="flex-1" />;
   }
-  return <TranscriptList key={sessionId} transcript={data} ready={!isPlaceholderData} scope={MAIN} follow testId="transcript" />;
+  return (
+    <TranscriptList
+      key={sessionId}
+      transcript={data}
+      ready={!isPlaceholderData}
+      scope={MAIN}
+      follow
+      testId="transcript"
+    />
+  );
 }
 
 /**
@@ -128,7 +154,15 @@ export interface TranscriptListProps {
 }
 
 /** Virtualized row list shared by the main transcript and the Subagent panel. */
-export function TranscriptList({ transcript, ready, scope, follow = false, agent = null, extraRuns, testId }: TranscriptListProps) {
+export function TranscriptList({
+  transcript,
+  ready,
+  scope,
+  follow = false,
+  agent = null,
+  extraRuns,
+  testId,
+}: TranscriptListProps) {
   const sessionId = transcript.sessionId;
   const showHidden = useUi((s) => s.showHidden);
   const inheritedExpanded = useUi((s) => s.expanded[INHERITED_KEY] ?? false);
@@ -154,7 +188,6 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
   const folds = useUi((s) => foldState(s.expanded));
   const grouping = useMemo(() => foldTurns(built, useUi.getState().expanded), [built, folds]);
   const rows = grouping.rows;
-
 
   const ctx = useMemo<TranscriptCtx>(() => {
     const runs = new Map<string, SubagentRun>();
@@ -343,7 +376,10 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
                   ref={virtualizer.measureElement}
                   data-index={v.index}
                   data-row={row.kind}
-                  className={cn("absolute top-0 left-0 w-full", v.index === 0 ? "" : isContinuation(row) ? "pt-2" : "pt-[18px]")}
+                  className={cn(
+                    "absolute top-0 left-0 w-full",
+                    v.index === 0 ? "" : isContinuation(row) ? "pt-2" : "pt-[18px]",
+                  )}
                   style={{ transform: `translateY(${v.start + 20}px)` }}
                 >
                   <RowView row={row} />
@@ -353,7 +389,11 @@ export function TranscriptList({ transcript, ready, scope, follow = false, agent
           </div>
           {follow && (
             // Room at the end for the floating input area (its height, kept in `--connect-h` by the panel).
-            <div ref={tailRef} className="mx-auto -mt-5 max-w-(--conv-w)" style={{ paddingBottom: "calc(var(--connect-h, 0px) + 20px)" }}>
+            <div
+              ref={tailRef}
+              className="mx-auto -mt-5 max-w-(--conv-w)"
+              style={{ paddingBottom: "calc(var(--connect-h, 0px) + 20px)" }}
+            >
               <ConnectTail />
             </div>
           )}
@@ -405,7 +445,6 @@ function settle(scroller: HTMLElement, anchor: string, nodeId: string) {
   };
   requestAnimationFrame(step);
 }
-
 
 /**
  * The conversation column's edges, to drag its width (both sides move, it stays centered); double-click goes

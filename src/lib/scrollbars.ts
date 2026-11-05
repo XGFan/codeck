@@ -13,7 +13,10 @@ export function installScrollbarAutoHide() {
       const el = e.target instanceof HTMLElement ? e.target : document.documentElement;
       el.style.setProperty("--scroll-thumb", "var(--color-scroll-thumb)");
       window.clearTimeout(timers.get(el));
-      timers.set(el, window.setTimeout(() => el.style.removeProperty("--scroll-thumb"), HIDE_AFTER_MS));
+      timers.set(
+        el,
+        window.setTimeout(() => el.style.removeProperty("--scroll-thumb"), HIDE_AFTER_MS),
+      );
     },
     { capture: true, passive: true },
   );
