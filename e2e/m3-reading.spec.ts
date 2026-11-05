@@ -75,6 +75,11 @@ test("大纲浮在对话左侧、滚动条浮在右侧，都不占对话区宽�
   const outline = (await page.getByTestId("outline").boundingBox())!;
   const column = (await page.getByTestId("conversation-column").boundingBox())!;
   expect(outline.x + outline.width).toBeLessThanOrEqual(column.x);
+  // The ticks sit in the middle of the outline's height, not at its top.
+  const ticks = page.getByTestId("outline-tick");
+  const first = (await ticks.first().boundingBox())!;
+  const last = (await ticks.last().boundingBox())!;
+  expect((first.y + last.y + last.height) / 2).toBeCloseTo(outline.y + outline.height / 2, 0);
 
   const bar = page.getByTestId("transcript-scrollbar");
   const thumb = page.getByTestId("transcript-scrollbar-thumb");

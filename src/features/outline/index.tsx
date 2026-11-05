@@ -34,8 +34,9 @@ function useTurnKeys() {
  * between the header and the input area; the current turn is blue, hover lengthens a tick and shows the prompt.
  * Rendered in the transcript's positioned parent, where `--connect-h` is the floating input area's height.
  * Only the ticks take the pointer, each 16px wide: in a narrow pane the conversation column's left width handle
- * (8–20px) stays draggable beside and above / below them. Many turns shrink the ticks to 2px apart; past that the
- * list runs off the bottom (safe centering), never over the header.
+ * (8–20px) stays draggable beside and above / below them. Many turns close the gaps first, down to 1px between
+ * ticks; past that the list runs off the bottom, never over the header. Centered by auto margins on the first and
+ * last tick, which drop to 0 on overflow: WebKit ignores `justify-content: safe center`.
  */
 export function Outline() {
   const sessionId = useUi((s) => s.sessionId);
@@ -47,7 +48,7 @@ export function Outline() {
     <nav
       aria-label="轮次大纲"
       data-testid="outline"
-      className="pointer-events-none absolute top-0 left-0 z-20 flex w-6 flex-col justify-[safe_center] py-6"
+      className="pointer-events-none absolute top-0 left-0 z-20 flex w-6 flex-col py-6"
       style={{ bottom: "var(--connect-h, 0px)" }}
     >
       {turns.map((t) => {
@@ -62,7 +63,7 @@ export function Outline() {
             aria-label={`第 ${t.turn + 1} 轮：${t.text.slice(0, 30)}`}
             aria-current={on || undefined}
             onClick={() => goTo(t)}
-            className="group pointer-events-auto relative flex max-h-2 min-h-0.5 w-4 flex-1 basis-0 items-center pl-1.5"
+            className="group pointer-events-auto relative flex max-h-2 min-h-[3px] w-4 flex-1 basis-0 items-center pl-1.5 first:mt-auto last:mb-auto"
           >
             <span
               className={cn(
