@@ -150,6 +150,16 @@ pub async fn find_in_session(
     with_engine(&state, move |e| e.find_in_session(&req)).await
 }
 
+/// Syncs the Session's main file now (a prompt was just sent to it), without waiting for the watcher's debounce: a
+/// `Job::Fs` like the watcher's, so it merges with any batch queued.
+#[tauri::command]
+#[specta::specta]
+pub async fn sync_session(state: State<'_, AppState>, session_id: String) -> CmdResult<()> {
+    let path = with_engine(&state, move |e| e.session_file_path(&session_id, None)).await?;
+    state.jobs.send(Job::Fs(vec![path]));
+    Ok(())
+}
+
 /// Reveals the Session's main file (or the Subagent Run's file) in Finder.
 #[tauri::command]
 #[specta::specta]

@@ -256,6 +256,8 @@ export function Composer({ c }: { c: ConnState }) {
     if (!r.success) return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
     // A new prompt: what was rewound becomes another Branch (the marker goes once that is indexed).
     if (msg.type === "prompt") rewoundSent(c.conn);
+    // It is in the transcript by now: indexed at once, not after the watcher's debounce.
+    if (msg.type === "prompt" && c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
     // Keep what was typed while it was being sent.

@@ -36,6 +36,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::resolve_jump,
             commands::find_in_session,
             commands::reveal_session_file,
+            commands::sync_session,
             commands::get_stats,
             commands::get_diagnostics,
             commands::list_slash_commands,

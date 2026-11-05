@@ -21,6 +21,7 @@ export function createRealApi(): Api {
     resolveJump: commands.resolveJump,
     findInSession: commands.findInSession,
     revealSessionFile: commands.revealSessionFile,
+    syncSession: commands.syncSession,
     getStats: commands.getStats,
     getDiagnostics: commands.getDiagnostics,
     listSlashCommands: commands.listSlashCommands,

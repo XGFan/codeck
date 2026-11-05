@@ -49,6 +49,8 @@ export interface Api {
   resolveJump(req: JumpRequest): Promise<JumpTarget>;
   findInSession(req: FindRequest): Promise<FindResult>;
   revealSessionFile(sessionId: string, agentId: string | null): Promise<null>;
+  /** Syncs the Session's file now (a prompt was just sent), without the watcher's debounce. */
+  syncSession(sessionId: string): Promise<null>;
   getStats(req: StatsRequest): Promise<Stats>;
   getDiagnostics(): Promise<Diagnostics>;
   /** Slash commands for completion while connected to a Session started in `cwd`. */

@@ -64,7 +64,10 @@ declare global {
   interface Window {
     /** E2E hooks, installed only by the mock API. */
     /** E2E spy: clipboard / Finder calls and search queries (args: [query]) made through the mock API. */
-    __cvCalls?: Array<{ method: "copyText" | "revealSessionFile" | "search" | "findInSession"; args: unknown[] }>;
+    __cvCalls?: Array<{
+      method: "copyText" | "revealSessionFile" | "syncSession" | "search" | "findInSession";
+      args: unknown[];
+    }>;
     __cvMock?: {
       emit(eventName: string, payload: unknown): void;
       setLive(sessionId: string, state: LiveState | null): void;
@@ -720,6 +723,11 @@ export function createMockApi(): Api {
     revealSessionFile: (sessionId, agentId) =>
       later(() => {
         calls.push({ method: "revealSessionFile", args: [sessionId, agentId] });
+        return null;
+      }),
+    syncSession: (sessionId) =>
+      later(() => {
+        calls.push({ method: "syncSession", args: [sessionId] });
         return null;
       }),
     getStats: (req) => later(() => getStats(req)),

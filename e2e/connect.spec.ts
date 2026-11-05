@@ -160,6 +160,10 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await expect(card).toHaveCount(0);
   expect(await lastSent(page, "answer_permission")).toMatchObject({ decision: "allow", request_id: "toolu_mock0000" });
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[0]);
+  // Sent: the Session is synced at once, not after the watcher's debounce.
+  expect(
+    await page.evaluate(() => window.__cvCalls!.filter((c) => c.method === "syncSession").map((c) => c.args[0])),
+  ).toContain("a7c63e92-0008-4000-8000-000000000008");
 
   await send(page, "MOCK-TOOL again");
   await page.getByTestId("deny-message").fill("not now");

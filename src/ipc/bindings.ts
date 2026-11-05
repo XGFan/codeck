@@ -24,6 +24,11 @@ export const commands = {
 	findInSession: (req: FindRequest) => __TAURI_INVOKE<FindResult>("find_in_session", { req }),
 	/**  Reveals the Session's main file (or the Subagent Run's file) in Finder. */
 	revealSessionFile: (sessionId: string, agentId: string | null) => __TAURI_INVOKE<null>("reveal_session_file", { sessionId, agentId }),
+	/**
+	 *  Syncs the Session's main file now (a prompt was just sent to it), without waiting for the watcher's debounce: a
+	 *  `Job::Fs` like the watcher's, so it merges with any batch queued.
+	 */
+	syncSession: (sessionId: string) => __TAURI_INVOKE<null>("sync_session", { sessionId }),
 	getStats: (req: StatsRequest) => __TAURI_INVOKE<Stats>("get_stats", { req }),
 	getDiagnostics: () => __TAURI_INVOKE<Diagnostics>("get_diagnostics"),
 	/**  Slash commands for completion while connected to a Session started in `cwd`. */
