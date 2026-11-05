@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Output, Stdio};
-use std::sync::Arc;
+use std::process::{Child, ChildStdin, Command, Output, Stdio};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use codeck_core::model::{AppError, ErrorCode};
@@ -44,6 +44,16 @@ pub fn failed(message: impl Into<String>) -> AppError {
 const SUBCOMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 /// How much of a connection's stderr its exit event carries.
 const STDERR_TAIL_CHARS: usize = 4000;
+/// How long Disconnect waits for a `send` that holds ccrpc's stdin (one stuck writing into a
+/// stalled ccrpc) before ending that ccrpc instead.
+const STDIN_LOCK_WAIT: Duration = Duration::from_secs(1);
+/// After Disconnect closed its stdin, how long ccrpc has to detach and exit before it gets SIGTERM.
+const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
+/// How often a connection's waiter looks whether its ccrpc exited.
+const EXIT_POLL: Duration = Duration::from_millis(100);
+/// Once ccrpc exited, how long to wait for each further line it wrote (a process it left behind
+/// may keep its stdout open: the exit is reported once none came for this long).
+const DRAIN_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Serialize, Clone, Debug)]
 pub struct ExitEvent {
@@ -64,6 +74,9 @@ pub type Sink = Arc<dyn Fn(Out) + Send + Sync>;
 struct Conn {
     /// Its own lock: a stalled ccrpc blocks only its own writes, not the connection table.
     stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// The ccrpc process. Reaped only through this lock (by the connection's waiter), so a signal
+    /// sent while holding it never reaches a recycled pid.
+    child: Arc<Mutex<Child>>,
     wire: Arc<Mutex<Wire>>,
     gui: Arc<Mutex<File>>,
     dir: Arc<Mutex<PathBuf>>,
@@ -85,6 +98,7 @@ pub struct App {
     seq: Mutex<u64>,
     pub doctor: Mutex<Option<Vec<DoctorLine>>>,
     sub_timeout: Duration,
+    disconnect_grace: Duration,
 }
 
 impl App {
@@ -111,6 +125,7 @@ impl App {
             seq: Mutex::new(0),
             doctor: Mutex::new(None),
             sub_timeout: SUBCOMMAND_TIMEOUT,
+            disconnect_grace: DISCONNECT_GRACE,
         };
         app.gui_line(&format!("start ccrpc={}", app.ccrpc.display()));
         Ok(app)
@@ -305,68 +320,113 @@ impl App {
             dir.display()
         ));
         let dir = Arc::new(Mutex::new(dir));
+        let stdin = Arc::new(Mutex::new(child.stdin.take()));
+        let child = Arc::new(Mutex::new(child));
         self.conns.lock().insert(
             id.clone(),
             Conn {
-                stdin: Arc::new(Mutex::new(child.stdin.take())),
+                stdin,
+                child: child.clone(),
                 wire: wire.clone(),
                 gui: gui.clone(),
                 dir: dir.clone(),
             },
         );
 
-        let err_tail = Arc::new(Mutex::new(None::<String>));
-        let err_thread = {
+        // Each reader drops its sender when its pipe ends; stdout's notes when it last relayed a line.
+        let (err_done_tx, err_done) = mpsc::channel::<()>();
+        let (out_done_tx, out_done) = mpsc::channel::<()>();
+        let last_line = Arc::new(Mutex::new(std::time::Instant::now()));
+        let err_tail = Arc::new(Mutex::new(String::new()));
+        {
             let (err_tail, gui) = (err_tail.clone(), gui.clone());
             std::thread::spawn(move || {
+                let _done = err_done_tx;
                 // Logged as it comes (a crash of the app keeps what was written); only the tail is
                 // kept for the exit event.
                 let mut reader = BufReader::new(stderr);
-                let (mut buf, mut tail) = (Vec::new(), String::new());
+                let mut buf = Vec::new();
                 while matches!(reader.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
                     let line = String::from_utf8_lossy(&buf);
                     let line = line.trim_end_matches(['\n', '\r']);
                     logs::line(&mut gui.lock(), &format!("stderr {line}"));
+                    let mut tail = err_tail.lock();
                     tail.push_str(line);
                     tail.push('\n');
                     if tail.len() > 4 * STDERR_TAIL_CHARS {
-                        tail = last_chars(&tail, STDERR_TAIL_CHARS).to_string();
+                        *tail = last_chars(&tail, STDERR_TAIL_CHARS).to_string();
                     }
                     buf.clear();
                 }
-                *err_tail.lock() = Some(last_chars(&tail, STDERR_TAIL_CHARS).to_string());
-            })
-        };
+            });
+        }
+        // Lines are relayed until the exit is: the exit event is always the connection's last.
+        let open = Arc::new(Mutex::new(true));
+        {
+            let (open, conn, sink) = (open.clone(), id.clone(), sink.clone());
+            let last_line = last_line.clone();
+            let rename = sub == "new";
+            std::thread::spawn(move || {
+                let _done = out_done_tx;
+                let mut renamed = !rename;
+                let mut reader = BufReader::new(stdout);
+                let mut buf = Vec::new();
+                loop {
+                    buf.clear();
+                    match reader.read_until(b'\n', &mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    let line = String::from_utf8_lossy(&buf)
+                        .trim_end_matches(['\n', '\r'])
+                        .to_string();
+                    // Nothing is logged or relayed once the exit was reported.
+                    let open = open.lock();
+                    if !*open {
+                        break;
+                    }
+                    wire.lock().write("recv", &line);
+                    if !renamed {
+                        renamed = rename_new_dir(&line, &dir, &wire);
+                    }
+                    sink(Out::Line {
+                        conn: conn.clone(),
+                        line,
+                    });
+                    *last_line.lock() = std::time::Instant::now();
+                }
+            });
+        }
+        // The exit is reported once ccrpc is gone, whether or not its stdout has ended.
         let (conns, main_gui, conn) = (self.conns.clone(), self.gui.clone(), id.clone());
-        let rename = sub == "new";
         std::thread::spawn(move || {
-            let mut renamed = !rename;
-            let mut reader = BufReader::new(stdout);
-            let mut buf = Vec::new();
+            let code = loop {
+                match child.lock().try_wait() {
+                    Ok(Some(status)) => break status.code(),
+                    Ok(None) => {}
+                    Err(_) => break None,
+                }
+                std::thread::sleep(EXIT_POLL);
+            };
+            // Lines still coming are relayed (however slow the sink); stdout is given up only once
+            // DRAIN_WAIT passes with no new line.
+            *last_line.lock() = std::time::Instant::now();
             loop {
-                buf.clear();
-                match reader.read_until(b'\n', &mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {}
+                let quiet = last_line.lock().elapsed();
+                let Some(left) = DRAIN_WAIT.checked_sub(quiet) else {
+                    break;
+                };
+                match out_done.recv_timeout(left) {
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    _ => break,
                 }
-                let line = String::from_utf8_lossy(&buf)
-                    .trim_end_matches(['\n', '\r'])
-                    .to_string();
-                wire.lock().write("recv", &line);
-                if !renamed {
-                    renamed = rename_new_dir(&line, &dir, &wire);
-                }
-                sink(Out::Line {
-                    conn: conn.clone(),
-                    line,
-                });
             }
-            let code = child.wait().ok().and_then(|s| s.code());
-            let _ = err_thread.join();
+            let _ = err_done.recv_timeout(DRAIN_WAIT);
             logs::line(&mut gui.lock(), &format!("exit code={code:?}"));
             logs::line(&mut main_gui.lock(), &format!("{conn} exit code={code:?}"));
             conns.lock().remove(&conn);
-            let stderr = err_tail.lock().take().unwrap_or_default();
+            let stderr = last_chars(&err_tail.lock(), STDERR_TAIL_CHARS).to_string();
+            *open.lock() = false;
             sink(Out::Exit(ExitEvent { conn, code, stderr }));
         });
         Ok(id)
@@ -389,8 +449,10 @@ impl App {
             .map_err(|e| io(format!("写不进 ccrpc：{e}")))
     }
 
-    /// Closes ccrpc's stdin: it detaches and exits; the Session keeps running.
-    /// False when the connection is unknown (its ccrpc already exited).
+    /// Disconnect: closes ccrpc's stdin, so it detaches and exits; the Session keeps running. A
+    /// ccrpc that cannot take the close (a `send` stuck writing to it holds its stdin) or is still
+    /// running [`DISCONNECT_GRACE`] later gets SIGTERM. False when the connection is unknown (its
+    /// ccrpc already exited).
     pub fn disconnect(&self, conn: &str) -> bool {
         let Some((stdin, gui)) = self
             .conns
@@ -401,20 +463,36 @@ impl App {
             return false;
         };
         logs::line(&mut gui.lock(), "disconnect");
-        stdin.lock().take();
+        let Some(mut stdin) = stdin.try_lock_for(STDIN_LOCK_WAIT) else {
+            terminate(&self.conns, conn, "stdin busy");
+            return true;
+        };
+        stdin.take();
+        drop(stdin);
+        let (conns, conn, grace) = (self.conns.clone(), conn.to_string(), self.disconnect_grace);
+        std::thread::spawn(move || {
+            std::thread::sleep(grace);
+            terminate(&conns, &conn, "still running after Disconnect");
+        });
         true
     }
 
-    /// Closes every connection (the app is quitting).
+    /// Closes every connection (the app is quitting); a ccrpc whose stdin is held by a stuck
+    /// `send` gets SIGTERM.
     pub fn disconnect_all(&self) {
         let all: Vec<_> = self
             .conns
             .lock()
-            .values()
-            .map(|c| c.stdin.clone())
+            .iter()
+            .map(|(id, c)| (id.clone(), c.stdin.clone()))
             .collect();
-        for s in all {
-            s.lock().take();
+        for (id, s) in all {
+            match s.try_lock_for(STDIN_LOCK_WAIT) {
+                Some(mut s) => drop(s.take()),
+                None => {
+                    terminate(&self.conns, &id, "stdin busy");
+                }
+            }
         }
     }
 
@@ -452,6 +530,28 @@ impl App {
         f.write_all(&bytes).map_err(|e| io(e.to_string()))?;
         Ok(path.display().to_string())
     }
+}
+
+/// SIGTERM to the connection's ccrpc while it still runs (ccrpc only detaches from the Session in
+/// clay; the Session is not touched). Checked under the connection table's lock and then the
+/// child's own: a ccrpc already reaped (its pid possibly reused) is never signalled. True when sent.
+fn terminate(conns: &Mutex<HashMap<String, Conn>>, conn: &str, why: &str) -> bool {
+    let conns = conns.lock();
+    let Some(c) = conns.get(conn) else {
+        return false;
+    };
+    let mut child = c.child.lock();
+    if !matches!(child.try_wait(), Ok(None)) {
+        return false;
+    }
+    let pid = child.id();
+    logs::line(
+        &mut c.gui.lock(),
+        &format!("SIGTERM ccrpc pid={pid} ({why})"),
+    );
+    // SAFETY: plain kill(2) on our own child, not reaped yet (checked under its lock just now).
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    true
 }
 
 /// A new Session's directory is named after its Holder ID once `ready` gives it. True once that
@@ -718,6 +818,116 @@ mod tests {
             (gone.code, gone.message.as_str()),
             (ErrorCode::InvalidQuery, "ccrpc 已退出")
         );
+    }
+
+    /// Waits for `conn`'s exit event; then checks no second one follows.
+    fn exit_once(rx: &mpsc::Receiver<Out>, conn: &str, within: Duration) -> ExitEvent {
+        let deadline = Instant::now() + within;
+        let exit = loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(Out::Exit(e)) if e.conn == conn => break e,
+                Ok(_) => {}
+                Err(_) => panic!("no exit event within {within:?}"),
+            }
+        };
+        while let Ok(o) = rx.recv_timeout(Duration::from_millis(700)) {
+            assert!(!matches!(o, Out::Exit(_)), "a second exit event");
+        }
+        exit
+    }
+
+    fn channel_sink() -> (Sink, mpsc::Receiver<Out>) {
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        (Arc::new(move |o| drop(tx.lock().send(o))), rx)
+    }
+
+    /// Disconnect closes stdin; a ccrpc that neither reads it nor exits gets SIGTERM after the
+    /// grace period, and its exit is reported once.
+    #[test]
+    fn disconnect_ends_a_ccrpc_that_does_not_exit() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = fake_ccrpc(d.path(), "echo '{\"type\":\"ready\"}'; exec sleep 30");
+        app.disconnect_grace = Duration::from_millis(300);
+        let (sink, rx) = channel_sink();
+        let conn = app.connect(sink, "m1").unwrap();
+        let t = Instant::now();
+        assert!(app.disconnect(&conn));
+        let exit = exit_once(&rx, &conn, Duration::from_secs(5));
+        assert_eq!(exit.code, None, "ended by a signal");
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+        assert!(!app.disconnect(&conn), "the connection is gone");
+    }
+
+    /// A `send` blocked on a full pipe holds ccrpc's stdin: Disconnect does not wait for it.
+    #[test]
+    fn disconnect_does_not_wait_for_a_stuck_send() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(d.path(), "exec sleep 30");
+        let (sink, rx) = channel_sink();
+        let conn = app.connect(sink, "m1").unwrap();
+        std::thread::scope(|s| {
+            let stuck = s.spawn(|| app.send(&conn, &"x".repeat(1 << 20)));
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(!stuck.is_finished(), "the pipe should be full");
+            let t = Instant::now();
+            assert!(app.disconnect(&conn));
+            assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+            exit_once(&rx, &conn, Duration::from_secs(5));
+            assert!(
+                stuck.join().unwrap().is_err(),
+                "the write fails once ccrpc is gone"
+            );
+        });
+    }
+
+    /// A slow sink still gets every line ccrpc wrote before exiting, then the exit.
+    #[test]
+    fn a_slow_sink_gets_the_last_lines_before_the_exit() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(
+            d.path(),
+            "for i in 1 2 3 4; do echo \"{\\\"n\\\":$i}\"; done",
+        );
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let sink: Sink = Arc::new(move |o| {
+            if matches!(o, Out::Line { .. }) {
+                std::thread::sleep(Duration::from_millis(600));
+            }
+            drop(tx.lock().send(o));
+        });
+        let conn = app.connect(sink, "m1").unwrap();
+        let mut lines = Vec::new();
+        let exit = loop {
+            match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+                Out::Line { line, .. } => lines.push(line),
+                Out::Exit(e) => break e,
+            }
+        };
+        assert_eq!(exit.conn, conn);
+        assert_eq!(
+            lines,
+            [r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#, r#"{"n":4}"#]
+        );
+    }
+
+    /// The exit event does not wait for stdout to end: a process ccrpc left behind may hold it.
+    #[test]
+    fn exit_is_reported_while_a_leftover_process_holds_stdout() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(d.path(), "echo '{\"type\":\"ready\"}'; sleep 20 & exit 3");
+        let (sink, rx) = channel_sink();
+        let conn = app.connect(sink, "m1").unwrap();
+        let t = Instant::now();
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Out::Line { line, .. }) => assert_eq!(line, r#"{"type":"ready"}"#),
+            _ => panic!("the line comes first"),
+        }
+        let exit = exit_once(&rx, &conn, Duration::from_secs(5));
+        assert_eq!(exit.code, Some(3));
+        assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
     }
 
     #[test]
