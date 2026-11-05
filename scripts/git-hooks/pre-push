@@ -1,0 +1,81 @@
+#!/bin/sh
+# Runs the checks for what a push brings (instead of CI): Rust changes → fmt, clippy, tests (plus
+# ccrpc's mock end-to-end tests when ccrpc changed); frontend changes → Prettier, typecheck, lint,
+# vitest, E2E; docs only → nothing. Runs on the working tree, so it needs HEAD to be what is pushed
+# and no uncommitted changes to tracked files. Skip once with `git push --no-verify`.
+# Install: scripts/install-git-hooks.sh
+set -u
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+zero=0000000000000000000000000000000000000000
+
+changed=""
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # deleting a ref
+  if [ "$(git rev-parse HEAD)" != "$local_sha" ]; then
+    echo "pre-push: 推送的 $local_sha 不是当前 HEAD，检查只能在工作区跑。切到它再推，或 git push --no-verify。" >&2
+    exit 1
+  fi
+  if [ "$remote_sha" = "$zero" ]; then
+    base=$(git merge-base "$local_sha" origin/main 2>/dev/null || true)
+  else
+    base=$remote_sha
+  fi
+  if [ -n "$base" ]; then
+    changed="$changed
+$(git diff --name-only "$base" "$local_sha")"
+  else
+    changed="$changed
+$(git ls-files)"
+  fi
+done
+[ -n "$(echo "$changed" | tr -d '[:space:]')" ] || exit 0
+
+if ! git diff --quiet HEAD --; then
+  echo "pre-push: 工作区有未提交的改动，检查跑的不是要推送的内容。提交或还原后再推，或 git push --no-verify。" >&2
+  exit 1
+fi
+
+# Markdown (README, spec, TODO…) never needs a check, wherever it lives.
+has() { echo "$changed" | grep -vE '\.md$' | grep -qE "$1"; }
+rust=false; ccrpc=false; web=false
+has '^(crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/)' && rust=true
+has '^(crates/ccrpc/|src-tauri/src/ccrpc/)' && ccrpc=true
+has '^(src/|e2e/|package\.json$|pnpm-lock\.yaml$|(vite|playwright)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|index\.html$|\.prettier)' && web=true
+if ! $rust && ! $web; then
+  echo "pre-push: 只有文档等改动，跳过检查。"
+  exit 0
+fi
+
+log=$(mktemp -t codeck-pre-push)
+trap 'rm -f "$log"' EXIT
+step() {
+  name=$1
+  shift
+  printf 'pre-push: %s … ' "$name"
+  if "$@" >"$log" 2>&1; then
+    echo ok
+  else
+    echo 失败
+    tail -n 40 "$log" >&2
+    echo "pre-push: $name 没有通过，未推送。" >&2
+    exit 1
+  fi
+}
+
+if $rust; then
+  step "cargo fmt" cargo fmt --all -- --check
+  step "clippy" cargo clippy --workspace --all-targets -- -D warnings
+  step "cargo test" cargo test --workspace
+  if $ccrpc; then
+    step "ccrpc mock e2e" cargo test -p ccrpc --test e2e mock_ -- --ignored --test-threads=1
+  fi
+fi
+if $web; then
+  step "Prettier" pnpm format:check
+  step "typecheck" pnpm typecheck
+  step "lint" pnpm lint
+  step "vitest" pnpm test
+  # Own port: never reuses a dev server left running by another worktree.
+  step "E2E" env E2E_PORT="${CODECK_PUSH_E2E_PORT:-1499}" pnpm test:e2e
+fi
