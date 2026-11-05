@@ -7,7 +7,7 @@
 //! Everything else (`tool-results/`, `memory/`, …) is ignored. Directories and files are visited
 //! once per realpath and (dev, ino), so a symlinked project dir or a hard link adds nothing.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, Metadata};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -80,24 +80,58 @@ pub fn mtime_ns(md: &Metadata) -> i64 {
 /// Walks `<root>/projects`. Missing or unreadable entries are skipped.
 pub fn scan_root(root: &Path) -> ScanResult {
     let mut out = ScanResult::default();
-    let Ok(entries) = read_dir_sorted(&projects_dir(root)) else {
-        return out;
-    };
-    let mut seen_dirs: HashSet<(u64, u64)> = HashSet::new();
     let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
-    for entry in entries {
-        let Ok(real) = fs::canonicalize(&entry) else {
-            continue;
-        };
-        let Ok(md) = fs::metadata(&real) else {
-            continue;
-        };
-        if !md.is_dir() || !seen_dirs.insert((md.dev(), md.ino())) {
-            continue;
-        }
-        scan_project_dir(&real, &mut seen_files, &mut out);
+    for dir in project_dirs(root) {
+        scan_project_dir(&dir, &mut seen_files, &mut out);
     }
     out
+}
+
+/// [`scan_root`] limited to the sessions `sids`: their main files and session dirs in every
+/// project dir (a session's files may sit in more than one).
+///
+/// The (dev, ino) dedupe sees only these sessions' files: a file hard-linked into another
+/// session, which [`scan_root`] keeps only once (for whichever comes first), is kept here.
+pub fn scan_sessions(root: &Path, sids: &BTreeSet<String>) -> ScanResult {
+    let mut out = ScanResult::default();
+    let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
+    for dir in project_dirs(root) {
+        // The order of `scan_project_dir` (sorted names: `<sid>/` before `<sid>.jsonl`).
+        for sid in sids {
+            let session_dir = dir.join(sid);
+            if fs::metadata(&session_dir).is_ok_and(|m| m.is_dir()) {
+                let listing = list_session_dir(&session_dir, sid, &mut seen_files);
+                out.files.extend(listing.agent_files);
+                out.sidecars.extend(listing.sidecars);
+            }
+            let main = dir.join(format!("{sid}.jsonl"));
+            let Ok(md) = fs::metadata(&main) else {
+                continue;
+            };
+            if md.is_file() && seen_files.insert((md.dev(), md.ino())) {
+                let real = fs::canonicalize(&main).unwrap_or(main);
+                out.files
+                    .push(scanned(real, &md, FileRole::Main, sid, None, None));
+            }
+        }
+    }
+    out
+}
+
+/// Realpaths of the project dirs under `<root>/projects`, each directory once.
+fn project_dirs(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = read_dir_sorted(&projects_dir(root)) else {
+        return Vec::new();
+    };
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let real = fs::canonicalize(&entry).ok()?;
+            let md = fs::metadata(&real).ok()?;
+            (md.is_dir() && seen.insert((md.dev(), md.ino()))).then_some(real)
+        })
+        .collect()
 }
 
 fn scan_project_dir(dir: &Path, seen: &mut HashSet<(u64, u64)>, out: &mut ScanResult) {

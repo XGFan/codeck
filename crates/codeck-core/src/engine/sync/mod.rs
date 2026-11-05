@@ -5,7 +5,8 @@ mod compute;
 mod plan;
 mod write;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::atomic::Ordering;
 
 use rayon::prelude::*;
 
@@ -20,19 +21,63 @@ use plan::{SessionPlan, batches, diff_sidecars, plan_sync};
 use write::{rebill_changed, session_exists, write_work};
 
 impl Engine {
+    /// `scope`: only these sessions changed (a filesystem batch); the whole root is scanned
+    /// without it, before the first sync (no sidecar state to diff against yet) and after a
+    /// failed sync.
     pub(super) fn sync(
         &self,
         p: Option<&dyn Fn(&IndexStatus)>,
         keep_cache: bool,
+        scope: Option<&BTreeSet<String>>,
     ) -> CoreResult<ChangeSet> {
         let _g = self.sync_lock.lock();
+        let scope = scope.filter(|_| {
+            self.sidecar_state.lock().is_some() && !self.full_scan_next.load(Ordering::Relaxed)
+        });
+        let r = self.sync_locked(p, keep_cache, scope);
+        if r.is_err() {
+            self.full_scan_next.store(true, Ordering::Relaxed);
+        } else if scope.is_none() {
+            self.full_scan_next.store(false, Ordering::Relaxed);
+        }
+        r
+    }
+
+    fn sync_locked(
+        &self,
+        p: Option<&dyn Fn(&IndexStatus)>,
+        keep_cache: bool,
+        scope: Option<&BTreeSet<String>>,
+    ) -> CoreResult<ChangeSet> {
         let p: &dyn Fn(&IndexStatus) = p.unwrap_or(&|_| {});
-        let scan = scan::scan_root(&self.cfg.data_root);
-        let db_files = self.index.read(reader::all_files)?;
-        let (sidecar_dirty, sidecar_now) =
-            diff_sidecars(self.sidecar_state.lock().as_ref(), &scan, &db_files);
+        let (scan, db_files) = match scope {
+            Some(s) => (
+                scan::scan_sessions(&self.cfg.data_root, s),
+                self.index.read(|c| reader::files_of_sessions(c, s))?,
+            ),
+            None => (
+                scan::scan_root(&self.cfg.data_root),
+                self.index.read(reader::all_files)?,
+            ),
+        };
+        let (sidecar_dirty, sidecar_now) = {
+            let prev = self.sidecar_state.lock();
+            match (scope, prev.as_ref()) {
+                (Some(s), Some(prev)) => {
+                    let prev = prev
+                        .iter()
+                        .filter(|(_, v)| s.contains(&v.2))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    diff_sidecars(Some(&prev), &scan, &db_files)
+                }
+                _ => diff_sidecars(prev.as_ref(), &scan, &db_files),
+            }
+        };
         let (plans, removed) = plan_sync(&scan, db_files, &sidecar_dirty);
-        let with_text = self.index.read(reader::sessions_with_text)?;
+        let with_text = self.index.read(|c| {
+            reader::sessions_with_text(c, plans.iter().filter(|p| !p.reparse).map(|p| &p.sid))
+        })?;
 
         let files_total: u32 = plans.iter().map(|p| p.ingest.len() as u32).sum();
         let bytes_total: u64 = plans.iter().map(SessionPlan::ingest_bytes).sum();
@@ -162,7 +207,16 @@ impl Engine {
             p,
         );
         result?;
-        *self.sidecar_state.lock() = Some(sidecar_now);
+        {
+            let mut state = self.sidecar_state.lock();
+            match (scope, state.as_mut()) {
+                (Some(s), Some(state)) => {
+                    state.retain(|_, v| !s.contains(&v.2));
+                    state.extend(sidecar_now);
+                }
+                _ => *state = Some(sidecar_now),
+            }
+        }
         cs.changed.sort();
         cs.changed.dedup();
         cs.removed.sort();

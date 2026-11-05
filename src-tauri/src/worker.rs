@@ -21,7 +21,8 @@ use crate::state::{AppState, open_engine};
 use crate::watcher::{self, Watcher};
 
 const LIVE_POLL: Duration = Duration::from_secs(3);
-const RESCAN_EVERY_POLLS: u32 = 200; // 10 minutes
+/// The last resort for changes no filesystem batch reported (10 minutes).
+const RESCAN_EVERY_POLLS: u32 = 200;
 const STATUS_INTERVAL: Duration = Duration::from_millis(200); // <= 5 events/s
 
 #[derive(Debug)]

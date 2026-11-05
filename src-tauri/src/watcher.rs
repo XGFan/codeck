@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use codeck_core::paths;
+use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 
@@ -71,6 +72,36 @@ impl PathMapper {
         }
         None
     }
+
+    /// For a created, removed or renamed path: a project dir or an entry directly in one (such
+    /// as a `<sid>/` dir moved in), mapped under the raw `<root>/projects` like [`Self::map`]. Its
+    /// files may arrive without events of their own; the engine scans the whole root for such a
+    /// path.
+    pub fn map_tree(&self, path: &Path) -> Option<PathBuf> {
+        let raw_projects = &self.projects[0];
+        for dir in &self.projects {
+            if let Ok(rel) = path.strip_prefix(dir) {
+                return (matches!(depth(rel), Some(1 | 2))).then(|| raw_projects.join(rel));
+            }
+        }
+        for (target, link) in &self.links {
+            if let Ok(rel) = path.strip_prefix(target) {
+                return (matches!(depth(rel), Some(0 | 1))).then(|| link.join(rel));
+            }
+        }
+        None
+    }
+}
+
+/// Number of components of `rel`; `None` when one is hidden or not a plain name.
+fn depth(rel: &Path) -> Option<usize> {
+    rel.components()
+        .map(|c| match c {
+            Component::Normal(s) if !s.to_string_lossy().starts_with('.') => Some(()),
+            _ => None,
+        })
+        .collect::<Option<Vec<()>>>()
+        .map(|v| v.len())
 }
 
 fn is_hidden(rel: &Path) -> bool {
@@ -132,11 +163,23 @@ pub fn start(root: &Path, jobs: JobSender) -> Option<Watcher> {
     let mut debouncer =
         match new_debouncer(DEBOUNCE, None, move |res: DebounceEventResult| match res {
             Ok(events) => {
+                let mapper = &mapper;
                 let mut out: Vec<PathBuf> = events
                     .iter()
                     .filter(|e| !matches!(e.kind, EventKind::Access(_)))
-                    .flat_map(|e| e.paths.iter())
-                    .filter_map(|p| mapper.map(p))
+                    .flat_map(|e| {
+                        let tree = matches!(
+                            e.kind,
+                            EventKind::Create(_)
+                                | EventKind::Remove(_)
+                                | EventKind::Modify(ModifyKind::Name(_))
+                        );
+                        e.paths.iter().filter_map(move |p| {
+                            mapper
+                                .map(p)
+                                .or_else(|| tree.then(|| mapper.map_tree(p)).flatten())
+                        })
+                    })
                     .collect();
                 out.sort();
                 out.dedup();
@@ -148,6 +191,9 @@ pub fn start(root: &Path, jobs: JobSender) -> Option<Watcher> {
                 for e in errors {
                     tracing::warn!("watcher error: {e}");
                 }
+                // Events may have been lost: diff the whole root now, not at the next periodic
+                // Rescan.
+                jobs.send(Job::Rescan);
             }
         }) {
             Ok(d) => d,
@@ -213,6 +259,30 @@ mod tests {
         assert_eq!(m("/r/projects/-Users-a/s1/config.json"), None);
         assert_eq!(m("/r/projects/-Users-a/.hidden/s1.jsonl"), None);
         assert_eq!(m("/elsewhere/s1.jsonl"), None);
+    }
+
+    #[test]
+    fn project_dirs_and_their_entries_map_as_tree_changes() {
+        let t = |p: &str| {
+            mapper()
+                .map_tree(Path::new(p))
+                .map(|p| p.display().to_string())
+        };
+        assert_eq!(
+            t("/r/projects/-Users-b").as_deref(),
+            Some("/r/projects/-Users-b")
+        );
+        assert_eq!(
+            t("/r/projects/-Users-b/s1").as_deref(),
+            Some("/r/projects/-Users-b/s1")
+        );
+        assert_eq!(
+            t("/ext/proj-a/s1").as_deref(),
+            Some("/r/projects/-Users-a/s1")
+        );
+        assert_eq!(t("/r/projects"), None);
+        assert_eq!(t("/r/projects/-Users-b/s1/subagents"), None);
+        assert_eq!(t("/r/projects/-Users-b/.tmp"), None);
     }
 
     #[test]

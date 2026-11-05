@@ -6,6 +6,7 @@ mod common;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use codeck_core::ChangeSet;
 use common::engine::{Env, open_engine};
@@ -696,4 +697,114 @@ fn session_belongs_to_its_start_project_and_the_projects_it_edited() {
         .collect();
     names.sort();
     assert_eq!(names, vec!["web", "ws"]);
+}
+
+/// What a sync writes, without row ids (they follow insert order).
+fn index_dump(conn: &Connection) -> Vec<String> {
+    let mut out = Vec::new();
+    for sql in [
+        "SELECT * FROM sessions ORDER BY id",
+        "SELECT path, dev, ino, role, session_id, agent_id, size, mtime_ns, head, parsed_offset,
+            line_count, failed_lines, first_error FROM files ORDER BY path",
+        "SELECT * FROM projects ORDER BY id",
+        "SELECT * FROM messages ORDER BY session_id, agent_id, key",
+        "SELECT * FROM tool_calls ORDER BY session_id, tool_use_id",
+        "SELECT * FROM session_projects ORDER BY session_id, project_id",
+        "SELECT * FROM subagents ORDER BY session_id, agent_id",
+        "SELECT session_id, node_uuid, block_idx, on_main_line FROM msg_text
+            ORDER BY session_id, node_uuid, block_idx",
+    ] {
+        let mut st = conn.prepare(sql).unwrap();
+        let n = st.column_count();
+        let rows = st
+            .query_map([], |r| {
+                (0..n)
+                    .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap();
+        out.extend(rows.map(|r| format!("{:?}", r.unwrap())));
+    }
+    out
+}
+
+#[test]
+fn filesystem_batches_index_like_a_full_scan() {
+    // `copies` puts the same sessions in two project dirs; `subagents` adds agent files.
+    let env = Env::indexed(common::engine::data_root(&["basic", "copies", "subagents"]));
+    let projects = env.root.path().join("projects");
+    let basic = projects
+        .join(ids::BASIC_DIR)
+        .join(format!("{}.jsonl", ids::BASIC));
+    let agent = projects
+        .join(ids::SUBAGENTS_DIR)
+        .join(ids::SUBAGENTS)
+        .join("subagents/agent-a11b19d522e5e3835.jsonl");
+    let new_dir = projects.join("-Users-dev-code-fresh");
+    let fresh = new_dir.join("0f0f0f0f-0000-4000-8000-000000000001.jsonl");
+    let old_copy = projects
+        .join(ids::COPIES_DIR_OLD)
+        .join(format!("{}.jsonl", ids::COPIES_SUPERSET));
+    let no_cancel = AtomicBool::new(false);
+    let check = |step: &str| {
+        env.engine.index_text_backlog(&|_| {}, &no_cancel).unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let full = open_engine(env.root.path(), cache.path());
+        full.scan_all(&|_| {}).unwrap();
+        full.index_text_backlog(&|_| {}, &no_cancel).unwrap();
+        let oracle = Connection::open(cache.path().join("index.sqlite")).unwrap();
+        assert_eq!(index_dump(&env.db()), index_dump(&oracle), "after {step}");
+    };
+
+    append(&basic, &prompt_line("u-new", "", "another prompt"));
+    env.apply(&basic);
+    check("a main-file append");
+    let last = fs::read_to_string(&agent)
+        .unwrap()
+        .lines()
+        .last()
+        .unwrap()
+        .to_owned();
+    append(&agent, &format!("{last}\n"));
+    env.apply(&agent);
+    check("an agent-file append");
+    fs::create_dir_all(&new_dir).unwrap();
+    fs::write(&fresh, prompt_line("u-fresh", "", "a new session")).unwrap();
+    env.apply(&fresh);
+    check("a new session in a new project dir");
+    fs::remove_file(&old_copy).unwrap();
+    env.apply(&old_copy);
+    check("one copy of a session removed");
+    fs::remove_file(&basic).unwrap();
+    env.apply(&basic);
+    check("a session removed");
+}
+
+#[test]
+fn after_a_failed_sync_the_next_batch_scans_everything() {
+    let env = Env::scanned(common::engine::data_root(&["basic", "branch"]));
+    let db = env.db();
+    let basic = env.main_file(ids::BASIC_DIR, ids::BASIC);
+    let branch = env.main_file(ids::BRANCH_DIR, ids::BRANCH);
+    let before = messages(&db, ids::BRANCH);
+    db.execute_batch(&format!(
+        "CREATE TRIGGER fail BEFORE INSERT ON messages WHEN NEW.session_id = '{}'
+         BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        ids::BASIC
+    ))
+    .unwrap();
+    append(&basic, &prompt_line("u-fail", "", "not written"));
+    assert!(
+        env.engine
+            .apply_changes(std::slice::from_ref(&basic))
+            .is_err()
+    );
+    // A change no batch reports, then a batch naming only the failed session.
+    append(
+        &branch,
+        &prompt_line("u-unreported", "", "picked up by the full scan"),
+    );
+    db.execute_batch("DROP TRIGGER fail").unwrap();
+    env.apply(&basic);
+    assert_eq!(messages(&db, ids::BRANCH), before + 1);
 }

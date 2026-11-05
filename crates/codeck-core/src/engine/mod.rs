@@ -15,9 +15,9 @@
 mod session_cache;
 mod sync;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -38,7 +38,7 @@ use crate::model::{
     SessionSummary, SourceFile, Stats, StatsRequest, TokenTotals, ToolDetail, ToolDetailRequest,
     Transcript, TranscriptRequest, TranscriptScope,
 };
-use crate::paths::{index_db_path, prices_cache_path, sessions_dir};
+use crate::paths::{index_db_path, prices_cache_path, projects_dir, sessions_dir};
 use crate::{diag, search, stats};
 use session_cache::{CachedSession, FileState, Lru};
 
@@ -79,10 +79,48 @@ pub struct Engine {
     agents: Mutex<Lru<(String, String), (FileState, LoadedFile)>>,
     /// Sidecar (size, mtime, session) seen by the last sync; `None` before the first one.
     sidecar_state: Mutex<Option<SidecarState>>,
+    /// A sync failed: the next one scans the whole root, whatever its batch names (the sessions
+    /// of a failed per-session sync would otherwise wait until they change again).
+    full_scan_next: AtomicBool,
 }
 
 /// Sidecar path → (size, mtime, session id).
 type SidecarState = HashMap<PathBuf, (u64, i64, String)>;
+
+/// Session ids the changed `paths` name (`projects/<dir>/<sid>.jsonl` or anything under
+/// `projects/<dir>/<sid>/`, also via the realpath of `projects`), ignoring `<root>/sessions`;
+/// `None` when a path names no session (a project dir itself, a `<sid>/` dir moved in, anything
+/// else), or names none at all: then the whole root is scanned.
+///
+/// Changes no batch reports are caught by the next full scan: after a failed sync, after a
+/// watcher error (the worker queues a Rescan), and at the latest by the periodic Rescan, the
+/// last resort.
+fn changed_sessions(root: &Path, paths: &[PathBuf]) -> Option<BTreeSet<String>> {
+    let projects = projects_dir(root);
+    let real_projects = projects.canonicalize().ok();
+    let sessions = sessions_dir(root);
+    let mut out = BTreeSet::new();
+    for p in paths.iter().filter(|p| !p.starts_with(&sessions)) {
+        let rel = p
+            .strip_prefix(&projects)
+            .ok()
+            .or_else(|| p.strip_prefix(real_projects.as_ref()?).ok())?;
+        let comps = rel
+            .components()
+            .map(|c| match c {
+                Component::Normal(s) => s.to_str(),
+                _ => None,
+            })
+            .collect::<Option<Vec<&str>>>()?;
+        let sid = match comps.as_slice() {
+            [_, name] => name.strip_suffix(".jsonl")?,
+            [_, sid, _, ..] => sid,
+            _ => return None,
+        };
+        out.insert(sid.to_owned());
+    }
+    (!out.is_empty()).then_some(out)
+}
 
 impl fmt::Debug for Engine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -121,6 +159,7 @@ impl Engine {
             sessions: Mutex::new(Lru::new(SESSION_CACHE_CAP)),
             agents: Mutex::new(Lru::new(AGENT_CACHE_CAP)),
             sidecar_state: Mutex::new(None),
+            full_scan_next: AtomicBool::new(false),
         })
     }
 
@@ -141,7 +180,7 @@ impl Engine {
 
     /// Phase 1: stat walk + metadata parse of changed files.
     pub fn scan_all(&self, p: &dyn Fn(&IndexStatus)) -> CoreResult<ChangeSet> {
-        self.sync(Some(p), false)
+        self.sync(Some(p), false, None)
     }
 
     /// Phase 2: full-text backlog (`index::text`). `on_main_line` is set at insert time from
@@ -199,13 +238,15 @@ impl Engine {
     }
 
     /// Applies a debounced filesystem batch. Paths only under `<root>/sessions` affect liveness
-    /// (see `poll_live`), not the index; anything else re-runs the (cheap) stat diff.
+    /// (see `poll_live`), not the index; anything else re-runs the stat diff, limited to the
+    /// sessions the paths name when every path names one.
     pub fn apply_changes(&self, paths: &[PathBuf]) -> CoreResult<ChangeSet> {
         let sessions = sessions_dir(&self.cfg.data_root);
         if !paths.is_empty() && paths.iter().all(|p| p.starts_with(&sessions)) {
             return Ok(ChangeSet::default());
         }
-        self.sync(None, true)
+        let scope = changed_sessions(&self.cfg.data_root, paths);
+        self.sync(None, true, scope.as_ref())
     }
 
     /// Returns the new Live Session snapshot when it changed since the last poll.

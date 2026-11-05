@@ -64,6 +64,23 @@ pub fn all_files(conn: &Connection) -> CoreResult<Vec<FileRecord>> {
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// `files` rows of the sessions `sids`.
+pub fn files_of_sessions<'a>(
+    conn: &Connection,
+    sids: impl IntoIterator<Item = &'a String>,
+) -> CoreResult<Vec<FileRecord>> {
+    let mut st = conn.prepare_cached(&format!(
+        "SELECT {FILE_COLS} FROM files WHERE session_id=?1"
+    ))?;
+    let mut out = Vec::new();
+    for sid in sids {
+        for r in st.query_map([sid], file_from_row)? {
+            out.push(r?);
+        }
+    }
+    Ok(out)
+}
+
 /// Files of a session, largest main file first, then agent files by path.
 pub fn session_files(conn: &Connection, session_id: &str) -> CoreResult<Vec<FileRecord>> {
     let mut st = conn.prepare_cached(&format!(
@@ -450,9 +467,16 @@ pub fn text_ready(conn: &Connection) -> CoreResult<bool> {
         .is_none())
 }
 
-/// Sessions that have `msg_text` rows.
-pub fn sessions_with_text(conn: &Connection) -> CoreResult<HashSet<String>> {
-    let mut st = conn.prepare("SELECT DISTINCT session_id FROM msg_text")?;
-    let rows = st.query_map([], |r| r.get::<_, String>(0))?;
-    Ok(rows.collect::<Result<_, _>>()?)
+/// Those of `sids` that have `msg_text` rows.
+pub fn sessions_with_text<'a>(
+    conn: &Connection,
+    sids: impl IntoIterator<Item = &'a String>,
+) -> CoreResult<HashSet<String>> {
+    let mut out = HashSet::new();
+    for sid in sids {
+        if super::writer::has_text_rows(conn, sid)? {
+            out.insert(sid.clone());
+        }
+    }
+    Ok(out)
 }

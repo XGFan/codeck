@@ -811,11 +811,12 @@ pub fn write_on_main_line(
     for u in main_set {
         st.execute([u])?;
     }
-    conn.prepare_cached(
-        "UPDATE msg_text SET on_main_line =
-            (coalesce(agent_id, '') != '' OR node_uuid IN (SELECT uuid FROM temp_main))
-         WHERE session_id=?1",
-    )?
+    // Only rows whose flag changes are written.
+    let flag = "(coalesce(agent_id, '') != '' OR node_uuid IN (SELECT uuid FROM temp_main))";
+    conn.prepare_cached(&format!(
+        "UPDATE msg_text SET on_main_line = {flag}
+         WHERE session_id=?1 AND on_main_line IS NOT {flag}"
+    ))?
     .execute([session_id])?;
     conn.execute("DELETE FROM temp_main", [])?;
     Ok(())
