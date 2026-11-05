@@ -73,7 +73,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 ### src-tauri
 
 - `commands.rs`：每个命令都是 async，通过 `with_engine` 把 Engine 调用丢到 blocking pool，错误转成 `AppError`（`message` 是面向用户的中文文案）。新增命令要同时登记到 `lib.rs` 的 `specta_builder()`。
-- `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次 / TextBacklog / Rebuild / SetRoot / PollLive / Rescan）。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
+- `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次（排队中的合并成一个）/ TextBacklog / Rebuild / SetRoot / SwapRoot（切换数据根：在两个任务之间换 Engine，命令等它回复）/ Rescan / RefreshPrices / ApplyPrices）。Live 轮询不排进 worker：计时线程每 3 秒直接读进程文件，免得排在索引后面、又打断全文积压。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
 - `prices.rs`：下载 LiteLLM 价格表；worker 的 `RefreshPrices` 在独立线程里下载，结果以 `ApplyPrices` 交回 worker 写库，价格有变化时发 `PricesChanged` 事件。
 - `watcher.rs`（FSEvents，debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖，存于 Application Support）、`events.rs`（IndexStatus / SessionsChanged / LiveChanged / PricesChanged，以及 ccrpc 的 CcrpcLine / CcrpcExit 事件）。
 - `ccrpc/`：Connect（ADR-0007）。每个连接一个 `ccrpc attach|new --co-display` 子进程，stdout 逐行原样转发为 `CcrpcLine` 事件（协议解析与状态都在前端 `features/connect`），三层日志在 `~/Library/Logs/dev.joy.codeck/ccrpc/`。状态在第一个 ccrpc 命令时才初始化（要跑一次登录 shell 取环境），不要挪到启动流程里。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
