@@ -23,7 +23,7 @@ use crate::pty::{self, HolderConn, Owner};
 use crate::recognize::{self, PermissionChoice, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
-use crate::transcript::{self, BgTask, BlockKind, Tailer, TxEvent};
+use crate::transcript::{self, BgTask, BlockKind, Tailer, TaskKind, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
 pub const PROTOCOL: u32 = 2;
@@ -387,6 +387,38 @@ impl HookRequest {
 /// A prompt the plugin saw submitted: `(sequence, prompt_id, text)`.
 type HookPrompt = (u64, String, String);
 
+/// What went out for the current waiting.
+#[derive(Debug)]
+enum Announced {
+    /// A permission request or a question: its tool_use id.
+    Request(String),
+    /// A choice: its request id (`choice:N`), its layout, the event sent, and since when the
+    /// layout has been off the screen.
+    Choice {
+        id: String,
+        layout: String,
+        event: Value,
+        gone_since: Option<Instant>,
+    },
+    /// A dialog handed to the caller as its screen: the Process File's `waitingFor`.
+    Dialog(String),
+}
+
+impl Announced {
+    /// Answered by `request_id` (a dialog has no request id).
+    fn is(&self, request_id: &str) -> bool {
+        match self {
+            Announced::Request(id) | Announced::Choice { id, .. } => id == request_id,
+            Announced::Dialog(_) => false,
+        }
+    }
+
+    /// The folder trust dialog, announced as a choice.
+    fn is_trust(&self) -> bool {
+        matches!(self, Announced::Choice { layout, .. } if layout == TRUST_LAYOUT)
+    }
+}
+
 pub struct Engine {
     roots: Roots,
     /// ccrpc's state directory (check-ins, hook sockets).
@@ -468,15 +500,12 @@ pub struct Engine {
     /// Dialog signatures already analyzed (never twice).
     analyzed: HashSet<String>,
     analyses: VecDeque<Instant>,
-    /// Layout of the choice announced, the event, and since when it is off the screen.
-    choice_layout: Option<String>,
-    choice_event: Option<Value>,
-    choice_gone_since: Option<Instant>,
+    /// Numbers the choices announced (`choice:N`).
     choice_seq: u64,
     /// The Holder reports size owners (not an older Holder).
     holder_reports_owner: bool,
-    /// Request (tool_use id) or dialog announced for the current waiting.
-    announced: Option<String>,
+    /// What went out for the current waiting.
+    announced: Option<Announced>,
     startup_checked: Option<Instant>,
     startup_last: Option<Vec<String>>,
     /// Queued follow-ups: text and image paths.
@@ -585,9 +614,6 @@ impl Engine {
             analysis: None,
             analyzed: HashSet::new(),
             analyses: VecDeque::new(),
-            choice_layout: None,
-            choice_event: None,
-            choice_gone_since: None,
             choice_seq: 0,
             holder_reports_owner,
             announced: None,
@@ -1243,7 +1269,7 @@ impl Engine {
             self.resolved.clear();
         }
         self.resolved.insert(id.to_string());
-        if self.announced.as_deref() == Some(id) {
+        if self.announced.as_ref().is_some_and(|a| a.is(id)) {
             self.announced = None;
         }
     }
@@ -1310,11 +1336,11 @@ impl Engine {
         let (resp, input) = (&i["tool_response"], &i["tool_input"]);
         let text = |v: &Value| v.as_str().map(str::to_string);
         let task = match i["tool_name"].as_str() {
-            Some("Bash") => text(&resp["backgroundTaskId"]).map(|id| (id, "shell")),
+            Some("Bash") => text(&resp["backgroundTaskId"]).map(|id| (id, TaskKind::Shell)),
             Some("Agent" | "Task") if resp["isAsync"] == true => {
-                text(&resp["agentId"]).map(|id| (id, "agent"))
+                text(&resp["agentId"]).map(|id| (id, TaskKind::Agent))
             }
-            Some("Workflow") => text(&resp["taskId"]).map(|id| (id, "workflow")),
+            Some("Workflow") => text(&resp["taskId"]).map(|id| (id, TaskKind::Workflow)),
             _ => None,
         };
         let Some((id, kind)) = task else { return };
@@ -1333,7 +1359,9 @@ impl Engine {
             kind,
             tool_use_id: tool_use_id.to_string(),
             description,
-            command: (kind == "shell").then(|| text(&input["command"])).flatten(),
+            command: (kind == TaskKind::Shell)
+                .then(|| text(&input["command"]))
+                .flatten(),
             status: "running".into(),
         });
     }
@@ -1351,9 +1379,9 @@ impl Engine {
                 continue;
             }
             let kind = match t["type"].as_str() {
-                Some("subagent") => "agent",
-                Some("shell") => "shell",
-                Some("workflow") => "workflow",
+                Some("subagent") => TaskKind::Agent,
+                Some("shell") => TaskKind::Shell,
+                Some("workflow") => TaskKind::Workflow,
                 _ => continue,
             };
             self.hook_tasks.push(BgTask {
@@ -1440,7 +1468,7 @@ impl Engine {
                 kind: WaitKind::Permission | WaitKind::Question,
                 ..
             }
-        ) && let Some(id) = self.announced.take()
+        ) && let Some(Announced::Request(id)) = self.announced.take()
             && self.open_request(&id).is_none()
         {
             self.resolved.insert(id);
@@ -1562,7 +1590,7 @@ impl Engine {
         let lines = self.screen().map(|s| s.lines).unwrap_or_default();
         // The folder trust dialog is answered as a choice.
         if recognize::trust_folder(&lines).is_some() {
-            if self.choice_layout.as_deref() != Some(TRUST_LAYOUT) {
+            if !self.announced.as_ref().is_some_and(Announced::is_trust) {
                 self.choice_seq += 1;
                 let rid = format!("choice:{}", self.choice_seq);
                 let ev = json!({"type": "choice", "request_id": rid, "title": recognize::TRUST_TITLE,
@@ -1572,17 +1600,18 @@ impl Engine {
                     "tool_use_id": null, "layout": TRUST_LAYOUT, "layout_source": "builtin"});
                 crate::clog!("recognize choice layout={TRUST_LAYOUT} source=builtin");
                 crate::log::screen(lines.iter().map(String::as_str));
-                self.announced = Some(rid);
-                self.choice_layout = Some(TRUST_LAYOUT.to_string());
-                self.choice_event = Some(ev.clone());
+                self.announced = Some(Announced::Choice {
+                    id: rid,
+                    layout: TRUST_LAYOUT.to_string(),
+                    event: ev.clone(),
+                    gone_since: None,
+                });
                 self.startup_last = Some(lines);
                 self.emit(ev);
             }
             return;
         }
-        if self.choice_layout.as_deref() == Some(TRUST_LAYOUT) {
-            self.choice_layout = None;
-            self.choice_event = None;
+        if self.announced.as_ref().is_some_and(Announced::is_trust) {
             self.announced = None;
         }
         if self.startup_last.as_ref() != Some(&lines) {
@@ -1620,8 +1649,6 @@ impl Engine {
                 if gone.is_none() {
                     return err("timeout", "回车后 10 秒内信任框没有关闭");
                 }
-                self.choice_layout = None;
-                self.choice_event = None;
                 self.announced = None;
                 return Ok(json!({"state": self.state.name()}));
             }
@@ -1636,7 +1663,7 @@ impl Engine {
     /// An announced request whose tool got its result is over even if the Process File still says
     /// waiting (two prompts in a row can collapse into one waiting period): announce afresh.
     fn refresh_announcement(&mut self) {
-        let Some(id) = &self.announced else {
+        let Some(a) = &self.announced else {
             return;
         };
         if !matches!(
@@ -1648,57 +1675,53 @@ impl Engine {
         ) {
             return;
         }
-        if id.starts_with("dialog:") {
-            return;
-        }
-        // A choice is over once its tool got a result, or its layout has been off the screen a
-        // moment (two waits can merge into one waiting period): announce afresh.
-        if id.starts_with("choice:") {
-            let tool_done = self
-                .choice_event
-                .as_ref()
-                .and_then(|v| v["tool_use_id"].as_str())
-                .is_some_and(|tid| self.resolved.contains(tid));
-            let shown = self.choice_layout.as_ref().is_some_and(|lid| {
-                self.screen()
+        match a {
+            Announced::Dialog(_) => {}
+            // A choice is over once its tool got a result, or its layout has been off the screen
+            // a moment (two waits can merge into one waiting period): announce afresh.
+            Announced::Choice { layout, event, .. } => {
+                let tool_done = event["tool_use_id"]
+                    .as_str()
+                    .is_some_and(|tid| self.resolved.contains(tid));
+                let shown = self
+                    .screen()
                     .ok()
                     .and_then(|s| {
                         self.library
                             .find_kind(&s.lines, LayoutKind::Choice)
-                            .map(|(l, _)| &l.id == lid)
+                            .map(|(l, _)| &l.id == layout)
                     })
-                    .unwrap_or(false)
-            });
-            if shown {
-                self.choice_gone_since = None;
-            } else if self.choice_gone_since.is_none() {
-                self.choice_gone_since = Some(Instant::now());
+                    .unwrap_or(false);
+                let mut gone = false;
+                if let Some(Announced::Choice { gone_since, .. }) = &mut self.announced {
+                    if shown {
+                        *gone_since = None;
+                    } else if gone_since.is_none() {
+                        *gone_since = Some(Instant::now());
+                    }
+                    gone = gone_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(250));
+                }
+                if tool_done || gone {
+                    self.announced = None;
+                    self.raw_since = Some((
+                        self.raw_since.take().map(|r| r.0).unwrap_or_default(),
+                        Instant::now(),
+                    ));
+                }
             }
-            let gone = self
-                .choice_gone_since
-                .is_some_and(|t| t.elapsed() >= Duration::from_millis(250));
-            if tool_done || gone {
-                self.announced = None;
-                self.choice_layout = None;
-                self.choice_event = None;
-                self.choice_gone_since = None;
-                self.raw_since = Some((
-                    self.raw_since.take().map(|r| r.0).unwrap_or_default(),
-                    Instant::now(),
-                ));
+            // A question answered on the screen has no hook: it is open while its tool is pending.
+            Announced::Request(id) => {
+                let screen_ask = self.pending_ask().is_some_and(|p| p.id == *id);
+                if self.open_request(id).is_none() && !screen_ask {
+                    if let Some(Announced::Request(done)) = self.announced.take() {
+                        self.resolved.insert(done);
+                    }
+                    self.raw_since = Some((
+                        self.raw_since.take().map(|r| r.0).unwrap_or_default(),
+                        Instant::now(),
+                    ));
+                }
             }
-            return;
-        }
-        // A question answered on the screen has no hook: it is open while its tool is pending.
-        let screen_ask = self.pending_ask().is_some_and(|p| p.id == *id);
-        if self.open_request(id).is_none() && !screen_ask {
-            if let Some(done) = self.announced.take() {
-                self.resolved.insert(done);
-            }
-            self.raw_since = Some((
-                self.raw_since.take().map(|r| r.0).unwrap_or_default(),
-                Instant::now(),
-            ));
         }
     }
 
@@ -1877,7 +1900,7 @@ impl Engine {
                         crate::log::screen(s.lines.iter().map(String::as_str));
                     }
                     let ev = Self::permission_event(r, opts);
-                    self.announced = Some(r.id.clone());
+                    self.announced = Some(Announced::Request(r.id.clone()));
                     self.emit(ev);
                     return;
                 }
@@ -1892,7 +1915,7 @@ impl Engine {
                         .and_then(|s| self.dialog_options(r, &s.lines));
                     crate::clog!("recognize permission {} on screen", r.id);
                     let ev = Self::permission_event(r, opts);
-                    self.announced = Some(id);
+                    self.announced = Some(Announced::Request(id));
                     self.emit(ev);
                     return;
                 }
@@ -1911,7 +1934,7 @@ impl Engine {
                         return;
                     }
                     // Cannot tie the dialog to a request: hand the screen to the caller.
-                    self.announced = Some(format!("dialog:{waiting_for}"));
+                    self.announced = Some(Announced::Dialog(waiting_for.clone()));
                     self.emit(
                         json!({"type": "dialog", "waiting_for": waiting_for, "lines": s.lines}),
                     );
@@ -1931,7 +1954,7 @@ impl Engine {
                 };
                 let ev = json!({"type": "question", "request_id": id,
                     "questions": input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": agent_id});
-                self.announced = Some(id);
+                self.announced = Some(Announced::Request(id));
                 self.emit(ev);
             }
             WaitKind::Dialog => {
@@ -1943,7 +1966,7 @@ impl Engine {
                 if self.announce_choice(&s) || self.analyzing(&s, &waiting_for) {
                     return;
                 }
-                self.announced = Some(format!("dialog:{waiting_for}"));
+                self.announced = Some(Announced::Dialog(waiting_for.clone()));
                 self.emit(json!({"type": "dialog", "waiting_for": waiting_for, "lines": s.lines}));
             }
         }
@@ -1984,16 +2007,18 @@ impl Engine {
         };
         self.choice_seq += 1;
         let rid = format!("choice:{}", self.choice_seq);
-        self.announced = Some(rid.clone());
-        self.choice_layout = Some(id.clone());
-        self.choice_gone_since = None;
         let options: Vec<Value> = opts
             .iter()
             .map(|o| json!({"label": o.label, "meaning": o.meaning, "description": o.description}))
             .collect();
         let ev = json!({"type": "choice", "request_id": rid, "title": title, "options": options,
             "tool_use_id": tool, "layout": id, "layout_source": source});
-        self.choice_event = Some(ev.clone());
+        self.announced = Some(Announced::Choice {
+            id: rid,
+            layout: id,
+            event: ev.clone(),
+            gone_since: None,
+        });
         self.emit(ev);
         true
     }
@@ -2108,8 +2133,10 @@ impl Engine {
 
     /// Answers the announced choice by an option's text (exact, else a unique prefix).
     fn answer_choice(&mut self, request_id: &str, option: &str) -> CmdResult {
-        if self.choice_layout.as_deref() == Some(TRUST_LAYOUT)
-            && self.announced.as_deref() == Some(request_id)
+        if self
+            .announced
+            .as_ref()
+            .is_some_and(|a| a.is_trust() && a.is(request_id))
         {
             return self.answer_trust(option);
         }
@@ -2118,18 +2145,22 @@ impl Engine {
             State::Exited => return err("exited", "Session 已结束"),
             _ => return err("not_waiting", format!("当前状态为 {}", self.state.name())),
         }
-        if self.announced.as_deref() != Some(request_id) || !request_id.starts_with("choice:") {
-            return err(
-                "unknown_request",
-                format!("当前挂起的选择不是 {request_id}"),
-            );
-        }
+        // The layout of the choice being answered: the key goes only to a screen showing it.
+        let layout = match &self.announced {
+            Some(Announced::Choice { id, layout, .. }) if id == request_id => layout.clone(),
+            _ => {
+                return err(
+                    "unknown_request",
+                    format!("当前挂起的选择不是 {request_id}"),
+                );
+            }
+        };
         self.settle_dialog();
         let now = self.fresh_screen()?;
         let Some((l, opts)) = self.library.find_kind(&now.lines, LayoutKind::Choice) else {
             return Err(self.unrecognized("answer_choice", Some(&now)));
         };
-        if Some(&l.id) != self.choice_layout.as_ref() {
+        if l.id != layout {
             return err("unknown_request", "屏幕上已经不是这个选择");
         }
         let exact: Vec<_> = opts.iter().filter(|o| o.label == option).collect();
@@ -2151,7 +2182,7 @@ impl Engine {
         let rid = request_id.to_string();
         let ok = self.wait_until(Duration::from_secs(10), |e| {
             !matches!(e.state, State::Waiting { .. })
-                || e.announced.as_deref() != Some(rid.as_str())
+                || !e.announced.as_ref().is_some_and(|a| a.is(&rid))
         });
         if ok {
             Ok(json!({"state": self.state.name()}))
@@ -2563,7 +2594,7 @@ impl Engine {
 
     fn request_is(&self, kind: &WaitKind, request_id: &str) -> bool {
         matches!(&self.state, State::Waiting { kind: k, .. } if k == kind)
-            && self.announced.as_deref() == Some(request_id)
+            && self.announced.as_ref().is_some_and(|a| a.is(request_id))
     }
 
     fn check_request(&self, kind: WaitKind, request_id: &str) -> std::result::Result<(), CmdErr> {
@@ -2572,7 +2603,7 @@ impl Engine {
             State::Exited => return err("exited", "Session 已结束"),
             _ => return err("not_waiting", format!("当前状态为 {}", self.state.name())),
         }
-        if self.announced.as_deref() != Some(request_id) {
+        if !self.announced.as_ref().is_some_and(|a| a.is(request_id)) {
             return err(
                 "unknown_request",
                 format!("当前挂起的请求不是 {request_id}"),
@@ -2585,7 +2616,7 @@ impl Engine {
         let rid = request_id.to_string();
         let ok = self.wait_until(Duration::from_secs(10), |e| {
             !matches!(e.state, State::Waiting { .. })
-                || e.announced.as_deref().is_some_and(|a| a != rid)
+                || e.announced.as_ref().is_some_and(|a| !a.is(&rid))
         });
         if ok {
             Ok(json!({"state": self.state.name()}))
@@ -2649,7 +2680,7 @@ impl Engine {
     fn answered(&mut self, id: &str) {
         self.resolve(id);
         // `announced` stays on the request until the state moves on.
-        self.announced = Some(id.to_string());
+        self.announced = Some(Announced::Request(id.to_string()));
         self.answered_until = Some(Instant::now() + ANSWER_SETTLE);
     }
 
@@ -3128,7 +3159,7 @@ impl Engine {
         }
         // The panel shows a shell by its command and an agent or a Workflow by its description.
         let needle = match task.kind {
-            "shell" => task.command.clone(),
+            TaskKind::Shell => task.command.clone(),
             _ => task.description.clone(),
         }
         .unwrap_or_default();
@@ -3241,17 +3272,14 @@ impl Engine {
 
     fn get_state(&self) -> Value {
         let mut v = self.state.to_json();
-        let request = self.announced.as_ref().map(|id| {
-            if id.starts_with("choice:")
-                && let Some(ev) = &self.choice_event
-            {
-                return ev.clone();
-            }
-            match self.open_request(id) {
+        let request = self.announced.as_ref().map(|a| match a {
+            Announced::Choice { event, .. } => event.clone(),
+            Announced::Request(id) => match self.open_request(id) {
                 Some(r) => json!({"request_id": r.id, "tool_name": r.tool_name, "input": r.input,
                     "agent_id": r.agent_id}),
-                None => json!({"waiting_for": id.strip_prefix("dialog:").unwrap_or(id)}),
-            }
+                None => json!({"waiting_for": id}),
+            },
+            Announced::Dialog(waiting_for) => json!({"waiting_for": waiting_for}),
         });
         v["request"] = request.unwrap_or(Value::Null);
         v["holder_id"] = json!(self.holder_id);

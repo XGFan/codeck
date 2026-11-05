@@ -193,13 +193,33 @@ pub fn local_setting(s: &str) -> Option<(Option<String>, Option<String>)> {
     (!level.is_empty()).then(|| (None, Some(level.to_lowercase())))
 }
 
+/// What a background task runs; on the wire `agent`, `shell` or `workflow`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskKind {
+    Agent,
+    Shell,
+    Workflow,
+}
+
+impl TaskKind {
+    /// The kind as [`subagent::background_launch`] names it.
+    pub fn from_name(name: &str) -> Option<TaskKind> {
+        match name {
+            "agent" => Some(TaskKind::Agent),
+            "shell" => Some(TaskKind::Shell),
+            "workflow" => Some(TaskKind::Workflow),
+            _ => None,
+        }
+    }
+}
+
 /// A background task Claude Code started: a Subagent Run, a shell or a Workflow Run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BgTask {
     /// Claude Code's task id (agentId, background shell id, Workflow task id).
     pub id: String,
-    /// `agent`, `shell` or `workflow`.
-    pub kind: &'static str,
+    pub kind: TaskKind,
     pub tool_use_id: String,
     pub description: Option<String>,
     /// The shell command of a background shell.
@@ -1092,6 +1112,7 @@ impl Tailer {
                 let text = nodes::result_content(rb.content.as_deref()).0;
                 if agent.is_none()
                     && let Some((kind, id)) = subagent::background_launch(&text)
+                    && let Some(kind) = TaskKind::from_name(kind)
                     && !self.tasks.iter().any(|t| t.id == id)
                 {
                     let input = tool.as_ref().map(|t| &t.input);
@@ -2001,9 +2022,36 @@ mod tests {
         assert_eq!(tasks.len(), 2);
         assert_eq!(
             (tasks[0].kind, tasks[0].command.as_deref()),
-            ("shell", Some("sleep 5"))
+            (TaskKind::Shell, Some("sleep 5"))
         );
         assert!(tasks.iter().all(|t| t.status == "completed"), "{tasks:?}");
+    }
+
+    /// `get_tasks` puts `BgTask` on the wire: the kind is a lowercase string, `command` only
+    /// for a shell.
+    #[test]
+    fn background_tasks_serialize_as_on_the_wire() {
+        let task = |kind, command: Option<&str>| BgTask {
+            id: "t1".into(),
+            kind,
+            tool_use_id: "toolu_1".into(),
+            description: Some("d".into()),
+            command: command.map(str::to_string),
+            status: "running".into(),
+        };
+        let all = [
+            task(TaskKind::Shell, Some("sleep 5")),
+            task(TaskKind::Agent, None),
+            task(TaskKind::Workflow, None),
+        ];
+        assert_eq!(
+            serde_json::to_string(&all).unwrap(),
+            concat!(
+                r#"[{"id":"t1","kind":"shell","tool_use_id":"toolu_1","description":"d","command":"sleep 5","status":"running"},"#,
+                r#"{"id":"t1","kind":"agent","tool_use_id":"toolu_1","description":"d","status":"running"},"#,
+                r#"{"id":"t1","kind":"workflow","tool_use_id":"toolu_1","description":"d","status":"running"}]"#
+            )
+        );
     }
 
     #[test]
