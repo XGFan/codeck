@@ -19,6 +19,24 @@ test("两栏布局与统计、设置入口可见", async ({ page }) => {
   await expect(page.getByTestId("statusbar")).toHaveCount(0);
 });
 
+test("索引状态到达时按到一半的设置按钮仍然有效", async ({ page }) => {
+  // Paused clock: the app renders, but no IPC reply (the mock answers on a timer) arrives until it runs.
+  await page.clock.install();
+  await page.clock.pauseAt(Date.now() + 1000);
+  await page.goto("/");
+  const button = page.getByTestId("settings-button");
+  await expect(button).toBeVisible();
+  await expect(page.getByTestId("statusbar")).toHaveCount(0);
+  const box = (await button.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  // The index status arrives between the press and the release.
+  await page.clock.runFor(1000);
+  await expect(page.getByTestId("statusbar")).toContainText("已索引");
+  await page.mouse.up();
+  await expect(page.getByTestId("settings")).toBeVisible();
+});
+
 test("右侧对话头部不再有搜索按钮", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-testid=session-row]:not([data-pending])").first().click();

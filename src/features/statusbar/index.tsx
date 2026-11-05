@@ -9,8 +9,10 @@ import { useIndexStatus } from "@/queries";
  */
 export function StatusBar() {
   const { data: s } = useIndexStatus();
+  // Keyed so the buttons stay the same elements when the status first arrives: rebuilt, a click pressed just
+  // before would be released on a new button and lost.
   const actions = (
-    <span className="ml-auto flex shrink-0 items-center gap-0.5">
+    <span key="actions" className="ml-auto flex shrink-0 items-center gap-0.5">
       <StatsToggle className="size-6" />
       <SettingsButton className="size-6 text-secondary" />
     </span>
