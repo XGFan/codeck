@@ -63,12 +63,12 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 - `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`（组装用的类型）、`live`（进程文件）、`pricing`。codeck-core 直接写 `transcript::…`。解析层的集成测试（parse / merge / branch / assemble）在 `crates/transcript/tests/`，fixture 用 codeck-core 的，经 `#[path]` 引用 `crates/codeck-core/tests/common/fixtures.rs`（该文件不能依赖 codeck-core）。解析层的错误是 `TranscriptError`，codeck-core 按变体映射到 `CoreError`。
 
-- `engine.rs` 的 `Engine` 是 src-tauri 调用的**唯一入口**，全部是阻塞调用。它负责：索引同步（stat 遍历 → 与 `files` 表比对 → rayon 并行轻解析 → 按批事务写入 → 重算受影响的 Session；追加只读 `[parsed_offset, EOF)`，文件变小/被替换则整 Session 重解析）；以及显示用的小 LRU（按 source/sidecar 的 path+size+mtime 哈希校验）。
+- `engine/` 的 `Engine` 是 src-tauri 调用的**唯一入口**，全部是阻塞调用（门面 API 在 `engine/mod.rs`）。它负责：索引同步（`engine/sync/`：stat 遍历 → 与 `files` 表比对（`plan.rs`）→ rayon 并行轻解析（`compute.rs`）→ 按批事务写入（`write.rs`）→ 重算受影响的 Session；追加只读 `[parsed_offset, EOF)`，文件变小/被替换则整 Session 重解析）；以及显示用的小 LRU（`engine/session_cache.rs`，按 source/sidecar 的 path+size+mtime 哈希校验）。
 - 管线：`scan`（遍历数据根、按 realpath/inode 去重）→ `raw`（宽容的 serde 结构，字段全可选）→ `parse`（按行解析，坏行跳过并计数）→ `assemble/*`（把事件日志组装成节点：parentUuid 树、Branch/Main Line、compact 接续、Fork、Subagent/Workflow 关联、工具摘要、⌘F 查找、搜索跳转）→ `index/*`（SQLite + FTS5 trigram）→ `search` / `stats` / `diag`。`known.rs` 列出已知的条目类型/内容块/工具名，未知的进诊断而不是丢弃。
 - IPC 类型分两处，都由 specta 导出：`crates/transcript/src/model/*` 放组装用的类型（Transcript、节点、Branch、⌘F / 跳转、Live 状态等），`crates/codeck-core/src/model/*` 放应用层类型（Project、Session 列表与详情、搜索、统计、诊断、应用状态、事件、`AppError`），并重新导出前者，所以 src-tauri 一律写 `codeck_core::model::…`。改这两处或 `src-tauri/src/commands.rs` 的签名后必须 `pnpm bindings`；`src/ipc/bindings.ts` 是生成文件，勿手改。
 - 索引是可丢弃的镜像（ADR-0003）：不写迁移，schema 变化就把 `index/schema.rs` 的 `SCHEMA_VERSION` +1，启动时自动删库重建。
 - 工具输出不进 FTS，也不提供搜索（ADR-0004）；⌘F 会话内查找仍覆盖工具输出（`assemble/find.rs`）。
-- Cost：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine::rebill_changed`）。价格表在 `Engine` 里，联网下载在 src-tauri（`prices.rs`，ADR-0005）。
+- Cost：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine/sync/write.rs` 的 `rebill_changed`）。价格表在 `Engine` 里，联网下载在 src-tauri（`prices.rs`，ADR-0005）。
 
 ### src-tauri
 
