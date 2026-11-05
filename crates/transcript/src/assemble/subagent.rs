@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 
 use super::nodes::{self, PREVIEW_BYTES, RESULT_BYTES, RESULT_LINES};
-use super::{LoadedFile, SessionSidecar, SessionSkeleton, prompt};
+use super::{EntryKind, LoadedFile, SessionSidecar, SessionSkeleton, prompt};
 use crate::known::AGENT_TOOLS;
 use crate::model::{AgentId, NodeId, PromptOrigin, SubagentRun};
 use crate::raw::{RawToolUseResult, lenient};
@@ -108,7 +108,8 @@ pub fn notification_facts(s: &SessionSkeleton, files: &[LoadedFile]) -> Notices 
     let mut out = Notices::default();
     let mut seq = 0u32;
     for (i, n) in s.nodes.iter().enumerate() {
-        if n.entry_type != "user" || n.is_tool_result || n.is_compact_summary || n.is_human {
+        if n.entry_type != EntryKind::User || n.is_tool_result || n.is_compact_summary || n.is_human
+        {
             continue;
         }
         let e = s.entry(files, i);

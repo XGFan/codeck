@@ -202,16 +202,19 @@ pub fn run(conn: &Connection, r: &SearchRequest, force_like: bool) -> CoreResult
         }
     }
 
+    let mut sids: Vec<&str> = picked.iter().map(|p| p.1.as_str()).collect();
+    sids.dedup();
+    let mut summaries = reader::session_summaries(conn, &sids)?;
     for (id, sid, n) in picked {
         let Some(hit) = details.remove(&id) else {
             continue;
         };
         if resp.groups.last().is_none_or(|g| g.session.id != sid) {
-            let Some(row) = reader::session_detail(conn, &sid)? else {
+            let Some(session) = summaries.remove(&sid) else {
                 continue;
             };
             resp.groups.push(SearchGroup {
-                session: row.summary,
+                session,
                 hit_count: n,
                 hits: Vec::new(),
             });

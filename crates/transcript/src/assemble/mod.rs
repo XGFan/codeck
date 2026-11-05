@@ -82,13 +82,36 @@ pub struct SessionSkeleton {
     pub fork_origin_id: Option<String>,
 }
 
+/// `type` of a [`SkeletonNode`]'s entry; `Other` for any other type (the record keeps the string).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EntryKind {
+    User,
+    Assistant,
+    System,
+    Attachment,
+    #[default]
+    Other,
+}
+
+impl EntryKind {
+    pub fn of(entry_type: &str) -> Self {
+        match entry_type {
+            "user" => Self::User,
+            "assistant" => Self::Assistant,
+            "system" => Self::System,
+            "attachment" => Self::Attachment,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// One uuid-bearing entry in a [`SessionSkeleton`].
 #[derive(Clone, Debug, Default)]
 pub struct SkeletonNode {
     pub uuid: String,
     /// Effective parent (`parentUuid`, else `logicalParentUuid`, else the preceding entry; index into `SessionSkeleton::nodes`), cycle-free.
     pub parent: Option<usize>,
-    pub entry_type: String,
+    pub entry_type: EntryKind,
     pub subtype: Option<String>,
     pub timestamp_ms: Option<f64>,
     /// Assistant `message.id`.
@@ -120,38 +143,39 @@ pub struct SkeletonNode {
 
 impl SkeletonNode {
     pub fn is_assistant(&self) -> bool {
-        self.entry_type == "assistant"
+        self.entry_type == EntryKind::Assistant
     }
 
     pub fn is_compact_boundary(&self) -> bool {
-        self.entry_type == "system" && self.subtype.as_deref() == Some("compact_boundary")
+        self.entry_type == EntryKind::System && self.subtype.as_deref() == Some("compact_boundary")
     }
 
     /// Conversational anchor candidate: assistant, non-meta user entries
     /// (prompts, tool results, compact summaries, notifications) and compact boundaries.
     pub fn is_conversational(&self) -> bool {
-        match self.entry_type.as_str() {
-            "assistant" => true,
-            "user" => !self.is_meta,
+        match self.entry_type {
+            EntryKind::Assistant => true,
+            EntryKind::User => !self.is_meta,
             _ => self.is_compact_boundary(),
         }
     }
 
     /// Satellite candidate: shown after the path node it hangs off.
     pub fn is_satellite_type(&self) -> bool {
-        matches!(self.entry_type.as_str(), "attachment" | "system") && !self.is_compact_boundary()
+        matches!(self.entry_type, EntryKind::Attachment | EntryKind::System)
+            && !self.is_compact_boundary()
     }
 
     /// Shown only with 「显示隐藏条目」: attachments, bookkeeping system entries (stop hooks, turn
     /// durations…), meta user entries and tool results not absorbed into their call.
     pub fn hidden_by_default(&self) -> bool {
-        match self.entry_type.as_str() {
-            "attachment" => true,
-            "system" => {
+        match self.entry_type {
+            EntryKind::Attachment => true,
+            EntryKind::System => {
                 !self.is_compact_boundary()
                     && crate::known::is_hidden_system_subtype(self.subtype.as_deref().unwrap_or(""))
             }
-            "user" => !self.is_compact_summary && (self.is_tool_result || self.is_meta),
+            EntryKind::User => !self.is_compact_summary && (self.is_tool_result || self.is_meta),
             _ => false,
         }
     }

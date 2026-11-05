@@ -12,24 +12,17 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
-use codeck_core::model::{AppError, ErrorCode};
+use codeck_core::model::AppError;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
 use self::relay::{App, Out, Sink};
+use crate::commands::internal;
 use crate::events::{CcrpcExitEvent, CcrpcLineEvent};
 use crate::state::AppState;
 
 type CmdResult<T> = Result<T, AppError>;
-
-/// The blocking task itself failed (as commands.rs words it).
-fn internal(e: impl std::fmt::Display) -> AppError {
-    AppError {
-        code: ErrorCode::Internal,
-        message: format!("后台任务失败：{e}"),
-    }
-}
 
 /// ccrpc, its logs and its pasted images, set up by the first command that needs them. A failed
 /// setup is not kept: the next command tries again (e.g. after ccrpc is installed). `Arc` so a

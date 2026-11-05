@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
-use super::{LoadedFile, SessionSkeleton, content, prompt};
+use super::{EntryKind, LoadedFile, SessionSkeleton, content, prompt};
 use crate::model::{
     AgentId, AssistantBlock, ImageRef, Node, NodeBody, NodeId, PersistedRef, PromptOrigin,
     TokenTotals, ToolCall, ToolResult,
@@ -60,7 +60,7 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
 
     for (pos, &i) in display.iter().enumerate() {
         let n = &s.nodes[i];
-        if n.entry_type == "user"
+        if n.entry_type == EntryKind::User
             && n.is_tool_result
             && !n.is_compact_summary
             && !n.tool_results.is_empty()
@@ -81,8 +81,8 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
         }
         let e = s.entry(ctx.files, i);
         let mut id_idx = i;
-        let body = match n.entry_type.as_str() {
-            "assistant" => {
+        let body = match n.entry_type {
+            EntryKind::Assistant => {
                 let frags: &[usize] = match n.message_id.as_deref() {
                     Some(m) => {
                         if !emitted_messages.insert(m) {
@@ -95,10 +95,10 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 id_idx = frags[0];
                 assistant_body(ctx, frags, &shown)
             }
-            "user" if n.is_compact_summary => NodeBody::CompactSummary {
+            EntryKind::User if n.is_compact_summary => NodeBody::CompactSummary {
                 text: prompt::user_text(e),
             },
-            "user" if n.is_tool_result => {
+            EntryKind::User if n.is_tool_result => {
                 let text = n
                     .tool_results
                     .iter()
@@ -115,7 +115,7 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     text: cap_text(&text, PREVIEW_BYTES, RESULT_LINES).0,
                 }
             }
-            "user" => {
+            EntryKind::User => {
                 let mut text = prompt::user_text(e);
                 let origin = prompt::classify(e, &text);
                 if origin == PromptOrigin::Coordinator {
@@ -127,7 +127,7 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     // skill text), which is hidden: show them on the command.
                     for &c in &s.children[i] {
                         let child = &s.nodes[c];
-                        if child.entry_type == "user" && child.is_meta {
+                        if child.entry_type == EntryKind::User && child.is_meta {
                             images.extend(prompt_images(s.entry(ctx.files, c), &child.uuid));
                         }
                     }
@@ -138,14 +138,14 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     origin,
                 }
             }
-            "system" if n.is_compact_boundary() => {
+            EntryKind::System if n.is_compact_boundary() => {
                 let meta = e.compact_metadata.as_ref();
                 NodeBody::CompactBoundary {
                     trigger: meta.and_then(|m| m.trigger.clone()),
                     pre_tokens: meta.and_then(|m| m.pre_tokens),
                 }
             }
-            "system" => {
+            EntryKind::System => {
                 let subtype = n.subtype.clone().unwrap_or_default();
                 let mut text = system_text(ctx, i, e);
                 if text.trim().is_empty() {
@@ -157,17 +157,17 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     text,
                 }
             }
-            "attachment" => {
+            EntryKind::Attachment => {
                 let (attachment_type, text) = attachment_preview(e.attachment.as_deref());
                 NodeBody::Attachment {
                     attachment_type,
                     text,
                 }
             }
-            other => {
+            EntryKind::Other => {
                 let (path, offset) = s.location(ctx.files, i);
                 NodeBody::Unknown {
-                    entry_type: other.to_owned(),
+                    entry_type: e.entry_type().to_owned(),
                     raw_json: raw_line(path, offset)
                         .map(|l| cap_json(&l, PREVIEW_BYTES).0)
                         .unwrap_or_else(|| "{}".to_owned()),

@@ -286,6 +286,21 @@ pub struct SessionDetailRow {
     pub tokens_main: TokenTotals,
 }
 
+/// Summaries of the sessions `ids`, by id (one query; missing ids are absent).
+pub fn session_summaries(
+    conn: &Connection,
+    ids: &[&str],
+) -> CoreResult<HashMap<String, SessionSummary>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = summary_select(&format!("s.id IN ({})", vec!["?"; ids.len()].join(",")));
+    let mut st = conn.prepare(&sql)?;
+    let rows = st.query_map(params_from_iter(ids), summary_from_row)?;
+    rows.map(|r| r.map(|s| (s.id.clone(), s)).map_err(Into::into))
+        .collect()
+}
+
 pub fn session_detail(conn: &Connection, id: &str) -> CoreResult<Option<SessionDetailRow>> {
     let sql = summary_select("s.id = ?1");
     let Some(summary) = conn.query_row(&sql, [id], summary_from_row).optional()? else {

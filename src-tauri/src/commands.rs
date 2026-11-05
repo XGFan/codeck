@@ -15,7 +15,8 @@ use crate::worker::Job;
 
 type CmdResult<T> = Result<T, AppError>;
 
-fn internal(e: impl std::fmt::Display) -> AppError {
+/// The blocking task itself failed.
+pub(crate) fn internal(e: impl std::fmt::Display) -> AppError {
     AppError {
         code: ErrorCode::Internal,
         message: format!("后台任务失败：{e}"),

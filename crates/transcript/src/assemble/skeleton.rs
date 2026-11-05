@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::{LoadedFile, SessionSkeleton, SkeletonNode, prompt, tree};
+use super::{EntryKind, LoadedFile, SessionSkeleton, SkeletonNode, prompt, tree};
 use crate::model::{PromptOrigin, TokenTotals};
 use crate::raw::RawEntry;
 
@@ -161,13 +161,13 @@ fn node_of(
     rank: u32,
     offset: u64,
 ) -> SkeletonNode {
-    let entry_type = e.entry_type().to_owned();
+    let entry_type = EntryKind::of(e.entry_type());
     let msg = e.message.as_ref();
-    let is_tool_result = entry_type == "user" && e.is_tool_result();
+    let is_tool_result = entry_type == EntryKind::User && e.is_tool_result();
     let is_compact_summary = e.is_compact_summary == Some(true);
     let mut is_meta = e.is_meta == Some(true);
     let mut is_human = false;
-    if entry_type == "user" && !is_tool_result && !is_compact_summary {
+    if entry_type == EntryKind::User && !is_tool_result && !is_compact_summary {
         let text = prompt::user_text(e);
         let origin = prompt::classify(e, &text);
         // An empty command output has nothing to show; treat it like meta.
@@ -194,7 +194,7 @@ fn node_of(
             _ => {}
         }
     }
-    let is_assistant = entry_type == "assistant";
+    let is_assistant = entry_type == EntryKind::Assistant;
     SkeletonNode {
         uuid: uuid.to_owned(),
         parent: None,
