@@ -402,14 +402,17 @@ impl Tailer {
     pub fn poll(&mut self) -> Vec<TxEvent> {
         let mut out = Vec::new();
         self.capped = false;
-        // A file that shrank was replaced: start it over with fresh state.
+        // A file that shrank was replaced: what was read from it starts over. What other files
+        // gave (Subagent / Workflow progress, the Workflow Runs reported) and the usage already
+        // reported carry over, so none of it is reported twice.
         if std::fs::metadata(&self.main).map(|m| m.len()).unwrap_or(0) < self.offset {
-            self.offset = 0;
-            self.pending.clear();
-            self.last_text = None;
-            self.emitted.clear();
-            self.emitted_set.clear();
-            self.parents.clear();
+            let old = std::mem::replace(self, Tailer::new(&self.main));
+            self.main_only = old.main_only;
+            self.keep_offsets = old.keep_offsets;
+            self.subs = old.subs;
+            self.workflows = old.workflows;
+            self.usage_seen = old.usage_seen;
+            self.last_discover = old.last_discover;
         }
         if let Ok(chunk) = read_lines(&self.main, self.offset) {
             self.offset = chunk.consumed_to;
@@ -1622,6 +1625,71 @@ mod tests {
         let q = queues(t.poll());
         assert_eq!(q, vec![vec!["a", "c"], vec!["c"], vec![]]);
         assert!(t.queue().is_empty());
+    }
+
+    /// A main file that shrank was replaced: nothing read from the old one is kept (queue,
+    /// pending tools, entry offsets), as if tailing the new file from the start.
+    #[test]
+    fn a_replaced_main_file_starts_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let enqueue =
+            |c: &str| json!({"type": "queue-operation", "operation": "enqueue", "content": c});
+        let tool_use = json!({"type": "assistant", "uuid": "a1", "parentUuid": "u1",
+            "message": {"id": "m-a1", "role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_old", "name": "Bash", "input": {"command": "ls"}}]}});
+        write_lines(
+            &main,
+            &[
+                prompt("u1", None, "a long first prompt from the old file", 1),
+                tool_use,
+                enqueue("old one"),
+                enqueue("old two"),
+            ],
+        );
+        // A Subagent Run file next to it, and a reply whose usage the new file has again.
+        let agents = subagents_dir(&main);
+        std::fs::create_dir_all(&agents).unwrap();
+        write_lines(
+            &agents.join("agent-ag1.jsonl"),
+            &[prompt("x1", None, "sub prompt", 1)],
+        );
+        let mut billed = reply("r1", "u1", "done", 2);
+        billed["message"]["usage"] = json!({"input_tokens": 10, "output_tokens": 3});
+        let mut old_lines = std::fs::read_to_string(&main).unwrap();
+        old_lines.push_str(&format!("{billed}\n"));
+        std::fs::write(&main, old_lines).unwrap();
+        let mut t = Tailer::new(&main);
+        t.keep_offsets();
+        let first = t.poll();
+        assert!(
+            blocks(&first)
+                .iter()
+                .any(|b| b.agent_id.as_deref() == Some("ag1"))
+        );
+        assert!(first.iter().any(|e| matches!(e, TxEvent::Usage { .. })));
+        assert_eq!(t.queue(), ["old one", "old two"]);
+        assert!(t.pending_by_id("toolu_old").is_some());
+        write_lines(
+            &main,
+            &[prompt("n1", None, "new", 1), enqueue("new"), billed],
+        );
+        let evs = t.poll();
+        // Only the main file starts over: the Subagent Run and the usage are not reported again.
+        assert!(
+            !blocks(&evs).iter().any(|b| b.agent_id.is_some()),
+            "{evs:?}"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(e, TxEvent::Usage { .. })),
+            "{evs:?}"
+        );
+        assert!(blocks(&evs).iter().any(|b| b.uuid == "n1"));
+        assert_eq!(t.queue(), ["new"]);
+        assert!(t.pending().is_empty());
+        assert_eq!(t.offset_of("u1"), None);
+        assert_eq!(t.offset_of("n1"), Some(0));
+        assert_eq!(t.read_to(), std::fs::metadata(&main).unwrap().len());
     }
 
     #[test]
