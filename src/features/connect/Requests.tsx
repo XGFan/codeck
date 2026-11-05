@@ -1,7 +1,15 @@
-import { MessageCircleQuestionMark, RotateCcw, ScanSearch, Sparkles } from "lucide-react";
+import {
+  ListChecks,
+  MessageCircleQuestionMark,
+  MonitorDot,
+  RotateCcw,
+  ScanSearch,
+  ShieldQuestionMark,
+  Sparkles,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LiveDot } from "@/components/LiveDot";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import { toolKey } from "@/features/transcript/keys";
 import { PendingText, ToolCallView } from "@/features/transcript/tools";
@@ -20,7 +28,7 @@ import type {
 } from "./protocol";
 import { NoticeCard } from "./Notice";
 import { QuestionForm } from "./QuestionForm";
-import { codeLine, REWIND_LABELS, REWIND_ORDER, REWIND_WARNING } from "./rewind";
+import { codeLine, REWIND_DESC, REWIND_LABELS, REWIND_ORDER, REWIND_WARNING } from "./rewind";
 import { useConnect } from "./store";
 import { useAnswer, useNumberKeys } from "./useAnswer";
 
@@ -99,13 +107,15 @@ function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecogn
   };
   return (
     <Shell
+      icon={<MonitorDot size={14} strokeWidth={1.6} />}
       title={r.type === "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : `认不出的屏幕（${r.context}）`}
+      status="等待处理"
       testid="screen-card"
     >
       <pre className="max-h-64 overflow-auto rounded bg-terminal p-2 font-mono text-[11px] leading-[1.45] text-[#e4e4e6]">
         {trimLines(r.lines).join("\n")}
       </pre>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="flex items-center gap-2">
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void close()} data-testid="screen-close">
           关闭（Esc）
         </Button>
@@ -124,39 +134,118 @@ function trimLines(lines: string[]): string[] {
   return lines.slice(a, b);
 }
 
+/**
+ * A request card, as the transcript's 「向你提问」 card: a header bar (icon, title, the Subagent / AI badges, what it
+ * waits for at the right), then the body.
+ */
 function Shell({
+  icon,
   title,
+  status,
   source,
   agent,
   testid,
   children,
 }: {
+  icon: React.ReactNode;
   title: string;
+  status: string;
   source?: LayoutSource | null;
   agent?: string | null;
   testid: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-live-waiting/60 bg-ground px-3 py-2.5 shadow-sm" data-testid={testid}>
-      <div className="mb-2 flex items-center gap-2">
-        <LiveDot state="waiting" />
-        <h3 className="m-0 min-w-0 flex-1 truncate text-[13px] font-semibold">{title}</h3>
+    <section
+      className="w-full shrink-0 overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm"
+      data-testid={testid}
+    >
+      <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
+        <span className="flex shrink-0 text-accent" aria-hidden>
+          {icon}
+        </span>
+        <h3 className="m-0 min-w-0 truncate text-[12px] font-semibold">{title}</h3>
         {agent && (
-          <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {agent.slice(0, 8)}</span>
+          <span className="shrink-0 rounded bg-code px-1.5 text-[11px] text-secondary">
+            Subagent {agent.slice(0, 8)}
+          </span>
         )}
         {source === "learned" && (
           <span
-            className="flex items-center gap-1 rounded bg-selection px-1.5 text-[11px] text-accent"
+            className="flex shrink-0 items-center gap-1 rounded bg-selection px-1.5 text-[11px] text-accent"
             title="分析器学到的布局"
             data-testid="ai-badge"
           >
             <Sparkles size={11} aria-hidden /> AI 识别
           </span>
         )}
+        <span className="ml-auto shrink-0 text-live-waiting">{status}</span>
       </div>
-      {children}
+      <div className="flex flex-col gap-2 bg-ground px-3 py-2.5 text-[12.5px]">{children}</div>
     </section>
+  );
+}
+
+/**
+ * One answer of a card: a full-width row with its number key. `primary` (the dialog's default) is drawn picked;
+ * keyboard focus draws a row the same.
+ */
+function OptionRow({
+  n,
+  label,
+  desc,
+  primary,
+  disabled,
+  onClick,
+  testid,
+}: {
+  n: number;
+  label: string;
+  desc?: string | null;
+  primary?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  testid: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={testid}
+      data-card-answer
+      className={cn(
+        "group flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent/50 focus-visible:bg-selection disabled:opacity-60",
+        primary ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded border text-[11px] tabular-nums",
+          primary
+            ? "border-accent bg-accent text-white"
+            : "border-border bg-list text-secondary group-focus-visible:border-accent group-focus-visible:bg-accent group-focus-visible:text-white",
+        )}
+      >
+        {n}
+      </span>
+      <span className="min-w-0 break-words">
+        <span className="font-medium">{label}</span>
+        {desc && <span className="ml-2 text-secondary">{desc}</span>}
+      </span>
+    </button>
+  );
+}
+
+/** Under a card's answers: the number keys hint, an error, and `children` at the right. */
+function CardFoot({ error, children }: { error?: string | null; children?: React.ReactNode }) {
+  return (
+    <div className="flex min-h-6 items-center gap-2 text-[11.5px] text-secondary">
+      <span className="shrink-0">按数字键作答</span>
+      {error && <span className="min-w-0 text-[12px] text-error">{error}</span>}
+      {children && <span className="ml-auto flex shrink-0 items-center">{children}</span>}
+    </div>
   );
 }
 
@@ -190,7 +279,7 @@ function ToolInput({ r, sessionId }: { r: PermissionRequestEvent; sessionId: str
 
 function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnState; focus: boolean }) {
   const { busy, error, send } = useAnswer(c);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState("");
   const always = r.options?.find((o) => o.meaning === "allow_always");
   const label = (meaning: string, fallback: string) => permissionLabel(r, meaning, fallback);
   const answer = (decision: string, message?: string) =>
@@ -200,65 +289,62 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
     ...(always ? [() => void answer("allow_always")] : []),
     () => void answer("deny"),
   ];
-  useNumberKeys(focus && feedback == null && !busy, actions);
+  // Typing in the 「拒绝，并告诉 Claude」 row takes the digits (the keys skip an input).
+  useNumberKeys(focus && !busy, actions);
   let n = 0;
   return (
-    <Shell title={`允许 ${r.tool_name}？`} source={r.layout_source} agent={r.agent_id} testid="permission-card">
+    <Shell
+      icon={<ShieldQuestionMark size={14} strokeWidth={1.6} />}
+      title={`允许 ${r.tool_name}？`}
+      status="等待审批"
+      source={r.layout_source}
+      agent={r.agent_id}
+      testid="permission-card"
+    >
       <ToolInput r={r} sessionId={c.sessionId} />
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        <Button size="sm" disabled={busy} onClick={() => void answer("allow")} data-testid="allow" data-card-answer>
-          {++n}. {label("allow", "允许")}
-        </Button>
+      <div className="flex flex-col gap-1.5">
+        <OptionRow
+          n={++n}
+          label={label("allow", "允许")}
+          primary
+          disabled={busy}
+          onClick={() => void answer("allow")}
+          testid="allow"
+        />
         {always && (
-          <Button
-            size="sm"
-            variant="outline"
+          <OptionRow
+            n={++n}
+            label={always.label}
             disabled={busy}
             onClick={() => void answer("allow_always")}
-            title={always.label}
-            data-testid="allow-always"
-            className="max-w-[28rem]"
-          >
-            <span className="truncate">
-              {++n}. {always.label}
-            </span>
-          </Button>
+            testid="allow-always"
+          />
         )}
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void answer("deny")} data-testid="deny">
-          {++n}. {label("deny", "拒绝")}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
+        <OptionRow
+          n={++n}
+          label={label("deny", "拒绝")}
           disabled={busy}
-          onClick={() => setFeedback(feedback == null ? "" : null)}
-          data-testid="deny-with-message"
-        >
-          拒绝，并告诉 Claude…
-        </Button>
-      </div>
-      {feedback != null && (
+          onClick={() => void answer("deny")}
+          testid="deny"
+        />
         <form
-          className="mt-2 flex gap-1.5"
+          className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1 text-[12px] focus-within:border-accent"
           onSubmit={(e) => {
             e.preventDefault();
-            if (feedback.trim()) void answer("deny", feedback.trim());
+            if (feedback.trim() && !busy) void answer("deny", feedback.trim());
           }}
         >
+          <span className="shrink-0 text-secondary">拒绝，并告诉 Claude：</span>
           <input
-            autoFocus
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
-            placeholder="要 Claude 怎么改（本轮继续）"
-            className="h-7 min-w-0 flex-1 rounded-md border border-border bg-ground px-2 text-[13px] outline-none focus:border-accent"
+            placeholder="要 Claude 怎么改（本轮继续），回车发送"
+            className="h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary"
             data-testid="deny-message"
           />
-          <Button size="sm" type="submit" disabled={busy || !feedback.trim()}>
-            发送
-          </Button>
         </form>
-      )}
-      {error && <p className="mt-1.5 text-[12px] text-error">{error}</p>}
+      </div>
+      <CardFoot error={error} />
     </Shell>
   );
 }
@@ -336,27 +422,28 @@ function ChoiceCard({ r, c, focus }: { r: ChoiceEvent; c: ConnState; focus: bool
     r.options.map((o) => () => pick(o.label)),
   );
   return (
-    <Shell title={r.title} source={r.layout_source} testid="choice-card">
-      <div className="flex flex-col items-start gap-1.5">
+    <Shell
+      icon={<ListChecks size={14} strokeWidth={1.6} />}
+      title={r.title}
+      status="等待选择"
+      source={r.layout_source}
+      testid="choice-card"
+    >
+      <div className="flex flex-col gap-1.5">
         {r.options.map((o, i) => (
-          <Button
+          <OptionRow
             key={o.label}
-            size="sm"
-            variant={i === 0 ? "default" : "outline"}
+            n={i + 1}
+            label={o.label}
+            desc={o.description}
+            primary={i === 0}
             disabled={busy}
             onClick={() => pick(o.label)}
-            title={o.description ?? undefined}
-            data-testid="choice-option"
-            data-card-answer
-            className="max-w-full"
-          >
-            <span className="truncate">
-              {i + 1}. {o.label}
-            </span>
-          </Button>
+            testid="choice-option"
+          />
         ))}
       </div>
-      {error && <p className="mt-1.5 text-[12px] text-error">{error}</p>}
+      <CardFoot error={error} />
     </Shell>
   );
 }
@@ -404,37 +491,41 @@ function RewindCard({ r, c, focus }: { r: RewindRequest; c: ConnState; focus: bo
   );
   return (
     <div ref={box} tabIndex={-1} className="outline-none" data-testid="rewind-card-box">
-      <Shell title="回退到这条提示词之前" testid="rewind-card">
-        <div className="flex flex-col gap-1.5 text-[13px]">
-          <p
-            data-testid="rewind-quote"
-            className="m-0 line-clamp-3 border-l-2 border-border pl-2.5 break-words whitespace-pre-wrap text-text/80"
-          >
-            {r.text}
+      <Shell
+        icon={<RotateCcw size={14} strokeWidth={1.6} />}
+        title="回退到这条提示词之前"
+        status="等待确认"
+        testid="rewind-card"
+      >
+        <p
+          data-testid="rewind-quote"
+          className="m-0 line-clamp-3 border-l-2 border-border pl-2.5 break-words whitespace-pre-wrap text-text/80"
+        >
+          {r.text}
+        </p>
+        <p data-testid="rewind-code-line" className="m-0">
+          {codeLine(r.code)}
+        </p>
+        {r.warning && (
+          <p data-testid="rewind-warning" className="m-0 text-tag-text">
+            {REWIND_WARNING}
           </p>
-          <p data-testid="rewind-code-line" className="m-0">
-            {codeLine(r.code)}
-          </p>
-          {r.warning && (
-            <p data-testid="rewind-warning" className="m-0 text-[12.5px] text-tag-text">
-              {REWIND_WARNING}
-            </p>
-          )}
-        </div>
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        )}
+        {/* None drawn picked: nothing that restores code is a default. */}
+        <div className="flex flex-col gap-1.5">
           {options.map((o, i) => (
-            <Button
+            <OptionRow
               key={o}
-              size="sm"
-              variant={i === 0 ? "default" : "outline"}
+              n={i + 1}
+              label={REWIND_LABELS[o]}
+              desc={REWIND_DESC[o]}
               disabled={busy}
               onClick={() => void answer(o)}
-              data-testid={`rewind-${o}`}
-              data-card-answer
-            >
-              {i + 1}. {REWIND_LABELS[o]}
-            </Button>
+              testid={`rewind-${o}`}
+            />
           ))}
+        </div>
+        <CardFoot>
           <Button
             size="sm"
             variant="ghost"
@@ -444,7 +535,7 @@ function RewindCard({ r, c, focus }: { r: RewindRequest; c: ConnState; focus: bo
           >
             取消（Esc）
           </Button>
-        </div>
+        </CardFoot>
       </Shell>
     </div>
   );

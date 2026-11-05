@@ -10,6 +10,12 @@ export const REWIND_LABELS: Record<RewindOption, string> = {
   code: "只恢复代码",
 };
 export const REWIND_ORDER: RewindOption[] = ["both", "conversation", "code"];
+/** What a restore leaves as it is, after its label. */
+export const REWIND_DESC: Record<RewindOption, string | null> = {
+  both: null,
+  conversation: "代码保持现状",
+  code: "对话保持现状",
+};
 
 /** The confirm page's `⚠` warning, said in Chinese. */
 export const REWIND_WARNING = "恢复的文件整份覆盖，之后的改动都会丢失；Bash 对其他文件的改动不会撤销。";

@@ -137,7 +137,12 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await expect(card).toContainText("touch mock-tool.txt");
   await expect(card.getByTestId("tool-call")).toHaveAttribute("data-tool", "Bash");
   await expect(card.getByTestId("allow-always")).toContainText("always allow access to");
-  await expect(card.getByTestId("allow")).toHaveText("1. 允许");
+  // Design A: full-width rows, each with its number key; the card says what it waits for.
+  await expect(card.getByTestId("allow")).toHaveText("1允许");
+  await expect(card).toContainText("等待审批");
+  const allowBox = (await card.getByTestId("allow").boundingBox())!;
+  const denyBox = (await card.getByTestId("deny").boundingBox())!;
+  expect(Math.abs(allowBox.width - denyBox.width)).toBeLessThan(1);
   await expect(card.getByTestId("deny")).toBeVisible();
   // Waiting: Enter does not send, it moves focus to the card.
   await page.getByTestId("connect-input").fill("先别发");
@@ -150,7 +155,6 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[0]);
 
   await send(page, "MOCK-TOOL again");
-  await page.getByTestId("permission-card").getByTestId("deny-with-message").click();
   await page.getByTestId("deny-message").fill("not now");
   await page.getByTestId("deny-message").press("Enter");
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[1]);
@@ -435,8 +439,8 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(card).toContainText("README.md");
   await expect(card).toContainText("新的一行");
   // A learned layout: the buttons carry the dialog's own words, not fixed ones.
-  await expect(card.getByTestId("allow")).toHaveText("1. Yes");
-  await expect(card.getByTestId("deny")).toHaveText("3. No");
+  await expect(card.getByTestId("allow")).toHaveText("1Yes");
+  await expect(card.getByTestId("deny")).toHaveText("3No");
   // This Session's card and the LCP Session, counted once each.
   await expect.poll(async () => (await probe(page)).badge).toBe(2);
   // With focus in the conversation, number keys do not answer.
@@ -1081,7 +1085,11 @@ test("回退：/rewind 进入选回退点，Esc 与「取消」退出；点「�
   await expect(card.getByTestId("rewind-warning")).toHaveText(
     "恢复的文件整份覆盖，之后的改动都会丢失；Bash 对其他文件的改动不会撤销。",
   );
-  await expect(card.locator("[data-card-answer]")).toHaveText(["1. 恢复代码与对话", "2. 只恢复对话", "3. 只恢复代码"]);
+  await expect(card.locator("[data-card-answer]")).toHaveText([
+    "1恢复代码与对话",
+    "2只恢复对话代码保持现状",
+    "3只恢复代码对话保持现状",
+  ]);
   // Just asked for: the card takes focus, none of its options.
   await expect(page.getByTestId("rewind-card-box")).toBeFocused();
   await card.getByTestId("rewind-cancel").click();
@@ -1191,7 +1199,7 @@ test("回退：没有代码改动时只能恢复对话；输入框已有内容�
   await expect(card.getByTestId("rewind-quote")).toHaveText(U0_TEXT);
   await expect(card.getByTestId("rewind-code-line")).toHaveText("这条提示词及之后的对话会被移除；代码不变");
   await expect(card.getByTestId("rewind-warning")).toHaveCount(0);
-  await expect(card.locator("[data-card-answer]")).toHaveText(["1. 只恢复对话"]);
+  await expect(card.locator("[data-card-answer]")).toHaveText(["1只恢复对话代码保持现状"]);
   // As on the other cards: Enter in the input box moves focus to the card, then 1 picks its first option.
   await input.press("Enter");
   await expect(card.getByTestId("rewind-conversation")).toBeFocused();

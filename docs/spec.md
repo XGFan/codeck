@@ -142,16 +142,16 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - 共显时写入会清空 TUI 输入框里没发的内容（ccrpc 的已知限制）。
   - 没发出的输入（文字和粘贴的图片）按 Session 保留，切换 Session、重连、重启应用后仍在；存在 localStorage（`codeck.connect.drafts`，旧版的 `codeck.drive.drafts` 读一次后删掉，只存有 Session id 的，空的不存；图片预览超出存储上限时只存文字），发出后清掉。
   - 输入框聚焦时 `j` / `k` 等单键快捷键不响应；Esc 在卡片里的输入框中只离开输入框，在输入区以外或 idle 时保持原有含义（关闭 Subagent 面板等）。
-- **请求卡片**：
+- **请求卡片**：样式同对话里的「向你提问」卡片：等待色边框；顶部一条标题栏（图标、标题、Subagent / AI 识别标记，右侧写在等什么：等待审批 / 等待选择 / 等待确认 / 等待处理），下面是正文。选项为整行、等宽的行，左侧是数字键标记；对话框的默认项（审批的「允许」、选择的第一项）画成选中样式，回退的选项都不预先选中，键盘焦点所在行同样画成选中。选项下方写「按数字键作答」。
 
   | 事件 | 卡片 | 作答 |
   |---|---|---|
-  | `permission_request` | 工具名 + 工具输入（用对话记录的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent。computer use 的授权框（`request_access`）也是这张卡片 | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；允许不是单纯的 `Yes…` 时按钮也显示原文（computer use 的 `Allow for this session (4 apps)`：窄窗格下列不下的应用不在这次授权里）；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
+  | `permission_request` | 工具名 + 工具输入（用对话记录的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent。computer use 的授权框（`request_access`）也是这张卡片 | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；允许不是单纯的 `Yes…` 时按钮也显示原文（computer use 的 `Allow for this session (4 apps)`：窄窗格下列不下的应用不在这次授权里）；选项下方常显一行「拒绝，并告诉 Claude：」输入框，写了字回车即拒绝并带上说明（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
   | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。单选题里所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用；多选题里「其他」是又一个勾选框，可与选项一起勾选、一起发出，点它的方框取消则字保留但划掉），输入区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在输入区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
-  | `choice` | 标题 + 选项按钮 | `answer_choice`（按 label） |
+  | `choice` | 标题 + 选项（有说明时写在选项文字后） | `answer_choice`（按 label） |
   | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
   | `feedback_draft` | 输入框上方的卡片：「Claude 起草了一条产品反馈：<标题>」，注明草稿只存在本机、在终端里按 2 才会发送；「查看全文」展开草稿（Markdown） | 「不发送」：`dismiss_feedback_draft`，只在空闲时可点（本轮进行中终端隐藏这张卡片）；草稿留在 `/feedback` 里；CoDeck 不提供发送 |
-  | `rewind` 的响应 | 「回退到这条提示词之前」（见下方「回退」） | 「恢复代码与对话」/「只恢复对话」/「只恢复代码」（只列确认页上有的，依次编号）：`answer_rewind {option}`；「取消（Esc）」：`answer_rewind {cancel}` |
+  | `rewind` 的响应 | 「回退到这条提示词之前」（见下方「回退」） | 「恢复代码与对话」/「只恢复对话 · 代码保持现状」/「只恢复代码 · 对话保持现状」（只列确认页上有的，依次编号）：`answer_rewind {option}`；「取消（Esc）」：`answer_rewind {cancel}` |
 
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
   - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。
