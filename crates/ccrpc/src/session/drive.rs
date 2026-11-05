@@ -584,8 +584,15 @@ impl Engine {
                 }
                 Some((Some(true), _)) => self.keys(key::ENTER)?,
                 Some((Some(false), s)) => return Err(self.unrecognized("exit", Some(&s))),
-                // Gone, or neither gone nor asking what is known: no key; wait for it to exit.
-                Some((None, _)) | None => {}
+                Some((None, _)) => {}
+                // Neither gone nor asking what is known: a screen other than the input box is an
+                // unknown question (no key); at the input box claude may just be slow to exit.
+                None => {
+                    let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
+                    if ::transcript::live::pid_exists(pid) && recognize::input_text(&s).is_none() {
+                        return Err(self.unrecognized("exit", Some(&s)));
+                    }
+                }
             }
             if !self.wait_until(Duration::from_secs(15), |_| {
                 !::transcript::live::pid_exists(pid)
