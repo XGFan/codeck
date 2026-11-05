@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use codeck_core::model::{IndexStatus, SessionsChanged};
-use codeck_core::{ChangeSet, CoreError, Engine, paths};
+use codeck_core::model::{AppInfo, IndexStatus, SessionsChanged};
+use codeck_core::{ChangeSet, CoreError, CoreResult, Engine, paths};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use parking_lot::Mutex;
 use tauri::{AppHandle, Manager};
@@ -15,7 +15,8 @@ use tauri_specta::Event;
 
 use crate::events::{IndexStatusEvent, LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent};
 use crate::prices;
-use crate::state::AppState;
+use crate::settings::{self, Settings};
+use crate::state::{AppState, open_engine};
 use crate::watcher::{self, Watcher};
 
 const LIVE_POLL: Duration = Duration::from_secs(3);
@@ -32,8 +33,15 @@ pub enum Job {
     /// is queued and yields to any other job between transactions (A14b).
     TextBacklog,
     Rebuild,
-    /// The Engine was swapped: restart the watcher and rescan.
+    /// Restart the watcher and rescan (at startup).
     SetRoot,
+    /// Saves the settings, opens an Engine on their data root and swaps it in, then restarts the
+    /// watcher and rescans. Done here, between jobs, so the old Engine is not writing to the index
+    /// the new one opens (both use the same file).
+    SwapRoot {
+        settings: Settings,
+        reply: Sender<CoreResult<AppInfo>>,
+    },
     PollLive,
     /// Periodic stat rescan; also refreshes the watcher (new symlinked projects).
     Rescan,
@@ -195,6 +203,7 @@ impl Worker {
                     self.restart_watcher(&engine);
                     self.full_scan(&engine);
                 }
+                Job::SwapRoot { settings, reply } => self.swap_root(engine, &settings, &reply),
                 Job::FullScan => self.full_scan(&engine),
                 Job::Fs(paths) => self.fs_batch(&engine, &paths),
                 // `Queue::next` absorbs backlog requests; kept for exhaustiveness.
@@ -239,6 +248,27 @@ impl Worker {
             });
         if spawned.is_err() {
             self.fetching_prices.store(false, Ordering::SeqCst);
+        }
+    }
+
+    fn swap_root(&mut self, old: Arc<Engine>, s: &Settings, reply: &Sender<CoreResult<AppInfo>>) {
+        // Release this thread's handle first: if it was the last one, the old index connections
+        // close before the new Engine may replace the index file.
+        drop(old);
+        let opened = settings::save(s)
+            .map_err(CoreError::from)
+            .and_then(|()| open_engine(s));
+        match opened {
+            Ok(engine) => {
+                let engine = Arc::new(engine);
+                *self.app.state::<AppState>().engine.write() = engine.clone();
+                let _ = reply.send(Ok(engine.app_info()));
+                self.restart_watcher(&engine);
+                self.full_scan(&engine);
+            }
+            Err(e) => {
+                let _ = reply.send(Err(e));
+            }
         }
     }
 

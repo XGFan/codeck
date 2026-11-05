@@ -1,8 +1,6 @@
 //! IPC commands. All are async and run the blocking Engine call on the blocking pool
 //! (a sync command would run on the main thread).
 
-use std::sync::Arc;
-
 use codeck_core::model::{
     AppError, AppInfo, Diagnostics, ErrorCode, FindRequest, FindResult, ImageData, ImageRequest,
     IndexStatus, JumpRequest, JumpTarget, ProjectSummary, SearchRequest, SearchResponse,
@@ -13,7 +11,7 @@ use codeck_core::{CoreError, CoreResult, Engine};
 use tauri::State;
 
 use crate::settings::{self, Settings};
-use crate::state::{AppState, open_engine};
+use crate::state::AppState;
 use crate::worker::Job;
 
 type CmdResult<T> = Result<T, AppError>;
@@ -60,18 +58,16 @@ pub async fn set_data_root(state: State<'_, AppState>, path: Option<String>) -> 
         data_root: path,
         ..settings::load()
     };
-    let engine = tauri::async_runtime::spawn_blocking(move || {
-        settings::save(&settings)?;
-        let engine = open_engine(&settings)?;
-        Ok::<_, CoreError>(engine)
-    })
-    .await
-    .map_err(internal)?
-    .map_err(AppError::from)?;
-    let info = engine.app_info();
-    *state.engine.write() = Arc::new(engine);
-    state.jobs.send(Job::SetRoot);
-    Ok(info)
+    // The worker swaps the Engine between jobs, so nothing is writing to the index meanwhile.
+    let (reply, rx) = crossbeam_channel::bounded(1);
+    if !state.jobs.send(Job::SwapRoot { settings, reply }) {
+        return Err(internal("worker stopped"));
+    }
+    tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(internal)?
+        .map_err(internal)?
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
