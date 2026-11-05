@@ -465,7 +465,7 @@ impl Engine {
         // The dialog's No interrupts the turn: the message goes as the next prompt.
         if let Some(msg) = message {
             if !self.wait_until(Duration::from_secs(10), |e| {
-                e.state == State::Idle && !e.turn_active
+                e.state == State::Idle && !e.turns.active()
             }) {
                 return err("timeout", "拒绝后 10 秒内没有回到 idle，说明没有发出");
             }

@@ -267,12 +267,15 @@ impl Engine {
     pub(super) fn send_prompt_with(&mut self, text: &str, images: &[String]) -> CmdResult {
         // Idle and no turn open. A turn that went idle without its Stop (interrupted) closes within
         // a few seconds: wait for that.
-        if self.state == State::Idle && self.turn_active {
+        if self.state == State::Idle && self.turns.active() {
             self.wait_until(Duration::from_secs(6), |e| {
-                !e.turn_active || e.state != State::Idle
+                !e.turns.active() || e.state != State::Idle
             });
         }
-        self.require(self.state == State::Idle && !self.turn_active, "not_idle")?;
+        self.require(
+            self.state == State::Idle && !self.turns.active(),
+            "not_idle",
+        )?;
         let clean = Self::clean_text(text)?;
         let paths = Self::image_paths(images)?;
         let images = &paths;
@@ -412,17 +415,8 @@ impl Engine {
             return err("bad_request", "队列里没有要发的内容");
         }
         self.writable()?;
-        // The running turn ends here (an interrupted turn gets no Stop); the queue runs as a turn
-        // of its own with no UserPromptSubmit, ended by its Stop (as a steer delivered after Stop).
-        if self.turn_active {
-            self.turn.aborted = true;
-            self.emit_turn_end(None, Value::Null);
-        }
-        self.pending_steers.clear();
-        self.turn = TurnStats::start(None, "prompt");
-        self.turn.provisional = true;
-        self.turn_active = true;
-        self.last_text = None;
+        let out = self.turns.send_now();
+        self.apply_turns(out);
         self.keys(key::CTRL_ENTER)?;
         if self.wait_after_keys(Duration::from_secs(5), |e| e.queue.is_empty()) {
             Ok(json!({}))
@@ -627,7 +621,7 @@ impl Engine {
     /// top-level loop.
     pub(super) fn drain_follow_ups(&mut self) {
         if self.state != State::Idle
-            || self.turn_active
+            || self.turns.active()
             || self.idle_at.is_none_or(|t| t.elapsed() < FOLLOW_UP_SETTLE)
         {
             return;

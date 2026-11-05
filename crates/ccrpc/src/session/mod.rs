@@ -39,7 +39,7 @@ use self::announce::Announced;
 use self::requests::{HookPrompt, HookRequest, PreTool};
 pub(crate) use self::startup::toh_command;
 pub use self::startup::{Opts, cmd_attach, cmd_new, resolve_target};
-use self::turn::{Marks, TurnStats};
+use self::turn::{Marks, TurnTracker};
 
 pub const PROTOCOL: u32 = 2;
 /// Longest wait between two looks while a command waits.
@@ -159,14 +159,8 @@ pub struct Engine {
     hook_seq: u64,
     /// Background tasks the plugin reported (started, ended) since ccrpc connected.
     hook_tasks: Vec<BgTask>,
-    /// Input queued during the turn (steers) not yet delivered within it: delivered after its
-    /// Stop as a turn of its own, which has no UserPromptSubmit.
-    pending_steers: Vec<String>,
     /// When the Session went idle (for a turn that never got its Stop).
     idle_at: Option<Instant>,
-    /// The turn's Stop came: `(when, last text, background tasks)`; `turn_end` once the transcript
-    /// caught up.
-    stop_pending: Option<(Instant, Option<String>, Value)>,
     /// When the Process File appeared without a check-in.
     no_checkin_since: Option<Instant>,
     /// An answer just went back through a hook: no announcing until then.
@@ -216,11 +210,8 @@ pub struct Engine {
     state: State,
     /// Raw `(status, waitingFor)` last read, with when it was first seen.
     raw_since: Option<((String, Option<String>), Instant)>,
-    /// A turn is running (opened by UserPromptSubmit, or running at connect) and has not ended.
-    turn_active: bool,
-    last_text: Option<String>,
-    turn: TurnStats,
-    prices: ::transcript::pricing::PriceTable,
+    /// Turns: opened and ended by the plugin's hooks, with what each did.
+    turns: TurnTracker,
     library: Library,
     analyzer: Option<Analyzer>,
     /// The analysis in flight: dialog signature and where its result arrives.
@@ -241,9 +232,6 @@ pub struct Engine {
     /// What the person typed (or a steer sent) waiting in Claude Code's own queue, oldest first:
     /// the transcript's queue minus task notifications and Teammate messages.
     queue: Vec<String>,
-    /// The next turn's Stop, come while this one's still waits for the transcript (claude fires
-    /// both Stops before writing either turn): handled once this turn has ended.
-    deferred_stop: Option<HookMsg>,
     marks: Marks,
     /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
     resolved: HashSet<String>,
@@ -317,9 +305,7 @@ impl Engine {
             hook_prompts: VecDeque::new(),
             hook_seq: 0,
             hook_tasks: Vec::new(),
-            pending_steers: Vec::new(),
             idle_at: None,
-            stop_pending: None,
             no_checkin_since: None,
             answered_until: None,
             co_display: opts.co_display,
@@ -353,10 +339,7 @@ impl Engine {
             tailer: None,
             state: State::Starting,
             raw_since: None,
-            turn_active: false,
-            last_text: None,
-            turn: TurnStats::default(),
-            prices: ::transcript::pricing::PriceTable::embedded(),
+            turns: TurnTracker::new(),
             library: Library::load(layout::library_dir()),
             analyzer: Analyzer::from_env(),
             analysis: None,
@@ -369,7 +352,6 @@ impl Engine {
             startup_last: None,
             follow_ups: VecDeque::new(),
             queue: Vec::new(),
-            deferred_stop: None,
             marks: Marks::default(),
             resolved: HashSet::new(),
             procfile_warned: false,
@@ -498,7 +480,7 @@ impl Engine {
                         TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
                         TxEvent::Enqueued { content } => self.marks.enqueue(content),
                         TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
-                            self.last_text = b.text.clone();
+                            self.turns.note_history_text(b.text.clone());
                         }
                         TxEvent::Usage {
                             main: true,
@@ -575,26 +557,9 @@ impl Engine {
             self.answered_until = None;
         }
         self.update_state();
-        if let Some((at, _, _)) = &self.stop_pending
-            && (self.turn.marker_seen || at.elapsed() >= STOP_CATCH_UP)
-        {
-            self.finish_stopped_turn();
-        }
-        // Stop comes before idle: a turn that went idle without one was interrupted.
-        if self.turn_active
-            && self.stop_pending.is_none()
-            && self.state == State::Idle
-            && self.idle_at.is_some_and(|t| t.elapsed() >= ABORT_GRACE)
-        {
-            if self.turn.provisional {
-                // The steer had been delivered within the previous turn after all.
-                self.turn_active = false;
-                self.turn = TurnStats::default();
-            } else {
-                self.turn.aborted = true;
-                self.emit_turn_end(None, Value::Null);
-            }
-        }
+        let idle_since = self.idle_at.filter(|_| self.state == State::Idle);
+        let out = self.turns.poll(Instant::now(), idle_since);
+        self.apply_turns(out);
         self.refresh_announcement();
         self.announce_requests();
         self.look_at_screen();
@@ -1096,10 +1061,12 @@ impl Engine {
         // A turn already running is adopted: its Stop (whatever its prompt id) ends it. The
         // Process File says so even while its waiting is not classified yet.
         let raw = self.pf.as_ref().and_then(|p| p.status.as_deref());
-        self.turn_active = matches!(self.state, State::Busy | State::Waiting { .. })
-            || matches!(raw, Some("busy" | "waiting"));
-        if self.turn_active {
-            self.turn = TurnStats::start(None, "prompt");
+        if matches!(self.state, State::Busy | State::Waiting { .. })
+            || matches!(raw, Some("busy" | "waiting"))
+        {
+            self.turns.adopt_running();
+        } else {
+            self.turns.idle_at_connect();
         }
         self.announced = None;
         self.startup_checked = None;
