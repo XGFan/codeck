@@ -20,6 +20,13 @@
   --color-diff-del-text: #7a1512;
   --color-error: #b42318;
   --color-error-bg: #fef1f0;
+  /* Search: matched text, the Subagent / Branch tags on a hit, the outlined button beside an accent one. */
+  --color-mark: #ffe58a;
+  --color-mark-text: #1c1c1e;
+  --color-tag: #fff1dd;
+  --color-tag-border: #f5d4a6;
+  --color-tag-text: #7a3e00;
+  --color-accent-border: #b9cdee;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
 }
@@ -42,6 +49,12 @@
     --color-diff-add-text: #8fd6a6;
     --color-diff-del: #3a2220;
     --color-diff-del-text: #ffb4ab;
+    --color-mark: #6b5a1c;
+    --color-mark-text: #fff4c7;
+    --color-tag: #3a2c18;
+    --color-tag-border: #6b4c22;
+    --color-tag-text: #f2c27c;
+    --color-accent-border: #34507a;
   }
 }
 

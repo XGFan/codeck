@@ -1,5 +1,6 @@
 import { Check, MessageCircleQuestionMark, ScanSearch, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LiveDot } from "@/components/LiveDot";
 import { Button } from "@/components/ui/button";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import { toolKey } from "@/features/transcript/keys";
@@ -118,7 +119,7 @@ function Shell({
   return (
     <section className="rounded-lg border border-live-waiting/60 bg-ground px-3 py-2.5 shadow-sm" data-testid={testid}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="size-2 shrink-0 rounded-full bg-live-waiting" />
+        <LiveDot state="waiting" />
         <h3 className="m-0 min-w-0 flex-1 truncate text-[13px] font-semibold">{title}</h3>
         {agent && (
           <span className="rounded bg-code px-1.5 text-[11px] text-secondary">Subagent {agent.slice(0, 8)}</span>

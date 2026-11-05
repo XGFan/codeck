@@ -18,6 +18,7 @@ import {
   useUnindexed,
 } from "@/features/connect";
 import { useLeadingInset } from "@/features/layout";
+import { LiveDot } from "@/components/LiveDot";
 import { api } from "@/ipc";
 import type { LiveState, ModelCost } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
@@ -161,12 +162,7 @@ function StateWord({
       data-testid="live-state"
       className={cn("flex items-center gap-1.5 font-semibold", waiting ? "text-live-waiting" : "text-live")}
     >
-      <span
-        className={cn(
-          "size-2 rounded-full",
-          waiting ? "bg-live-waiting" : status === "busy" ? "bg-live" : "box-border border-[1.5px] border-live",
-        )}
-      />
+      <LiveDot state={waiting ? "waiting" : status === "busy" ? "busy" : "idle"} />
       <span data-testid={connected ? "connect-state" : undefined} data-state={status}>
         {STATE_WORD[status] ?? status}
       </span>

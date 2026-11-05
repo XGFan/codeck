@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LiveDot, type LiveDotState } from "@/components/LiveDot";
 import { NewSessionButton, NewSessionError, useConnect, useUnread } from "@/features/connect";
 import type { Drill, ProjectSummary, SessionQuery, SessionSort, SessionSummary } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
@@ -260,7 +261,7 @@ function SessionRow({
       className={rowClass(selected)}
     >
       <div className="flex items-center gap-1.5">
-        {s.live && <LiveDot state={state} />}
+        {s.live && <LiveDot state={state} halo title={LIVE_TITLE[state]} testId="live-dot" />}
         <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
         {unread && <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />}
         <span className="shrink-0 text-[11px] text-secondary">
@@ -293,22 +294,7 @@ const rowClass = (selected: boolean) =>
       : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]",
   );
 
-function LiveDot({ state }: { state: "busy" | "waiting" | "idle" }) {
-  return (
-    <span
-      data-testid="live-dot"
-      data-state={state}
-      title={state === "busy" ? "工作中" : state === "waiting" ? "等待作答" : "空闲"}
-      className={cn(
-        "size-2 shrink-0 rounded-full",
-        state === "busy" && "bg-live shadow-[0_0_0_3px_rgba(30,127,69,0.16)]",
-        state === "waiting" &&
-          "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
-        state === "idle" && "box-border border-[1.5px] border-live",
-      )}
-    />
-  );
-}
+const LIVE_TITLE: Record<LiveDotState, string> = { busy: "工作中", waiting: "等待作答", idle: "空闲" };
 
 /** A Session in `ccrpc ls` before its first prompt: no transcript yet, so only its directory. */
 function PendingRow({ p, selected, onOpen }: { p: PendingSession; selected: boolean; onOpen: (id: string) => void }) {
@@ -324,7 +310,7 @@ function PendingRow({ p, selected, onOpen }: { p: PendingSession; selected: bool
       className={rowClass(selected)}
     >
       <div className="flex items-center gap-1.5">
-        <LiveDot state={p.status} />
+        <LiveDot state={p.status} halo title={LIVE_TITLE[p.status]} testId="live-dot" />
         <span className="min-w-0 flex-1 truncate font-semibold">新 Session</span>
         {unread && <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />}
       </div>

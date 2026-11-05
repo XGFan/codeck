@@ -3,6 +3,7 @@ import { Command } from "cmdk";
 import { Folder, GitBranch, Search, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { LiveDot } from "@/components/LiveDot";
 import { api } from "@/ipc";
 import type {
   AppError,
@@ -47,7 +48,7 @@ function Marked({ text, terms }: { text: string; terms: string[] }) {
     <>
       {highlight(text, terms).map((p, i) =>
         p.hit ? (
-          <mark key={i} className="rounded-[2px] bg-[#ffe58a] px-px text-[#1c1c1e]">
+          <mark key={i} className="rounded-[2px] bg-mark px-px text-mark-text">
             {p.text}
           </mark>
         ) : (
@@ -108,7 +109,7 @@ function ProjectItem({
             e.stopPropagation();
             onScope();
           }}
-          className="flex h-6 items-center gap-1 rounded-md border border-[#b9cdee] bg-ground px-2 text-[12px] text-accent"
+          className="flex h-6 items-center gap-1 rounded-md border border-accent-border bg-ground px-2 text-[12px] text-accent"
         >
           <Kbd>⌘↵</Kbd> 只搜这个 Project
         </button>
@@ -202,7 +203,7 @@ function HitRow({
       <span className={cn("min-w-0 flex-1 truncate text-[12px] text-text/80", mono && "font-mono")}>
         {hit.snippet.map((p, i) =>
           p.hit ? (
-            <mark key={i} className="rounded-[2px] bg-[#ffe58a] px-px text-[#1c1c1e]">
+            <mark key={i} className="rounded-[2px] bg-mark px-px text-mark-text">
               {p.text}
             </mark>
           ) : (
@@ -213,7 +214,7 @@ function HitRow({
       {hit.agentId && (
         <span
           data-testid="tag-subagent"
-          className="shrink-0 rounded border border-[#f5d4a6] bg-[#fff1dd] px-1.5 text-[11px] text-[#7a3e00]"
+          className="shrink-0 rounded border border-tag-border bg-tag px-1.5 text-[11px] text-tag-text"
         >
           Subagent{agentType ? ` · ${agentType}` : ""}
         </span>
@@ -221,7 +222,7 @@ function HitRow({
       {!hit.onMainLine && (
         <span
           data-testid="tag-branch"
-          className="shrink-0 rounded border border-[#f5d4a6] bg-[#fff1dd] px-1.5 text-[11px] text-[#7a3e00]"
+          className="shrink-0 rounded border border-tag-border bg-tag px-1.5 text-[11px] text-tag-text"
         >
           已回退的分支
         </span>
@@ -579,9 +580,7 @@ export function SearchOverlay() {
                       className="flex flex-col gap-0.5 border-t border-border/70 py-2"
                     >
                       <div className="flex items-center gap-2 px-4 pb-0.5">
-                        {g.session.live && (
-                          <span data-testid="search-live" className="size-2 shrink-0 rounded-full bg-live" />
-                        )}
+                        {g.session.live && <LiveDot state="busy" testId="search-live" />}
                         <span className="min-w-0 truncate font-semibold">{g.session.title}</span>
                         <span className="shrink-0 text-[12px] text-secondary">
                           {sessionProjectIds(g.session)
