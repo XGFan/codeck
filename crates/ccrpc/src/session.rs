@@ -20,7 +20,7 @@ use crate::layout::{self, Layout, LayoutKind, Library, Meaning};
 use crate::locate::{self, Roots};
 use crate::procfile::{self, ProcessFile};
 use crate::pty::{self, HolderConn, Owner};
-use crate::recognize::{self, PermissionChoice, PermissionDialog};
+use crate::recognize::{self, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
 use crate::transcript::{self, BgTask, BlockKind, Tailer, TaskKind, TxEvent};
@@ -1737,15 +1737,7 @@ impl Engine {
         let (l, opts) = self.library.find_kind(lines, LayoutKind::Permission)?;
         let options = opts
             .into_iter()
-            .map(|o| {
-                let c = match o.meaning {
-                    Meaning::Allow => PermissionChoice::Allow,
-                    Meaning::AllowAlways => PermissionChoice::AllowAlways,
-                    Meaning::Deny => PermissionChoice::Deny,
-                    Meaning::Other => PermissionChoice::Other,
-                };
-                (o.number, o.label, c)
-            })
+            .map(|o| (o.number, o.label, o.meaning))
             .collect();
         Some((
             PermissionDialog { options },
@@ -1768,15 +1760,8 @@ impl Engine {
         let options: Vec<Value> = d
             .options
             .iter()
-            .map(|(_, label, c)| {
-                let meaning = match c {
-                    PermissionChoice::Allow => "allow",
-                    PermissionChoice::AllowAlways => "allow_always",
-                    PermissionChoice::Deny => "deny",
-                    PermissionChoice::Other => "other",
-                };
-                json!({"label": label, "meaning": meaning})
-            })
+            // `meaning` as the layouts write it: allow / allow_always / deny / other.
+            .map(|(_, label, meaning)| json!({"label": label, "meaning": meaning}))
             .collect();
         Some((Value::Array(options), source))
     }
@@ -2702,12 +2687,12 @@ impl Engine {
             return Err(self.unrecognized("answer_permission", None));
         };
         let choice = match decision {
-            Decision::Allow => PermissionChoice::Allow,
-            Decision::AllowAlways => PermissionChoice::AllowAlways,
-            Decision::Deny => PermissionChoice::Deny,
+            Decision::Allow => Meaning::Allow,
+            Decision::AllowAlways => Meaning::AllowAlways,
+            Decision::Deny => Meaning::Deny,
         };
         let Some(n) = d.number_for(choice) else {
-            if choice == PermissionChoice::AllowAlways {
+            if choice == Meaning::AllowAlways {
                 return err("not_offered", "这次审批没有“总是允许”选项");
             }
             return Err(self.unrecognized("answer_permission", Some(&s)));

@@ -2,6 +2,8 @@
 //! docs/probes.md). Each one returns `None` when the screen does not match what it knows; callers
 //! then report `unrecognized` instead of pressing keys.
 
+use crate::layout::Meaning;
+
 /// One numbered menu row (`❯ 2. [✔] label`), with wrapped continuation lines joined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuOption {
@@ -72,45 +74,36 @@ fn checkbox(label: &str) -> (Option<bool>, String) {
     }
 }
 
-/// What a permission option means.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PermissionChoice {
-    Allow,
-    AllowAlways,
-    Deny,
-    Other,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDialog {
     /// `(number, full label, meaning)`.
-    pub options: Vec<(u32, String, PermissionChoice)>,
+    pub options: Vec<(u32, String, Meaning)>,
 }
 
 impl PermissionDialog {
-    pub fn number_for(&self, choice: PermissionChoice) -> Option<u32> {
+    pub fn number_for(&self, choice: Meaning) -> Option<u32> {
         self.options.iter().find(|o| o.2 == choice).map(|o| o.0)
     }
 }
 
-fn classify(label: &str) -> PermissionChoice {
+fn classify(label: &str) -> Meaning {
     let l = label.trim();
     // Claude Code writes `don’t` with a typographic apostrophe.
     let lower = l.to_lowercase().replace('’', "'");
     // `Yes, run it`: the Workflow dialog's plain yes.
     if l == "Yes" || l == "Yes, run it" {
-        PermissionChoice::Allow
+        Meaning::Allow
     } else if lower.starts_with("yes,")
         && !lower.contains("auto mode")
         && (lower.contains("always allow")
             || lower.contains("don't ask again")
             || lower.contains("allow all"))
     {
-        PermissionChoice::AllowAlways
+        Meaning::AllowAlways
     } else if l == "No" || lower.starts_with("no,") || lower.starts_with("no ") {
-        PermissionChoice::Deny
+        Meaning::Deny
     } else {
-        PermissionChoice::Other
+        Meaning::Other
     }
 }
 
@@ -192,10 +185,8 @@ pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
         })
         .collect();
     let has = |c| options.iter().any(|o| o.2 == c);
-    let deny_last = options
-        .last()
-        .is_some_and(|o| o.2 == PermissionChoice::Deny);
-    (has(PermissionChoice::Allow) && deny_last).then_some(PermissionDialog { options })
+    let deny_last = options.last().is_some_and(|o| o.2 == Meaning::Deny);
+    (has(Meaning::Allow) && deny_last).then_some(PermissionDialog { options })
 }
 
 /// Byte column where an option's number starts (after any `❯` marker).
@@ -521,12 +512,12 @@ mod tests {
     #[test]
     fn permission_dialog_options_by_meaning() {
         let d = permission(&screen("permission_bash.txt")).unwrap();
-        assert_eq!(d.number_for(PermissionChoice::Allow), Some(1));
-        assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
-        assert_eq!(d.number_for(PermissionChoice::Deny), Some(4));
+        assert_eq!(d.number_for(Meaning::Allow), Some(1));
+        assert_eq!(d.number_for(Meaning::AllowAlways), Some(2));
+        assert_eq!(d.number_for(Meaning::Deny), Some(4));
         assert_eq!(
             d.options[2].2,
-            PermissionChoice::Other,
+            Meaning::Other,
             "switch to auto mode is not allow_always"
         );
         assert!(
@@ -550,16 +541,16 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
         let d = permission(&lines).unwrap();
-        assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
-        assert_eq!(d.number_for(PermissionChoice::Deny), Some(3));
+        assert_eq!(d.number_for(Meaning::AllowAlways), Some(2));
+        assert_eq!(d.number_for(Meaning::Deny), Some(3));
     }
 
     #[test]
     fn multi_line_command_and_typographic_apostrophe() {
         let lines = screen("permission_multiline_bash.txt");
         let d = permission(&lines).unwrap();
-        assert_eq!(d.number_for(PermissionChoice::AllowAlways), Some(2));
-        assert_eq!(d.number_for(PermissionChoice::Deny), Some(4));
+        assert_eq!(d.number_for(Meaning::AllowAlways), Some(2));
+        assert_eq!(d.number_for(Meaning::Deny), Some(4));
         let command = "python3 -I -c \"\nfrom PIL import Image\nim = Image.open('/private/var";
         let needle: String = command
             .chars()
@@ -638,9 +629,9 @@ mod tests {
     fn workflow_dialog_menu_after_numbered_phases() {
         let lines = screen("permission_workflow.txt");
         let d = permission(&lines).unwrap();
-        assert_eq!(d.number_for(PermissionChoice::Allow), Some(1));
-        assert_eq!(d.number_for(PermissionChoice::Deny), Some(3));
-        assert_eq!(d.number_for(PermissionChoice::AllowAlways), None);
+        assert_eq!(d.number_for(Meaning::Allow), Some(1));
+        assert_eq!(d.number_for(Meaning::Deny), Some(3));
+        assert_eq!(d.number_for(Meaning::AllowAlways), None);
         assert!(permission_body(&lines).unwrap().contains("echo"));
     }
 

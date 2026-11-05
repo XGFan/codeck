@@ -343,6 +343,17 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    /// The built-in permission recognizer's options go out with these meanings too
+    /// (`permission_request.options[].meaning`).
+    #[test]
+    fn meanings_serialize_as_on_the_wire() {
+        use Meaning::*;
+        assert_eq!(
+            serde_json::to_string(&[Allow, AllowAlways, Deny, Other]).unwrap(),
+            r#"["allow","allow_always","deny","other"]"#
+        );
+    }
+
     fn plan() -> Layout {
         Layout {
             id: String::new(),
