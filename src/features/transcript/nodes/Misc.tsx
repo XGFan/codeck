@@ -10,6 +10,12 @@ import { Anchor } from "./Anchor";
 
 type Body<K extends Node["body"]["kind"]> = Extract<Node["body"], { kind: K }>;
 
+/** Wording of a system entry that carries nothing beyond its envelope. */
+function emptySystemText(subtype: string): string {
+  if (subtype === "agents_killed") return "已终止所有后台 agent";
+  return subtype || "未知系统记录";
+}
+
 export function SystemLine({ body }: { body: Body<"system"> }) {
   const warn = body.level === "error" || body.level === "warning";
   return (
@@ -17,6 +23,16 @@ export function SystemLine({ body }: { body: Body<"system"> }) {
       className={cn("flex items-baseline gap-2 text-[12px]", body.level === "error" ? "text-error" : "text-secondary")}
     >
       <span className="shrink-0 rounded border border-border px-1 text-[11px]">{warn ? "警告" : "系统"}</span>
+      <span className="min-w-0 break-words whitespace-pre-wrap">{body.text || emptySystemText(body.subtype)}</span>
+    </div>
+  );
+}
+
+/** A tool result whose call is not on the shown path. */
+export function ToolResultLine({ body }: { body: Body<"toolResult"> }) {
+  return (
+    <div className="flex items-baseline gap-2 text-[12px] text-secondary">
+      <span className="shrink-0 rounded border border-border px-1 text-[11px]">工具结果</span>
       <span className="min-w-0 break-words whitespace-pre-wrap">{body.text}</span>
     </div>
   );

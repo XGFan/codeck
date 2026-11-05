@@ -61,6 +61,7 @@ pub fn find(
             NodeBody::UserPrompt { text, .. }
             | NodeBody::CompactSummary { text }
             | NodeBody::System { text, .. }
+            | NodeBody::ToolResult { text }
             | NodeBody::Attachment { text, .. } => m.add(FindLocation::Text, count(text)),
             NodeBody::Unknown { raw_json, .. } => m.add(FindLocation::Text, count(raw_json)),
             NodeBody::CompactBoundary { .. } => {}

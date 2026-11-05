@@ -9,7 +9,7 @@ import { Anchor } from "./Anchor";
 import { AskRow } from "./Ask";
 import { AssistantRow, AssistantSegment } from "./Assistant";
 import { InheritedBanner, InheritedDivider } from "./Fork";
-import { AttachmentLine, CompactRow, CompactSummaryCard, SystemLine, UnknownJson } from "./Misc";
+import { AttachmentLine, CompactRow, CompactSummaryCard, SystemLine, ToolResultLine, UnknownJson } from "./Misc";
 import { NotificationRow, UserPromptView } from "./User";
 
 export { TranscriptContext, scrollToNode, type ScrollRequest, type TranscriptCtx } from "./scroll";
@@ -114,6 +114,7 @@ export function NodeView({ node }: { node: Node }) {
         {b.kind === "userPrompt" && <UserPromptView node={node} body={b} />}
         {b.kind === "compactSummary" && <CompactSummaryCard node={node} body={b} />}
         {b.kind === "system" && <SystemLine body={b} />}
+        {b.kind === "toolResult" && <ToolResultLine body={b} />}
         {b.kind === "attachment" && <AttachmentLine body={b} />}
         {b.kind === "unknown" && <UnknownJson label={`未知记录 · ${b.entryType}`} json={b.rawJson} />}
       </div>

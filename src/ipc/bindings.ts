@@ -379,7 +379,14 @@ export type Node = {
 	body: NodeBody,
 };
 
-export type NodeBody = { kind: "userPrompt"; text: string; images: ImageRef[]; origin: PromptOrigin } | { kind: "assistant"; messageId: string | null; model: string | null; blocks: AssistantBlock[]; usage: TokenTotals | null; isApiError: boolean } | { kind: "compactBoundary"; trigger: string | null; preTokens: number | null } | { kind: "compactSummary"; text: string } | { kind: "system"; subtype: string; level: string | null; text: string } | { kind: "attachment"; attachmentType: string; text: string } | { kind: "unknown"; entryType: string; rawJson: string };
+export type NodeBody = { kind: "userPrompt"; text: string; images: ImageRef[]; origin: PromptOrigin } | { kind: "assistant"; messageId: string | null; model: string | null; blocks: AssistantBlock[]; usage: TokenTotals | null; isApiError: boolean } | { kind: "compactBoundary"; trigger: string | null; preTokens: number | null } | { kind: "compactSummary"; text: string } | { kind: "system"; subtype: string; level: string | null; 
+/**
+ *  Empty when the entry carries nothing beyond its envelope (e.g. `agents_killed`); the
+ *  viewer then words it by `subtype`.
+ */
+text: string } | 
+/**  A tool result not absorbed into its call (the call is not on the shown path). */
+{ kind: "toolResult"; text: string } | { kind: "attachment"; attachmentType: string; text: string } | { kind: "unknown"; entryType: string; rawJson: string };
 
 /**  Output offloaded to `<session dir>/tool-results/<file_name>`. */
 export type PersistedRef = {

@@ -102,6 +102,12 @@ pub enum NodeBody {
     System {
         subtype: String,
         level: Option<String>,
+        /// Empty when the entry carries nothing beyond its envelope (e.g. `agents_killed`); the
+        /// viewer then words it by `subtype`.
+        text: String,
+    },
+    /// A tool result not absorbed into its call (the call is not on the shown path).
+    ToolResult {
         text: String,
     },
     Attachment {

@@ -109,9 +109,7 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     })
                     .map(|b| result_content(b.content.as_deref()).0)
                     .unwrap_or_default();
-                NodeBody::System {
-                    subtype: "tool_result".to_owned(),
-                    level: None,
+                NodeBody::ToolResult {
                     text: cap_text(&text, PREVIEW_BYTES, RESULT_LINES).0,
                 }
             }
@@ -149,7 +147,7 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 let subtype = n.subtype.clone().unwrap_or_default();
                 let mut text = system_text(ctx, i, e);
                 if text.trim().is_empty() {
-                    text = empty_system_text(&subtype);
+                    text.clear();
                 }
                 NodeBody::System {
                     subtype,
@@ -605,15 +603,6 @@ fn system_text(ctx: &RenderCtx<'_>, i: usize, e: &RawEntry) -> String {
         return String::new();
     }
     cap_text(&Value::Object(map).to_string(), PREVIEW_BYTES, usize::MAX).0
-}
-
-/// Display text of a system entry that carries nothing beyond its envelope (e.g. `agents_killed`).
-fn empty_system_text(subtype: &str) -> String {
-    match subtype {
-        "agents_killed" => "已终止所有后台 agent".to_owned(),
-        "" => "未知系统记录".to_owned(),
-        other => other.to_owned(),
-    }
 }
 
 /// The source line at `offset` (read-only positional reads; for rare generic views only).

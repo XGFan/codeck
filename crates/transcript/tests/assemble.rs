@@ -651,7 +651,7 @@ fn background_subagent_without_notification_has_no_result() {
 }
 
 #[test]
-fn teammate_messages_are_not_human_prompts_and_empty_system_entries_get_text() {
+fn teammate_messages_are_not_human_prompts_and_empty_system_entries_stay_empty() {
     let s = open("subagents", ids::SUBAGENTS_DIR, ids::SUBAGENTS);
     let t = main_t(&s, false);
     let n = t
@@ -678,7 +678,7 @@ fn teammate_messages_are_not_human_prompts_and_empty_system_entries_get_text() {
     let a = summarize(&s.skeleton);
     assert_eq!(a.message_count, 5, "1 prompt + 4 assistant messages");
 
-    // `agents_killed` carries only its envelope: shown with a readable text, never empty.
+    // `agents_killed` carries only its envelope: visible, with no text (the viewer words it).
     let killed = t
         .nodes
         .iter()
@@ -687,7 +687,7 @@ fn teammate_messages_are_not_human_prompts_and_empty_system_entries_get_text() {
     match &killed.body {
         NodeBody::System { subtype, text, .. } => {
             assert_eq!(subtype, "agents_killed");
-            assert_eq!(text, "已终止所有后台 agent");
+            assert_eq!(text, "");
         }
         b => panic!("unexpected {b:?}"),
     }

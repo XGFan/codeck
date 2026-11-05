@@ -426,10 +426,17 @@ export const richMain: Node[] = [
     level: "info",
     text: "已自动切换到 claude-sonnet-5-5（上一模型限额已用尽）",
   }),
+  otherNode("n-killed", t, { kind: "system", subtype: "agents_killed", level: null, text: "" }),
   otherNode(
     "n-turn",
     ts(),
     { kind: "system", subtype: "turn_duration", level: null, text: "本轮耗时 4 分 12 秒" },
+    { hidden: true },
+  ),
+  otherNode(
+    "n-orphan-result",
+    t,
+    { kind: "toolResult", text: "孤立的工具结果：调用不在当前显示的路径上" },
     { hidden: true },
   ),
   otherNode("n-cb", ts(), { kind: "compactBoundary", trigger: "auto", preTokens: 168_204 }),

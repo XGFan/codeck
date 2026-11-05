@@ -346,7 +346,13 @@ function findIn(req: FindRequest): FindResult {
   };
   for (const n of tr.nodes) {
     const b = n.body;
-    if (b.kind === "userPrompt" || b.kind === "compactSummary" || b.kind === "system" || b.kind === "attachment")
+    if (
+      b.kind === "userPrompt" ||
+      b.kind === "compactSummary" ||
+      b.kind === "system" ||
+      b.kind === "toolResult" ||
+      b.kind === "attachment"
+    )
       add(n.id, { kind: "text" }, b.text);
     else if (b.kind === "assistant")
       for (const blk of b.blocks) {

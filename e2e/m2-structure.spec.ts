@@ -280,6 +280,21 @@ test("显示系统消息开关控制隐藏条目", async ({ page }) => {
   await expect(transcript.getByText("可用技能：review、simplify、security-review（共 3 项）")).toHaveCount(0);
 });
 
+test("只有外壳的系统记录按类型写出文案，孤立的工具结果标「工具结果」并随系统消息显示", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const transcript = page.getByTestId("transcript");
+  const killed = transcript.locator('[data-node-id="n-killed"]');
+  const orphan = transcript.locator('[data-node-id="n-orphan-result"]');
+  await reveal(transcript, killed, "top");
+  await expect(killed).toContainText("已终止所有后台 agent");
+  await expect(orphan).toHaveCount(0);
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
+  await reveal(transcript, orphan, "top");
+  await expect(orphan).toContainText("工具结果");
+  await expect(orphan).toContainText("孤立的工具结果：调用不在当前显示的路径上");
+});
+
 test("Fork 继承的历史默认折叠，可展开与收起", async ({ page }) => {
   await openSession(page, FORK_TITLE);
   const transcript = page.getByTestId("transcript");
