@@ -116,6 +116,8 @@ export interface ReadyEvent extends SessionInfo {
   warnings: string[];
   /** What waits in the TUI's own queue (older ccrpc: absent). */
   queue?: string[];
+  /** A feedback draft card already on screen at connect (older ccrpc: absent). */
+  feedback_draft?: FeedbackDraft | null;
 }
 
 export interface ProgressEvent {
@@ -133,6 +135,14 @@ export interface Task {
   description: string | null;
   command?: string | null;
   status: string;
+}
+
+/** The draft behind Claude Code's 「Product feedback drafted」 card: the model's `SendFeedback` call. */
+export interface FeedbackDraft {
+  title: string;
+  /** The `SendFeedback` call (null when the transcript has none for the card). */
+  tool_use_id: string | null;
+  input: { title?: string; details?: string; type?: string } | null;
 }
 
 export interface ResponseMsg {
@@ -163,6 +173,8 @@ export type EventMsg =
   | { type: "analysis_failed"; error: string; title?: string }
   | ({ type: "session_info" } & SessionInfo)
   | ProgressEvent
+  /** The feedback draft card above the TUI's input box appeared (a draft) or went away (null). */
+  | { type: "feedback_draft"; draft: FeedbackDraft | null }
   | { type: "session_changed"; session_id: string; previous: string | null }
   | { type: "session_exit" };
 

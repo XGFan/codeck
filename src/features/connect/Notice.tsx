@@ -14,6 +14,7 @@ export function NoticeCard({
   action,
   onClose,
   testId,
+  children,
 }: {
   tone?: "info" | "wait" | "error";
   icon: ReactNode;
@@ -30,52 +31,57 @@ export function NoticeCard({
   };
   onClose?: () => void;
   testId?: string;
+  /** Shown under the row (more text the card can unfold). */
+  children?: ReactNode;
 }) {
   return (
     <div
       data-testid={testId}
-      className="flex w-full items-center gap-3 rounded-2xl border border-border bg-ground py-2.5 pr-3 pl-4 shadow-[0_2px_10px_rgba(0,0,0,0.04)]"
+      className="flex w-full flex-col rounded-2xl border border-border bg-ground py-2.5 pr-3 pl-4 shadow-[0_2px_10px_rgba(0,0,0,0.04)]"
     >
-      <span
-        className={cn(
-          "flex shrink-0",
-          tone === "error" ? "text-error" : tone === "wait" ? "text-live-waiting" : "text-secondary",
+      <div className="flex w-full items-center gap-3">
+        <span
+          className={cn(
+            "flex shrink-0",
+            tone === "error" ? "text-error" : tone === "wait" ? "text-live-waiting" : "text-secondary",
+          )}
+        >
+          {icon}
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className={cn("truncate text-[13px] font-semibold", tone === "error" && "text-error")}>{title}</span>
+          {desc && <span className="truncate text-[12.5px] text-secondary">{desc}</span>}
+        </div>
+        {action && (
+          <>
+            <span className="w-px self-stretch bg-border" aria-hidden />
+            <button
+              type="button"
+              onClick={action.onClick}
+              disabled={action.disabled}
+              title={action.title}
+              data-testid={action.testId}
+              className={cn(
+                "h-7 shrink-0 rounded-full px-3 text-[12.5px] disabled:opacity-40",
+                action.primary ? "bg-text text-ground hover:opacity-90" : "border border-border hover:bg-selection/60",
+              )}
+            >
+              {action.label}
+            </button>
+          </>
         )}
-      >
-        {icon}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className={cn("truncate text-[13px] font-semibold", tone === "error" && "text-error")}>{title}</span>
-        {desc && <span className="truncate text-[12.5px] text-secondary">{desc}</span>}
-      </div>
-      {action && (
-        <>
-          <span className="w-px self-stretch bg-border" aria-hidden />
+        {onClose && (
           <button
             type="button"
-            onClick={action.onClick}
-            disabled={action.disabled}
-            title={action.title}
-            data-testid={action.testId}
-            className={cn(
-              "h-7 shrink-0 rounded-full px-3 text-[12.5px] disabled:opacity-40",
-              action.primary ? "bg-text text-ground hover:opacity-90" : "border border-border hover:bg-selection/60",
-            )}
+            aria-label="关闭"
+            onClick={onClose}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-selection/60 hover:text-text"
           >
-            {action.label}
+            <X size={14} aria-hidden />
           </button>
-        </>
-      )}
-      {onClose && (
-        <button
-          type="button"
-          aria-label="关闭"
-          onClick={onClose}
-          className="flex size-6 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-selection/60 hover:text-text"
-        >
-          <X size={14} aria-hidden />
-        </button>
-      )}
+        )}
+      </div>
+      {children}
     </div>
   );
 }

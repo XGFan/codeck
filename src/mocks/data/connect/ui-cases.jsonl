@@ -49,4 +49,8 @@
 {"t": 1793700000470, "dir": "send", "msg": {"id": "ab", "type": "abort"}}
 {"t": 1793700000480, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
 {"t": 1793700000490, "dir": "recv", "msg": {"type": "response", "id": "ab", "command": "abort", "success": true, "data": {"state": "idle"}}}
+{"t": 1793700000491, "dir": "recv", "msg": {"type": "feedback_draft", "draft": {"title": "Edit 之后没有重新读文件就改了第二处", "tool_use_id": "toolu_fb1", "input": {"type": "idea", "title": "Edit 之后没有重新读文件就改了第二处", "details": "- **What happened:** 第一次 Edit 改动了行号，第二次 Edit 仍按旧内容定位。\n- **What the user said:** User didn't comment; observed by the model.\n- **Repro:** 同一文件连续两次 Edit。"}}}}
+{"t": 1793700000492, "dir": "send", "msg": {"id": "fd", "type": "dismiss_feedback_draft"}}
+{"t": 1793700000493, "dir": "recv", "msg": {"type": "feedback_draft", "draft": null}}
+{"t": 1793700000494, "dir": "recv", "msg": {"type": "response", "id": "fd", "command": "dismiss_feedback_draft", "success": true, "data": {}}}
 {"t": 1793700000500, "dir": "exit", "code": 1, "stderr": "ccrpc: Holder 断开了"}

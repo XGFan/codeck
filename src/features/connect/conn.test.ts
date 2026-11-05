@@ -26,6 +26,33 @@ const end: TurnEndEvent = {
 };
 
 describe("conn reducer", () => {
+  it("keeps the feedback draft card from ready or its event until it is gone or the Session ended", () => {
+    const draft = { title: "T", tool_use_id: "toolu_1", input: { title: "T", details: "- d" } };
+    const ready = {
+      type: "ready",
+      protocol: 2,
+      holder_id: "h1",
+      session_id: "s1",
+      cwd: "/w",
+      claude_version: "2.1.318",
+      state: "idle",
+      size: [80, 24],
+      taken_over: false,
+      co_display: true,
+      warnings: [],
+      mode: null,
+      model: null,
+      context_tokens: null,
+      feedback_draft: draft,
+    } satisfies InMsg;
+    const s = fold([ready]);
+    expect(s.feedbackDraft).toEqual(draft);
+    expect(fold([{ type: "feedback_draft", draft: null }], s).feedbackDraft).toBeNull();
+    expect(fold([{ type: "session_exit" }], s).feedbackDraft).toBeNull();
+    // A ccrpc too old to say: none.
+    expect(fold([{ ...ready, feedback_draft: undefined }]).feedbackDraft).toBeNull();
+  });
+
   it("ends main-line requests when waiting ends, a background Subagent's when its tool ran", () => {
     const waiting: InMsg = {
       type: "state",

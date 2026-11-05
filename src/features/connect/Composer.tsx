@@ -1,4 +1,4 @@
-import { ArrowUp, Clock, ImageIcon, Square, X } from "lucide-react";
+import { ArrowUp, Clock, ImageIcon, MessageSquareText, Square, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { api } from "@/ipc";
@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
+import type { FeedbackDraft } from "./protocol";
 import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
 import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, type Draft } from "./drafts";
@@ -14,6 +15,7 @@ import { draftKey, useConnect } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
+import { Markdown } from "@/lib/markdown";
 
 const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
 
@@ -35,6 +37,65 @@ function focusFirstCard() {
     document.querySelector<HTMLElement>("[data-connect-requests] [data-card-answer]:not(:disabled)") ??
     document.querySelector<HTMLElement>("[data-answering] [data-card-answer]:not(:disabled)");
   el?.focus();
+}
+
+/**
+ * The model drafted product feedback (Claude Code's card above its input box): the title, the draft unfolded on
+ * request, and 「不发送」 (the card's `0`). Sending stays in the terminal (`2`, or `/feedback`).
+ */
+function FeedbackDraftNotice({
+  c,
+  draft,
+  onError,
+}: {
+  c: ConnState;
+  draft: FeedbackDraft;
+  onError: (e: string) => void;
+}) {
+  const command = useConnect((s) => s.command);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const details = draft.input?.details;
+  const dismiss = async () => {
+    setBusy(true);
+    const r = await command(c.conn, { type: "dismiss_feedback_draft" });
+    setBusy(false);
+    if (!r.success) onError(`没能关掉反馈草稿：${r.error?.message ?? r.error?.code ?? ""}`);
+  };
+  return (
+    <NoticeCard
+      testId="feedback-draft"
+      icon={<MessageSquareText size={18} strokeWidth={1.7} />}
+      title={`Claude 起草了一条产品反馈：${draft.title}`}
+      desc="草稿只存在本机，在终端里按 2 才会发送"
+      action={{
+        label: "不发送",
+        onClick: () => void dismiss(),
+        // Claude Code hides the card during a turn: only then can its key reach it.
+        disabled: busy || c.state !== "idle",
+        title: "关掉这张卡片（终端里的 0），草稿留在 /feedback 里，30 天后过期",
+        testId: "feedback-draft-dismiss",
+      }}
+    >
+      {details && (
+        <div className="mt-1 pl-[30px] text-[12.5px]">
+          <button
+            type="button"
+            className="text-accent hover:underline"
+            onClick={() => setOpen((o) => !o)}
+            data-testid="feedback-draft-toggle"
+          >
+            {open ? "收起" : "查看全文"}
+          </button>
+          {open && (
+            <div data-testid="feedback-draft-details" className="mt-1 max-h-56 overflow-auto text-secondary">
+              <Markdown text={details} className="text-[12.5px] leading-relaxed" />
+            </div>
+          )}
+        </div>
+      )}
+    </NoticeCard>
+  );
 }
 
 /**
@@ -184,6 +245,7 @@ export function Composer({ c }: { c: ConnState }) {
             }}
           />
         )}
+        {c.feedbackDraft && <FeedbackDraftNotice c={c} draft={c.feedbackDraft} onError={setError} />}
         {error && <ErrorNotice text={error} onClose={() => setError(null)} />}
       </div>
       <div

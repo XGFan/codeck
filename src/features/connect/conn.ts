@@ -4,6 +4,7 @@
 import type {
   ChoiceEvent,
   DialogEvent,
+  FeedbackDraft,
   InMsg,
   PermissionRequestEvent,
   ProgressEvent,
@@ -52,6 +53,8 @@ export interface ConnState {
   notices: { id: number; text: string }[];
   /** The Session a Resume started this connection for: it stands for that Session until ccrpc names one. */
   resumeOf: string | null;
+  /** The model drafted product feedback: Claude Code's card above the input box (sent only from the terminal). */
+  feedbackDraft: FeedbackDraft | null;
 }
 
 export function initial(conn: string, holderId: string | null, resumeOf: string | null = null): ConnState {
@@ -78,6 +81,7 @@ export function initial(conn: string, holderId: string | null, resumeOf: string 
     unread: false,
     notices: [],
     resumeOf,
+    feedbackDraft: null,
   };
 }
 
@@ -118,6 +122,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         effort: m.effort ?? null,
         contextTokens: m.context_tokens ?? null,
         queue: m.queue ?? [],
+        feedbackDraft: m.feedback_draft ?? null,
       };
     case "queue":
       return { ...s, queue: m.items };
@@ -151,6 +156,8 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       return { ...s, mode: m.mode, model: m.model, effort: m.effort ?? null, contextTokens: m.context_tokens };
     case "progress":
       return s.state === "busy" ? { ...s, progress: m } : s;
+    case "feedback_draft":
+      return { ...s, feedbackDraft: m.draft };
     case "follow_up_failed":
       return notice(s, `排队的消息没有发出：${m.error.message}`);
     case "layout_learned":
@@ -173,7 +180,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         effort: s.effort,
       };
     case "session_exit":
-      return { ...s, sessionExited: true, state: "exited", requests: [], progress: null };
+      return { ...s, sessionExited: true, state: "exited", requests: [], progress: null, feedbackDraft: null };
     case "taken_over":
       return notice(s, "Session 已被接手，ccrpc 转为只读");
     case "reclaimed":

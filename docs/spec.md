@@ -147,6 +147,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用），输入区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在输入区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
   | `choice` | 标题 + 选项按钮 | `answer_choice`（按 label） |
   | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
+  | `feedback_draft` | 输入框上方的卡片：「Claude 起草了一条产品反馈：<标题>」，注明草稿只存在本机、在终端里按 2 才会发送；「查看全文」展开草稿（Markdown） | 「不发送」：`dismiss_feedback_draft`，只在空闲时可点（本轮进行中终端隐藏这张卡片）；草稿留在 `/feedback` 里；CoDeck 不提供发送 |
 
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
   - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。

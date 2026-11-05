@@ -334,6 +334,17 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(screen).toContainText("Mac Client");
   await page.getByTestId("connect-input").press("Escape");
   expect(await lastSent(page, "abort")).toBeTruthy();
+
+  // The model drafted product feedback: the card shows it; 「不发送」 dismisses it, sending stays in the terminal.
+  const draft = page.getByTestId("feedback-draft");
+  await expect(draft).toContainText("Claude 起草了一条产品反馈：Edit 之后没有重新读文件就改了第二处");
+  await expect(draft).toContainText("在终端里按 2 才会发送");
+  await expect(draft.getByTestId("feedback-draft-details")).toHaveCount(0);
+  await draft.getByTestId("feedback-draft-toggle").click();
+  await expect(draft.getByTestId("feedback-draft-details")).toContainText("同一文件连续两次 Edit");
+  await draft.getByTestId("feedback-draft-dismiss").click();
+  expect(await lastSent(page, "dismiss_feedback_draft")).toBeTruthy();
+  await expect(draft).toHaveCount(0);
   await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
 
