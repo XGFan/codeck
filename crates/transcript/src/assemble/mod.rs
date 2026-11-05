@@ -143,6 +143,20 @@ impl SkeletonNode {
     pub fn is_satellite_type(&self) -> bool {
         matches!(self.entry_type.as_str(), "attachment" | "system") && !self.is_compact_boundary()
     }
+
+    /// Shown only with 「显示隐藏条目」: attachments, bookkeeping system entries (stop hooks, turn
+    /// durations…), meta user entries and tool results not absorbed into their call.
+    pub fn hidden_by_default(&self) -> bool {
+        match self.entry_type.as_str() {
+            "attachment" => true,
+            "system" => {
+                !self.is_compact_boundary()
+                    && crate::known::is_hidden_system_subtype(self.subtype.as_deref().unwrap_or(""))
+            }
+            "user" => !self.is_compact_summary && (self.is_tool_result || self.is_meta),
+            _ => false,
+        }
+    }
 }
 
 impl SessionSkeleton {

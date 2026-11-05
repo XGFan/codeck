@@ -6,7 +6,6 @@
 
 use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, skeleton, tree};
 use crate::error::{TranscriptError, TranscriptResult};
-use crate::known;
 use crate::model::{BranchChoice, JumpRequest, JumpTarget, TranscriptScope};
 use crate::parse;
 
@@ -123,7 +122,7 @@ fn locate(sk: &SessionSkeleton, r: &JumpRequest) -> TranscriptResult<Located> {
         node_id: sk.nodes[display].uuid.clone(),
         tool_use_id,
         choices: choices_for(sk, on),
-        hidden: is_hidden(sk, display),
+        hidden: sk.nodes[display].hidden_by_default(),
     })
 }
 
@@ -152,19 +151,4 @@ fn choices_for(sk: &SessionSkeleton, target: usize) -> Vec<BranchChoice> {
         mark(&mut on_path, &branch::resolve_path(sk, &choices));
     }
     choices
-}
-
-/// Hidden by default (§3.4 step 6), mirroring `nodes::render`.
-fn is_hidden(sk: &SessionSkeleton, i: usize) -> bool {
-    let n = &sk.nodes[i];
-    match n.entry_type.as_str() {
-        "attachment" => true,
-        "system" => {
-            !n.is_compact_boundary()
-                && known::is_hidden_system_subtype(n.subtype.as_deref().unwrap_or(""))
-        }
-        // A tool_result still standing alone here is unabsorbed and shown as hidden.
-        "user" => !n.is_compact_summary && (n.is_tool_result || n.is_meta),
-        _ => false,
-    }
 }

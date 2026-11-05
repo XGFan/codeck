@@ -10,7 +10,6 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 
 use super::{LoadedFile, SessionSkeleton, content, prompt, tree};
-use crate::known;
 use crate::model::{
     AgentId, AssistantBlock, ImageRef, Node, NodeBody, NodeId, PersistedRef, PromptOrigin,
     TokenTotals, ToolCall, ToolResult,
@@ -61,9 +60,27 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
 
     for (pos, &i) in display.iter().enumerate() {
         let n = &s.nodes[i];
+        if n.entry_type == "user"
+            && n.is_tool_result
+            && !n.is_compact_summary
+            && !n.tool_results.is_empty()
+            && n.tool_results
+                .iter()
+                .all(|id| s.tool_use_at.contains_key(id))
+        {
+            continue; // absorbed into its ToolCall
+        }
+        // Decided before building the body: hidden entries are mostly skipped, and some bodies
+        // read the source file.
+        let hidden = n.hidden_by_default();
+        if hidden {
+            hidden_count += 1;
+            if !ctx.include_hidden {
+                continue;
+            }
+        }
         let e = s.entry(ctx.files, i);
         let mut id_idx = i;
-        let mut hidden = false;
         let body = match n.entry_type.as_str() {
             "assistant" => {
                 let frags: &[usize] = match n.message_id.as_deref() {
@@ -82,14 +99,6 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 text: prompt::user_text(e),
             },
             "user" if n.is_tool_result => {
-                if !n.tool_results.is_empty()
-                    && n.tool_results
-                        .iter()
-                        .all(|id| s.tool_use_at.contains_key(id))
-                {
-                    continue; // absorbed into its ToolCall
-                }
-                hidden = true;
                 let text = n
                     .tool_results
                     .iter()
@@ -112,7 +121,6 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 if origin == PromptOrigin::Coordinator {
                     text = prompt::coordinator_body(&text);
                 }
-                hidden = n.is_meta;
                 let mut images = prompt_images(e, &n.uuid);
                 if !n.is_meta {
                     // A slash command's pasted images arrive in the meta entry after it (with the
@@ -139,7 +147,6 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
             }
             "system" => {
                 let subtype = n.subtype.clone().unwrap_or_default();
-                hidden = known::is_hidden_system_subtype(&subtype);
                 let mut text = system_text(ctx, i, e);
                 if text.trim().is_empty() {
                     text = empty_system_text(&subtype);
@@ -151,7 +158,6 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 }
             }
             "attachment" => {
-                hidden = true;
                 let (attachment_type, text) = attachment_preview(e.attachment.as_deref());
                 NodeBody::Attachment {
                     attachment_type,
@@ -168,12 +174,6 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                 }
             }
         };
-        if hidden {
-            hidden_count += 1;
-            if !ctx.include_hidden {
-                continue;
-            }
-        }
         let head = &s.nodes[id_idx];
         nodes.push(Node {
             id: head.uuid.clone(),
