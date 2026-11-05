@@ -1,6 +1,8 @@
 //! The environment for ccrpc: an app started from the Dock has none of the login shell's
 //! (PATH without `toh` / `claude`, no `CCRPC_ANALYZER_API_KEY`), so it is read once from
-//! `$SHELL -l -c 'env -0'`.
+//! `<shell> -l -c 'env -0'`, `<shell>` being the account's login shell. Its `SHELL` is that shell too:
+//! `toh new` opens the Pane in `$SHELL`, which otherwise depends on how CoDeck was started (from a
+//! terminal it is that terminal's shell, not the account's).
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -12,10 +14,14 @@ use std::time::{Duration, Instant};
 const DROP: &[&str] = &["CLAUDECODE", "TOH_HOLDER_ID", "CLAUDE_CODE_ENTRYPOINT"];
 
 pub fn login_env() -> HashMap<String, String> {
-    let mut env = read_login_env().unwrap_or_else(|| std::env::vars().collect());
+    let shell = account_shell()
+        .or_else(|| std::env::var("SHELL").ok())
+        .unwrap_or_else(|| "/bin/zsh".into());
+    let mut env = read_login_env(&shell).unwrap_or_else(|| std::env::vars().collect());
     for k in DROP {
         env.remove(*k);
     }
+    env.insert("SHELL".into(), shell);
     // Where toh / claude / ccrpc usually live, in case the shell gave nothing better.
     let home = env.get("HOME").cloned().unwrap_or_default();
     let path = env.get("PATH").cloned().unwrap_or_default();
@@ -39,8 +45,29 @@ pub fn login_env() -> HashMap<String, String> {
     env
 }
 
-fn read_login_env() -> Option<HashMap<String, String>> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+/// The login shell in the account's record (what `dscl . -read ~ UserShell` shows).
+fn account_shell() -> Option<String> {
+    // SAFETY: getpwuid_r writes into `pw` and `buf`, which outlive the reads of `pw_shell` below.
+    unsafe {
+        let mut pw: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0 as libc::c_char; 4096];
+        let mut out: *mut libc::passwd = std::ptr::null_mut();
+        let rc = libc::getpwuid_r(
+            libc::getuid(),
+            &mut pw,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut out,
+        );
+        if rc != 0 || out.is_null() || pw.pw_shell.is_null() {
+            return None;
+        }
+        let shell = std::ffi::CStr::from_ptr(pw.pw_shell).to_str().ok()?;
+        (!shell.is_empty() && std::path::Path::new(shell).is_file()).then(|| shell.to_string())
+    }
+}
+
+fn read_login_env(shell: &str) -> Option<HashMap<String, String>> {
     let mut cmd = Command::new(shell);
     cmd.args(["-l", "-c", "/usr/bin/env -0"])
         .stdin(Stdio::null())

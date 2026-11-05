@@ -40,7 +40,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - `ls --json --watch`：先打一行全表，之后表变了再打一行，stdin 关闭即退出。由 `toh ls --json --watch`（Pane 来去、隐藏 / 显示）与进程文件目录、报到目录的文件事件唤醒；`ps` 只在 Pane 或进程文件增减、列出的 claude 进程不在了时重跑，标题从上次读到的位置往后读。另每 30 秒看一次，兜住没删进程文件就退出的 claude。
 - 插件：`new` 在插件未启用（用户 settings 的 `enabledPlugins` 里没有 `ccrpc@ccrpc`）且 claude 参数里没有 `--plugin-dir` 时报错；claude 的进程文件出现 5 秒仍没有报到也报错退出。`attach` 要求该 claude 已报到（见 3 节），否则报错并提示重启 claude。
 - `ccrpc plugin install`：在 `$XDG_DATA_HOME/ccrpc/plugin`（缺省 `~/.local/share/ccrpc/plugin`）生成本地 marketplace `ccrpc` 与插件 `ccrpc`（hooks 调用当前 ccrpc 可执行文件的绝对路径），再经 `claude plugin marketplace add|update`、`claude plugin install|update` 装成用户级插件。换了 ccrpc 的位置要重新 install。
-- 目录：`--toh-state-dir` 或 `TOH_STATE_DIR` 只原样交给 `toh`（缺省由 toh 自己定）；Claude Code 配置目录按 `--claude-config-dir` > `CLAUDE_CONFIG_DIR` > `~/.claude`（两个选项写在子命令之前）。配置目录不是缺省值时，`new` 以 `env CLAUDE_CONFIG_DIR=… claude` 启动（`toh new` 只把少数变量带进 Pane）。`toh` 需在 PATH 里。claude 运行 20 秒仍没有进程文件时，在 stderr 提示可能是配置目录不对。
+- 目录：`--toh-state-dir` 或 `TOH_STATE_DIR` 只原样交给 `toh`（缺省由 toh 自己定）；Claude Code 配置目录按 `--claude-config-dir` > `CLAUDE_CONFIG_DIR` > `~/.claude`（两个选项写在子命令之前）。`new` 让 toh 在 Pane 的登录 shell 里敲入 `command claude …`，`command` 使 shell 里同名的包装函数、别名不起作用，claude 的参数只有 `--` 之后给的；配置目录不是缺省值时为 `command env CLAUDE_CONFIG_DIR=… claude …`（`toh new` 只把少数变量带进 Pane）。`toh` 需在 PATH 里。claude 运行 20 秒仍没有进程文件时，在 stderr 提示可能是配置目录不对。
 
 ## 3. 定位
 

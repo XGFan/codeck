@@ -162,6 +162,9 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
         toh_args.extend(["--window".to_string(), "hidden".to_string()]);
     }
     toh_args.push("--".into());
+    // toh types the command into the Pane's login shell: `command` keeps the user's shell functions and
+    // aliases named `claude` (wrappers that add arguments) out of it, so the arguments are exactly ours.
+    toh_args.push("command".into());
     // `toh new` passes only a few variables to the Pane: carry a non-default config dir explicitly
     // so claude writes its Process File where ccrpc reads.
     // So does a non-default ccrpc state directory, for the plugin's hooks.
