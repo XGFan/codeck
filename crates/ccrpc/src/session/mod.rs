@@ -21,10 +21,11 @@ use crate::hook::{self, HookMsg, HookServer};
 use crate::layout::{self, Layout, LayoutKind, Library, Meaning, Select};
 use crate::locate::{self, Roots};
 use crate::procfile::{self, ProcessFile};
-use crate::pty::{self, HolderConn, Owner, key};
+use crate::pty::{self, HolderConn, key};
 use crate::recognize::{self, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
+use crate::toh::{self, Pane};
 use crate::transcript::{self, BgTask, BlockKind, Tailer, TaskKind, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
@@ -37,11 +38,10 @@ mod turn;
 
 use self::announce::Announced;
 use self::requests::{HookPrompt, HookRequest, PreTool};
-pub(crate) use self::startup::toh_command;
-pub use self::startup::{Opts, cmd_attach, cmd_new, resolve_target};
+pub use self::startup::{cmd_attach, cmd_new, resolve_target};
 use self::turn::{Marks, TurnTracker};
 
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 /// Longest wait between two looks while a command waits.
 const TICK: Duration = Duration::from_millis(50);
 /// Longest wait between two looks when idle (file, Holder and stdin events wake earlier).
@@ -80,8 +80,13 @@ const STARTUP_DIALOG_AFTER: Duration = Duration::from_secs(3);
 /// [`KEY_SETTLE`] while the screen has not reacted yet.
 const KEY_MIN_GAP: Duration = Duration::from_millis(50);
 const KEY_SETTLE: Duration = Duration::from_millis(80);
-/// PTY size ccrpc sets when it takes the size (ADR-0001).
-pub const DEFAULT_SIZE: (u16, u16) = (160, 48);
+/// PTY size ccrpc switches to when the screen cannot be read or written at the size people's
+/// Clients set (a typical terminal, the size Claude Code is laid out for), and starts new Panes at
+/// (ADR-0001).
+pub const WORK_SIZE: (u16, u16) = (120, 40);
+/// After switching to [`WORK_SIZE`], screens are not taken for anything until Claude Code has had
+/// this long to redraw.
+const GROW_SETTLE: Duration = Duration::from_millis(800);
 /// Claude Code versions the built-in layouts were probed on.
 pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316", "2.1.317"];
 /// At most this many analyses an hour.
@@ -171,8 +176,6 @@ pub struct Engine {
     no_checkin_since: Option<Instant>,
     /// An answer just went back through a hook: no announcing until then.
     answered_until: Option<Instant>,
-    /// Shown in the caller's UI and a ToH Client at once: no Resize, no takeover.
-    co_display: bool,
     /// `get_messages` pages (its own thread).
     history: HistoryWorker,
     /// Main line's last model and context size; the permission mode the plugin last saw.
@@ -199,16 +202,14 @@ pub struct Engine {
     fatal: Option<String>,
     holder_id: String,
     shell_pid: u32,
-    tty: Option<String>,
     conn: HolderConn,
     out: Out,
     wake: Arc<Wake>,
     fs: FsWatch,
-    /// PTY size ccrpc set.
+    /// PTY size last seen (people's Clients set it; ccrpc only when an operation failed).
     size: (u16, u16),
-    /// Someone took the Pane over: ccrpc only reads from now on.
-    taken_over: bool,
-    last_size_check: Instant,
+    /// When ccrpc last switched the PTY to [`WORK_SIZE`].
+    grown_at: std::cell::Cell<Option<Instant>>,
     claude_pid: Option<u32>,
     claude_seen_at: Option<Instant>,
     last_locate: Option<Instant>,
@@ -231,8 +232,6 @@ pub struct Engine {
     analyses: VecDeque<Instant>,
     /// Numbers the choices announced (`choice:N`).
     choice_seq: u64,
-    /// The Holder reports size owners (not an older Holder).
-    holder_reports_owner: bool,
     /// What went out for the current waiting.
     announced: Option<Announced>,
     startup_checked: Option<Instant>,
@@ -272,37 +271,11 @@ fn serves_in_wait(c: &Command) -> bool {
 }
 
 impl Engine {
-    pub fn open(roots: Roots, holder_id: &str, out: Out, opts: &Opts) -> Result<Engine> {
-        let meta = locate::read_holder(&roots, holder_id)?;
-        let tty = locate::process_table()?
-            .get(&meta.child_pid)
-            .and_then(|p| p.tty.clone());
-        let (cols, rows) = tty
-            .as_deref()
-            .and_then(|t| locate::tty_size(t).ok())
-            .unwrap_or((80, 24));
-        let conn = HolderConn::connect(&roots.holder_socket(holder_id), cols, rows)?;
-        let initial = conn.initial_owner(Duration::from_secs(3))?;
-        let holder_reports_owner = initial != Owner::Unknown;
-        match initial {
-            // Shown alongside a person: nobody's use excludes ccrpc.
-            _ if opts.co_display => {}
-            Owner::Other(client) if !opts.force => {
-                conn.detach();
-                bail!("Session 正被 {client} 使用，加 --force 强制连接");
-            }
-            Owner::Unknown => {
-                eprintln!("ccrpc: Holder {holder_id} 不报告尺寸所有者，无法确认是否有人在用")
-            }
-            _ => {}
-        }
-        // Co-display leaves the size to the people's Clients.
-        let size = if opts.co_display {
-            (cols, rows)
-        } else {
-            conn.claim_size(opts.size.0, opts.size.1)?;
-            opts.size
-        };
+    /// Connects to `pane`'s Holder. The PTY keeps the size people's Clients set: shown in the
+    /// caller's UI and on ToH at once, either side may type (ADR-0001).
+    pub fn open(roots: Roots, pane: &Pane, out: Out) -> Result<Engine> {
+        let conn = HolderConn::connect(&pane.socket)?;
+        let size = conn.size();
         let wake = Wake::new();
         conn.set_wake(wake.clone());
         let fs = FsWatch::new(wake.clone());
@@ -318,7 +291,6 @@ impl Engine {
             idle_at: None,
             no_checkin_since: None,
             answered_until: None,
-            co_display: opts.co_display,
             history: HistoryWorker::start(wake.clone()),
             model: None,
             effort: None,
@@ -332,16 +304,14 @@ impl Engine {
             looked_at: None,
             progress_sent: None,
             fatal: None,
-            holder_id: holder_id.to_string(),
-            shell_pid: meta.child_pid,
-            tty,
+            holder_id: pane.id.clone(),
+            shell_pid: pane.shell_pid,
             conn,
             out,
             wake,
             fs,
             size,
-            taken_over: false,
-            last_size_check: Instant::now(),
+            grown_at: std::cell::Cell::new(None),
             claude_pid: None,
             claude_seen_at: None,
             last_locate: None,
@@ -358,7 +328,6 @@ impl Engine {
             analyzed: HashSet::new(),
             analyses: VecDeque::new(),
             choice_seq: 0,
-            holder_reports_owner,
             announced: None,
             startup_checked: None,
             startup_last: None,
@@ -526,7 +495,7 @@ impl Engine {
             self.set_exited();
             return;
         }
-        self.check_takeover();
+        self.size = self.conn.size();
         self.locate_claude();
         if let Some(pid) = self.claude_pid {
             if !::transcript::live::pid_exists(pid) {
@@ -665,10 +634,17 @@ impl Engine {
     /// empty.
     fn dismiss_feedback_draft(&mut self) -> CmdResult {
         self.require(self.state == State::Idle, "not_idle")?;
-        let s = self.fresh_screen()?;
-        let Some(card) = recognize::feedback_draft(&s.lines) else {
+        let mut s = self.fresh_screen()?;
+        let Some(mut card) = recognize::feedback_draft(&s.lines) else {
             return err("no_feedback_draft", "屏幕上没有反馈草稿卡片");
         };
+        // A short Pane pushes the input box off the screen: look again at WORK_SIZE.
+        if recognize::input_empty_below(&s, card.bottom).is_none() && self.grow() {
+            self.grow_settle();
+            s = self.fresh_screen()?;
+            card = recognize::feedback_draft(&s.lines)
+                .ok_or(("no_feedback_draft", "屏幕上没有反馈草稿卡片".to_string()))?;
+        }
         match recognize::input_empty_below(&s, card.bottom) {
             Some(true) => {}
             Some(false) => return err("input_not_empty", "输入框里有字，0 会被当作输入"),
@@ -949,12 +925,11 @@ impl Engine {
         v["follow_up_queue"] = json!(self.follow_ups.len());
         v["follow_ups"] = json!(self.follow_up_texts());
         v["queue"] = json!(self.queue);
-        v["taken_over"] = json!(self.taken_over);
+        v["size"] = json!([self.size.0, self.size.1]);
         let info = self.session_info();
         for k in ["mode", "model", "effort", "context_tokens"] {
             v[k] = info[k].clone();
         }
-        v["co_display"] = json!(self.co_display);
         v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
         v
     }
@@ -989,24 +964,9 @@ impl Engine {
     }
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
-        let reads = matches!(
-            c,
-            Command::GetState
-                | Command::GetMessages { .. }
-                | Command::GetScreen
-                | Command::GetToolResult { .. }
-                | Command::GetImage { .. }
-                | Command::GetTasks
-                | Command::CancelFollowUp { .. }
-                | Command::Reclaim { .. }
-        );
-        if self.taken_over && !reads {
-            return err("taken_over", "Session 已被人接手，只读");
-        }
         match c {
             Command::Prompt { text, images } => self.send_prompt_with(text, images),
             Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
-            Command::Reclaim { force } => self.reclaim(*force),
             Command::SetMode { mode } => self.set_mode(*mode),
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
             Command::StopTask { task_id } => self.stop_task(task_id),
@@ -1092,12 +1052,13 @@ impl Engine {
         self.ready_sent = true;
         let version = self.pf.as_ref().and_then(|p| p.version.clone());
         crate::clog!(
-            "ccrpc {} holder={} session={} claude={} co_display={}",
+            "ccrpc {} holder={} session={} claude={} size={}x{}",
             env!("CARGO_PKG_VERSION"),
             self.holder_id,
             self.session_id.as_deref().unwrap_or("-"),
             version.as_deref().unwrap_or("-"),
-            self.co_display
+            self.size.0,
+            self.size.1
         );
         let mut v = self.state.to_json();
         v["type"] = json!("ready");
@@ -1107,8 +1068,6 @@ impl Engine {
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
         v["claude_version"] = json!(version);
         v["size"] = json!([self.size.0, self.size.1]);
-        v["taken_over"] = json!(self.taken_over);
-        v["co_display"] = json!(self.co_display);
         v["queue"] = json!(self.queue);
         // Seen by the first look, before events went out.
         v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
@@ -1123,9 +1082,6 @@ impl Engine {
             warnings.push(format!(
                 "Claude Code {ver} 不是实测过的版本，认不出的界面会交给分析器或报 unrecognized"
             ));
-        }
-        if !self.holder_reports_owner {
-            warnings.push("Holder 不报告尺寸所有者，只能靠 PTY 尺寸变化判断接手".to_string());
         }
         v["warnings"] = json!(warnings);
         self.emit(v);

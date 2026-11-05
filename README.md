@@ -129,7 +129,7 @@ src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层�
 e2e/              Playwright 用例
 ```
 
-**CoDeck、ccrpc 与 ToH 的分工**：ToH 在本机用 Holder 持有 clay Pane 的 PTY，Claude Code 跑在里面，Mac / iPhone / web 的 Client 都能接手同一个 Pane。ccrpc 把一个 Pane 里的交互式 Claude Code 变成 JSONL 接口：经 Holder 收屏幕、写按键，经 ccrpc 插件的 hooks 得知审批、提问与轮次边界并代答审批。CoDeck 每 Connect 一个 Session 起一个 `ccrpc attach --co-display` 子进程（一个 Session 同时只能连一个 ccrpc），Disconnect 只结束这个 ccrpc，Session 照常运行。对话内容始终来自 CoDeck 自己的索引与实时追随，不经 ccrpc（[ADR-0007](docs/adr/0007-monorepo-parsing-library-and-drive-via-ccrpc.md)）。
+**CoDeck、ccrpc 与 ToH 的分工**：ToH 在本机用 Holder 持有 clay Pane 的 PTY，Claude Code 跑在里面，Mac / iPhone / web 的 Client 都能接手同一个 Pane。ccrpc 把一个 Pane 里的交互式 Claude Code 变成 JSONL 接口：经 Holder 收屏幕、写按键，经 ccrpc 插件的 hooks 得知审批、提问与轮次边界并代答审批。CoDeck 每 Connect 一个 Session 起一个 `ccrpc attach` 子进程（Session 同时显示在终端里，两边都能输入）（一个 Session 同时只能连一个 ccrpc），Disconnect 只结束这个 ccrpc，Session 照常运行。对话内容始终来自 CoDeck 自己的索引与实时追随，不经 ccrpc（[ADR-0007](docs/adr/0007-monorepo-parsing-library-and-drive-via-ccrpc.md)）。
 
 ## 许可证
 

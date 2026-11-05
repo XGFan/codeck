@@ -111,8 +111,6 @@ export interface ReadyEvent extends SessionInfo {
   state: StateName;
   waiting?: Waiting;
   size: [number, number];
-  taken_over: boolean;
-  co_display: boolean;
   warnings: string[];
   /** What waits in the TUI's own queue (older ccrpc: absent). */
   queue?: string[];
@@ -167,8 +165,6 @@ export type EventMsg =
   | { type: "follow_up_failed"; text: string; error: { code: string; message: string } }
   /** The TUI's own input queue changed: steers and what the person typed while busy, oldest first. */
   | { type: "queue"; items: string[] }
-  | { type: "taken_over"; client: string | null }
-  | { type: "reclaimed" }
   | { type: "layout_learned"; layout: string; kind: string; title: string; path: string }
   | { type: "analysis_failed"; error: string; title?: string }
   | ({ type: "session_info" } & SessionInfo)

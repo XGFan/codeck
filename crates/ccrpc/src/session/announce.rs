@@ -218,7 +218,8 @@ impl Engine {
         let State::Waiting { kind, waiting_for } = self.state.clone() else {
             return;
         };
-        if self.announced.is_some() || self.answered_until.is_some() {
+        // Just switched to WORK_SIZE: Claude Code is redrawing what it showed.
+        if self.announced.is_some() || self.answered_until.is_some() || self.growing() {
             return;
         }
         match kind {
@@ -236,6 +237,10 @@ impl Engine {
                         .as_ref()
                         .and_then(|s| self.dialog_options(r, &s.lines));
                     if opts.is_none() && r.at.elapsed() < OPTIONS_GRACE {
+                        return;
+                    }
+                    // The options cannot be read at this size: read them at WORK_SIZE.
+                    if opts.is_none() && self.grow() {
                         return;
                     }
                     crate::clog!(
@@ -277,7 +282,8 @@ impl Engine {
                     return;
                 }
                 if self.waiting_age() >= MATCH_GRACE {
-                    if self.analyzing(&s, &waiting_for) {
+                    // Known layouts may only be cut off: look again at WORK_SIZE first.
+                    if self.grow() || self.analyzing(&s, &waiting_for) {
                         return;
                     }
                     // Cannot tie the dialog to a request: hand the screen to the caller.
@@ -310,7 +316,7 @@ impl Engine {
                     return;
                 }
                 let s = self.screen().unwrap_or_default();
-                if self.announce_choice(&s) || self.analyzing(&s, &waiting_for) {
+                if self.announce_choice(&s) || self.grow() || self.analyzing(&s, &waiting_for) {
                     return;
                 }
                 self.announced = Some(Announced::Dialog(waiting_for.clone()));

@@ -173,10 +173,7 @@ impl Engine {
                     && !self.resolved.contains(&p.id)
             })
             .map(|p| p.id.clone());
-        let hold = id.is_some()
-            && agent_id.is_none()
-            && !CHOICE_TOOLS.contains(&name.as_str())
-            && !self.taken_over;
+        let hold = id.is_some() && agent_id.is_none() && !CHOICE_TOOLS.contains(&name.as_str());
         let mut reply = m.reply;
         if !hold && let Some(r) = reply.take() {
             let _ = hook::send_reply(r, None);
@@ -208,13 +205,6 @@ impl Engine {
 
     pub(super) fn open_request(&self, id: &str) -> Option<&HookRequest> {
         self.requests.iter().find(|r| r.id == id)
-    }
-
-    /// Releases every waiting hook (someone took over: the person answers in the TUI).
-    pub(super) fn release_hooks(&mut self) {
-        for r in &mut self.requests {
-            r.reply = None;
-        }
     }
 
     /// The pending tool the permission dialog on `s` is about: the one whose command / file shows
@@ -423,7 +413,6 @@ impl Engine {
         // "Always allow" is the dialog's own option: the rule it adds (`python3 *`) is not the
         // suggestion the hook gets (the exact command). The held hook is let go after the key.
         if *decision == Decision::AllowAlways && self.requests[idx].reply.is_some() {
-            self.writable()?;
             let held = self.requests[idx].reply.take();
             let res = self.answer_permission_on_screen(request_id, decision, None);
             if res.is_err()
@@ -434,7 +423,6 @@ impl Engine {
             return res;
         }
         if self.requests[idx].reply.is_some() {
-            self.writable()?;
             let output = match decision {
                 Decision::Allow | Decision::AllowAlways => hook::allow_output(None, None),
                 Decision::Deny => hook::deny_output(message),
@@ -650,7 +638,6 @@ impl Engine {
             .cloned()
             .unwrap_or_default();
         let picked = question_answers(&questions, answers).map_err(|m| ("bad_request", m))?;
-        self.writable()?;
         let mut updated = input;
         updated["answers"] = Value::Object(picked);
         let stream = self.requests[idx].reply.take().expect("held");
@@ -695,7 +682,6 @@ impl Engine {
                 .to_string();
             plan.push((title, a, multi));
         }
-        self.writable()?;
         let mut tabbed = false;
         for (title, a, multi) in plan {
             if !self.request_is(&WaitKind::Question, request_id) {

@@ -1,18 +1,20 @@
-//! Locating a Controlled Session: Holder metadata → shell pid → `claude` descendant → Process File
-//! → transcript. Everything here only reads.
+//! Locating a Controlled Session: the Holder's shell (from `toh`, see [`crate::toh`]) → `claude`
+//! descendant → Process File → transcript. Everything here only reads.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
+use anyhow::{Context, Result};
+
+use crate::toh::Pane;
 
 /// Directories ccrpc reads from.
 #[derive(Debug, Clone)]
 pub struct Roots {
-    /// ToH state directory (`TOH_STATE_DIR`, default `~/.local/state/toh`).
-    pub toh_state: PathBuf,
+    /// ToH state directory to hand to `toh` (`TOH_STATE_DIR` or `--toh-state-dir`); `None` leaves
+    /// it to toh. ccrpc never looks inside it.
+    pub toh_state: Option<PathBuf>,
     /// Claude Code config directory (`CLAUDE_CONFIG_DIR`, default `~/.claude`).
     pub claude_config: PathBuf,
 }
@@ -26,21 +28,13 @@ impl Roots {
                 .map(PathBuf::from)
         };
         Roots {
-            toh_state: env_dir("TOH_STATE_DIR").unwrap_or_else(|| home.join(".local/state/toh")),
+            toh_state: env_dir("TOH_STATE_DIR"),
             claude_config: env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude")),
         }
     }
 
     pub fn default_claude_config() -> PathBuf {
         PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".claude")
-    }
-
-    pub fn holders_dir(&self) -> PathBuf {
-        self.toh_state.join("holders")
-    }
-
-    pub fn holder_socket(&self, id: &str) -> PathBuf {
-        self.holders_dir().join(format!("{id}.sock"))
     }
 
     pub fn sessions_dir(&self) -> PathBuf {
@@ -52,32 +46,7 @@ impl Roots {
     }
 }
 
-/// The fields of `<toh>/holders/<id>.json` ccrpc needs.
-#[derive(Debug, Clone, Deserialize)]
-pub struct HolderMeta {
-    pub holder_pid: u32,
-    /// The Pane's shell.
-    pub child_pid: u32,
-    #[serde(default)]
-    pub cwd: String,
-    #[serde(default)]
-    pub backend: Option<String>,
-    /// clay's Window; `hidden` is a hidden Pane (ToH ADR-0050).
-    #[serde(default)]
-    pub window_id: Option<String>,
-}
-
-impl HolderMeta {
-    /// Whether the Pane is hidden: in clay's `hidden` Window (the Mac Client keeps it in its hidden window). `None`
-    /// outside clay (kitty and the like), where a Pane cannot be hidden.
-    pub fn hidden(&self) -> Option<bool> {
-        if self.backend.as_deref() != Some("clay") {
-            return None;
-        }
-        self.window_id.as_deref().map(|w| w == "hidden")
-    }
-}
-
+/// A Holder ID as `toh` prints it (checked before it goes into a command line).
 pub fn valid_holder_id(id: &str) -> bool {
     !id.is_empty()
         && id
@@ -85,50 +54,11 @@ pub fn valid_holder_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-pub fn read_holder(roots: &Roots, id: &str) -> Result<HolderMeta> {
-    if !valid_holder_id(id) {
-        bail!("Holder ID 不合法：{id}");
-    }
-    let p = roots.holders_dir().join(format!("{id}.json"));
-    let bytes =
-        std::fs::read(&p).with_context(|| format!("读不到 Holder 元数据 {}", p.display()))?;
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-/// Every live Holder: `(id, meta)` for each `<id>.json` that has a `<id>.sock` next to it.
-pub fn list_holders(roots: &Roots) -> Vec<(String, HolderMeta)> {
-    let Ok(rd) = std::fs::read_dir(roots.holders_dir()) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(id) = p.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
-            continue;
-        };
-        if !roots.holder_socket(&id).exists() {
-            continue;
-        }
-        if let Ok(m) = read_holder(roots, &id)
-            && ::transcript::live::pid_exists(m.holder_pid)
-        {
-            out.push((id, m));
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
 /// One row of `ps`.
 #[derive(Debug, Clone)]
 pub struct Proc {
     pub pid: u32,
     pub ppid: u32,
-    /// Controlling terminal name without `/dev/` (`ttys012`), `None` for `??`.
-    pub tty: Option<String>,
     /// Executable basename.
     pub name: String,
 }
@@ -136,14 +66,14 @@ pub struct Proc {
 /// Snapshot of the process table.
 pub fn process_table() -> Result<HashMap<u32, Proc>> {
     let out = Command::new("/bin/ps")
-        .args(["-A", "-o", "pid=,ppid=,tty=,comm="])
+        .args(["-A", "-o", "pid=,ppid=,comm="])
         .output()
         .context("运行 ps 失败")?;
     let text = String::from_utf8_lossy(&out.stdout);
     let mut map = HashMap::new();
     for line in text.lines() {
         let mut it = line.split_whitespace();
-        let (Some(pid), Some(ppid), Some(tty)) = (it.next(), it.next(), it.next()) else {
+        let (Some(pid), Some(ppid)) = (it.next(), it.next()) else {
             continue;
         };
         let comm: Vec<&str> = it.collect();
@@ -152,16 +82,7 @@ pub fn process_table() -> Result<HashMap<u32, Proc>> {
         };
         let comm = comm.join(" ");
         let name = comm.rsplit('/').next().unwrap_or(&comm).to_string();
-        let tty = (tty != "??").then(|| tty.to_string());
-        map.insert(
-            pid,
-            Proc {
-                pid,
-                ppid,
-                tty,
-                name,
-            },
-        );
+        map.insert(pid, Proc { pid, ppid, name });
     }
     Ok(map)
 }
@@ -191,12 +112,12 @@ pub fn find_claude_under(table: &HashMap<u32, Proc>, root: u32) -> Option<Proc> 
 /// The Holder whose shell is an ancestor of `pid`.
 pub fn holder_of_pid<'a>(
     table: &HashMap<u32, Proc>,
-    holders: &'a [(String, HolderMeta)],
+    panes: &'a [Pane],
     pid: u32,
-) -> Option<&'a (String, HolderMeta)> {
+) -> Option<&'a Pane> {
     let mut cur = pid;
     for _ in 0..64 {
-        if let Some(h) = holders.iter().find(|(_, m)| m.child_pid == cur) {
+        if let Some(h) = panes.iter().find(|p| p.shell_pid == cur) {
             return Some(h);
         }
         cur = table.get(&cur)?.ppid;
@@ -205,28 +126,6 @@ pub fn holder_of_pid<'a>(
         }
     }
     None
-}
-
-/// `(cols, rows)` of a terminal device, read with `TIOCGWINSZ` on a read-only, non-blocking open
-/// (nothing is ever read from or written to the device).
-pub fn tty_size(tty: &str) -> Result<(u16, u16)> {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
-    if !tty.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        bail!("tty 名不合法：{tty}");
-    }
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
-        .open(Path::new("/dev").join(tty))
-        .with_context(|| format!("打不开 /dev/{tty}"))?;
-    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    // SAFETY: TIOCGWINSZ fills a winsize; the fd is valid for the duration of the call.
-    let rc = unsafe { libc::ioctl(f.as_raw_fd(), libc::TIOCGWINSZ, &mut ws) };
-    if rc != 0 {
-        return Err(anyhow!(std::io::Error::last_os_error()).context("TIOCGWINSZ"));
-    }
-    Ok((ws.ws_col, ws.ws_row))
 }
 
 /// A transcript path reported by the plugin is one of Claude Code's: a `.jsonl` file under the
@@ -253,7 +152,6 @@ mod tests {
         Proc {
             pid,
             ppid,
-            tty: Some("ttys001".into()),
             name: name.into(),
         }
     }
@@ -272,36 +170,19 @@ mod tests {
         .collect();
         assert_eq!(find_claude_under(&table, 11).map(|p| p.pid), Some(13));
         assert_eq!(find_claude_under(&table, 14).map(|p| p.pid), None);
-        let holders = vec![(
-            "abc".to_string(),
-            HolderMeta {
-                holder_pid: 10,
-                child_pid: 11,
-                cwd: String::new(),
-                backend: None,
-                window_id: None,
-            },
-        )];
+        let panes = vec![Pane {
+            id: "abc".into(),
+            backend: Some("clay".into()),
+            hidden: Some(false),
+            cwd: String::new(),
+            shell_pid: 11,
+            socket: PathBuf::from("/t/abc.sock"),
+        }];
         assert_eq!(
-            holder_of_pid(&table, &holders, 13).map(|h| h.0.as_str()),
+            holder_of_pid(&table, &panes, 13).map(|p| p.id.as_str()),
             Some("abc")
         );
-        assert!(holder_of_pid(&table, &holders, 10).is_none());
-    }
-
-    #[test]
-    fn only_clay_panes_can_be_hidden() {
-        let meta = |backend: Option<&str>, window: Option<&str>| HolderMeta {
-            holder_pid: 1,
-            child_pid: 2,
-            cwd: String::new(),
-            backend: backend.map(String::from),
-            window_id: window.map(String::from),
-        };
-        assert_eq!(meta(Some("clay"), Some("hidden")).hidden(), Some(true));
-        assert_eq!(meta(Some("clay"), Some("0a1b")).hidden(), Some(false));
-        assert_eq!(meta(Some("kitty"), None).hidden(), None);
-        assert_eq!(meta(None, None).hidden(), None);
+        assert!(holder_of_pid(&table, &panes, 10).is_none());
     }
 
     #[test]
@@ -314,7 +195,7 @@ mod tests {
     #[test]
     fn transcripts_only_under_projects() {
         let roots = Roots {
-            toh_state: PathBuf::from("/t"),
+            toh_state: None,
             claude_config: PathBuf::from("/c"),
         };
         assert!(is_transcript_path(

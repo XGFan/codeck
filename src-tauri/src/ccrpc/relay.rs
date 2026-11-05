@@ -273,7 +273,7 @@ impl App {
         Ok(())
     }
 
-    /// `ccrpc attach --co-display <holder>`.
+    /// `ccrpc attach <holder>`.
     pub fn connect(&self, sink: Sink, holder_id: &str) -> R<String> {
         if !valid_holder_id(holder_id) {
             return Err(invalid("Holder ID 不对"));
@@ -281,7 +281,7 @@ impl App {
         self.spawn(sink, "attach", &[holder_id.to_string()], holder_id)
     }
 
-    /// `ccrpc new --co-display [--hidden] --cwd <cwd> [-- <launch rule's claude arguments>]`.
+    /// `ccrpc new [--hidden] --cwd <cwd> [-- <launch rule's claude arguments>]`.
     pub fn new_session(
         &self,
         sink: Sink,
@@ -302,7 +302,7 @@ impl App {
         self.spawn(sink, "new", &args, "new")
     }
 
-    /// Resume: `ccrpc new --co-display [--hidden] --cwd <cwd> -- [launch rule's arguments] --resume <session_id>`, in a
+    /// Resume: `ccrpc new [--hidden] --cwd <cwd> -- [launch rule's arguments] --resume <session_id>`, in a
     /// new Pane.
     pub fn resume_session(
         &self,
@@ -340,7 +340,6 @@ impl App {
         ));
         let mut cmd = self.command();
         cmd.arg(sub)
-            .arg("--co-display")
             .arg("--log")
             .arg(dir.join("ccrpc.log"))
             .args(args)
@@ -779,8 +778,8 @@ mod tests {
             loop {
                 if let Ok(s) = std::fs::read_to_string(&argv) {
                     let _ = std::fs::remove_file(&argv);
-                    // Skip `new --co-display --log <file>`.
-                    return s.lines().skip(4).map(str::to_string).collect::<Vec<_>>();
+                    // Skip `new --log <file>`.
+                    return s.lines().skip(3).map(str::to_string).collect::<Vec<_>>();
                 }
                 assert!(Instant::now() < deadline, "fake ccrpc did not run");
                 std::thread::sleep(Duration::from_millis(20));
@@ -797,7 +796,7 @@ mod tests {
         let args = loop {
             if let Ok(s) = std::fs::read_to_string(&argv) {
                 let _ = std::fs::remove_file(&argv);
-                break s.lines().skip(4).map(str::to_string).collect::<Vec<_>>();
+                break s.lines().skip(3).map(str::to_string).collect::<Vec<_>>();
             }
             assert!(Instant::now() < deadline, "fake ccrpc did not run");
             std::thread::sleep(Duration::from_millis(20));
@@ -812,7 +811,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let args = loop {
             if let Ok(s) = std::fs::read_to_string(&argv) {
-                break s.lines().skip(4).map(str::to_string).collect::<Vec<_>>();
+                break s.lines().skip(3).map(str::to_string).collect::<Vec<_>>();
             }
             assert!(Instant::now() < deadline, "fake ccrpc did not run");
             std::thread::sleep(Duration::from_millis(20));

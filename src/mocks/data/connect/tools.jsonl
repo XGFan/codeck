@@ -1,5 +1,5 @@
 {"t": 1793700000000, "dir": "meta", "ls": {"title": "tools", "cwd": "/work/homelab", "session_id": "a7c63e92-0008-4000-8000-000000000008", "holder_id": "m8ded9f28b056"}}
-{"dir":"recv","msg":{"claude_version":null,"co_display":false,"context_tokens":null,"cwd":null,"holder_id":"m936e30109835","mode":null,"model":null,"protocol":2,"session_id":null,"size":[160,48],"state":"starting","taken_over":false,"type":"ready","warnings":[]},"t":1793768093372}
+{"dir":"recv","msg":{"claude_version":null,"context_tokens":null,"cwd":null,"holder_id":"m936e30109835","mode":null,"model":null,"protocol":3,"session_id":null,"size":[120,40],"state":"starting","type":"ready","warnings":[]},"t":1793768093372}
 {"dir":"recv","msg":{"state":"idle","type":"state"},"t":1793768093517}
 {"dir":"recv","msg":{"context_tokens":null,"mode":"manual","model":null,"type":"session_info"},"t":1793768093674}
 {"dir":"send","msg":{"id":"t1","text":"MOCK-TOOL please","type":"prompt"},"t":1793768096556}

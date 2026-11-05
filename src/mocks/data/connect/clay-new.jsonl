@@ -1,5 +1,5 @@
 {"t": 1793700000500, "dir": "meta", "ls": {"holder_id": "mclaynew00001", "session_id": "c1a70000-0000-4000-8000-0000000000c1", "title": null, "cwd": "/Users/dev/Developer/lumen-api/services", "status": "idle", "plugin": true}}
-{"t": 1793700000540, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mclaynew00001", "session_id": "c1a70000-0000-4000-8000-0000000000c1", "cwd": "/Users/dev/Developer/lumen-api/services", "claude_version": "2.1.317", "state": "idle", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
+{"t": 1793700000540, "dir": "recv", "msg": {"type": "ready", "protocol": 3, "holder_id": "mclaynew00001", "session_id": "c1a70000-0000-4000-8000-0000000000c1", "cwd": "/Users/dev/Developer/lumen-api/services", "claude_version": "2.1.317", "state": "idle", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
 {"t": 1793700000600, "dir": "send", "msg": {"id": "p1", "type": "prompt", "text": "/release v1"}}
 {"t": 1793700000610, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
 {"t": 1793700000620, "dir": "recv", "msg": {"type": "response", "id": "p1", "command": "prompt", "success": true, "data": {"delivered_as": "prompt", "uuid": "c1a70000-0000-4000-8000-00000000u001", "prompt_id": null}}}

@@ -637,7 +637,7 @@ test("ccrpc ls 只在有 Live Session 或连接时轮询，恢复时立即查一
 test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一直「连接中」", async ({ page }) => {
   await connectTo(page, REFUSED);
   await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
-  await expect(page.getByTestId("proc-exit")).toContainText("正被 mac 使用");
+  await expect(page.getByTestId("proc-exit")).toContainText("Holder 版本太旧");
   // Only the banner says it: no input box under it.
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
   await expect(page.getByTestId("reconnect")).toBeVisible();

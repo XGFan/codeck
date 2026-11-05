@@ -1,15 +1,22 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use notify::RecursiveMode;
+use serde_json::{Value, json};
 
 use crate::locate::{self, Roots};
 use crate::pty::{self, HolderConn};
 use crate::screen::Screen;
+use crate::toh::Pane;
+use crate::wake::{FsWatch, Wake};
 
 const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir DIR] <命令>
-  ccrpc new [--cwd DIR] [--size COLSxROWS] [--co-display] [--hidden] [--log FILE] [-- claude 参数…]
-  ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID | sessionId>
-  ccrpc ls [--json]
+  ccrpc new [--cwd DIR] [--size COLSxROWS] [--hidden] [--log FILE] [-- claude 参数…]
+  ccrpc attach [--log FILE] <Holder ID | sessionId>
+  ccrpc ls [--json [--watch]]
   ccrpc hide | show <Holder ID>
   ccrpc plugin install | uninstall | generate <目录>
   ccrpc doctor
@@ -27,15 +34,19 @@ pub fn run(args: Vec<String>) -> Result<()> {
     let mut args = args;
     while let Some(a) = args.first().cloned() {
         let slot = match a.as_str() {
-            "--toh-state-dir" => &mut roots.toh_state,
-            "--claude-config-dir" => &mut roots.claude_config,
+            "--toh-state-dir" | "--claude-config-dir" => a.clone(),
             _ => break,
         };
-        let v = args
-            .get(1)
-            .with_context(|| format!("{a} 需要目录"))?
-            .clone();
-        *slot = std::path::PathBuf::from(v);
+        let v = PathBuf::from(
+            args.get(1)
+                .with_context(|| format!("{a} 需要目录"))?
+                .clone(),
+        );
+        if slot == "--toh-state-dir" {
+            roots.toh_state = Some(v);
+        } else {
+            roots.claude_config = v;
+        }
         args.drain(..2);
     }
     match args.first().map(String::as_str) {
@@ -64,17 +75,79 @@ pub fn run(args: Vec<String>) -> Result<()> {
 }
 
 fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
-    let json_out = match args {
-        [] => false,
-        [a] if a == "--json" => true,
-        _ => bail!("用法：ccrpc ls [--json]"),
-    };
-    let holders = locate::list_holders(roots);
-    let table = locate::process_table()?;
+    let (mut json_out, mut watch) = (false, false);
+    for a in args {
+        match a.as_str() {
+            "--json" => json_out = true,
+            "--watch" => watch = true,
+            _ => bail!("用法：ccrpc ls [--json [--watch]]"),
+        }
+    }
+    if watch && !json_out {
+        bail!("ls：--watch 只能和 --json 一起用");
+    }
+    if watch {
+        return ls_watch(roots);
+    }
+    let panes = crate::toh::list(roots)?;
+    let rows = ls_rows(roots, &panes, &mut LsState::default())?;
+    if json_out {
+        println!("{}", Value::Array(rows));
+    } else {
+        for r in &rows {
+            let s = |k: &str| r[k].as_str().unwrap_or_default().to_string();
+            let id = s("holder_id");
+            let pane_cwd = panes
+                .iter()
+                .find(|p| p.id == id)
+                .map_or("", |p| p.cwd.as_str());
+            println!(
+                "{id}\t{}\t{}\t{pane_cwd}\t{}",
+                s("session_id"),
+                s("status"),
+                if r["plugin"] == true { "plugin" } else { "-" }
+            );
+        }
+    }
+    Ok(())
+}
+
+/// What `ls` keeps from one list to the next: the `claude` under each Pane's shell (`ps` runs
+/// again only when Panes or Process Files come or go, or one of those claude processes is gone),
+/// and each transcript's title, read on from where it was last read.
+#[derive(Default)]
+struct LsState {
+    /// The Panes' shells and the Process Files the map below was made for.
+    key: Option<(Vec<u32>, Vec<std::ffi::OsString>)>,
+    claude: HashMap<u32, locate::Proc>,
+    titles: HashMap<PathBuf, ::transcript::assemble::skeleton::TitleTail>,
+}
+
+/// One row per Pane running Claude Code.
+fn ls_rows(roots: &Roots, panes: &[Pane], st: &mut LsState) -> Result<Vec<Value>> {
+    let mut files: Vec<std::ffi::OsString> = std::fs::read_dir(roots.sessions_dir())
+        .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    files.sort();
+    let key = (panes.iter().map(|p| p.shell_pid).collect::<Vec<_>>(), files);
+    let gone = st
+        .claude
+        .values()
+        .any(|c| !::transcript::live::pid_exists(c.pid));
+    if st.key.as_ref() != Some(&key) || gone {
+        let table = locate::process_table()?;
+        st.claude = panes
+            .iter()
+            .filter_map(|p| {
+                locate::find_claude_under(&table, p.shell_pid).map(|c| (p.shell_pid, c))
+            })
+            .collect();
+        st.key = Some(key);
+    }
     let state = crate::hook::state_dir();
     let mut rows = Vec::new();
-    for (id, m) in &holders {
-        let Some(claude) = locate::find_claude_under(&table, m.child_pid) else {
+    for pane in panes {
+        let Some(claude) = st.claude.get(&pane.shell_pid) else {
             continue;
         };
         let pf = crate::procfile::read(roots, claude.pid);
@@ -93,15 +166,7 @@ fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
         let cwd = pf
             .as_ref()
             .and_then(|p| p.cwd.clone())
-            .unwrap_or_else(|| m.cwd.clone());
-        if !json_out {
-            println!(
-                "{id}\t{sid}\t{status}\t{}\t{}",
-                m.cwd,
-                if plugin { "plugin" } else { "-" }
-            );
-            continue;
-        }
+            .unwrap_or_else(|| pane.cwd.clone());
         // The plugin's check-in, else where Claude Code puts it (`<projects>/<cwd encoded>/<id>.jsonl`).
         let guessed = (!sid.is_empty()
             && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
@@ -115,25 +180,88 @@ fn cmd_ls(roots: &Roots, args: &[String]) -> Result<()> {
         let transcript = checkin
             .as_ref()
             .filter(|_| plugin)
-            .map(|c| std::path::PathBuf::from(&c.transcript_path))
+            .map(|c| PathBuf::from(&c.transcript_path))
             .or(guessed)
             .filter(|p| locate::is_transcript_path(roots, p));
-        rows.push(serde_json::json!({
-            "holder_id": id,
+        let title = transcript
+            .map(|t| st.titles.entry(t.clone()).or_default().read(&t))
+            .unwrap_or_default();
+        rows.push(json!({
+            "holder_id": pane.id,
             "session_id": (!sid.is_empty()).then_some(&sid),
             "status": status,
             "cwd": cwd,
             "plugin": plugin,
-            "hidden": m.hidden(),
+            "hidden": pane.hidden,
             "claude_pid": claude.pid,
             "version": pf.as_ref().and_then(|p| p.version.clone()),
-            "title": transcript.as_deref().and_then(::transcript::assemble::skeleton::read_title),
+            "title": title,
         }));
     }
-    if json_out {
-        println!("{}", serde_json::Value::Array(rows));
+    Ok(rows)
+}
+
+const LS_BACKSTOP: Duration = Duration::from_secs(30);
+
+/// A directory to watch for `dir`: itself, or the closest parent that exists (its creation then
+/// wakes the loop, which watches it from then on).
+fn watch_point(dir: &Path) -> &Path {
+    let mut d = dir;
+    while !d.exists()
+        && let Some(p) = d.parent()
+    {
+        d = p;
     }
-    Ok(())
+    d
+}
+
+/// `ls --json --watch`: the list once, then again each time it changes, until stdin closes.
+/// Woken by `toh ls --json --watch` (Panes), and by file events on the Process Files and the
+/// plugin's check-ins; a look every [`LS_BACKSTOP`] catches a claude that died without removing
+/// its Process File.
+fn ls_watch(roots: &Roots) -> Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let wake = Wake::new();
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let (stop, wake) = (stop.clone(), wake.clone());
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+            stop.store(true, Ordering::SeqCst);
+            wake.bump();
+        });
+    }
+    let panes = crate::toh::Watch::spawn(roots, wake.clone())?;
+    let mut fs = FsWatch::new(wake.clone());
+    let sessions = roots.sessions_dir();
+    let checkins = crate::hook::state_dir().join("sessions");
+    let mut st = LsState::default();
+    let mut last = None;
+    loop {
+        let seen = wake.seen();
+        if stop.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        if let Some(why) = panes.ended() {
+            bail!(why);
+        }
+        fs.set(&[
+            (watch_point(&sessions), RecursiveMode::NonRecursive),
+            (watch_point(&checkins), RecursiveMode::NonRecursive),
+        ]);
+        if let Some(list) = panes.latest() {
+            let line = Value::Array(ls_rows(roots, &list, &mut st)?).to_string();
+            if last.as_ref() != Some(&line) {
+                let mut out = std::io::stdout().lock();
+                if writeln!(out, "{line}").and_then(|_| out.flush()).is_err() {
+                    return Ok(());
+                }
+                last = Some(line);
+            }
+        }
+        wake.wait(seen, LS_BACKSTOP);
+    }
 }
 
 /// `ccrpc hide|show <Holder ID>`: `toh hide|show`, hiding the Pane on the Mac or showing it again (ToH ADR-0050).
@@ -144,41 +272,15 @@ fn cmd_place(roots: &Roots, verb: &str, args: &[String]) -> Result<()> {
     if !locate::valid_holder_id(id) {
         bail!("不是 Holder ID：{id}");
     }
-    let out = crate::session::toh_command(roots)
-        .args([verb, id.as_str()])
-        .output()
-        .context("运行 toh 失败（toh 在 PATH 里吗？）")?;
-    if !out.status.success() {
-        bail!(
-            "toh {verb} 失败：{}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
-/// PTY size of a Holder's Pane, from the tty of its shell.
-pub fn pane_size(roots: &Roots, holder_id: &str) -> Result<(u16, u16)> {
-    let meta = locate::read_holder(roots, holder_id)?;
-    let table = locate::process_table()?;
-    let tty = table
-        .get(&meta.child_pid)
-        .and_then(|p| p.tty.clone())
-        .context("找不到 Pane shell 的 tty")?;
-    locate::tty_size(&tty)
+    crate::toh::place(roots, verb, id)
 }
 
 fn cmd_debug(roots: &Roots, args: &[String]) -> Result<()> {
     let (Some(sub), Some(id)) = (args.first(), args.get(1)) else {
         bail!("{USAGE}");
     };
-    // Debug commands look and type without taking the PTY size; only `screen` needs the size.
-    let (cols, rows) = match pane_size(roots, id) {
-        Ok(s) => s,
-        Err(e) if sub == "screen" => return Err(e),
-        Err(_) => (80, 24),
-    };
-    let conn = HolderConn::connect(&roots.holder_socket(id), cols, rows)?;
+    // Debug commands look and type without changing the PTY size.
+    let conn = HolderConn::connect(&crate::toh::pane(roots, id)?.socket)?;
     match sub.as_str() {
         "screen" => {
             let s: Screen = conn.resync(Duration::from_secs(3))?;
@@ -254,15 +356,15 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
         _ => line("fail", "claude", "PATH 里没有可用的 claude".into()),
     }
     // directories
-    for (what, dir) in [
-        ("ToH 状态目录", &roots.toh_state),
-        ("Claude Code 配置目录", &roots.claude_config),
-    ] {
-        if dir.is_dir() {
-            line("ok", what, dir.display().to_string());
-        } else {
-            line("fail", what, format!("{} 不存在", dir.display()));
-        }
+    let dir = &roots.claude_config;
+    if dir.is_dir() {
+        line("ok", "Claude Code 配置目录", dir.display().to_string());
+    } else {
+        line(
+            "fail",
+            "Claude Code 配置目录",
+            format!("{} 不存在", dir.display()),
+        );
     }
     let sessions = roots.sessions_dir();
     match std::fs::read_dir(&sessions) {
@@ -290,21 +392,22 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
     for (level, detail) in crate::plugin::doctor(roots) {
         line(level, "ccrpc 插件", detail);
     }
-    // Holders
-    let holders = locate::list_holders(roots);
-    let table = locate::process_table()?;
-    let with_claude = holders
-        .iter()
-        .filter(|(_, m)| locate::find_claude_under(&table, m.child_pid).is_some())
-        .count();
-    line(
-        "ok",
-        "clay Holder",
-        format!(
-            "{} 个，其中 {with_claude} 个在跑 Claude Code",
-            holders.len()
-        ),
-    );
+    // Holders, as toh lists them
+    match crate::toh::list(roots) {
+        Ok(panes) => {
+            let table = locate::process_table()?;
+            let with_claude = panes
+                .iter()
+                .filter(|p| locate::find_claude_under(&table, p.shell_pid).is_some())
+                .count();
+            line(
+                "ok",
+                "Holder",
+                format!("{} 个，其中 {with_claude} 个在跑 Claude Code", panes.len()),
+            );
+        }
+        Err(e) => line("fail", "Holder", format!("{e:#}")),
+    }
     // layouts and analyzer
     let lib = crate::layout::Library::load(crate::layout::library_dir());
     let learned = lib.layouts.iter().filter(|l| l.source == "learned").count();

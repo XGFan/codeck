@@ -1,3 +1,3 @@
-{"t": 1793700001000, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mresume000001", "session_id": null, "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "starting", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
+{"t": 1793700001000, "dir": "recv", "msg": {"type": "ready", "protocol": 3, "holder_id": "mresume000001", "session_id": null, "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "starting", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
 {"t": 1793700001010, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
 {"t": 1793700001020, "dir": "recv", "msg": {"type": "session_changed", "session_id": "RESUMED", "previous": null}}

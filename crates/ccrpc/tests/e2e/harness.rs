@@ -153,7 +153,8 @@ pub(crate) struct Rpc {
     pub(crate) stdin: Option<ChildStdin>,
     pub(crate) rx: Receiver<Value>,
     pub(crate) t0: Instant,
-    pub(crate) holder_pid: Option<u32>,
+    /// The Pane's shell: hung up when the test is done (the Pane ends with it).
+    pub(crate) shell_pid: Option<u32>,
     pub(crate) seen: Vec<Value>,
     /// Every `branch` event received.
     pub(crate) branches: Vec<Value>,
@@ -248,7 +249,7 @@ impl Rpc {
             stdin,
             rx,
             t0: Instant::now(),
-            holder_pid: None,
+            shell_pid: None,
             seen: Vec::new(),
             branches: Vec::new(),
         }
@@ -365,26 +366,70 @@ impl Drop for Rpc {
     fn drop(&mut self) {
         self.stdin.take();
         let _ = self.child.wait();
-        if let Some(pid) = self.holder_pid {
-            // SAFETY: only the Holder pid recorded for this test's own Pane.
-            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        if let Some(pid) = self.shell_pid {
+            // SAFETY: only the shell pid recorded for this test's own Pane; the Pane ends with it.
+            unsafe { libc::kill(pid as i32, libc::SIGHUP) };
         }
     }
 }
 
-pub(crate) fn holder_pid(toh_dir: &Path, holder: &str) -> Option<u32> {
-    let bytes = std::fs::read(toh_dir.join("holders").join(format!("{holder}.json"))).ok()?;
-    let v: Value = serde_json::from_slice(&bytes).ok()?;
-    v["holder_pid"].as_u64().map(|p| p as u32)
+/// The shell of this test's Pane `holder`, as `toh ls --json` lists it.
+pub(crate) fn shell_pid(env: &Env, holder: &str) -> Option<u32> {
+    let mut cmd = Command::new(toh_bin().unwrap_or_else(|| PathBuf::from("toh")));
+    cmd.args(["ls", "--json"])
+        .env("TOH_STATE_DIR", &env.toh_dir)
+        .env_remove("TOH_CONFIG");
+    for k in HOST_TERMINAL_VARS {
+        cmd.env_remove(k);
+    }
+    let out = cmd.output().ok()?;
+    let panes: Value = serde_json::from_slice(&out.stdout).ok()?;
+    panes.as_array()?.iter().find(|p| p["id"] == holder)?["shell_pid"]
+        .as_u64()
+        .map(|p| p as u32)
+}
+
+/// A raw ToH client standing in for a person's: attaches to `holder` and sets the PTY size.
+pub(crate) fn person_resizes(
+    env: &Env,
+    holder: &str,
+    cols: u16,
+    rows: u16,
+) -> std::os::unix::net::UnixStream {
+    use toh_proto::{AttachInfo, Frame};
+    let mut cmd = Command::new(toh_bin().unwrap_or_else(|| PathBuf::from("toh")));
+    cmd.args(["ls", "--json"])
+        .env("TOH_STATE_DIR", &env.toh_dir)
+        .env_remove("TOH_CONFIG");
+    let panes: Value = serde_json::from_slice(&cmd.output().unwrap().stdout).unwrap();
+    let sock = panes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == holder)
+        .unwrap()["socket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut s = std::os::unix::net::UnixStream::connect(sock).unwrap();
+    let attach = Frame::Attach(AttachInfo {
+        client: "e2e-person".into(),
+        cols,
+        rows,
+        ..Default::default()
+    });
+    s.write_all(&attach.encode()).unwrap();
+    s.write_all(&Frame::Resize { cols, rows }.encode()).unwrap();
+    s
 }
 
 /// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
 pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["protocol"], 2);
+    assert_eq!(ready["protocol"], 3);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
-    rpc.holder_pid = holder_pid(&env.toh_dir, &holder);
-    assert!(rpc.holder_pid.is_some());
+    rpc.shell_pid = shell_pid(env, &holder);
+    assert!(rpc.shell_pid.is_some());
     // Startup: Claude Code may offer to make auto mode the default (a `dialog`, possibly right
     // after a first `idle`); keep manual mode through the generic dialog path (send_keys). The
     // Session is ready once it has been idle for 3 s with no dialog.

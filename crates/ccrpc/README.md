@@ -6,7 +6,7 @@
 
 - macOS。
 - Rust ≥ 1.91（edition 2024）。
-- PATH 里有 `toh`，并已执行 `toh setup clay`。
+- PATH 里有 `toh`（带 `toh ls --json` 与 Size 帧的版本，ToH ADR-0051），并已执行 `toh setup clay`。
 - PATH 里有 `claude`。
 - 装好 ccrpc 插件（见下）。
 
@@ -44,16 +44,16 @@ ccrpc attach <Holder ID | sessionId>
 
 没有加载插件的 Session（装插件前就在跑的 claude）不能 attach：重启 claude（如 `claude --resume <sessionId>`）后再连。一个 Session 同时只能连一个 ccrpc。
 
-ccrpc 不与人共用 Session：连上后把 PTY 设为 160×48（`--size COLSxROWS` 可改）；有人正在 ToH 上用这个 Pane（持有 PTY 尺寸）时 `attach` 报错，`--force` 强制连接；连着时有人接手，ccrpc 发 `taken_over` 并转为只读，调用方重新 `attach` 才能再写入。
+受控 Session 与人共用 Pane（[ADR-0001](docs/adr/0001-share-the-pane-and-resize-only-when-unreadable.md)）：它同时显示在调用方的界面与 ToH Client 里，两边都能输入，PTY 尺寸归人的 Client，ccrpc 的屏幕跟着它走。屏幕在这个尺寸下读不懂（窄屏下对话框折行、审批框的选项读不全、矮屏里输入框被挤出屏幕）时，ccrpc 把 PTY 调成 120×40 再读，不调回去，人的 Client 下次抢尺寸就换回它的。ToH 升级前就开着的 Pane 不能连，要关掉重开。
 
-列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔；`--json` 输出数组，另带 Pane 是否隐藏、claude pid、版本与会话标题）：
+列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔；`--json` 输出数组，另带 Pane 是否隐藏、claude pid、版本与会话标题；`--json --watch` 先打一行，之后变了再打一行，stdin 关闭即退出，由文件与进程事件唤醒）：
 
 ```sh
-ccrpc ls [--json]
+ccrpc ls [--json [--watch]]
 ccrpc hide | show <Holder ID>   # 在 Mac 上隐藏 / 显示这个 Pane（toh hide / toh show）
 ```
 
-`new` / `attach` 的 `--co-display` 让受控 Session 同时显示在调用方界面与 ToH Client 里：不改 PTY 尺寸、人在 Client 上按键不算接手；`new --hidden` 把 Pane 开在 ToH Mac Client 的隐藏窗口里（iOS 与 web 照常列出），PTY 初始尺寸取 `--size`；`--log FILE` 把版本、状态判定、识别决策与当时的整屏、hook 事件、响应与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
+`new` 的 PTY 初始尺寸是 120×40（`--size COLSxROWS` 可改）；`new --hidden` 把 Pane 开在 ToH Mac Client 的隐藏窗口里（iOS 与 web 照常列出），没人显示它，尺寸就一直是这个；`--log FILE` 把版本、状态判定、识别决策与当时的整屏、hook 事件、响应与按键记进文件，排查用（粘贴的提示词会记下开头 60 个字）。
 
 检查依赖与配置（toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器），每行 `ok` / `warn` / `fail`：
 
@@ -63,12 +63,12 @@ ccrpc doctor
 
 认不出的对话框可以交给分析器：设置 `CCRPC_ANALYZER_API_KEY`（Messages 兼容接口的 key），可选 `CCRPC_ANALYZER_BASE_URL`（缺省 `https://api.deepseek.com/anthropic`）、`CCRPC_ANALYZER_MODEL`（缺省 `deepseek-flash`）。分析得出的布局存进本机布局库（`CCRPC_LAYOUT_DIR`，缺省 `~/.local/share/ccrpc/layouts`）并立即使用；`ccrpc layouts list` 列出，`ccrpc layouts export <仓库目录>` 导出成内置布局。分析器会收到整屏文字与挂起工具的输入。`ccrpc analyzer test` 让分析器识别一个内置对话框，检验 key、接口与模型能不能用（成功时输出模型与用时，不存布局）。
 
-ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_CONFIG_DIR`（再缺省为 `~/.local/state/toh`、`~/.claude`），也可以在子命令前用 `--toh-state-dir DIR`、`--claude-config-dir DIR` 指定。
+Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`），可以在子命令前用 `--claude-config-dir DIR` 指定；`--toh-state-dir DIR`（或 `TOH_STATE_DIR`）只原样交给 `toh`。ccrpc 不读 ToH 状态目录里的文件：Holder 经 `toh ls --json` / `toh new --json` 得到，再按其中的 socket 连上。
 
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
 
 ```
-< {"type":"ready","protocol":2,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.317","state":"idle","size":[160,48]}
+< {"type":"ready","protocol":3,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.317","state":"idle","size":[120,40]}
 > {"id":"1","type":"prompt","text":"给 src/util.rs 补一个单元测试"}
 < {"type":"state","state":"busy"}
 < {"type":"block","kind":"user","uuid":"2a1f…","index":0,"text":"给 src/util.rs 补一个单元测试"}
@@ -117,7 +117,6 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
 | `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Workflow Run |
 | `dismiss_feedback_draft` | 关掉模型起草的反馈卡片（终端里的 `0`）；发送只能在终端里做 |
-| `reclaim {force?}` | 接手的人离开后取回控制 |
 | `exit {close_pane?, stop_tasks?}` | 退出 claude；`close_pane` 时连 Pane 一起结束 |
 
 事件（没有 `id`）：
@@ -135,7 +134,6 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `follow_up_failed` | 队列里的 `follow_up` 发不出去 |
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
-| `taken_over` / `reclaimed` | 有人在 ToH 上接手了这个 Session，之后只读 / 已取回 |
 | `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框、`/add-dir` 的确认框），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
 | `session_info` | 权限模式、模型、思考等级、上下文大小变了 |
@@ -153,8 +151,8 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 ## 边界
 
 - 必须装 ccrpc 插件（[ADR-0003](docs/adr/0003-require-ccrpc-plugin.md)）：只含 hooks，只在 clay Pane 里生效，不占上下文，不改变 Claude Code 的表现（人在 TUI 上看到、能做的与没有插件时一样）。不加 MCP、channel，不用 `-p`。
-- 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录与 ToH 状态目录下的文件只读（插件由 `claude plugin` 命令安装）。
-- 只服务本机 clay 里的 Session，调用方也只在 Host 本机；不与人共用 Session（[ADR-0001](docs/adr/0001-own-pty-size-and-yield-on-takeover.md)）。
+- 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录下的文件只读（插件由 `claude plugin` 命令安装），ToH 状态目录里的文件不读，只用 `toh` 命令与 Holder socket。
+- 只服务本机 clay 里的 Session，调用方也只在 Host 本机；与人共用 Pane，读不懂屏幕时才调尺寸（[ADR-0001](docs/adr/0001-share-the-pane-and-resize-only-when-unreadable.md)）。
 - 命令按到达顺序逐条执行；排队只有 `follow_up`。例外：命令等待期间，不写入、不等待的命令（`get_state`、`get_screen` 等）立即作答，`abort` 在那条命令按完最后一个键后立即执行；它们只可能先于正在执行的那条，绝不先于更早收到的命令（见 spec 5 节）。
 - 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316 / 2.1.317，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
 
@@ -172,7 +170,7 @@ cargo test
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-`mock_model_turns`、`mock_model_session`、`mock_model_tools`、`mock_model_follow_up` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、后台任务的通知那一轮之后才发 follow_up、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（CoDeck Connect 功能 E2E 的回放 fixture 由此而来）。
+`mock_model_turns`、`mock_model_session`、`mock_model_tools`、`mock_model_follow_up` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、后台任务的通知那一轮之后才发 follow_up、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion；`mock_model_shared_pane` 覆盖与人共用 Pane（跟随人设的尺寸、读不出审批选项时调成 120×40）。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（CoDeck Connect 功能 E2E 的回放 fixture 由此而来）。
 
 可选变量：`CCRPC_E2E_TUI=fullscreen`（用全屏 TUI 跑）、`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用仓库同级目录的 `toh/target/debug/toh`，没有则用 PATH 里的）。
 

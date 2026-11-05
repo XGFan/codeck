@@ -181,10 +181,6 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       };
     case "session_exit":
       return { ...s, sessionExited: true, state: "exited", requests: [], progress: null, feedbackDraft: null };
-    case "taken_over":
-      return notice(s, "Session 已被接手，ccrpc 转为只读");
-    case "reclaimed":
-      return notice(s, "已取回 Session");
     default:
       // Responses, and content events (block text, branch, workflow): not state.
       return s;

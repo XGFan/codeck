@@ -104,10 +104,6 @@ pub enum Command {
     CancelFollowUp {
         index: Option<usize>,
     },
-    /// Takes the Session back after a takeover.
-    Reclaim {
-        force: bool,
-    },
     SetMode {
         mode: PermissionMode,
     },
@@ -316,9 +312,6 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
                 ),
             },
         }),
-        "reclaim" => Ok(Command::Reclaim {
-            force: opt_bool(obj, kind, "force")?,
-        }),
         "set_mode" => {
             let m = req_text(obj, kind, "mode")?;
             let mode = PermissionMode::CYCLE
@@ -510,7 +503,6 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::GetToolResult { .. } => "get_tool_result",
         Command::GetImage { .. } => "get_image",
         Command::CancelFollowUp { .. } => "cancel_follow_up",
-        Command::Reclaim { .. } => "reclaim",
         Command::SetMode { .. } => "set_mode",
         Command::GetTasks => "get_tasks",
         Command::DismissFeedbackDraft => "dismiss_feedback_draft",
@@ -931,7 +923,6 @@ mod tests {
             "get_tool_result",
             "get_image",
             "cancel_follow_up",
-            "reclaim",
             "set_mode",
             "get_tasks",
             "stop_task",

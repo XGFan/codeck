@@ -30,8 +30,6 @@ const ready = (holderId: string, sessionId: string | null) =>
     claude_version: "2",
     state: "idle",
     size: [80, 24],
-    taken_over: false,
-    co_display: true,
     warnings: [],
   }) as unknown as InMsg;
 const flush = () => vi.advanceTimersByTimeAsync(0);

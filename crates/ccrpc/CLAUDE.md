@@ -9,7 +9,7 @@ ccrpc：让 Host 本机的脚本以 JSONL（stdin / stdout）驱动跑在 ToH cl
 - **ccrpc 插件**（[ADR-0003](docs/adr/0003-require-ccrpc-plugin.md)）：受控 Session 必须装 ccrpc 插件。插件只含 hooks（不加 skills、agents、命令、MCP、channel），只在 clay Pane 里生效；hook 除 PermissionRequest 的决定外不向 stdout 写任何东西（会进上下文）。不用 `claude -p`。
 - **不改变 Claude Code 的表现**：人在 TUI 上看到的界面与能做的操作与没有插件时一样。只扣住阻塞时界面照常显示的 hook（主线的审批与 AskUserQuestion）；后台 Subagent 的审批、ExitPlanMode 不扣，按屏幕作答。
 - 写只经 Holder 的 PTY 与插件的 PermissionRequest 回复；读用 transcript、进程文件、屏幕与插件报来的 hook 事件。
-- **只读**：Claude Code 配置目录与 ToH 状态目录下的文件只用 `File::open` 读，绝不写、移动、删除；插件经 `claude plugin` 命令安装。ccrpc 只写自己的状态目录（`CCRPC_STATE_DIR`）与数据目录。
+- **只读**：Claude Code 配置目录下的文件只用 `File::open` 读，绝不写、移动、删除；插件经 `claude plugin` 命令安装。ToH 状态目录里的文件一律不读、不拼路径：Holder 经 `toh ls --json` / `toh new --json` 得到，按其中的 socket 连上（ToH ADR-0051，见 `toh.rs`）。ccrpc 只写自己的状态目录（`CCRPC_STATE_DIR`）与数据目录。
 - 屏幕识别只认布局库里的布局（实测的内置布局，或分析器分析得出、存在本机的布局，见 [ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出或过不了结构检查就发 `unrecognized`，不猜、不按键。
 - 端到端测试必须用独立的 `TOH_STATE_DIR`、`CLAUDE_CONFIG_DIR` 与 `CCRPC_STATE_DIR`，插件经 `--plugin-dir` 加载、不安装，去掉 `TOH_CONFIG`、`KITTY_*`、`WEZTERM_*`、`KAKU_UNIX_SOCKET`、`ITERM_SESSION_ID`、`CLAUDECODE`、`TOH_HOLDER_ID`；测试 ToH 配置设 `[lan] bind = "127.0.0.1"`、`mdns = false`。清理只按记下的 PID / Holder ID。绝不碰主人真实的 clay Session。
 
@@ -33,8 +33,9 @@ cargo test --test e2e mock_ -- --ignored --test-threads=1                 # 端�
 - `history`：`get_messages` 的后台线程，增量维护 Main Line 与 Subagent Run 的内容块，分页。
 - `log`：`--log FILE` 的日志（`clog!`）。
 - `plugin`：生成与安装 ccrpc 插件（`ccrpc plugin install`）。
-- `locate`：Holder 元数据、进程树、进程文件、transcript 路径。
-- `pty`：Holder unix socket 连接（toh-proto 帧）、常驻 VT 与尺寸所有者、写入（bracketed paste、按键）。
+- `toh`：与 ToH 的接口：`toh ls --json [--watch]`、`toh new --json`、`toh hide|show`。
+- `locate`：进程树（Pane 的 shell 下的 claude）、进程文件、transcript 路径。
+- `pty`：Holder unix socket 连接（toh-proto 帧）、常驻 VT（跟随 Size 帧报来的 PTY 尺寸）、写入（bracketed paste、按键、调尺寸）。
 - `screen`：alacritty_terminal 维护屏幕文本；`recognize`：审批框、AskUserQuestion、输入框、模式行、后台任务面板、目录信任框、进度行的识别。
 - `wake`：事件驱动的唤醒（stdin、Holder 帧、notify 文件监听）。
 - `layout`：布局库（内置 `layouts/*.json` 由 build.rs 嵌入，学到的在本机），结构检查；`analyze`：分析器，认不出的对话框交给模型得出布局。

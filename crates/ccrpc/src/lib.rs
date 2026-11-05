@@ -12,5 +12,6 @@ pub mod recognize;
 pub mod rpc;
 pub mod screen;
 pub mod session;
+pub mod toh;
 pub mod transcript;
 pub mod wake;

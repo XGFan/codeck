@@ -1,5 +1,5 @@
 {"t": 1793700000900, "dir": "meta", "ls": {"holder_id": "mresumed00001", "session_id": "d2e95a07-0010-4000-8000-000000000010", "title": "resumed", "cwd": "/work/orbit-web", "status": "idle"}}
-{"t": 1793700000910, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mresumed00001", "session_id": "d2e95a07-0010-4000-8000-000000000010", "cwd": "/work/orbit-web", "claude_version": "2.1.318", "state": "idle", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
+{"t": 1793700000910, "dir": "recv", "msg": {"type": "ready", "protocol": 3, "holder_id": "mresumed00001", "session_id": "d2e95a07-0010-4000-8000-000000000010", "cwd": "/work/orbit-web", "claude_version": "2.1.318", "state": "idle", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
 {"t": 1793700000920, "dir": "send", "msg": {"id": "g1", "type": "get_tasks"}}
 {"t": 1793700000930, "dir": "recv", "msg": {"type": "response", "id": "g1", "command": "get_tasks", "success": true, "data": {"tasks": []}}}
 {"t": 1793700000940, "dir": "recv", "msg": {"type": "state", "state": "exited"}}

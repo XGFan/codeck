@@ -4592,7 +4592,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 [[package]]
 name = "toh-proto"
 version = "0.1.0"
-source = "git+ssh://git@github.com/XGFan/toh.git?branch=master#063451733905ecbbfb3afb5f87e11a930625718a"
+source = "git+ssh://git@github.com/XGFan/toh.git?branch=master#50d0d4ff60a95440339cd7e502a3ab30e7ffe3d4"
 dependencies = [
  "serde",
  "serde_json",

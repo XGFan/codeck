@@ -18,7 +18,7 @@ _Avoid_: 活跃会话, active session, 进行中的会话
 
 **Connect**:
 经 ccrpc 连上一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，从此可以在应用里向它发提示词、作答审批与提问。
-_Avoid_: 驾驶, attach（ToH 的 attach 指把终端接到 Pane）, 接管（ccrpc 的「接手」指人在 Client 上操作 Pane）
+_Avoid_: 驾驶, attach（ToH 的 attach 指把终端接到 Pane）, 接管
 
 **Connected Session**:
 已 Connect 的 Live Session，即 ccrpc 一侧的受控 Session；对话内容仍来自索引与实时追随。

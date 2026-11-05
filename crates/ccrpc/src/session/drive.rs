@@ -1,5 +1,5 @@
-//! Writing to the Pane: keys and pastes checked against the screen, the takeover rule, and the
-//! commands that type into the TUI.
+//! Writing to the Pane: keys and pastes checked against the screen, the switch to [`WORK_SIZE`]
+//! when the screen cannot be read, and the commands that type into the TUI.
 
 use super::*;
 
@@ -15,60 +15,37 @@ impl Engine {
             .map_err(|e| ("io", format!("{e:#}")))
     }
 
-    /// PTY size from the Pane shell's tty.
-    pub(super) fn pty_size(&self) -> Option<(u16, u16)> {
-        locate::tty_size(self.tty.as_deref()?).ok()
+    /// The screen could not be read at the size people's Clients set: switch the PTY to
+    /// [`WORK_SIZE`] (once; it stays until someone's Client takes the size back). True when it
+    /// switched, and the screen is worth reading again after [`Self::grow_settle`].
+    pub(super) fn grow(&self) -> bool {
+        if self.conn.size() == WORK_SIZE || self.conn.resize(WORK_SIZE.0, WORK_SIZE.1).is_err() {
+            return false;
+        }
+        crate::clog!(
+            "resize {}x{} -> {}x{}",
+            self.size.0,
+            self.size.1,
+            WORK_SIZE.0,
+            WORK_SIZE.1
+        );
+        self.grown_at.set(Some(Instant::now()));
+        true
     }
 
-    /// A size owner other than ccrpc means someone took the Pane over (a Holder that does not
-    /// report owners: the PTY size changed). Afterwards the VT follows the PTY size.
-    pub(super) fn check_takeover(&mut self) {
-        // Co-display: the VT just follows the PTY size whoever set it.
-        if self.co_display {
-            if self.last_size_check.elapsed() >= Duration::from_secs(1) {
-                self.last_size_check = Instant::now();
-                if let Some(size) = self.pty_size()
-                    && size != self.conn.vt_size()
-                {
-                    let _ = self.conn.follow_size(size.0, size.1);
-                    self.size = size;
-                }
-            }
-            return;
-        }
-        if !self.taken_over {
-            // Sticky: someone who took the size and left between two looks still took over.
-            if let Some(client) = self.conn.taken_by() {
-                return self.take_over(Some(client));
-            }
-            if self.conn.owner() != Owner::Unknown {
-                return;
-            }
-        }
-        if self.last_size_check.elapsed() < Duration::from_secs(1) {
-            return;
-        }
-        self.last_size_check = Instant::now();
-        let Some(size) = self.pty_size() else {
-            return;
-        };
-        if !self.taken_over {
-            if size != self.size {
-                self.take_over(None);
-            }
-        } else if size != self.conn.vt_size() {
-            let _ = self.conn.follow_size(size.0, size.1);
-        }
+    /// Claude Code is still redrawing after [`Self::grow`]: what is on the screen is not taken
+    /// for anything yet.
+    pub(super) fn growing(&self) -> bool {
+        self.grown_at
+            .get()
+            .is_some_and(|t| t.elapsed() < GROW_SETTLE)
     }
 
-    pub(super) fn take_over(&mut self, client: Option<String>) {
-        self.taken_over = true;
-        self.follow_ups.clear();
-        self.release_hooks();
-        self.emit(json!({"type": "taken_over", "client": client}));
-        if let Some((cols, rows)) = self.pty_size() {
-            let _ = self.conn.follow_size(cols, rows);
-        }
+    /// Waits (serving stdin) until the screen has been redrawn at the new size.
+    pub(super) fn grow_settle(&mut self) {
+        self.wait_until(GROW_SETTLE + Duration::from_secs(2), |e| {
+            e.conn.size() == WORK_SIZE && !e.growing()
+        });
     }
 
     /// Ticks (and serves stdin, see [`Self::serve_input`]) until `cond` holds or `timeout` passes.
@@ -128,18 +105,7 @@ impl Engine {
         }
     }
 
-    /// Every write goes through here or [`Self::paste`]: none once someone took the Pane over,
-    /// even in the middle of a command.
-    pub(super) fn writable(&self) -> std::result::Result<(), CmdErr> {
-        // The Holder's report counts at once, before a tick turns it into `taken_over`.
-        if self.taken_over || (!self.co_display && self.conn.taken_by().is_some()) {
-            return err("taken_over", "Session 已被人接手，只读");
-        }
-        Ok(())
-    }
-
     pub(super) fn paste(&self, text: &str) -> std::result::Result<(), CmdErr> {
-        self.writable()?;
         crate::clog!(
             "paste {} chars: {:?}",
             text.chars().count(),
@@ -149,7 +115,6 @@ impl Engine {
     }
 
     pub(super) fn keys(&self, bytes: &[u8]) -> std::result::Result<(), CmdErr> {
-        self.writable()?;
         crate::clog!("keys {:?}", String::from_utf8_lossy(bytes));
         let seen = self.conn.generation();
         self.conn
@@ -160,16 +125,33 @@ impl Engine {
         Ok(())
     }
 
+    /// Every failed reading of the screen ends here. At a size other than [`WORK_SIZE`] the PTY
+    /// switches to it, so that trying again reads the screen as Claude Code lays it out.
     pub(super) fn unrecognized(&self, context: &str, s: Option<&Screen>) -> CmdErr {
         let lines = match s {
             Some(s) => s.lines.clone(),
             None => self.screen().map(|s| s.lines).unwrap_or_default(),
         };
         self.emit(json!({"type": "unrecognized", "context": context, "lines": lines}));
-        (
-            "unrecognized_screen",
-            format!("{context}：屏幕与已知布局不符"),
-        )
+        let msg = if self.grow() {
+            format!(
+                "{context}：屏幕与已知布局不符，窗格已调成 {}×{}",
+                WORK_SIZE.0, WORK_SIZE.1
+            )
+        } else {
+            format!("{context}：屏幕与已知布局不符")
+        };
+        ("unrecognized_screen", msg)
+    }
+
+    /// Waits up to `timeout` for the prompt input box; when it does not show at the size people
+    /// set, switches to [`WORK_SIZE`] and waits for it once more (no key pressed before either).
+    pub(super) fn await_input_box(&mut self, timeout: Duration) {
+        let seen = |_: &Engine, s: &Screen| recognize::input_text(s).map(|_| ());
+        if self.wait_screen(timeout, seen).is_none() && self.grow() {
+            self.grow_settle();
+            self.wait_screen(Duration::from_secs(2), seen);
+        }
     }
 
     /// The prompt input box is on screen (no dialog has it): returns its text.
@@ -181,9 +163,7 @@ impl Engine {
     /// Empties the prompt input box (`ctrl+u` + backspace per line), checking the screen.
     pub(super) fn clear_input(&mut self) -> std::result::Result<(), CmdErr> {
         // Just after startup the Process File says idle before the TUI is drawn.
-        self.wait_screen(Duration::from_secs(2), |_, s| {
-            recognize::input_text(s).map(|_| ())
-        });
+        self.await_input_box(Duration::from_secs(2));
         for _ in 0..3 {
             let text = self.input_box_now()?;
             if text.is_empty() {
@@ -414,7 +394,6 @@ impl Engine {
         if self.queue.is_empty() {
             return err("bad_request", "队列里没有要发的内容");
         }
-        self.writable()?;
         let out = self.turns.send_now();
         self.apply_turns(out);
         self.keys(key::CTRL_ENTER)?;
@@ -479,41 +458,6 @@ impl Engine {
             None => std::mem::take(&mut self.follow_ups).len(),
         };
         Ok(json!({"removed": removed, "follow_ups": self.follow_up_texts()}))
-    }
-
-    /// Takes the Session back after a takeover: without `force` only once the person's client
-    /// is gone (no size owner online).
-    pub(super) fn reclaim(&mut self, force: bool) -> CmdResult {
-        if self.state == State::Exited {
-            return err("exited", "Session 已结束");
-        }
-        if !self.taken_over {
-            return err("not_taken_over", "Session 没有被接手");
-        }
-        match self.conn.owner() {
-            Owner::Me | Owner::Nobody => {}
-            Owner::Other(c) if !force => {
-                return err(
-                    "taken_over",
-                    format!("Session 正被 {c} 使用，加 force 强制取回"),
-                );
-            }
-            Owner::Unknown if !force => {
-                return err(
-                    "taken_over",
-                    "Holder 不报告尺寸所有者，无法确认对方已离开，加 force 强制取回",
-                );
-            }
-            _ => {}
-        }
-        self.conn.clear_taken_by();
-        self.conn
-            .claim_size(self.size.0, self.size.1)
-            .map_err(|e| ("io", format!("{e:#}")))?;
-        self.taken_over = false;
-        self.last_size_check = Instant::now();
-        self.emit(json!({"type": "reclaimed"}));
-        Ok(json!({"size": [self.size.0, self.size.1]}))
     }
 
     pub(super) fn mode_now(&self) -> Option<rpc::PermissionMode> {

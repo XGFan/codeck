@@ -237,8 +237,6 @@
         "not_busy",
         "not_waiting",
         "unknown_request",
-        "taken_over",
-        "not_taken_over",
         "not_offered",
         "unsupported",
         "unrecognized_screen",
@@ -434,9 +432,6 @@
         },
         {
           "$ref": "#/$defs/commands/cancel_follow_up"
-        },
-        {
-          "$ref": "#/$defs/commands/reclaim"
         },
         {
           "$ref": "#/$defs/commands/set_mode"
@@ -926,27 +921,6 @@
         ],
         "additionalProperties": false
       },
-      "reclaim": {
-        "title": "reclaim",
-        "description": "被接手后取回 Session。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "reclaim"
-          },
-          "id": {
-            "$ref": "#/$defs/id"
-          },
-          "force": {
-            "type": "boolean",
-            "description": "对方还在时也强行取回。"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "additionalProperties": false
-      },
       "set_mode": {
         "title": "set_mode",
         "description": "按 shift+tab 切换权限模式；idle / busy 时可用。",
@@ -1353,10 +1327,6 @@
             },
             "description": "队列里的正文。"
           },
-          "taken_over": {
-            "type": "boolean",
-            "description": "是否已被接手。"
-          },
           "mode": {
             "type": [
               "string",
@@ -1385,10 +1355,6 @@
             ],
             "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
           },
-          "co_display": {
-            "type": "boolean",
-            "description": "是否共显（--co-display）。"
-          },
           "queue": {
             "type": "array",
             "items": {
@@ -1398,6 +1364,17 @@
           },
           "feedback_draft": {
             "$ref": "#/$defs/feedback_draft"
+          },
+          "size": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "列或行。"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "PTY 此刻的 [列, 行]（同 ready）。"
           }
         },
         "required": [
@@ -1407,8 +1384,7 @@
           "session_id",
           "cwd",
           "follow_up_queue",
-          "follow_ups",
-          "taken_over"
+          "follow_ups"
         ]
       },
       "get_messages": {
@@ -1556,27 +1532,6 @@
         "required": [
           "removed",
           "follow_ups"
-        ]
-      },
-      "reclaim": {
-        "title": "reclaim",
-        "description": "取回后的尺寸。",
-        "type": "object",
-        "properties": {
-          "size": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "列或行。"
-            },
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "[列, 行]。"
-          }
-        },
-        "required": [
-          "size"
         ]
       },
       "set_mode": {
@@ -1885,16 +1840,6 @@
         {
           "properties": {
             "command": {
-              "const": "reclaim"
-            },
-            "data": {
-              "$ref": "#/$defs/response_data/reclaim"
-            }
-          }
-        },
-        {
-          "properties": {
-            "command": {
               "const": "set_mode"
             },
             "data": {
@@ -2023,7 +1968,7 @@
             "$ref": "#/$defs/waiting"
           },
           "protocol": {
-            "const": 2,
+            "const": 3,
             "description": "协议版本。"
           },
           "holder_id": {
@@ -2060,22 +2005,14 @@
             },
             "minItems": 2,
             "maxItems": 2,
-            "description": "[列, 行]。"
-          },
-          "taken_over": {
-            "type": "boolean",
-            "description": "连接时是否已被接手。"
+            "description": "PTY 此刻的 [列, 行]：人的 Client 设的尺寸；ccrpc 认不出屏幕时调成的 120×40（ADR-0001）。"
           },
           "warnings": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "版本未实测、Holder 不报尺寸所有者时各一句。"
-          },
-          "co_display": {
-            "type": "boolean",
-            "description": "是否共显（--co-display）：不发 Resize、不判接手。"
+            "description": "Claude Code 不是实测过的版本时一句。"
           },
           "mode": {
             "type": [
@@ -2125,7 +2062,6 @@
           "cwd",
           "claude_version",
           "size",
-          "taken_over",
           "warnings"
         ]
       },
@@ -2613,40 +2549,6 @@
           "agents"
         ]
       },
-      "taken_over": {
-        "title": "taken_over",
-        "description": "Session 被另一个 Client 接手。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "taken_over"
-          },
-          "client": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "接手者的客户端标识，旧 Holder 为 null。"
-          }
-        },
-        "required": [
-          "type",
-          "client"
-        ]
-      },
-      "reclaimed": {
-        "title": "reclaimed",
-        "description": "Session 已被取回。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "reclaimed"
-          }
-        },
-        "required": [
-          "type"
-        ]
-      },
       "choice": {
         "title": "choice",
         "description": "其他编号菜单。",
@@ -2936,12 +2838,6 @@
         },
         {
           "$ref": "#/$defs/events/workflow"
-        },
-        {
-          "$ref": "#/$defs/events/taken_over"
-        },
-        {
-          "$ref": "#/$defs/events/reclaimed"
         },
         {
           "$ref": "#/$defs/events/choice"

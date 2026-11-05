@@ -27,27 +27,59 @@ struct ParentRefs {
 /// else the last `ai-title` — the same rule [`build`] applies. Only lines that can hold one are
 /// parsed, so a running Session's title is cheap to re-read.
 pub fn read_title(main: &std::path::Path) -> Option<String> {
-    use std::io::BufRead;
-    let f = std::fs::File::open(main).ok()?;
-    let (mut custom, mut ai) = (None, None);
-    for line in std::io::BufReader::new(f)
-        .split(b'\n')
-        .map_while(|l| l.ok())
-    {
-        if !line.windows(7).any(|w| w == b"-title\"") {
-            continue;
+    TitleTail::default().read(main)
+}
+
+/// [`read_title`] for a file that keeps growing: each call reads only what was appended since the
+/// last one (from the start again when the file got shorter).
+#[derive(Debug, Default, Clone)]
+pub struct TitleTail {
+    /// End of the last complete line read.
+    offset: u64,
+    custom: Option<String>,
+    ai: Option<String>,
+}
+
+impl TitleTail {
+    pub fn read(&mut self, main: &std::path::Path) -> Option<String> {
+        use std::io::{BufRead, Seek};
+        let mut f = std::fs::File::open(main).ok()?;
+        if f.metadata().ok()?.len() < self.offset {
+            *self = TitleTail::default();
         }
-        let Ok(e) = serde_json::from_slice::<RawEntry>(&line) else {
-            continue;
+        f.seek(std::io::SeekFrom::Start(self.offset)).ok()?;
+        let mut r = std::io::BufReader::new(f);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let n = match r.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            self.take(&line);
+            // A last line still being written is read again next time.
+            if !line.ends_with(b"\n") {
+                break;
+            }
+            self.offset += n as u64;
+        }
+        self.custom.clone().or_else(|| self.ai.clone())
+    }
+
+    fn take(&mut self, line: &[u8]) {
+        if !line.windows(7).any(|w| w == b"-title\"") {
+            return;
+        }
+        let Ok(e) = serde_json::from_slice::<RawEntry>(line) else {
+            return;
         };
         let pick = |v: Option<String>| v.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
         match e.entry_type() {
-            "custom-title" => custom = pick(e.custom_title).or(custom),
-            "ai-title" => ai = pick(e.ai_title).or(ai),
+            "custom-title" => self.custom = pick(e.custom_title).or(self.custom.take()),
+            "ai-title" => self.ai = pick(e.ai_title).or(self.ai.take()),
             _ => {}
         }
     }
-    custom.or(ai)
 }
 
 pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
@@ -376,5 +408,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_title(&p).as_deref(), Some("Mine"));
+    }
+
+    #[test]
+    fn title_tail_reads_only_what_was_appended() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("s.jsonl");
+        let line = |v: serde_json::Value| v.to_string() + "\n";
+        std::fs::write(
+            &p,
+            line(serde_json::json!({"type": "ai-title", "aiTitle": "first"})),
+        )
+        .unwrap();
+        let mut tail = TitleTail::default();
+        assert_eq!(tail.read(&p).as_deref(), Some("first"));
+        let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+        // Half a line: read now, and again once it is complete.
+        let custom = line(serde_json::json!({"type": "custom-title", "customTitle": "Mine"}));
+        f.write_all(&custom.as_bytes()[..10]).unwrap();
+        assert_eq!(tail.read(&p).as_deref(), Some("first"));
+        f.write_all(&custom.as_bytes()[10..]).unwrap();
+        assert_eq!(tail.read(&p).as_deref(), Some("Mine"));
+        // A shorter file is read from the start.
+        std::fs::write(
+            &p,
+            line(serde_json::json!({"type": "ai-title", "aiTitle": "new"})),
+        )
+        .unwrap();
+        assert_eq!(tail.read(&p).as_deref(), Some("new"));
     }
 }

@@ -1,8 +1,6 @@
 //! Against a real model (`CCRPC_E2E_API_KEY`; spends credits).
 
-use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -22,9 +20,9 @@ fn controls_a_real_session() {
     }
     let mut rpc = Rpc::start(&env);
     let ready = start_session(&mut rpc, &env);
-    assert_eq!(ready["size"], json!([160, 48]));
+    assert_eq!(ready["size"], json!([120, 40]));
     let scr = rpc.call("g0", json!({"type": "get_screen"}));
-    assert_eq!(scr["lines"].as_array().unwrap().len(), 48);
+    assert_eq!(scr["lines"].as_array().unwrap().len(), 40);
 
     // prompt → reply → turn_end
     let d = rpc.call(
@@ -516,164 +514,6 @@ fn wait_permission_or_tool(rpc: &mut Rpc) -> Option<Value> {
         }
     }
     None
-}
-
-/// A raw ToH client standing in for a person: attaches and takes the PTY size.
-fn person_takes_over(env: &Env, holder: &str) -> std::os::unix::net::UnixStream {
-    use toh_proto::{AttachInfo, Frame};
-    let sock = env.toh_dir.join("holders").join(format!("{holder}.sock"));
-    let mut s = std::os::unix::net::UnixStream::connect(sock).unwrap();
-    let attach = Frame::Attach(AttachInfo {
-        client: "e2e-person".into(),
-        cols: 100,
-        rows: 30,
-        ..Default::default()
-    });
-    s.write_all(&attach.encode()).unwrap();
-    s.write_all(
-        &Frame::Resize {
-            cols: 100,
-            rows: 30,
-        }
-        .encode(),
-    )
-    .unwrap();
-    s
-}
-
-#[test]
-#[ignore = "real Claude Code; needs CCRPC_E2E_API_KEY, toh and claude"]
-fn yields_when_a_person_takes_over() {
-    let Ok(key) = std::env::var("CCRPC_E2E_API_KEY") else {
-        eprintln!("跳过：没有 CCRPC_E2E_API_KEY");
-        return;
-    };
-    let env = setup(&key);
-    // Without the plugin there is no Controlled Session.
-    let out = ccrpc_cmd(&env)
-        .args(["new", "--cwd"])
-        .arg(&env.work)
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("ccrpc 插件未启用"));
-    let mut rpc = Rpc::start(&env);
-    let ready = start_session(&mut rpc, &env);
-    let holder = ready["holder_id"].as_str().unwrap().to_string();
-
-    // Someone opens the Pane in ToH: ccrpc reports it and stops writing.
-    let person = person_takes_over(&env, &holder);
-    let t = rpc.event("taken_over", Duration::from_secs(10));
-    assert_eq!(t["client"], "e2e-person");
-    rpc.send(json!({"id": "t1", "type": "prompt", "text": "hello"}));
-    let r = rpc.until("t1", Duration::from_secs(5), |v| v["id"] == "t1");
-    assert_eq!(r["error"]["code"], "taken_over");
-    let st = rpc.call("t2", json!({"type": "get_state"}));
-    assert_eq!(st["taken_over"], true);
-    // The VT follows the person's size.
-    let scr = rpc.call("t3", json!({"type": "get_screen"}));
-    assert_eq!(scr["lines"].as_array().unwrap().len(), 30);
-
-    // Taking it back: refused while the person is there, fine once they left.
-    rpc.send(json!({"id": "r1", "type": "reclaim"}));
-    let r = rpc.until("r1", Duration::from_secs(5), |v| v["id"] == "r1");
-    assert_eq!(r["error"]["code"], "taken_over", "{r}");
-    drop(person);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut n = 0;
-    loop {
-        n += 1;
-        rpc.send(json!({"id": format!("r2-{n}"), "type": "reclaim"}));
-        let id = format!("r2-{n}");
-        let r = rpc.until("r2", Duration::from_secs(10), |v| v["id"] == id.as_str());
-        if r["success"] == true {
-            break;
-        }
-        assert!(Instant::now() < deadline, "人离开后取不回：{r}");
-        std::thread::sleep(Duration::from_millis(300));
-    }
-    rpc.event("reclaimed", Duration::from_secs(5));
-    let st = rpc.call("r3", json!({"type": "get_state"}));
-    assert_eq!(st["taken_over"], false);
-    let scr = rpc.call("r4", json!({"type": "get_screen"}));
-    assert_eq!(scr["lines"].as_array().unwrap().len(), 48);
-
-    // One ccrpc per Session.
-    let out = ccrpc_cmd(&env)
-        .args(["attach", "--force", &holder])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("已有 ccrpc 连着"), "{err}");
-    let st = rpc.call("r5", json!({"type": "get_state"}));
-    assert_eq!(
-        st["taken_over"], false,
-        "the refused ccrpc did not touch the Pane"
-    );
-
-    // Another ccrpc refuses the Session while a person holds it, unless forced.
-    // (The Pane outlives this ccrpc: the forced one cleans it up.)
-    let holder_pid = rpc.holder_pid.take();
-    drop(rpc);
-    let person = person_takes_over(&env, &holder);
-    let out = ccrpc_cmd(&env)
-        .args(["attach", &holder])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("正被 e2e-person 使用"), "{err}");
-    let mut forced = Rpc::attach(&env, &["--force", &holder]);
-    forced.holder_pid = holder_pid;
-    let ready = forced.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["holder_id"], holder.as_str());
-    forced.call("f1", json!({"type": "get_state"}));
-
-    // Co-display: shown alongside the person, no size of its own, no takeover, still writes.
-    let holder_pid = forced.holder_pid.take();
-    drop(forced);
-    let mut co = Rpc::attach(&env, &["--co-display", &holder]);
-    co.holder_pid = holder_pid;
-    let ready = co.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["co_display"], true);
-    assert_eq!(ready["taken_over"], false);
-    assert_eq!(
-        ready["size"],
-        json!([160, 48]),
-        "the PTY as the last one left it"
-    );
-    // The person resizes: the co-displayed VT follows, and it is no takeover.
-    let mut person = person;
-    person
-        .write_all(&toh_proto::Frame::Resize { cols: 90, rows: 28 }.encode())
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let scr = co.call("c0", json!({"type": "get_screen"}));
-        if scr["lines"].as_array().unwrap().len() == 28 {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "共显的屏幕没有跟随 PTY 尺寸：{}",
-            scr["lines"].as_array().unwrap().len()
-        );
-        std::thread::sleep(Duration::from_millis(300));
-    }
-    co.call("c1", json!({"type": "send_keys", "keys": [{"text": "x"}]}));
-    std::thread::sleep(Duration::from_millis(500));
-    let st = co.call("c2", json!({"type": "get_state"}));
-    assert_eq!(
-        st["taken_over"], false,
-        "a person's keys are not a takeover here"
-    );
-    co.call("c3", json!({"type": "send_keys", "keys": ["backspace"]}));
-    drop(co);
-    drop(person);
 }
 
 #[test]

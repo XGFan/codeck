@@ -10,13 +10,13 @@ Session、Live Session、Subagent Run、Main Line 沿用 [CoDeck 的定义](http
 有 ccrpc 进程连着的 Session。它一定在本机某个 clay Pane 的 Holder 里运行、加载了 ccrpc 插件；ccrpc 退出后它仍在运行，只是不再受控。
 _Avoid_: managed session、worker（worker 是 paaa 的词）
 
-**接手（Takeover）**:
-人在 ToH Client 上操作 Session 所在的 Pane：把它切到前台，或在其中按键。正被人接手的 Session 不能成为受控 Session；受控 Session 被接手后，ccrpc 对它只读，直到调用方取回（接手的人已离开时）或重新连接。
-_Avoid_: 抢占、冲突、人机协同
-
 **共显（Co-display）**:
-受控 Session 同时显示在调用方的界面与 ToH Client 的 Pane 里，两边都能输入。共显的受控 Session 里，人在 Client 上的操作不算接手。
-_Avoid_: 共享、镜像、旁观
+受控 Session 同时显示在调用方的界面与 ToH Client 的 Pane 里，两边都能输入；PTY 尺寸归人的 Client。受控 Session 总是共显。
+_Avoid_: 共享、镜像、旁观、接手
+
+**工作尺寸（Work Size）**:
+屏幕在人设的尺寸下读不懂时，ccrpc 把 PTY 调成的尺寸：120×40，常见终端的大小，Claude Code 按它排版最稳。也是 `ccrpc new` 的初始尺寸。
+_Avoid_: 默认尺寸、固定尺寸
 
 **调用方（Caller）**:
 经 stdin / stdout 与 ccrpc 交换 JSONL 的程序。

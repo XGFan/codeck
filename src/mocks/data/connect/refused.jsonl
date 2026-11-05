@@ -1,2 +1,2 @@
 {"t": 1793700000800, "dir": "meta", "ls": {"holder_id": "mrefused00001", "title": "refused", "cwd": "/work/homelab", "session_id": "48b1d0f6-0009-4000-8000-000000000009"}, "connect_delay_ms": 50}
-{"t": 1793700000810, "dir": "exit", "code": 1, "stderr": "ccrpc: Session 正被 mac 使用，加 --force 强制连接"}
+{"t": 1793700000810, "dir": "exit", "code": 1, "stderr": "ccrpc: 这个 Pane 的 Holder 版本太旧，不报告终端尺寸：关掉这个 Pane 重开（claude --resume 可以接着原来的 Session）"}

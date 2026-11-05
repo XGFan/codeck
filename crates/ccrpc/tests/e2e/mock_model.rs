@@ -1,6 +1,7 @@
 //! Against a scripted local model (`mock_` tests: no key, no credits, deterministic timing).
 
 use std::io::{BufRead, BufReader, Write};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -526,7 +527,7 @@ fn mock_model_session() {
     let log = env.state_dir.join("ccrpc.log");
     let mut rpc = Rpc::start_in(&env, &fresh, &["--log", log.to_str().unwrap()]);
     let ready = rpc.event("ready", Duration::from_secs(20));
-    rpc.holder_pid = holder_pid(&env.toh_dir, ready["holder_id"].as_str().unwrap());
+    rpc.shell_pid = shell_pid(&env, ready["holder_id"].as_str().unwrap());
 
     // The folder trust dialog is a choice.
     let c = rpc.until("trust", Duration::from_secs(30), |v| v["type"] == "choice");
@@ -627,14 +628,14 @@ fn mock_model_session() {
     assert_eq!(older["more"], false);
 
     // Exit, with the Pane.
-    let holder_pid = rpc.holder_pid.unwrap();
+    let shell_pid = rpc.shell_pid.unwrap();
     rpc.call("x1", json!({"type": "exit", "close_pane": true}));
     let deadline = Instant::now() + Duration::from_secs(10);
-    while transcript::live::pid_exists(holder_pid) {
+    while transcript::live::pid_exists(shell_pid) {
         assert!(Instant::now() < deadline, "Pane 没有随 exit 结束");
         std::thread::sleep(Duration::from_millis(200));
     }
-    rpc.holder_pid = None;
+    rpc.shell_pid = None;
     let text = std::fs::read_to_string(&log).unwrap();
     assert!(
         text.contains("hook UserPromptSubmit") && text.contains("keys "),
@@ -708,16 +709,16 @@ fn mock_model_tools() {
     assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
 }
 
-/// A hidden Pane (`new --hidden`, ToH ADR-0050), co-displayed as CoDeck starts it: nobody shows it, so its PTY
-/// keeps the size it starts with, ccrpc's 160×48, and an approval dialog is recognized there; `ls --json` reports
-/// `hidden`, which `hide` / `show` toggle (on the scripted model, no credits).
+/// A hidden Pane (`new --hidden`, ToH ADR-0050), as CoDeck starts it: nobody shows it, so its PTY keeps the size
+/// it starts with, ccrpc's 120×40, and an approval dialog is recognized there; `ls --json` reports `hidden`, which
+/// `hide` / `show` toggle (on the scripted model, no credits).
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_hidden() {
     let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
-    let mut rpc = Rpc::start_in(&env, &env.work, &["--hidden", "--co-display"]);
+    let mut rpc = Rpc::start_in(&env, &env.work, &["--hidden"]);
     let ready = start_session(&mut rpc, &env);
-    assert_eq!(ready["size"], json!([160, 48]), "{ready}");
+    assert_eq!(ready["size"], json!([120, 40]), "{ready}");
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     let hidden = || {
         let out = ccrpc_cmd(&env).args(["ls", "--json"]).output().unwrap();
@@ -775,10 +776,10 @@ fn mock_model_ask_before_attach() {
         rpc.forget();
         rpc.call(id, json!({"type": "prompt", "text": text}));
         let held = rpc.event("question", Duration::from_secs(30));
-        let holder_pid = rpc.holder_pid.take();
+        let shell_pid = rpc.shell_pid.take();
         drop(rpc);
         let mut next = Rpc::attach(&env, &[&holder]);
-        next.holder_pid = holder_pid;
+        next.shell_pid = shell_pid;
         next.event("ready", Duration::from_secs(20));
         let q = next.event("question", Duration::from_secs(10));
         assert_eq!(q["request_id"], held["request_id"], "{q}");
@@ -1059,10 +1060,79 @@ fn mock_model_sigterm_detaches() {
         std::thread::sleep(Duration::from_millis(50));
     };
     assert!(status.success(), "{status:?}");
-    let holder_pid = rpc.holder_pid.take();
+    let shell_pid = rpc.shell_pid.take();
     drop(rpc);
-    let mut next = Rpc::attach(&env, &["--co-display", &holder]);
-    next.holder_pid = holder_pid;
+    let mut next = Rpc::attach(&env, &[&holder]);
+    next.shell_pid = shell_pid;
     let r = next.event("ready", Duration::from_secs(20));
     assert_eq!(r["state"], "idle", "{r}");
+}
+
+/// The Pane is shared with a person (ADR-0001): their Client sets the PTY size and ccrpc follows it;
+/// writing goes on meanwhile. Too small a Pane to read the approval dialog on makes ccrpc switch
+/// it to 120×40 and read the dialog there. Only one ccrpc per Session; the old options are gone
+/// (on the scripted model).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_shared_pane() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    assert_eq!(
+        ready["size"],
+        json!([120, 40]),
+        "new starts at the work size: {ready}"
+    );
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+
+    // A person shows the Pane at a size far too small for the dialog: the VT follows.
+    let _person = person_resizes(&env, &holder, 40, 12);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let st = rpc.call("s0", json!({"type": "get_state"}));
+        if st["size"] == json!([40, 12]) {
+            let scr = rpc.call("s1", json!({"type": "get_screen"}));
+            assert_eq!(scr["lines"].as_array().unwrap().len(), 12);
+            break;
+        }
+        assert!(Instant::now() < deadline, "没有跟随人设的尺寸：{st}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Still writes; the approval's options are read at 120×40.
+    rpc.forget();
+    rpc.call("t1", json!({"type": "prompt", "text": "MOCK-TOOL please"}));
+    let pr = rpc.event("permission_request", Duration::from_secs(30));
+    assert_eq!(pr["tool_name"], "Bash", "{pr}");
+    let meanings: Vec<&str> = pr["options"]
+        .as_array()
+        .unwrap_or_else(|| panic!("permission_request 没带 options：{pr}"))
+        .iter()
+        .filter_map(|o| o["meaning"].as_str())
+        .collect();
+    assert!(meanings.contains(&"allow_always"), "{pr}");
+    let st = rpc.call("t2", json!({"type": "get_state"}));
+    assert_eq!(st["size"], json!([120, 40]), "{st}");
+    rpc.call(
+        "t3",
+        json!({"type": "answer_permission", "request_id": pr["request_id"], "decision": "allow"}),
+    );
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["aborted"], false, "{t}");
+
+    // One ccrpc per Session; the removed options are refused.
+    for args in [vec![holder.as_str()], vec!["--co-display", holder.as_str()]] {
+        let out = ccrpc_cmd(&env)
+            .arg("attach")
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("已有 ccrpc 连着") || err.contains("用法：ccrpc attach"),
+            "{args:?}: {err}"
+        );
+    }
 }

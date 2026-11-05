@@ -76,11 +76,11 @@ export interface Api {
   ccrpcSetPaneHidden(holderId: string, hidden: boolean): Promise<void>;
   /** `ccrpc ls --json`. */
   ccrpcList(): Promise<LsEntry[]>;
-  /** `ccrpc attach --co-display`; returns the connection id. */
+  /** `ccrpc attach`; returns the connection id. */
   ccrpcConnect(holderId: string): Promise<string>;
-  /** `ccrpc new --co-display --cwd`; returns the connection id. */
+  /** `ccrpc new --cwd`; returns the connection id. */
   ccrpcNew(cwd: string): Promise<string>;
-  /** Resume: `ccrpc new --co-display --cwd <cwd> -- --resume <sessionId>` in a new Pane; returns the connection id. */
+  /** Resume: `ccrpc new --cwd <cwd> -- --resume <sessionId>` in a new Pane; returns the connection id. */
   ccrpcResume(sessionId: string, cwd: string): Promise<string>;
   ccrpcSend(conn: string, msg: object): Promise<void>;
   /** Closes ccrpc's stdin (the Session keeps running). */
