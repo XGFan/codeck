@@ -1,5 +1,5 @@
 //! The ccrpc processes, without Tauri: one `ccrpc` child per connection, its stdout relayed line
-//! by line to a sink, everything written to the connection's logs (docs/spec.md §7).
+//! by line to a sink, everything written to the connection's logs (the root docs/spec.md, Connect › 日志).
 
 use std::collections::HashMap;
 use std::fs::File;
