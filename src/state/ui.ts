@@ -50,7 +50,7 @@ const sessionDefaults = {
   findQuery: "",
   findIndex: 0,
   highlight: null as Highlight | null,
-  /** Keys: `tool:<nodeId>|<toolUseId>`, `group:<firstNodeId>|<firstToolUseId>`, `thinking:<nodeId>`, `inherited`, `compact:<nodeId>`. */
+  /** Expansion state, by the keys built in `features/transcript/keys.ts`. */
   expanded: {} as Record<string, boolean>,
 };
 

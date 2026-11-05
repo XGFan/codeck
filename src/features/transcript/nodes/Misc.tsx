@@ -4,6 +4,7 @@ import { cn } from "@/lib/cn";
 import type { Node } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { formatTokens } from "@/lib/format";
+import { compactKey } from "../keys";
 import { clock, prettyJson } from "../util";
 import { Anchor } from "./Anchor";
 
@@ -32,7 +33,7 @@ export function AttachmentLine({ body }: { body: Body<"attachment"> }) {
 
 /** Compact boundary divider; when the summary follows it, "查看摘要" expands it below the line. */
 export function CompactRow({ boundary, summary }: { boundary: Node; summary: Node | null }) {
-  const key = summary ? `compact:${summary.id}` : "";
+  const key = summary ? compactKey(summary.id) : "";
   const open = useUi((s) => (summary ? (s.expanded[key] ?? false) : false));
   const toggle = useUi((s) => s.toggleExpanded);
   const pre = boundary.body.kind === "compactBoundary" ? boundary.body.preTokens : null;
@@ -70,7 +71,7 @@ export function CompactRow({ boundary, summary }: { boundary: Node; summary: Nod
 }
 
 export function CompactSummaryCard({ node, body }: { node: Node; body: Body<"compactSummary"> }) {
-  const key = `compact:${node.id}`;
+  const key = compactKey(node.id);
   const open = useUi((s) => s.expanded[key] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
   return (

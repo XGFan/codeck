@@ -1,4 +1,5 @@
 import type { AssistantBlock, BranchPoint, InheritedRange, Node, SubagentRun, WorkflowRun } from "@/ipc/bindings";
+import { compactKey, foldKey, groupKey, INHERITED_KEY, thinkingKey, toolKey } from "./keys";
 
 /**
  * Presentation-only shaping of a Transcript (§3 "Transformation split"): Rust emits normalized nodes, this
@@ -116,11 +117,7 @@ export interface Grouping {
   compactKeyOf: Map<string, string>;
 }
 
-export const groupKey = (nodeId: string, toolUseId: string) => `group:${nodeId}|${toolUseId}`;
-export const compactKey = (summaryNodeId: string) => `compact:${summaryNodeId}`;
-export const INHERITED_KEY = "inherited";
 export const anchorKey = (nodeId: string, toolUseId?: string | null) => (toolUseId ? `${nodeId}|${toolUseId}` : nodeId);
-const thinkingKey = (nodeId: string) => `thinking:${nodeId}`;
 
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
 
@@ -467,7 +464,7 @@ function markAnswers(rows: Row[]): string | null {
     }
     for (const j of answer) rows[j] = { ...(rows[j] as Extract<Row, { kind: "text" }>), layer: "answer" };
     const procEnd = answer[0] ?? end;
-    const key = lastWork > i ? `fold:${(rows[i] as Extract<Row, { kind: "prompt" }>).node.id}` : undefined;
+    const key = lastWork > i ? foldKey((rows[i] as Extract<Row, { kind: "prompt" }>).node.id) : undefined;
     for (let j = i + 1; j < procEnd; j++) {
       const r = rows[j]!;
       rows[j] = { ...r, ...(r.kind === "text" ? { layer: "process" as const } : {}), ...(key ? { fold: key } : {}) };
@@ -592,7 +589,7 @@ export function locate(
   grouping: Grouping,
   nodeId: string,
   toolUseId?: string | null,
-  opts: { thinking?: boolean; toolKey?: (nodeId: string, toolUseId: string) => string } = {},
+  opts: { thinking?: boolean } = {},
 ): Location | null {
   if (!grouping.index.has(nodeId)) return null;
   const expand: string[] = [];
@@ -611,22 +608,16 @@ export function locate(
   if (toolUseId) {
     const g = grouping.groupOf.get(anchorKey(nodeId, toolUseId));
     if (g) expand.push(g);
-    if (!grouping.cardCalls.has(toolUseId)) expand.push((opts.toolKey ?? defaultToolKey)(nodeId, toolUseId));
+    if (!grouping.cardCalls.has(toolUseId)) expand.push(toolKey(nodeId, toolUseId));
   }
   return { expand };
 }
-
-const defaultToolKey = (nodeId: string, toolUseId: string) => `tool:${nodeId}|${toolUseId}`;
 
 /**
  * Group open state: the user's choice, else open when it holds an expanded call (a lone call row
  * that becomes a group when the next call arrives during live follow keeps the user's expansion visible).
  */
-export function isGroupOpen(
-  row: Extract<Row, { kind: "group" }>,
-  expanded: Record<string, boolean>,
-  toolKey: (nodeId: string, toolUseId: string) => string = defaultToolKey,
-): boolean {
+export function isGroupOpen(row: Extract<Row, { kind: "group" }>, expanded: Record<string, boolean>): boolean {
   return (
     expanded[row.key] ??
     row.items.some((it) => it.type === "call" && expanded[toolKey(it.node.id, it.call.toolUseId)] === true)

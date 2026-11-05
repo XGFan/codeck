@@ -5,7 +5,8 @@ import { Markdown } from "@/lib/markdown";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeCalls, type GroupItem, isGroupOpen, type RoleInfo, type Row, type ToolCallBlock } from "../grouping";
-import { ToolCallView, toolKey } from "../tools";
+import { thinkingKey } from "../keys";
+import { ToolCallView } from "../tools";
 import { clock } from "../util";
 import { Anchor } from "./Anchor";
 import { UnknownJson } from "./Misc";
@@ -96,7 +97,7 @@ function Tool({ node, call }: { node: Node; call: ToolCallBlock }) {
  */
 function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
   const failed = row.failedCount > 0;
-  const open = useUi((s) => isGroupOpen(row, s.expanded, toolKey));
+  const open = useUi((s) => isGroupOpen(row, s.expanded));
   const { text, targets } = useMemo(
     () => describeCalls(row.items.flatMap((it) => (it.type === "call" ? [it.call] : []))),
     [row.items],
@@ -146,7 +147,7 @@ function GroupEntry({ item }: { item: GroupItem }) {
  * tool group's). Blank lines around the text are not shown or counted.
  */
 function Thinking({ nodeId, text }: { nodeId: string; text: string }) {
-  const key = `thinking:${nodeId}`;
+  const key = thinkingKey(nodeId);
   const open = useUi((s) => s.expanded[key] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
   const body = text.trim();

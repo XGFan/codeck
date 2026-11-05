@@ -2,7 +2,8 @@ import { Check, MessageCircleQuestionMark, ScanSearch, Sparkles } from "lucide-r
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
-import { PendingText, toolKey, ToolCallView } from "@/features/transcript/tools";
+import { toolKey } from "@/features/transcript/keys";
+import { PendingText, ToolCallView } from "@/features/transcript/tools";
 import type { ToolCall } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";

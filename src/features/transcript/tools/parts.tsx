@@ -7,7 +7,8 @@ import { cn } from "@/lib/cn";
 import { TokenSpans, useHighlight } from "@/lib/shiki";
 import { useImage } from "@/queries/hooks";
 import { useUi } from "@/state/ui";
-import { formatBytes, toolKey, type OutputState, type ToolCtx } from "./data";
+import { toolKey } from "../keys";
+import { formatBytes, type OutputState, type ToolCtx } from "./data";
 
 /** What a call without a result is doing; a permission card says it waits for approval instead. */
 export const PendingText = createContext("执行中");
@@ -39,7 +40,7 @@ const VERB: Record<string, string> = {
 
 /**
  * A tool call as one quiet line — icon, what it did, on what, and only a failure or what it waits for at the
- * right — that opens its details (output, diff) in a box below. Failed calls are red and open by default.
+ * right — that opens its details (output, diff) in a box below. Failed calls are red.
  */
 export function Shell({
   nodeId,
@@ -50,7 +51,6 @@ export function Shell({
   summary,
   status,
   failed,
-  defaultOpen = false,
   children,
 }: {
   nodeId: string;
@@ -63,11 +63,10 @@ export function Shell({
   /** Replaces the default status (nothing when done, 失败, or what a call without a result does). */
   status?: ReactNode;
   failed: boolean;
-  defaultOpen?: boolean;
   children: ReactNode;
 }) {
   const key = toolKey(nodeId, call.toolUseId);
-  const open = useUi((s) => s.expanded[key] ?? defaultOpen);
+  const open = useUi((s) => s.expanded[key] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
   const pendingText = useContext(PendingText);
   const result = call.result;
@@ -86,7 +85,7 @@ export function Shell({
         type="button"
         aria-expanded={open}
         // A link in the summary opens itself (the opener plugin takes `_blank` links) instead of toggling.
-        onClick={(e) => (e.target as Element).closest("a[href]") || toggle(key, defaultOpen)}
+        onClick={(e) => (e.target as Element).closest("a[href]") || toggle(key)}
         className={cn(
           "group/tool flex min-h-7 w-full items-center gap-2 rounded-md text-left text-[13px]",
           failed ? "text-error" : "text-secondary hover:text-text",

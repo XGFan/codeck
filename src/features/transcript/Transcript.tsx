@@ -8,7 +8,8 @@ import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { CONV_WIDTH, MAIN_SCOPE, useUi } from "@/state/ui";
 import { foldTurns } from "./fold";
-import { anchorKey, buildRows, type GroupingInput, INHERITED_KEY, locate, rowIndexOf } from "./grouping";
+import { anchorKey, buildRows, type GroupingInput, locate, rowIndexOf } from "./grouping";
+import { INHERITED_KEY, isFoldKey } from "./keys";
 import { isContinuation, RowView } from "./nodes";
 import {
   clearScroll,
@@ -19,7 +20,6 @@ import {
   usePendingScroll,
 } from "./nodes/scroll";
 import { resetReading, setCurrentTurn, setTurns, useReading } from "./reading";
-import { toolKey } from "./tools";
 import { commandLine } from "./util";
 import { errorText } from "@/lib/errors";
 
@@ -58,7 +58,7 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 /** The fold keys' state in `expanded`, as a string (stable while only other keys change). */
 const foldState = (expanded: Record<string, boolean>) =>
   Object.keys(expanded)
-    .filter((k) => k.startsWith("fold:"))
+    .filter(isFoldKey)
     .map((k) => `${k}=${expanded[k] ? 1 : 0}`)
     .join(",");
 
@@ -312,7 +312,7 @@ export function TranscriptList({
   useEffect(() => {
     if (!pending || !ready) return;
     const full = inheritedExpanded ? grouping : buildRows({ ...input, inheritedExpanded: true });
-    const loc = locate(full, pending.nodeId, pending.toolUseId, { thinking: pending.thinking, toolKey });
+    const loc = locate(full, pending.nodeId, pending.toolUseId, { thinking: pending.thinking });
     if (!loc) {
       // The node may arrive with the next data update (live append, refetch): keep the request for a while.
       const m = miss.current;

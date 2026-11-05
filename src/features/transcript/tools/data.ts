@@ -2,8 +2,7 @@ import { create } from "zustand";
 import type { ToolCall, TranscriptScope } from "@/ipc/bindings";
 import { useToolDetail } from "@/queries/hooks";
 import { MAIN_SCOPE, useUi } from "@/state/ui";
-
-export const toolKey = (nodeId: string, toolUseId: string) => `tool:${nodeId}|${toolUseId}`;
+import { toolKey } from "../keys";
 
 /** Where a call lives: the open session's main conversation unless given (Subagent panels pass theirs). */
 export interface ToolCtx {

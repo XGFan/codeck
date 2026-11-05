@@ -3,7 +3,7 @@ import { BashView, CompactView, EditView, GenericView, ReadView, TaskView, Write
 import { useToolCtx } from "./data";
 
 export { ImageRefs, ImageThumb, PendingText } from "./parts";
-export { requestFullOutput, toolKey } from "./data";
+export { requestFullOutput } from "./data";
 
 const SUMMARY_KEYS = ["command", "file_path", "path", "pattern", "url", "query", "description", "prompt"];
 

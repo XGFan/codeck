@@ -2,7 +2,7 @@ import { format } from "date-fns";
 import { GitFork } from "lucide-react";
 import type { InheritedRange } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
-import { INHERITED_KEY } from "../grouping";
+import { INHERITED_KEY } from "../keys";
 
 /** "Fork 自 <Origin Session>（…）" with the expand/collapse toggle for the inherited prefix. */
 export function InheritedBanner({
