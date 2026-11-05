@@ -25,4 +25,4 @@
 
 ## 验证
 
-每次改动：`cargo test`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt`。改到 `session.rs`、`recognize.rs`、`pty.rs`、`transcript.rs`、`hook.rs`、`history.rs`，或升级 Claude Code 后，再跑一次端到端（见 [README](../README.md#测试)；`mock_` 开头的用例用本地 mock 模型，时序确定、不耗额度）。Claude Code 升级后先重跑 probes.md 的 hooks 一节（插件依赖的 hook 行为）。Claude Code 升级导致识别失败时：用 `ccrpc debug screen` 拍下新布局存进 `tests/fixtures/screens/`，改识别器，更新 probes.md 里的版本与布局。
+每次改动：`cargo test`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt`。改到 `session/`、`recognize.rs`、`pty.rs`、`transcript.rs`、`hook.rs`、`history.rs`，或升级 Claude Code 后，再跑一次端到端（见 [README](../README.md#测试)；`mock_` 开头的用例用本地 mock 模型，时序确定、不耗额度）。Claude Code 升级后先重跑 probes.md 的 hooks 一节（插件依赖的 hook 行为）。Claude Code 升级导致识别失败时：用 `ccrpc debug screen` 拍下新布局存进 `tests/fixtures/screens/`，改识别器，更新 probes.md 里的版本与布局。
