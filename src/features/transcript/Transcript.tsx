@@ -3,7 +3,7 @@ import { ArrowDown } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
 import { OverlayScrollbar } from "@/components/OverlayScrollbar";
-import { ConnectTail, useUnindexed } from "@/features/connect";
+import { ConnectTail, RewoundDivider, useRewindView, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { MAIN_SCOPE, useUi } from "@/state/ui";
@@ -129,6 +129,8 @@ export interface TranscriptListProps {
   testId?: string;
 }
 
+const NO_PROMPTS: ReadonlySet<string> = new Set();
+
 /** Virtualized row list shared by the main transcript and the Subagent panel. */
 export function TranscriptList({
   transcript,
@@ -144,6 +146,8 @@ export function TranscriptList({
   const setPanelStack = useUi((s) => s.setPanelStack);
   const { input, grouping, inheritedExpanded } = useRows(transcript, agent);
   const rows = grouping.rows;
+  const rewind = useRewindView(scope.kind === "main" ? transcript : null, rows);
+  const rewindable = rewind?.rewindable ?? NO_PROMPTS;
 
   const ctx = useMemo<TranscriptCtx>(() => {
     const runs = new Map<string, SubagentRun>();
@@ -155,6 +159,7 @@ export function TranscriptList({
       runs,
       toolNode: grouping.toolNode,
       activeAgentId: panelStack[panelStack.length - 1] ?? null,
+      rewindable,
       openAgent: (agentId) => {
         const stack = useUi.getState().panelStack;
         if (scope.kind === "main") setPanelStack([agentId]);
@@ -164,7 +169,7 @@ export function TranscriptList({
         }
       },
     };
-  }, [sessionId, scope, extraRuns, transcript.subagents, grouping.toolNode, panelStack, setPanelStack]);
+  }, [sessionId, scope, extraRuns, transcript.subagents, grouping.toolNode, panelStack, setPanelStack, rewindable]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -213,19 +218,33 @@ export function TranscriptList({
           <div className="relative mx-auto max-w-(--conv-w)" style={{ height: total + 40 }}>
             {virtualizer.getVirtualItems().map((v) => {
               const row = rows[v.index]!;
+              // Rewound (conversation restored, no prompt since): dimmed under a divider, until the next prompt.
+              const dimFrom = rewind?.dimFrom ?? null;
+              const rewound = dimFrom != null && v.index >= dimFrom;
               return (
                 <div
                   key={v.key}
                   ref={virtualizer.measureElement}
                   data-index={v.index}
                   data-row={row.kind}
+                  data-rewound={rewound || undefined}
                   className={cn(
                     "absolute top-0 left-0 w-full",
                     v.index === 0 ? "" : isContinuation(row) ? "pt-2" : "pt-[18px]",
+                    rewound && v.index > dimFrom && "opacity-[.38]",
                   )}
                   style={{ transform: `translateY(${v.start + 20}px)` }}
                 >
-                  <RowView row={row} />
+                  {v.index === dimFrom ? (
+                    <>
+                      <RewoundDivider label={rewind!.label} />
+                      <div className="opacity-[.38]">
+                        <RowView row={row} />
+                      </div>
+                    </>
+                  ) : (
+                    <RowView row={row} />
+                  )}
                 </div>
               );
             })}

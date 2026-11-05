@@ -125,6 +125,33 @@ describe("commands", () => {
   });
 });
 
+describe("rewind", () => {
+  it("answers the confirm page once while an answer is under way (Esc, 「中止」 and the card's buttons)", async () => {
+    h.api.ccrpcConnect = async () => "c1";
+    await state().connect("H1", SID);
+    line("c1", ready("H1", SID));
+    const r = {
+      type: "rewind",
+      request_id: "rewind:1",
+      uuid: "u1",
+      text: "t",
+      code: null,
+      warning: null,
+      options: [{ option: "conversation", label: "Restore conversation" }],
+    } as const;
+    await Promise.all([
+      state().answerRewind("c1", { ...r, options: [...r.options] }, null),
+      state().answerRewind("c1", { ...r, options: [...r.options] }, null),
+      state().answerRewind("c1", { ...r, options: [...r.options] }, "conversation"),
+    ]);
+    expect(sent.filter((x) => x.msg.type === "answer_rewind").map((x) => x.msg.cancel)).toEqual([true]);
+    expect(state().errors[SID]).toBeUndefined();
+    // Answered: another answer goes out again.
+    await state().answerRewind("c1", { ...r, options: [...r.options] }, null);
+    expect(sent.filter((x) => x.msg.type === "answer_rewind")).toHaveLength(2);
+  });
+});
+
 describe("Resume", () => {
   beforeEach(() => {
     h.api.ccrpcResume = async () => "r1";

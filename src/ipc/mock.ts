@@ -68,6 +68,8 @@ declare global {
       emit(eventName: string, payload: unknown): void;
       setLive(sessionId: string, state: LiveState | null): void;
       appendNode(sessionId: string, node: Node): void;
+      /** A prompt sent after a rewind is indexed: the Main Line leaves the nodes from `atNodeId` on, ends with `node`. */
+      forkMain(sessionId: string, atNodeId: string, node: Node): void;
     };
   }
 }
@@ -136,6 +138,8 @@ function docsOf(sessionId: string, nodes: Node[], agentId: string | null, onMain
 // ---- mutable state ------------------------------------------------------------------------------
 
 const appended = new Map<string, Node[]>();
+/** Main Lines forked by `forkMain`: from the node `at` on, `nodes` instead. */
+const forks = new Map<string, { at: string; nodes: Node[] }>();
 const revisions = new Map<string, number>();
 const liveOverrides = new Map<string, LiveState | null>();
 let currentIndexStatus: IndexStatus = { ...indexStatusSeed };
@@ -163,7 +167,12 @@ const findData = (sessionId: string) => {
   return d;
 };
 
-const mainNodes = (sessionId: string): Node[] => [...findData(sessionId).nodes, ...(appended.get(sessionId) ?? [])];
+function mainNodes(sessionId: string): Node[] {
+  const nodes = [...findData(sessionId).nodes, ...(appended.get(sessionId) ?? [])];
+  const fork = forks.get(sessionId);
+  const at = fork ? nodes.findIndex((n) => n.id === fork.at) : -1;
+  return at >= 0 ? [...nodes.slice(0, at), ...fork!.nodes] : nodes;
+}
 
 function summaryOf(sessionId: string): SessionSummary {
   const d = findData(sessionId);
@@ -639,6 +648,11 @@ export function createMockApi(): Api {
     appendNode(sessionId, node) {
       findData(sessionId);
       appended.set(sessionId, [...(appended.get(sessionId) ?? []), node]);
+      revisions.set(sessionId, (revisions.get(sessionId) ?? 0) + 1);
+    },
+    forkMain(sessionId, atNodeId, node) {
+      findData(sessionId);
+      forks.set(sessionId, { at: atNodeId, nodes: [node] });
       revisions.set(sessionId, (revisions.get(sessionId) ?? 0) + 1);
     },
   };

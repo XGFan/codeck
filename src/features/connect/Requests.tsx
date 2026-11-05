@@ -1,5 +1,5 @@
-import { MessageCircleQuestionMark, ScanSearch, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { MessageCircleQuestionMark, RotateCcw, ScanSearch, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveDot } from "@/components/LiveDot";
 import { Button } from "@/components/ui/button";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
@@ -10,9 +10,17 @@ import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
 import { permissionLabel } from "./answers";
 import type { ConnState, Request } from "./conn";
-import type { ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
+import type {
+  ChoiceEvent,
+  LayoutSource,
+  PermissionRequestEvent,
+  QuestionEvent,
+  RewindOption,
+  RewindRequest,
+} from "./protocol";
 import { NoticeCard } from "./Notice";
 import { QuestionForm } from "./QuestionForm";
+import { codeLine, REWIND_LABELS, REWIND_ORDER, REWIND_WARNING } from "./rewind";
 import { useConnect } from "./store";
 import { useAnswer, useNumberKeys } from "./useAnswer";
 
@@ -20,6 +28,16 @@ import { useAnswer, useNumberKeys } from "./useAnswer";
 export function Requests({ c }: { c: ConnState }) {
   const reqs = [...c.requests].sort((a, b) => Number(isSub(a)) - Number(isSub(b)));
   if (reqs.length === 0) {
+    // ccrpc is finding the prompt in the terminal's Rewind picker (not a dialog for the analyzer).
+    if (c.rewinding)
+      return (
+        <NoticeCard
+          testId="rewinding"
+          tone="wait"
+          icon={<RotateCcw size={18} strokeWidth={1.7} />}
+          title="正在准备回退…"
+        />
+      );
     // Waiting with nothing to show yet: the analyzer may be looking at the screen.
     if (c.state === "waiting" && c.waiting?.kind !== "question")
       return (
@@ -56,6 +74,8 @@ function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
       return r.agent_id ? <QuestionCard r={r} c={c} /> : <QuestionHint r={r} />;
     case "choice":
       return <ChoiceCard r={r} c={c} focus={focus} />;
+    case "rewind":
+      return <RewindCard r={r} c={c} focus={focus} />;
     default:
       return <ScreenCard r={r} c={c} />;
   }
@@ -338,5 +358,94 @@ function ChoiceCard({ r, c, focus }: { r: ChoiceEvent; c: ConnState; focus: bool
       </div>
       {error && <p className="mt-1.5 text-[12px] text-error">{error}</p>}
     </Shell>
+  );
+}
+
+/** Focus is nowhere in particular (on the page, or on the panel), so it may be moved. */
+const focusFree = () => {
+  const a = document.activeElement;
+  return !a || a === document.body || !!a.closest("[data-connect-panel]");
+};
+
+/** Rewind cards (`conn|request_id`) already shown once: focus moves to a card only when it first appears. */
+const shownRewinds = new Set<string>();
+
+/**
+ * The rewind's confirm page (`rewind`): the prompt, what happens to the code, the restores it offers (number keys as
+ * on a choice card) and 「取消」 (Esc, `answer_rewind` cancel).
+ */
+function RewindCard({ r, c, focus }: { r: RewindRequest; c: ConnState; focus: boolean }) {
+  const answerRewind = useConnect((s) => s.answerRewind);
+  const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const options = REWIND_ORDER.filter((o) => r.options.some((x) => x.option === o));
+  const answer = async (option: RewindOption | null) => {
+    setBusy(true);
+    await answerRewind(c.conn, r, option);
+    setBusy(false);
+    // The prompt is back in the input box: ready to edit and send.
+    if (option && option !== "code" && focusFree())
+      document.querySelector<HTMLElement>("[data-testid=connect-input]")?.focus();
+  };
+  // Just asked for (focus still on the 「回退」 clicked, or nowhere): Esc and the number keys reach the card. The card
+  // itself takes focus, never one of its options; not when it shows again (back on the Session), nor while typing.
+  const conn = c.conn;
+  const id = r.request_id;
+  useEffect(() => {
+    const key = `${conn}|${id}`;
+    if (shownRewinds.has(key)) return;
+    shownRewinds.add(key);
+    const a = document.activeElement;
+    if (!a || a === document.body || a.closest("[data-testid=rewind-button]")) box.current?.focus();
+  }, [conn, id]);
+  useNumberKeys(
+    focus && !busy,
+    options.map((o) => () => void answer(o)),
+  );
+  return (
+    <div ref={box} tabIndex={-1} className="outline-none" data-testid="rewind-card-box">
+      <Shell title="回退到这条提示词之前" testid="rewind-card">
+        <div className="flex flex-col gap-1.5 text-[13px]">
+          <p
+            data-testid="rewind-quote"
+            className="m-0 line-clamp-3 border-l-2 border-border pl-2.5 break-words whitespace-pre-wrap text-text/80"
+          >
+            {r.text}
+          </p>
+          <p data-testid="rewind-code-line" className="m-0">
+            {codeLine(r.code)}
+          </p>
+          {r.warning && (
+            <p data-testid="rewind-warning" className="m-0 text-[12.5px] text-tag-text">
+              {REWIND_WARNING}
+            </p>
+          )}
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {options.map((o, i) => (
+            <Button
+              key={o}
+              size="sm"
+              variant={i === 0 ? "default" : "outline"}
+              disabled={busy}
+              onClick={() => void answer(o)}
+              data-testid={`rewind-${o}`}
+              data-card-answer
+            >
+              {i + 1}. {REWIND_LABELS[o]}
+            </Button>
+          ))}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void answer(null)}
+            data-testid="rewind-cancel"
+          >
+            取消（Esc）
+          </Button>
+        </div>
+      </Shell>
+    </div>
   );
 }

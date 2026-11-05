@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { apply, initial, type ConnState } from "./conn";
-import type { InMsg, PermissionRequestEvent, TurnEndEvent } from "./protocol";
+import { apply, initial, rewindAnswered, rewindShown, type ConnState } from "./conn";
+import type { InMsg, PermissionRequestEvent, RewindRequest, TurnEndEvent } from "./protocol";
 
 const fold = (msgs: InMsg[], s: ConnState = initial("c1", "h1")) => msgs.reduce(apply, s);
 const perm = (id: string, agent: string | null = null): PermissionRequestEvent => ({
@@ -126,5 +126,73 @@ describe("conn reducer", () => {
     n = apply(n, { type: "session_changed", session_id: "first", previous: null });
     expect(n.sessionId).toBe("first");
     expect(n.requests.map((r) => r.request_id)).toEqual(["t1"]);
+  });
+
+  it("keeps the rewind card while the confirm page waits, drops it when the waiting ends or another screen comes", () => {
+    const waiting: InMsg = { type: "state", state: "waiting", waiting: { kind: "dialog", waiting_for: "dialog open" } };
+    const rw: RewindRequest = {
+      type: "rewind",
+      request_id: "rewind:1",
+      uuid: "u1",
+      text: "改一下 README",
+      code: "The code will be unchanged.",
+      warning: null,
+      options: [{ option: "conversation", label: "Restore conversation" }],
+    };
+    const shown = rewindShown({ ...fold([waiting]), rewinding: { uuid: "u1", waited: true } }, rw);
+    expect(shown.requests).toEqual([rw]);
+    expect(shown.rewinding).toBeNull();
+    expect(apply(shown, waiting).requests).toEqual([rw]);
+    // Answered or cancelled in the terminal: the Session leaves the waiting, or the picker shows as a dialog.
+    expect(apply(shown, { type: "state", state: "idle" }).requests).toEqual([]);
+    expect(
+      fold([{ type: "dialog", waiting_for: "dialog open", lines: ["Rewind"] }], shown).requests.map((r) => r.type),
+    ).toEqual(["dialog"]);
+    expect(apply(shown, perm("t1")).requests.map((r) => r.request_id)).toEqual(["t1"]);
+
+    // The answer arrives after the Session waited and stopped again (the page was left in the terminal): no card.
+    const asking = { ...fold([]), rewinding: { uuid: "u1", waited: false } };
+    const left = fold([waiting, { type: "state", state: "idle" }], asking);
+    expect(left.rewinding).toEqual({ uuid: "u1", waited: true });
+    expect(rewindShown(left, rw)).toMatchObject({ requests: [], rewinding: null });
+    // Not waited yet (the answer came before the state): the card, the waiting follows.
+    expect(rewindShown(asking, rw).requests).toEqual([rw]);
+  });
+
+  it("marks the rewound prompt until the Session changes or ends; restoring only the code is a notice", () => {
+    const rw: RewindRequest = {
+      type: "rewind",
+      request_id: "rewind:2",
+      uuid: "u2",
+      text: "t",
+      code: "The code will be restored -1 in w.txt.",
+      warning: "w",
+      options: [],
+    };
+    const s = rewindShown(fold([]), rw);
+    const both = rewindAnswered(s, rw, "both", false);
+    expect(both.requests).toEqual([]);
+    expect(both.rewound).toEqual({ uuid: "u2", withCode: true, keptDraft: false });
+    expect(rewindAnswered(s, rw, "conversation", true).rewound).toEqual({
+      uuid: "u2",
+      withCode: false,
+      keptDraft: true,
+    });
+    // As ccrpc keeps it: through turns (a background task's does not fork; a prompt's fork shows in the transcript),
+    // until the Session changes or ends.
+    const turn: InMsg[] = [{ type: "state", state: "busy" }, { type: "state", state: "idle" }, end];
+    expect(fold(turn, both).rewound).toEqual(both.rewound);
+    expect(apply(both, { type: "session_changed", session_id: "s2", previous: "s1" }).rewound).toBeNull();
+    expect(apply(both, { type: "session_exit" }).rewound).toBeNull();
+
+    const code = rewindAnswered(s, rw, "code", false);
+    expect(code.rewound).toBeNull();
+    expect(code.notices.map((n) => n.text)).toEqual(["已恢复代码"]);
+  });
+
+  it("leaves picking a prompt to rewind to once the Session is not idle", () => {
+    const s = { ...fold([{ type: "state", state: "idle" }]), picking: true };
+    expect(apply(s, { type: "state", state: "idle" }).picking).toBe(true);
+    expect(apply(s, { type: "state", state: "busy" }).picking).toBe(false);
   });
 });

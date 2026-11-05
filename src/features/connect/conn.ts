@@ -9,6 +9,8 @@ import type {
   PermissionRequestEvent,
   ProgressEvent,
   QuestionEvent,
+  RewindOption,
+  RewindRequest,
   StateName,
   Task,
   TurnEndEvent,
@@ -21,8 +23,18 @@ export type Request =
   | PermissionRequestEvent
   | QuestionEvent
   | ChoiceEvent
+  | RewindRequest
   | (DialogEvent & { request_id: string })
   | (UnrecognizedEvent & { request_id: string });
+
+/** The conversation went back to before a prompt: shown in the transcript until the next prompt. */
+export interface Rewound {
+  uuid: string;
+  /** The code was restored too. */
+  withCode: boolean;
+  /** The input box had a draft, so the prompt was not put into it. */
+  keptDraft: boolean;
+}
 
 export interface ConnState {
   conn: string;
@@ -55,6 +67,15 @@ export interface ConnState {
   resumeOf: string | null;
   /** The model drafted product feedback: Claude Code's card above the input box (sent only from the terminal). */
   feedbackDraft: FeedbackDraft | null;
+  /** 「选回退点」 (`/rewind` typed): every prompt that can be rewound to shows its 「回退」. */
+  picking: boolean;
+  /** A `rewind` command under way: the prompt it opens the confirm page for, and whether the Session waited since. */
+  rewinding: { uuid: string; waited: boolean } | null;
+  /**
+   * The conversation went back to before this prompt, as ccrpc keeps it: until the transcript shows the new Branch
+   * (checked where it is shown), the Session changes or the connection ends.
+   */
+  rewound: Rewound | null;
 }
 
 export function initial(conn: string, holderId: string | null, resumeOf: string | null = null): ConnState {
@@ -82,6 +103,9 @@ export function initial(conn: string, holderId: string | null, resumeOf: string 
     notices: [],
     resumeOf,
     feedbackDraft: null,
+    picking: false,
+    rewinding: null,
+    rewound: null,
   };
 }
 
@@ -96,13 +120,33 @@ function dropMainRequests(s: ConnState): Request[] {
 }
 
 function upsertRequest(s: ConnState, r: Request): ConnState {
-  const rest = s.requests.filter((x) => x.request_id !== r.request_id);
+  // A rewind's confirm page is off the screen once anything else waits.
+  const rest = s.requests.filter((x) => x.request_id !== r.request_id && x.type !== "rewind");
   // A dialog / unrecognized screen replaces any other screen-only card.
   const others =
-    r.type === "dialog" || r.type === "unrecognized" || r.type === "choice"
+    r.type === "dialog" || r.type === "unrecognized" || r.type === "choice" || r.type === "rewind"
       ? rest.filter((x) => x.type === "permission_request" || x.type === "question")
       : rest;
   return { ...s, requests: [...others, r] };
+}
+
+/**
+ * `rewind` stopped at the confirm page: its card. When the Session already stopped waiting (the page was answered or
+ * left in the terminal before the answer arrived), nothing would remove it: none.
+ */
+export function rewindShown(s: ConnState, r: RewindRequest): ConnState {
+  if (s.rewinding?.waited && s.state !== "waiting") return { ...s, rewinding: null };
+  return { ...upsertRequest(s, r), rewinding: null };
+}
+
+/**
+ * The rewind's confirm page was answered with `option`: the card goes; with the conversation restored the prompt is
+ * marked (the transcript changes only with the next prompt), with only the code restored a notice says so.
+ */
+export function rewindAnswered(s: ConnState, r: RewindRequest, option: RewindOption, keptDraft: boolean): ConnState {
+  const t = { ...s, requests: s.requests.filter((x) => x.request_id !== r.request_id) };
+  if (option === "code") return notice(t, "已恢复代码");
+  return { ...t, rewound: { uuid: r.uuid, withCode: option === "both", keptDraft } };
 }
 
 export function apply(s: ConnState, m: InMsg): ConnState {
@@ -135,6 +179,9 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         waiting,
         requests,
         progress: m.state === "busy" ? s.progress : null,
+        // Prompts are picked while idle.
+        picking: s.picking && m.state === "idle",
+        rewinding: s.rewinding && m.state === "waiting" ? { ...s.rewinding, waited: true } : s.rewinding,
       };
     }
     case "block":
@@ -180,7 +227,17 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         effort: s.effort,
       };
     case "session_exit":
-      return { ...s, sessionExited: true, state: "exited", requests: [], progress: null, feedbackDraft: null };
+      return {
+        ...s,
+        sessionExited: true,
+        state: "exited",
+        requests: [],
+        progress: null,
+        feedbackDraft: null,
+        picking: false,
+        rewinding: null,
+        rewound: null,
+      };
     default:
       // Responses, and content events (block text, branch, workflow): not state.
       return s;

@@ -15,6 +15,7 @@ import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } 
 
 export { ConnectButton, PaneButton, STATE_WORD, useConnectDebugInfo } from "./Header";
 export { QuestionForm } from "./QuestionForm";
+export { RewindButton, RewoundDivider, useRewindView, type RewindView } from "./RewindViews";
 export { CcrpcSettings } from "./Settings";
 export { connFor, lsEntryFor, useConnect } from "./store";
 
@@ -184,6 +185,7 @@ export function ConnectPanel() {
 
 function Panel({ c }: { c: ConnState }) {
   const command = useConnect((s) => s.command);
+  const answerRewind = useConnect((s) => s.answerRewind);
   const reconnect = useConnect((s) => s.reconnect);
   const dismiss = useConnect((s) => s.dismissNotice);
   const setError = useConnect((s) => s.setError);
@@ -211,6 +213,15 @@ function Panel({ c }: { c: ConnState }) {
       e.preventDefault();
       e.stopPropagation();
       el.blur();
+      return;
+    }
+    // While ccrpc is in the terminal's Rewind picker nothing interrupts it; on the rewind's confirm page Esc cancels
+    // it (an abort would only step back to the picker).
+    const rw = live ? c.requests.find((r) => r.type === "rewind") : undefined;
+    if (live && (c.rewinding || rw)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (rw && !c.rewinding) void answerRewind(c.conn, rw, null);
       return;
     }
     if (!live || (c.state !== "busy" && c.state !== "waiting")) return;

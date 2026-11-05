@@ -1,5 +1,6 @@
 import { ArrowUp, ChevronDown, ChevronRight, Clock } from "lucide-react";
 import { CopyButton } from "@/components/ui/copy-button";
+import { RewindButton } from "@/features/connect";
 import type { BranchPoint, Node } from "@/ipc/bindings";
 import { stripAnsi } from "@/lib/ansi";
 import { Markdown } from "@/lib/markdown";
@@ -16,6 +17,7 @@ type UserBody = Extract<Node["body"], { kind: "userPrompt" }>;
 
 /** Human / command prompt (turn start), with the branch switcher when it is a branch head. */
 export function UserPromptView({ node, body, branch }: { node: Node; body: UserBody; branch?: BranchPoint | null }) {
+  const { rewindable } = useTranscriptCtx();
   const o = body.origin;
   if (o.kind === "teammate") return <TeammateCard node={node} body={body} />;
   if (o.kind === "coordinator") return <CoordinatorCard node={node} body={body} />;
@@ -52,8 +54,9 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         )}
       </div>
       {body.images.length > 0 && <PromptImages node={node} body={body} />}
-      {/* Under the bubble, as in Codex: time, copy on hover, the branch switcher at a branch head. */}
+      {/* Under the bubble, as in Codex: time, rewind and copy on hover, the branch switcher at a branch head. */}
       <div data-testid="prompt-meta" className="flex items-center gap-1.5 text-[11.5px] text-secondary">
+        {rewindable.has(node.id) && <RewindButton nodeId={node.id} />}
         <CopyButton text={o.kind === "command" ? commandLine(o.name, o.args) : body.text} />
         {branch && <BranchSwitcher point={branch} />}
         <span>{clock(node.timestampMs)}</span>

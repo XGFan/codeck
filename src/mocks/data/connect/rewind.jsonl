@@ -1,0 +1,36 @@
+{"t": 1793700003000, "dir": "meta", "ls": {"holder_id": "mrewind000001", "session_id": "91d5be38-0004-4000-8000-000000000004", "title": "rewind", "cwd": "/Users/dev/Developer/lumen-api", "status": "idle"}, "on_request": true}
+{"t": 1793700003010, "dir": "recv", "msg": {"type": "ready", "protocol": 2, "holder_id": "mrewind000001", "session_id": "91d5be38-0004-4000-8000-000000000004", "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "idle", "size": [160, 48], "taken_over": false, "co_display": true, "mode": "manual", "model": "claude-sonnet-5-5", "context_tokens": 21000, "warnings": []}}
+{"t": 1793700003020, "dir": "send", "msg": {"id": "r1", "type": "rewind", "uuid": "91d5-u1"}}
+{"t": 1793700003030, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
+{"t": 1793700003040, "dir": "recv", "msg": {"type": "response", "id": "r1", "command": "rewind", "success": true, "data": {"type": "rewind", "request_id": "rewind:1", "uuid": "91d5-u1", "text": "session.rs 第 44 行看起来没问题？", "code": "The code will be restored -12 in src/session.rs.", "warning": "Restored files go back whole, losing later changes by anyone. Bash changes to other files are not undone.", "options": [{"option": "both", "label": "Restore code and conversation"}, {"option": "conversation", "label": "Restore conversation"}, {"option": "code", "label": "Restore code"}]}}}
+{"t": 1793700003050, "dir": "send", "msg": {"id": "x1", "type": "answer_rewind", "request_id": "rewind:1", "cancel": true}}
+{"t": 1793700003060, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700003070, "dir": "recv", "msg": {"type": "response", "id": "x1", "command": "answer_rewind", "success": true, "data": {"state": "idle"}}}
+{"t": 1793700003080, "dir": "send", "msg": {"id": "r2", "type": "rewind", "uuid": "91d5-u1"}}
+{"t": 1793700003090, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
+{"t": 1793700003100, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700003110, "dir": "recv", "msg": {"type": "response", "id": "r2", "command": "rewind", "success": false, "error": {"code": "not_in_picker", "message": "终端的回退列表里没有这条提示词"}}}
+{"t": 1793700003120, "dir": "send", "msg": {"id": "r3", "type": "rewind", "uuid": "91d5-u1"}}
+{"t": 1793700003130, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
+{"t": 1793700003140, "dir": "recv", "msg": {"type": "response", "id": "r3", "command": "rewind", "success": true, "data": {"type": "rewind", "request_id": "rewind:2", "uuid": "91d5-u1", "text": "session.rs 第 44 行看起来没问题？", "code": "The code will be restored -12 in src/session.rs.", "warning": "Restored files go back whole, losing later changes by anyone. Bash changes to other files are not undone.", "options": [{"option": "both", "label": "Restore code and conversation"}, {"option": "conversation", "label": "Restore conversation"}, {"option": "code", "label": "Restore code"}]}}}
+{"t": 1793700003150, "dir": "send", "msg": {"id": "x3", "type": "answer_rewind", "request_id": "rewind:2", "option": "both"}}
+{"t": 1793700003160, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700003170, "dir": "recv", "msg": {"type": "response", "id": "x3", "command": "answer_rewind", "success": true, "data": {"state": "idle", "text": "session.rs 第 44 行看起来没问题？"}}}
+{"t": 1793700003180, "dir": "send", "msg": {"id": "p4", "type": "prompt", "text": "换个思路，看看 spawn 出去的任务"}}
+{"t": 1793700003190, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700003200, "dir": "recv", "msg": {"type": "block", "kind": "user", "uuid": "91d5-u2", "index": 0, "text": "换个思路，看看 spawn 出去的任务"}}
+{"t": 1793700003210, "dir": "recv", "msg": {"type": "response", "id": "p4", "command": "prompt", "success": true, "data": {"uuid": "91d5-u2", "prompt_id": "P4"}}}
+{"t": 1793700003220, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700003230, "dir": "recv", "msg": {"type": "turn_end", "prompt_id": "P4", "trigger": "prompt", "last_text": "好的。", "error": null, "aborted": false, "background_tasks": [], "duration_ms": 3100, "usage": {"input_tokens": 900, "output_tokens": 120, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}, "api_cost": 0.004}}
+{"t": 1793700003240, "dir": "send", "msg": {"id": "r5", "type": "rewind", "uuid": "91d5-u2"}}
+{"t": 1793700003250, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
+{"t": 1793700003260, "dir": "recv", "msg": {"type": "response", "id": "r5", "command": "rewind", "success": true, "data": {"type": "rewind", "request_id": "rewind:3", "uuid": "91d5-u2", "text": "换个思路，看看 spawn 出去的任务", "code": "The code will be restored -12 in src/session.rs.", "warning": "Restored files go back whole, losing later changes by anyone. Bash changes to other files are not undone.", "options": [{"option": "both", "label": "Restore code and conversation"}, {"option": "conversation", "label": "Restore conversation"}, {"option": "code", "label": "Restore code"}]}}}
+{"t": 1793700003270, "dir": "send", "msg": {"id": "x5", "type": "answer_rewind", "request_id": "rewind:3", "option": "code"}}
+{"t": 1793700003280, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700003290, "dir": "recv", "msg": {"type": "response", "id": "x5", "command": "answer_rewind", "success": true, "data": {"state": "idle", "text": null}}}
+{"t": 1793700003300, "dir": "send", "msg": {"id": "r6", "type": "rewind", "uuid": "91d5-u0"}}
+{"t": 1793700003310, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
+{"t": 1793700003320, "dir": "recv", "msg": {"type": "response", "id": "r6", "command": "rewind", "success": true, "data": {"type": "rewind", "request_id": "rewind:4", "uuid": "91d5-u0", "text": "线上 Redis 连接数持续增长，帮我排查连接池泄漏。", "code": "The code will be unchanged.", "warning": null, "options": [{"option": "conversation", "label": "Restore conversation"}]}}}
+{"t": 1793700003330, "dir": "send", "msg": {"id": "x6", "type": "answer_rewind", "request_id": "rewind:4", "option": "conversation"}}
+{"t": 1793700003340, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700003350, "dir": "recv", "msg": {"type": "response", "id": "x6", "command": "answer_rewind", "success": true, "data": {"state": "idle", "text": "线上 Redis 连接数持续增长，帮我排查连接池泄漏。"}}}

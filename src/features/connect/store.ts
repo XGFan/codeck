@@ -3,11 +3,11 @@ import { api } from "@/ipc";
 import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { createCcrpcClient } from "./client";
-import { apply, initial, type ConnState } from "./conn";
+import { apply, initial, rewindAnswered, rewindShown, type ConnState } from "./conn";
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
 import { createLsWatch } from "./lsWatch";
 import { resumeFailure } from "./resume";
-import type { InMsg, LsEntry, ResponseMsg, Task } from "./protocol";
+import type { InMsg, LsEntry, ResponseMsg, RewindOption, RewindRequest, Task } from "./protocol";
 import { errorText } from "@/lib/errors";
 
 interface ConnectStore {
@@ -61,6 +61,19 @@ interface ConnectStore {
   reconnect(conn: string): Promise<void>;
   refreshTasks(conn: string): Promise<void>;
   dropRequest(conn: string, requestId: string): void;
+  /** 「回退」 on a prompt: `rewind` to its confirm page, shown as a card; a failure is shown on the Session. */
+  rewind(conn: string, uuid: string): Promise<void>;
+  /**
+   * Answers the rewind's confirm page (`null`: cancel). Restoring the conversation puts the prompt into an empty
+   * input box (a draft stays) and marks it in the transcript. A failure is shown on the Session.
+   */
+  answerRewind(conn: string, r: RewindRequest, option: RewindOption | null): Promise<void>;
+  /** Enters or leaves 「选回退点」 (`/rewind`). */
+  setPicking(conn: string, on: boolean): void;
+  /** The rewound prompt left the indexed Main Line (the next prompt forked): the transcript shows it as usual. */
+  clearRewound(conn: string): void;
+  /** A prompt went out: the line about the kept draft goes (the marker stays until the new Branch is indexed). */
+  rewoundSent(conn: string): void;
   dismissNotice(conn: string, id: number): void;
   setError(key: string, e: string | null): void;
   setNewError(e: string | null): void;
@@ -171,7 +184,15 @@ export const useConnect = create<ConnectStore>((set, get) => {
     // ccrpc itself ended before naming the Session: that Resume is over (its card says why).
     if (c?.resumeOf && !c.sessionId && !failingResumes.has(conn)) setResuming(c.resumeOf, false);
     if (closing.delete(conn)) return removeConn(conn);
-    update(conn, (c) => ({ ...c, procExit: { code, stderr }, requests: [], progress: null }));
+    update(conn, (c) => ({
+      ...c,
+      procExit: { code, stderr },
+      requests: [],
+      progress: null,
+      picking: false,
+      rewinding: null,
+      rewound: null,
+    }));
   };
 
   /** Adds a connection, then replays what arrived for it before its id came back. */
@@ -251,6 +272,15 @@ export const useConnect = create<ConnectStore>((set, get) => {
     if (c?.unread) update(c.conn, (x) => ({ ...x, unread: false }));
   };
 
+  /** Another Session is on screen: picking a prompt ends with the one left (the rewound marker stays with it). */
+  const endPicking = () => {
+    const open = connFor(get(), useUi.getState().sessionId)?.conn;
+    for (const c of Object.values(get().conns))
+      if (c.conn !== open && c.picking) update(c.conn, (x) => ({ ...x, picking: false }));
+  };
+  /** Rewinds being answered (`conn|request_id`): Esc, 「中止」 and the card's buttons send one answer. */
+  const answering = new Set<string>();
+
   return {
     info: null,
     infoError: null,
@@ -279,7 +309,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
       };
       document.addEventListener("visibilitychange", onVisible);
       const unUi = useUi.subscribe((s, p) => {
-        if (s.sessionId !== p.sessionId) markSeen();
+        if (s.sessionId === p.sessionId) return;
+        markSeen();
+        endPicking();
       });
       return () => {
         gone = true;
@@ -457,6 +489,57 @@ export const useConnect = create<ConnectStore>((set, get) => {
 
     dropRequest(conn, requestId) {
       update(conn, (c) => ({ ...c, requests: c.requests.filter((q) => q.request_id !== requestId) }));
+    },
+
+    async rewind(conn, uuid) {
+      const c = get().conns[conn];
+      if (!c) return;
+      void api.ccrpcGuiLog(conn, `rewind ${uuid}`);
+      setErr(errorKey(c), null);
+      update(conn, (x) => ({ ...x, picking: false, rewinding: { uuid, waited: false } }));
+      const r = await get().command(conn, { type: "rewind", uuid });
+      if (r.success && r.data?.type === "rewind")
+        return update(conn, (x) => rewindShown(x, r.data as unknown as RewindRequest));
+      update(conn, (x) => ({ ...x, rewinding: null }));
+      if (!r.success) setErr(errorKey(c), `回退失败：${r.error?.message ?? r.error?.code ?? ""}`);
+    },
+
+    async answerRewind(conn, req, option) {
+      const key = `${conn}|${req.request_id}`;
+      if (answering.has(key)) return;
+      answering.add(key);
+      const msg = option ? { option } : { cancel: true };
+      const r = await get()
+        .command(conn, { type: "answer_rewind", request_id: req.request_id, ...msg })
+        .finally(() => answering.delete(key));
+      const c = get().conns[conn];
+      if (!c) return;
+      if (!r.success) {
+        // The confirm page is gone (answered or left in the terminal): so is its card.
+        if (r.error?.code === "unknown_request" || r.error?.code === "not_waiting")
+          get().dropRequest(conn, req.request_id);
+        return setErr(errorKey(c), `${option ? "回退" : "取消回退"}失败：${r.error?.message ?? r.error?.code ?? ""}`);
+      }
+      if (!option) return get().dropRequest(conn, req.request_id);
+      // Claude Code put the prompt back into its input box; here it goes into an empty one, a draft stays.
+      const dk = draftKey(c);
+      const draft = get().drafts[dk] ?? EMPTY_DRAFT;
+      const text = typeof r.data?.text === "string" ? r.data.text : null;
+      const empty = !draft.text.trim() && draft.images.length === 0;
+      if (text && empty) get().setDraft(dk, (d) => ({ ...d, text }));
+      update(conn, (x) => rewindAnswered(x, req, option, !!text && !empty));
+    },
+
+    setPicking(conn, on) {
+      update(conn, (c) => (c.picking === on ? c : { ...c, picking: on }));
+    },
+
+    clearRewound(conn) {
+      update(conn, (c) => (c.rewound ? { ...c, rewound: null } : c));
+    },
+
+    rewoundSent(conn) {
+      update(conn, (c) => (c.rewound?.keptDraft ? { ...c, rewound: { ...c.rewound, keptDraft: false } } : c));
     },
 
     dismissNotice(conn, id) {

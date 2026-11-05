@@ -71,6 +71,8 @@ export interface TranscriptCtx {
   openAgent: (agentId: string) => void;
   /** Innermost Subagent Run shown in the panel. */
   activeAgentId: string | null;
+  /** Prompts offering 「回退」 (the Main Line's in a Connected Session's main transcript). */
+  rewindable: ReadonlySet<string>;
 }
 
 export const TranscriptContext = createContext<TranscriptCtx | null>(null);

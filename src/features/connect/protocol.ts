@@ -143,6 +143,28 @@ export interface FeedbackDraft {
   input: { title?: string; details?: string; type?: string } | null;
 }
 
+/** What a rewind restores: `both` (code and conversation), `conversation`, `code`. */
+export type RewindOption = "both" | "conversation" | "code";
+
+/**
+ * `rewind`'s answer (and `get_state.request` while it waits): the TUI stopped at the confirm page of going back to
+ * before a Main Line prompt, answered with `answer_rewind`.
+ */
+export interface RewindRequest {
+  type: "rewind";
+  request_id: string;
+  /** The prompt's transcript uuid. */
+  uuid: string;
+  /** The prompt's full text. */
+  text: string;
+  /** The page's sentence on the code: `The code will be restored -1 in w.txt.` / `The code will be unchanged.` */
+  code: string | null;
+  /** The `⚠` warning when code would be restored. */
+  warning: string | null;
+  /** The restores the page offers (only `conversation` without code changes). */
+  options: { option: RewindOption; label: string }[];
+}
+
 export interface ResponseMsg {
   type: "response";
   id?: string | number;

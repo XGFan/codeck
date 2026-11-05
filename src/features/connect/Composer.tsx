@@ -13,6 +13,7 @@ import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
+import { RewindPickNotice } from "./RewindViews";
 import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
@@ -99,15 +100,18 @@ function FeedbackDraftNotice({
 }
 
 /**
- * The input box: idle → `prompt` (a built-in slash command → `slash`); busy → `steer`, as Enter in
- * the terminal (Claude Code's own queue, shown in the TUI and above the box, delivered when the
- * current tool call ends); ⌘Enter while busy also sends the queue at once (`send_now`, ctrl+enter in
+ * The input box: idle → `prompt` (a built-in slash command → `slash`; `/rewind` (`/checkpoint`) → 「选回退点」, nothing
+ * sent); busy → `steer`, as Enter in the terminal (Claude Code's own queue, shown in the TUI and above the box,
+ * delivered when the current tool call ends); ⌘Enter while busy also sends the queue at once (`send_now`, ctrl+enter in
  * the terminal: the turn is interrupted); waiting → not sent, focus goes to the card. Esc is handled by the input area. What is
  * typed lives in the connect store, so switching Sessions keeps it. Typing `/name` lists matching
  * commands: ↑↓ pick, Tab (or Enter on a different one) completes, Esc hides the list.
  */
 export function Composer({ c }: { c: ConnState }) {
   const command = useConnect((s) => s.command);
+  const answerRewind = useConnect((s) => s.answerRewind);
+  const setPicking = useConnect((s) => s.setPicking);
+  const rewoundSent = useConnect((s) => s.rewoundSent);
   const key = draftKey(c);
   const { text, images } = useConnect((s) => s.drafts[key]) ?? EMPTY_DRAFT;
   const setDraft = useConnect((s) => s.setDraft);
@@ -144,6 +148,11 @@ export function Composer({ c }: { c: ConnState }) {
   };
 
   const abort = async () => {
+    // ccrpc is in the terminal's Rewind picker: not to be interrupted.
+    if (c.rewinding) return;
+    // The rewind's confirm page: cancelled (an abort would only step back to the terminal's picker).
+    const rw = c.requests.find((r) => r.type === "rewind");
+    if (rw) return answerRewind(c.conn, rw, null);
     const r = await command(c.conn, { type: "abort" });
     if (!r.success) setError(`中止失败：${r.error?.message ?? r.error?.code ?? ""}`);
   };
@@ -161,6 +170,13 @@ export function Composer({ c }: { c: ConnState }) {
     if (live && state === "waiting") return focusFirstCard();
     if (live && now && state === "busy" && !body && c.queue.length > 0 && !sending) return sendNow();
     if (!body || sending || !live) return;
+    // Not for the terminal: the prompt to go back to is picked in the transcript.
+    if (state === "idle" && /^\/(rewind|checkpoint)(\s|$)/.test(body)) {
+      setPicking(c.conn, true);
+      setText((t) => (t.trim() === body ? "" : t));
+      return;
+    }
+    if (c.picking) setPicking(c.conn, false);
     let msg: Record<string, unknown>;
     const withImages = images.length ? { images: images.map((i) => i.path) } : {};
     let list: SlashCommand[] | undefined;
@@ -184,6 +200,8 @@ export function Composer({ c }: { c: ConnState }) {
     const r = await command(c.conn, msg);
     setSending(false);
     if (!r.success) return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
+    // A new prompt: what was rewound becomes another Branch (the marker goes once that is indexed).
+    if (msg.type === "prompt") rewoundSent(c.conn);
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
     // Keep what was typed while it was being sent.
@@ -246,6 +264,7 @@ export function Composer({ c }: { c: ConnState }) {
           />
         )}
         {c.feedbackDraft && <FeedbackDraftNotice c={c} draft={c.feedbackDraft} onError={setError} />}
+        {c.picking && <RewindPickNotice c={c} />}
         {error && <ErrorNotice text={error} onClose={() => setError(null)} />}
       </div>
       <div
@@ -380,8 +399,9 @@ export function Composer({ c }: { c: ConnState }) {
               type="button"
               aria-label="中止"
               title="中止本轮（Esc）"
+              disabled={!!c.rewinding}
               onClick={() => void abort()}
-              className="ml-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-text text-ground hover:opacity-85"
+              className="ml-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-text text-ground hover:opacity-85 disabled:opacity-40"
               data-testid="stop"
             >
               <Square size={11} fill="currentColor" aria-hidden />
@@ -400,6 +420,11 @@ export function Composer({ c }: { c: ConnState }) {
           )}
         </div>
       </div>
+      {c.rewound?.keptDraft && (
+        <p data-testid="rewind-kept-draft" className="m-0 mt-1.5 pl-4 text-[12px] text-secondary">
+          输入框里已有内容，原提示词没有填入
+        </p>
+      )}
     </div>
   );
 }

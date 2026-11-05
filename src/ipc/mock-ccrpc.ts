@@ -7,7 +7,9 @@
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks) are answered from what was replayed. `new-session` and `resume*` are not listed: `ccrpcNew` opens
 // the first; `ccrpcResume` opens `resume` (its `session_changed` names the Session asked for), or
-// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it).
+// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it). A recording whose meta has `on_request`
+// stands for a Session other tests need out of `ccrpc ls`: it is listed once a test (or the console) calls
+// `__cvCcrpc.list(name)`.
 
 import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
@@ -27,6 +29,8 @@ interface WireLine {
   connect_delay_ms?: number;
   /** On the meta line: what `get_tasks` answers (the recording's background tasks). */
   tasks?: Task[];
+  /** On the meta line: listed in `ccrpc ls` only once asked for (`__cvCcrpc.list(name)`). */
+  on_request?: boolean;
 }
 
 interface Fixture {
@@ -35,6 +39,7 @@ interface Fixture {
   ls: LsEntry;
   connectDelayMs: number;
   tasks: Task[];
+  onRequest: boolean;
 }
 
 const raw = import.meta.glob("/src/mocks/data/connect/*.jsonl", {
@@ -73,6 +78,7 @@ function parse(name: string, text: string): Fixture {
     ls,
     connectDelayMs: metaLine?.connect_delay_ms ?? 0,
     tasks: metaLine?.tasks ?? [],
+    onRequest: !!metaLine?.on_request,
   };
 }
 
@@ -130,6 +136,10 @@ export interface CcrpcProbe {
   hideNewPanes: boolean;
   /** Set by a test: the next Resume's `ready` names the Session already (the plugin checked in first). */
   resumeNamedInReady?: boolean;
+  /** Recordings with `on_request` a test put into `ccrpc ls`, by name. */
+  listed: string[];
+  /** Puts a recording with `on_request` into `ccrpc ls` (pushed to the watch at once). */
+  list: (name: string) => void;
 }
 const probe: CcrpcProbe = {
   sent: [],
@@ -141,6 +151,11 @@ const probe: CcrpcProbe = {
   analyzerSaves: 0,
   paneHides: [],
   hideNewPanes: false,
+  listed: [],
+  list: (name) => {
+    probe.listed.push(name);
+    later(pushLs);
+  },
 };
 
 declare global {
@@ -160,6 +175,7 @@ function lsNow(): LsEntry[] {
         f.name !== "new-session" &&
         !f.name.startsWith("resume-") &&
         f.name !== "resume" &&
+        (!f.onRequest || probe.listed.includes(f.name)) &&
         !closedPanes.has(f.ls.holder_id),
     )
     .map((f) => ({ ...f.ls, hidden: paneHidden.get(f.ls.holder_id) ?? f.ls.hidden }));
