@@ -8,6 +8,7 @@ import { PendingText, ToolCallView } from "@/features/transcript/tools";
 import type { ToolCall } from "@/ipc/bindings";
 import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
+import { permissionLabel } from "./answers";
 import type { ConnState, Request } from "./conn";
 import type { ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
 import { NoticeCard } from "./Notice";
@@ -171,10 +172,7 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
   const { busy, error, send } = useAnswer(c);
   const [feedback, setFeedback] = useState<string | null>(null);
   const always = r.options?.find((o) => o.meaning === "allow_always");
-  // A learned layout's meanings come from a model: its buttons show the dialog's own words, so a
-  // wrongly labelled option is visible before it is pressed.
-  const label = (meaning: string, fallback: string) =>
-    r.layout_source === "learned" ? (r.options?.find((o) => o.meaning === meaning)?.label ?? fallback) : fallback;
+  const label = (meaning: string, fallback: string) => permissionLabel(r, meaning, fallback);
   const answer = (decision: string, message?: string) =>
     send({ type: "answer_permission", request_id: r.request_id, decision, ...(message ? { message } : {}) });
   const actions = [

@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { answerError, otherChosen, questionAnswers, togglePick } from "./answers";
+import { answerError, otherChosen, permissionLabel, questionAnswers, togglePick } from "./answers";
 import type { AskQuestion } from "./protocol";
+
+describe("permissionLabel", () => {
+  const opts = (allow: string, deny: string) => [
+    { label: allow, meaning: "allow" as const },
+    { label: deny, meaning: "deny" as const },
+  ];
+
+  it("Claude Code's own dialogs keep the fixed words; a learned layout shows the dialog's", () => {
+    const builtin = { options: opts("Yes", "No"), layout_source: "builtin" as const };
+    expect(permissionLabel(builtin, "allow", "允许")).toBe("允许");
+    expect(permissionLabel(builtin, "deny", "拒绝")).toBe("拒绝");
+    const learned = { options: opts("Yes", "No"), layout_source: "learned" as const };
+    expect(permissionLabel(learned, "allow", "允许")).toBe("Yes");
+    expect(permissionLabel({ options: null, layout_source: null }, "allow", "允许")).toBe("允许");
+  });
+
+  it("an allow that says more than Yes shows its words (how many apps the grant covers)", () => {
+    const grant = {
+      options: opts("Allow for this session (4 apps)", "Deny, and tell Claude what to do differently (esc)"),
+      layout_source: "builtin" as const,
+    };
+    expect(permissionLabel(grant, "allow", "允许")).toBe("Allow for this session (4 apps)");
+    expect(permissionLabel(grant, "deny", "拒绝")).toBe("拒绝");
+    const workflow = { options: opts("Yes, run it", "No"), layout_source: "builtin" as const };
+    expect(permissionLabel(workflow, "allow", "允许")).toBe("允许");
+  });
+});
 
 describe("togglePick", () => {
   it("one answer: picking sets it alone, picking it again clears it", () => {

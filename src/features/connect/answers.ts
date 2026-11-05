@@ -1,10 +1,27 @@
-import type { AskQuestion, ResponseMsg } from "./protocol";
+import type { AskQuestion, PermissionRequestEvent, ResponseMsg } from "./protocol";
 
 /** What to say when ccrpc refuses an answer. */
 export function answerError(error: ResponseMsg["error"]): string {
   return error?.code === "not_offered"
     ? "这次审批没有“总是允许”选项"
     : `作答失败：${error?.message ?? error?.code ?? ""}`;
+}
+
+/**
+ * The words on a permission card's button for `meaning`: the dialog's own for a learned layout (its meanings come
+ * from a model, so a wrongly labelled option is visible before it is pressed), and for an allow that says more than
+ * a plain `Yes…` (computer use's `Allow for this session (4 apps)`: on a narrow screen apps are left out of the
+ * grant); otherwise `fallback`.
+ */
+export function permissionLabel(
+  r: Pick<PermissionRequestEvent, "options" | "layout_source">,
+  meaning: string,
+  fallback: string,
+): string {
+  const own = r.options?.find((o) => o.meaning === meaning)?.label;
+  if (!own) return fallback;
+  if (r.layout_source === "learned") return own;
+  return meaning === "allow" && !/^yes\b/i.test(own) ? own : fallback;
 }
 
 /** Picking an option: toggles it among the others when several can be picked, otherwise it is the only one. */

@@ -143,7 +143,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
   | 事件 | 卡片 | 作答 |
   |---|---|---|
-  | `permission_request` | 工具名 + 工具输入（用对话记录的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
+  | `permission_request` | 工具名 + 工具输入（用对话记录的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent。computer use 的授权框（`request_access`）也是这张卡片 | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；允许不是单纯的 `Yes…` 时按钮也显示原文（computer use 的 `Allow for this session (4 apps)`：窄窗格下列不下的应用不在这次授权里）；另有「拒绝，并告诉 Claude…」（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
   | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用），输入区只显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在输入区显示同样式的卡片 | `answer_question`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
   | `choice` | 标题 + 选项按钮 | `answer_choice`（按 label） |
   | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
