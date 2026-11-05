@@ -33,6 +33,20 @@ describe("formatDuration", () => {
     expect(formatDuration(3_600_000)).toBe("1 小时");
     expect(formatDuration(5 * 60_000)).toBe("5 分");
     expect(formatDuration(30_000)).toBe("30 秒");
+    expect(formatDuration(64_000)).toBe("1 分");
+  });
+  it("细节档精确到秒，不足 1 秒写毫秒", () => {
+    expect(formatDuration(64_000, "detail")).toBe("1 分 04 秒");
+    expect(formatDuration(72 * 60_000 + 5_000, "detail")).toBe("1 小时 12 分");
+    expect(formatDuration(7_500_000, "detail")).toBe("2 小时 5 分");
+    expect(formatDuration(1_500, "detail")).toBe("2 秒");
+    expect(formatDuration(320, "detail")).toBe("320 毫秒");
+    expect(formatDuration(999.6, "detail")).toBe("1 秒");
+  });
+  it("没有值或为负时为空", () => {
+    expect(formatDuration(null)).toBe("");
+    expect(formatDuration(-1, "detail")).toBe("");
+    expect(formatDuration(Number.NaN)).toBe("");
   });
 });
 

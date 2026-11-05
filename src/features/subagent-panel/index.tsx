@@ -6,7 +6,7 @@ import { useHotkey } from "@/lib/hotkeys";
 import { useCurrentTranscript, useTranscript } from "@/queries";
 import { selectOverlayOpen, useUi } from "@/state/ui";
 import { TranscriptList } from "@/features/transcript/Transcript";
-import { elapsed } from "@/features/transcript/util";
+import { formatDuration } from "@/lib/format";
 import { RunStatus, useSessionLive } from "@/features/transcript/nodes/Agents";
 import { runState } from "@/features/transcript/runState";
 
@@ -62,7 +62,7 @@ function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {
         run.agentType,
         run.model,
         `${run.messageCount} 条消息`,
-        elapsed(dur),
+        formatDuration(dur, "detail"),
         `输出 ${formatTokens(run.tokens.output)}`,
         `嵌套深度 ${stack.length}`,
         run.isAsync ? "后台" : null,

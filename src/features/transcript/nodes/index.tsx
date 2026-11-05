@@ -2,7 +2,7 @@ import type { Node } from "@/ipc/bindings";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useUi } from "@/state/ui";
-import { elapsed } from "../util";
+import { formatDuration } from "@/lib/format";
 import type { Row } from "../grouping";
 import { FinalResultCard, OrphanHeader, ParallelAgents, SubagentCard, TaskPromptCard, WorkflowCard } from "./Agents";
 import { Anchor } from "./Anchor";
@@ -98,7 +98,7 @@ function FoldRow({ row }: { row: Extract<Row, { kind: "fold" }> }) {
       ) : (
         <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
       )}
-      <span className="shrink-0">{row.ms != null ? `已处理 ${elapsed(row.ms)}` : "过程"}</span>
+      <span className="shrink-0">{row.ms != null ? `已处理 ${formatDuration(row.ms, "detail")}` : "过程"}</span>
       {parts && <span className="shrink-0 text-secondary/80">· {parts}</span>}
       <span className="h-px flex-1 bg-border" />
     </button>

@@ -35,12 +35,21 @@ function trim(v: number, digits: number): string {
 }
 
 /** 毫秒 -> "1 小时 12 分"、"5 分"、"30 秒"。 */
-export function formatDuration(ms: number): string {
-  const totalSec = Math.max(0, Math.round(ms / 1000));
+/**
+ * 时长，两档精度（docs/spec.md「界面」）：
+ * - `overview`（Session 时长、Connect 的用时）到分钟：「1 小时 12 分」「5 分」「30 秒」；
+ * - `detail`（每轮「已处理」、Subagent、工具调用）到秒：「1 小时 12 分」「1 分 04 秒」「30 秒」，不足 1 秒写「320 毫秒」。
+ * 没有值或为负时返回空串。
+ */
+export function formatDuration(ms: number | null | undefined, precision: "overview" | "detail" = "overview"): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  if (precision === "detail" && Math.round(ms) < 1000) return `${Math.round(ms)} 毫秒`;
+  const totalSec = Math.round(ms / 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
   if (h > 0) return m > 0 ? `${h} 小时 ${m} 分` : `${h} 小时`;
-  if (m > 0) return `${m} 分`;
+  if (m > 0) return precision === "detail" ? `${m} 分 ${String(s).padStart(2, "0")} 秒` : `${m} 分`;
   return `${totalSec} 秒`;
 }
 

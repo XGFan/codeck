@@ -6,7 +6,8 @@ import { useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 import type { AgentCardData } from "../grouping";
 import { DONE, FAILED, type RunState, runState } from "../runState";
-import { clock, elapsed, parseJson, shortModel } from "../util";
+import { formatDuration } from "@/lib/format";
+import { clock, parseJson, shortModel } from "../util";
 import { Anchor } from "./Anchor";
 import { scrollToNode, useTranscriptCtx } from "./scroll";
 
@@ -62,8 +63,8 @@ export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: Too
   const result = run.finalText ?? (call?.result && !run.isAsync ? call.result.text : null);
   const dur = runDuration(run);
   const meta = nested
-    ? [`嵌套 · ${run.messageCount} 条`, elapsed(dur)]
-    : [shortModel(run.model), `${run.messageCount} 条`, elapsed(dur)];
+    ? [`嵌套 · ${run.messageCount} 条`, formatDuration(dur, "detail")]
+    : [shortModel(run.model), `${run.messageCount} 条`, formatDuration(dur, "detail")];
   const body = (
     <div
       data-testid="subagent-card"
@@ -173,7 +174,7 @@ export function WorkflowCard({ run, node, call }: { run: WorkflowRun; node: Node
     run.phases.length ? `${run.phases.length} 阶段` : null,
     `${run.agents.length} 个 agent`,
     run.totalTokens != null ? `${formatTokens(run.totalTokens)} tokens` : null,
-    elapsed(run.durationMs),
+    formatDuration(run.durationMs, "detail"),
   ];
   const failed = FAILED.has(run.status ?? "");
 

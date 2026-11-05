@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import type { ImageRef, ToolCall } from "@/ipc/bindings";
 import { parseAnsi, stripAnsi } from "@/lib/ansi";
 import { cn } from "@/lib/cn";
+import { formatDuration } from "@/lib/format";
 import { TokenSpans, useHighlight } from "@/lib/shiki";
 import { useImage } from "@/queries/hooks";
 import { useUi } from "@/state/ui";
@@ -17,8 +18,6 @@ export const PendingText = createContext("执行中");
 export function PendingSpinner() {
   return <Spinner text={useContext(PendingText)} />;
 }
-
-const durationText = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 
 /** What a call did, as a verb (the line reads 「读取 src/config.rs」); unknown tools keep their name. */
 const VERB: Record<string, string> = {
@@ -103,7 +102,9 @@ export function Shell({
               失败
             </span>
           ) : null)}
-        {dur != null && <span className="shrink-0 text-[11.5px] text-secondary/80">{durationText(dur)}</span>}
+        {dur != null && (
+          <span className="shrink-0 text-[11.5px] text-secondary/80">{formatDuration(dur, "detail")}</span>
+        )}
         {open ? (
           <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
         ) : (
