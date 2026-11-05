@@ -72,12 +72,19 @@ export const useSession = (sessionId: string | null) =>
     enabled: sessionId != null,
   });
 
+/**
+ * A transcript left behind is dropped after this long, not the default 5 minutes: a long Session's runs to tens
+ * of MB, and browsing the list with ↑ / ↓ would keep every one passed over.
+ */
+const TRANSCRIPT_GC_MS = 10_000;
+
 export const useTranscript = (req: TranscriptRequest | null) =>
   useQuery({
     queryKey: req ? queryKeys.transcript(req) : ["transcript", null],
     queryFn: () => api.getTranscript(req!),
     enabled: req != null,
     placeholderData: keepPreviousData,
+    gcTime: TRANSCRIPT_GC_MS,
   });
 
 /** Transcript of the open session using the scope / branch / hidden state from the UI store. */
