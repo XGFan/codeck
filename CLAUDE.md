@@ -83,6 +83,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `src/ipc/`：`Api` 接口（`api.ts`）有两套实现——`real.ts` 包装生成的 bindings，`mock.ts` 用 `src/mocks/data/*` 的内存数据。`VITE_IPC=mock`（`.env.mock`，即 `pnpm dev:mock`）切到 mock。**E2E 全部跑在 mock 上**（tauri-driver 不支持 macOS），所以新增/修改 IPC 能力时要同步 `mock.ts` 和 mock 数据。
 - `src/queries/`：TanStack Query hooks 与 `queryKeys`；`events.ts` 订阅后端事件并做节流失效（实时追随、统计刷新）。
 - `src/state/ui.ts`：zustand 的 UI 状态；按 Session 的状态（branchChoices、panelStack、⌘F、展开状态等）在切换 Session 时重置；展开状态的键统一由 `features/transcript/keys.ts` 生成；栏的收起状态（`collapsed`）是全局的，存 localStorage。
+- 配色：`lib/theme.ts` 按设置（自动 / 浅色 / 暗色，存 localStorage）在 `<html>` 上写 `data-theme`，`index.css` 的暗色变量、Tailwind 的 `dark:`（`@custom-variant`）、图表与 Shiki 都按它，不直接用 `prefers-color-scheme`；`public/theme-init.js` 在首次绘制前套用；窗口本身经 Tauri 的 `setTheme` 跟着切换。
 - 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
 - `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls --watch` 的启停在 `lsWatch.ts`，草稿持久化在 `drafts.ts`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
 
