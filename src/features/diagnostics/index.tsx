@@ -2,15 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/ipc";
-import type { AppError, Diagnostics, NameCount } from "@/ipc/bindings";
+import type { Diagnostics, NameCount } from "@/ipc/bindings";
 import { queryKeys, useDiagnostics, useIndexStatus } from "@/queries";
+import { errorText } from "@/lib/errors";
 
 const nf = new Intl.NumberFormat("en-US");
 
 const cmpVersion = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
-
-const errText = (e: unknown) =>
-  e && typeof e === "object" && "message" in e ? String((e as AppError).message) : String(e);
 
 function versionRange(d: Diagnostics): string | null {
   const vs = d.versions.map((v) => v.version).sort(cmpVersion);
@@ -113,7 +111,7 @@ export function DiagnosticsContent() {
 
   const rescan = useMutation({
     mutationFn: () => api.rebuildIndex(),
-    onError: (e) => setActionError(errText(e)),
+    onError: (e) => setActionError(errorText(e)),
     onSuccess: () => setActionError(null),
   });
 
@@ -131,11 +129,11 @@ export function DiagnosticsContent() {
       setCopied(key);
       setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500);
     } catch (e) {
-      setActionError(errText(e));
+      setActionError(errorText(e));
     }
   };
 
-  if (error) return <div className="p-6 text-xs text-error">诊断数据读取失败：{errText(error)}</div>;
+  if (error) return <div className="p-6 text-xs text-error">诊断数据读取失败：{errorText(error)}</div>;
   if (!d) return <div className="p-6 text-xs text-secondary">正在读取诊断数据…</div>;
 
   const busy = phase === "scanning" || phase === "indexingText" || rescan.isPending;

@@ -6,6 +6,7 @@ import { apply, initial, type ConnState } from "./conn";
 import { resumeFailure } from "./resume";
 import { createEarlyBuffer } from "./early";
 import type { InMsg, LsEntry, ResponseMsg, Task } from "./protocol";
+import { errorText } from "@/lib/errors";
 
 const POLL_MS = 2000;
 
@@ -164,9 +165,6 @@ let polling = false;
 let pollGen = 0;
 let lastLs = "";
 let wanted = false;
-
-const errText = (e: unknown) =>
-  e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
 
 type Lookup = { ls: LsEntry[]; conns: Record<string, ConnState> };
 
@@ -391,7 +389,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       }
     } catch (e) {
       if (gen !== pollGen) return;
-      set({ lsError: `ccrpc ls 失败：${errText(e)}` });
+      set({ lsError: `ccrpc ls 失败：${errorText(e)}` });
       return sync();
     }
     pollTimer = window.setTimeout(() => void poll(gen), POLL_MS);
@@ -483,7 +481,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
           sync();
         }
       } catch (e) {
-        setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errText(e)}`);
+        setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errorText(e)}`);
       }
     },
 
@@ -492,7 +490,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       try {
         set({ info: await api.ccrpcInfo(), infoError: null });
       } catch (e) {
-        const why = `读取 ccrpc 信息失败：${errText(e)}`;
+        const why = `读取 ccrpc 信息失败：${errorText(e)}`;
         set({ infoError: why });
         sync();
       }
@@ -510,7 +508,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       try {
         addConn(await api.ccrpcConnect(holderId), holderId);
       } catch (e) {
-        setErr(sessionId, `连接失败：${errText(e)}`);
+        setErr(sessionId, `连接失败：${errorText(e)}`);
       }
     },
 
@@ -524,7 +522,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
         selectOnReady.add(conn);
         addConn(conn, null);
       } catch (e) {
-        set({ newError: `新建 Session 失败：${errText(e)}` });
+        set({ newError: `新建 Session 失败：${errorText(e)}` });
       }
     },
 
@@ -558,7 +556,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
         };
         window.setTimeout(check, RESUME_TIMEOUT_MS);
       } catch (e) {
-        setErr(sessionId, `Resume 失败：${errText(e)}`);
+        setErr(sessionId, `Resume 失败：${errorText(e)}`);
         setResuming(sessionId, false);
       }
     },
@@ -583,7 +581,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
             id,
             command: String(msg.type),
             success: false,
-            error: { code: "io", message: errText(e) },
+            error: { code: "io", message: errorText(e) },
           });
         });
       });
@@ -626,7 +624,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       try {
         addConn(await api.ccrpcConnect(c.holderId), c.holderId);
       } catch (e) {
-        setErr(errorKey(c), `重连失败：${errText(e)}`);
+        setErr(errorKey(c), `重连失败：${errorText(e)}`);
       }
     },
 

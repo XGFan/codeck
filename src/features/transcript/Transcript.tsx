@@ -21,6 +21,7 @@ import {
 import { resetReading, setCurrentTurn, setTurns, useReading } from "./reading";
 import { toolKey } from "./tools";
 import { commandLine } from "./util";
+import { errorText } from "@/lib/errors";
 
 /**
  * Scroll + highlight API for other features (⌘F / T4.2, outline, links):
@@ -90,7 +91,7 @@ export function TranscriptView() {
     );
   }
   if (error && data?.sessionId !== sessionId) {
-    const message = typeof error === "object" && "message" in error ? String(error.message) : String(error);
+    const message = errorText(error);
     return (
       <div
         data-testid="transcript-error"

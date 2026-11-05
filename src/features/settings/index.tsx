@@ -9,9 +9,10 @@ import { DiagnosticsContent } from "@/features/diagnostics";
 import { CcrpcSettings } from "@/features/connect";
 import { useHotkey } from "@/lib/hotkeys";
 import { api } from "@/ipc";
-import type { AppError, DataRootSource } from "@/ipc/bindings";
+import type { DataRootSource } from "@/ipc/bindings";
 import { queryKeys, useAppInfo, useIndexStatus } from "@/queries";
 import { useUi } from "@/state/ui";
+import { errorText } from "@/lib/errors";
 
 const nf = new Intl.NumberFormat("en-US");
 const SOURCE_LABEL: Record<DataRootSource, string> = {
@@ -19,9 +20,6 @@ const SOURCE_LABEL: Record<DataRootSource, string> = {
   env: "环境变量 CLAUDE_CONFIG_DIR",
   default: "默认",
 };
-const errText = (e: unknown) =>
-  e && typeof e === "object" && "message" in e ? String((e as AppError).message) : String(e);
-
 const TABS = [
   { id: "general", label: "通用" },
   { id: "data", label: "数据" },
@@ -118,12 +116,12 @@ function DataTab() {
       void qc.resetQueries({ predicate: (q) => q.queryKey[0] !== "appInfo" && q.queryKey[0] !== "indexStatus" });
       qc.setQueryData(queryKeys.appInfo, next);
     },
-    onError: (e) => setError(errText(e)),
+    onError: (e) => setError(errorText(e)),
   });
   const rebuild = useMutation({
     mutationFn: () => api.rebuildIndex(),
     onSuccess: () => setError(null),
-    onError: (e) => setError(errText(e)),
+    onError: (e) => setError(errorText(e)),
   });
 
   if (!info) return null;

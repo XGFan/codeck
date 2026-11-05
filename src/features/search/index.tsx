@@ -21,6 +21,7 @@ import { isComposingKey, keepOpenWhileComposing, useHotkey } from "@/lib/hotkeys
 import { queryKeys, useIndexStatus, useProjects, useSessions } from "@/queries";
 import { useUi } from "@/state/ui";
 import { highlight, matchProjects, matchSessions, parseQuery, sessionProjectIds } from "./match";
+import { errorText } from "@/lib/errors";
 
 const nf = new Intl.NumberFormat("en-US");
 const MAX_PROJECTS = 3;
@@ -33,9 +34,6 @@ const NO_GROUPS: SearchGroup[] = [];
 
 const SECTION = "flex items-center gap-2 px-4 pt-2.5 pb-1 text-[11px] font-semibold text-secondary";
 const ITEM = "group flex cursor-default items-center gap-2.5 px-4 py-[7px] data-[selected=true]:bg-selection";
-
-const asAppError = (e: unknown): AppError | null =>
-  e && typeof e === "object" && "message" in e ? (e as AppError) : null;
 
 /** `i` (the hit's place in its group) keeps two hits in different blocks of one entry apart. */
 const hitKey = (sessionId: string, h: SearchHit, i: number) =>
@@ -361,7 +359,7 @@ export function SearchOverlay() {
       useUi.getState().jumpTo(target);
       close();
     } catch (e) {
-      setJumpError(asAppError(e)?.message ?? String(e));
+      setJumpError(errorText(e));
     }
   };
   const filterProject = (id: string) => {

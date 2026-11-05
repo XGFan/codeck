@@ -6,6 +6,7 @@ import { useFind } from "@/queries";
 import { MAIN_SCOPE, useUi } from "@/state/ui";
 import { scrollToNode } from "../transcript/Transcript";
 import { requestFullOutput } from "../transcript/tools";
+import { errorText } from "@/lib/errors";
 
 const NO_MATCHES: FindMatch[] = [];
 const HIGHLIGHT = "cv-find";
@@ -130,9 +131,7 @@ export function FindBar() {
   };
 
   if (!show) return null;
-  const errorText = error
-    ? `查找失败：${typeof error === "object" && "message" in error ? String(error.message) : String(error)}`
-    : "";
+  const failure = error ? `查找失败：${errorText(error)}` : "";
   return (
     <div
       data-testid="find"
@@ -170,9 +169,9 @@ export function FindBar() {
       <span data-testid="find-count" className="min-w-12 text-[12px] text-secondary tabular-nums">
         {!current || error ? "" : matches.length === 0 ? "无结果" : `${at + 1} / ${matches.length}`}
       </span>
-      {errorText && (
+      {failure && (
         <span role="alert" data-testid="find-error" className="min-w-0 truncate text-[12px] text-error">
-          {errorText}
+          {failure}
         </span>
       )}
       <button type="button" aria-label="上一个" disabled={!matches.length} onClick={() => step(-1)} className={iconBtn}>

@@ -6,6 +6,7 @@ import { api } from "@/ipc";
 import type { AnalyzerInfo, LaunchRule } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { useConnect } from "./store";
+import { errorText } from "@/lib/errors";
 
 function Row({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
   return (
@@ -118,7 +119,7 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
     } catch (e) {
       setResult({
         ok: false,
-        text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`,
+        text: `保存失败：${errorText(e)}`,
       });
     }
     setBusy(false);
@@ -210,7 +211,7 @@ function HideNewPanes({ saved }: { saved: boolean }) {
     try {
       await save(hide);
     } catch (e) {
-      setError(`保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`);
+      setError(`保存失败：${errorText(e)}`);
     }
     setBusy(false);
   };
@@ -272,7 +273,7 @@ function LaunchRulesForm({ saved }: { saved: LaunchRule[] }) {
     } catch (e) {
       setResult({
         ok: false,
-        text: `保存失败：${e && typeof e === "object" && "message" in e ? String(e.message) : String(e)}`,
+        text: `保存失败：${errorText(e)}`,
       });
     }
     setBusy(false);

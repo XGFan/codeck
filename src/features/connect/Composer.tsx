@@ -12,6 +12,7 @@ import { ConnectFooter } from "./Header";
 import { draftKey, EMPTY_DRAFT, useConnect, type Draft } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { Tasks } from "./Tasks";
+import { errorText } from "@/lib/errors";
 
 const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
 
@@ -148,9 +149,7 @@ export function Composer({ c }: { c: ConnState }) {
         // A data: URL: the app's CSP allows data: images, not blob:.
         setImages((x) => [...x, { path, url: `data:${f.type};base64,${b64}` }]);
       } catch (err) {
-        setError(
-          `图片保存失败：${err && typeof err === "object" && "message" in err ? String(err.message) : String(err)}`,
-        );
+        setError(`图片保存失败：${errorText(err)}`);
       }
     }
   };
