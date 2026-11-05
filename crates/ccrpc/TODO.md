@@ -26,8 +26,7 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 
 ## 形态
 
-- 常驻进程 + unix socket（一条连接管多个 Session，沿用同一套 JSONL 消息）
-- 同一 Session 连多个 ccrpc
+- 常驻进程 + unix socket（一条连接管多个 Session，沿用同一套 JSONL 消息）；同一 Session 连多个 ccrpc（现在第二个 `attach` 报「已有 ccrpc 连着这个 Session」）。2026-11-05 评估后先不做：每个连接一个 ccrpc 时，一个 Session 约 15 MB，省资源不是理由；共享的收益只在多个调用方同看 / 同控一个 Session、同时连很多 Session 并快速切换、Session 列表改为推送（取代 `ls` 轮询）。代价是故障不再隔离、慢命令（`get_messages` 等最长 120 秒）互相拖住、升级要断开全部连接、脚本不能再直接管道驱动。真要做时依次考虑：只读的旁观连接（不占 hook socket、只收事件）；只把 `ls` 做成常驻服务；常驻路由 + 每个 Session 一个 ccrpc 工作进程（保留隔离与逐个升级）。
 - 调用方 SDK（Rust、TypeScript / Python）与示例
 - 分发：版本号、CHANGELOG、release 二进制
 

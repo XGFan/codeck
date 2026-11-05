@@ -43,7 +43,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 
 索引只镜像数据目录当前内容：源文件被删，对应 Session 也随之消失；升级后索引格式变化会自动重建（[ADR-0003](docs/adr/0003-index-is-disposable-mirror.md)）。索引放在 Caches 中，不进入 Time Machine 备份。
 
-首次启动时先扫描元数据（3 GB 数据约 2–3 秒），列表即可浏览；全文索引在后台建立（约 2–3 分钟，索引约 760 MB），期间 Session 列表底部显示进度，搜索结果不完整。工具输出不进索引，也不提供搜索（[ADR-0004](docs/adr/0004-tool-output-scanned-not-indexed.md)）。
+首次启动时先扫描元数据（4.7 GB 数据约 5 秒），列表即可浏览；全文索引在后台建立（约 1 分钟，索引约 1 GB），期间 Session 列表底部显示进度，搜索结果不完整。工具输出不进索引，也不提供搜索（[ADR-0004](docs/adr/0004-tool-output-scanned-not-indexed.md)）。
 
 ## 数据目录
 
@@ -54,8 +54,9 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 ## 环境要求
 
 - macOS 14+，Apple Silicon
-- Rust 1.90+（`rustup`）、Xcode Command Line Tools
+- Rust 1.91+（`rustup`）、Xcode Command Line Tools
 - Node 22+ 与 pnpm
+- Connect（可选）：ToH（clay 后端）与 ccrpc；ccrpc 依次取 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`，插件用 `ccrpc plugin install` 安装（见 [crates/ccrpc](crates/ccrpc)）
 
 ## 开发
 
@@ -120,13 +121,15 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 ## 结构
 
 ```
-crates/transcript/ 解析库：容错解析、对话组装、显示模型、进程文件、价格（ccrpc 也用它）
-crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断
+crates/transcript/ 解析库：容错解析、对话组装、组装用的显示模型、进程文件、价格（ccrpc 也用它）
+crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断；应用层的 IPC 类型
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
 src-tauri/        Tauri 外壳：命令与事件、后台 worker、FSEvents 监听、Live 轮询、设置
 src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock 双实现）
 e2e/              Playwright 用例
 ```
+
+**CoDeck、ccrpc 与 ToH 的分工**：ToH 在本机用 Holder 持有 clay Pane 的 PTY，Claude Code 跑在里面，Mac / iPhone / web 的 Client 都能接手同一个 Pane。ccrpc 把一个 Pane 里的交互式 Claude Code 变成 JSONL 接口：经 Holder 收屏幕、写按键，经 ccrpc 插件的 hooks 得知审批、提问与轮次边界并代答审批。CoDeck 每 Connect 一个 Session 起一个 `ccrpc attach --co-display` 子进程（一个 Session 同时只能连一个 ccrpc），Disconnect 只结束这个 ccrpc，Session 照常运行。对话内容始终来自 CoDeck 自己的索引与实时追随，不经 ccrpc（[ADR-0007](docs/adr/0007-monorepo-parsing-library-and-drive-via-ccrpc.md)）。
 
 ## 许可证
 
