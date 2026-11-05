@@ -504,6 +504,13 @@ impl Engine {
         };
         self.settle_dialog();
         let now = self.fresh_screen()?;
+        // The wait ticked: the choice may be over, or a newer one announced meanwhile.
+        if !self.announced.as_ref().is_some_and(|a| a.is(request_id)) {
+            return err(
+                "unknown_request",
+                format!("作答前选择已经变了，不再是 {request_id}"),
+            );
+        }
         let Some((l, opts)) = self.library.find_kind(&now.lines, LayoutKind::Choice) else {
             return Err(self.unrecognized("answer_choice", Some(&now)));
         };
