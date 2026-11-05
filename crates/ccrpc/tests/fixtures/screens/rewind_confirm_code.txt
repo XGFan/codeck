@@ -1,0 +1,48 @@
+
+✻ Churned for 8s · done 9:16 PM
+
+❯ steered text
+
+⏺ slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow
+
+✻ Cogitated for 8s · done 9:16 PM
+
+❯ /compact
+  ⎿  Compacted (ctrl+o to see full summary)
+  ⎿  Read w.txt (2 lines)
+
+❯ after compact
+
+⏺ ok
+
+✻ Churned for 0s · done 9:16 PM
+
+❯ MOCK-WRITE /tmp/proj/w2.txt code-only
+
+⏺ Write(w2.txt)
+  ⎿  Wrote 1 line to w2.txt
+      1 v0
+  ⎿  Allowed by PermissionRequest hook
+
+⏺ ok
+
+✻ Cooked for 0s · done 9:17 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◉ xhigh · /effort ▔
+   Rewind
+
+   Confirm you want to restore to the point before you sent this message:
+
+   │ MOCK-WRITE /tmp/proj/w2.txt code-only
+   │ (5s ago)
+
+   This message and everything after it will be removed.
+   The code will be restored -1 in w2.txt.
+
+   ❯ 1. Restore code and conversation
+     2. Restore conversation
+     3. Restore code
+     4. Summarize from here
+   ↓ 5. Summarize up to here
+
+   ⚠ Restored files go back whole, losing later changes by anyone. Bash changes to other files are not undone.
+

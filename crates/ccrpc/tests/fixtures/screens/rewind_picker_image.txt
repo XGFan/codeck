@@ -1,0 +1,48 @@
+  multi line 28
+  multi line 29
+  multi line 30
+
+⏺ ok
+
+✻ Baked for 0s · done 9:19 PM
+
+❯ [Image #2]with image
+  second line
+  ⎿  [Image #2]
+
+⏺ ok
+
+✻ Crunched for 0s · done 9:19 PM
+
+❯ continue
+
+⏺ ok
+
+✻ Brewed for 0s · done 9:19 PM
+
+❯   leading spaces
+
+⏺ ok
+
+✻ Worked for 0s · done 9:19 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◉ xhigh · /effort ▔
+   Rewind
+
+   Restore the code and/or conversation to the point before…
+
+     continue
+     No code changes
+
+     long-single abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefg…
+     No code changes
+
+     multi line 1…
+     No code changes
+
+   ❯ [Image #2]with image…
+     No code changes
+
+
+     ↓ 3 more
+
+   Enter to continue · Esc to cancel

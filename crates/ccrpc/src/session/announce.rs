@@ -218,6 +218,10 @@ impl Engine {
         let State::Waiting { kind, waiting_for } = self.state.clone() else {
             return;
         };
+        // The Rewind picker and confirm page are a rewind's own, not a dialog to report.
+        if self.rewind.is_some() {
+            return;
+        }
         // Just switched to WORK_SIZE: Claude Code is redrawing what it showed.
         if self.announced.is_some() || self.answered_until.is_some() || self.growing() {
             return;
@@ -384,7 +388,11 @@ impl Engine {
             return true;
         }
         // What the built-in recognizers know is never sent out.
-        if recognize::permission(&s.lines).is_some() || recognize::ask(&s.lines).is_some() {
+        if recognize::permission(&s.lines).is_some()
+            || recognize::ask(&s.lines).is_some()
+            || recognize::rewind_picker(&s.lines).is_some()
+            || recognize::rewind_confirm(&s.lines).is_some()
+        {
             return false;
         }
         let sig = dialog_signature(&s.lines);

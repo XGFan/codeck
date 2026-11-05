@@ -620,6 +620,279 @@ fn duration_secs(s: &str) -> Option<u64> {
     any.then_some(total)
 }
 
+/// The Rewind screens' title (2.1.318; `tests/fixtures/screens/rewind_*.txt`).
+const REWIND_TITLE: &str = "Rewind";
+const REWIND_PICKER_SUB: &str = "Restore the code and/or conversation to the point before…";
+const REWIND_PICKER_FOOT: &str = "Enter to continue · Esc to cancel";
+const REWIND_CONFIRM_SUB: &str =
+    "Confirm you want to restore to the point before you sent this message:";
+/// The picker's last row: the conversation as it is.
+pub const REWIND_CURRENT: &str = "(current)";
+
+/// The Rewind picker (`Esc Esc` on an empty input box): one row per prompt, oldest first, ending
+/// with [`REWIND_CURRENT`]; each shows the prompt's first line (cut with `…`) above what its turn
+/// changed. Only a window of rows is drawn: `above` / `below` count the rest (`↑ 8 more`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewindPicker {
+    /// Shown rows' text (without `❯`) and whether the cursor is on it.
+    pub rows: Vec<(String, bool)>,
+    pub above: usize,
+    pub below: usize,
+}
+
+impl RewindPicker {
+    /// The row under the cursor.
+    pub fn cursor(&self) -> Option<&str> {
+        self.rows.iter().find(|r| r.1).map(|r| r.0.as_str())
+    }
+
+    /// The cursor's row counted from the top of the whole list.
+    pub fn position(&self) -> Option<usize> {
+        self.rows.iter().position(|r| r.1).map(|i| self.above + i)
+    }
+}
+
+/// Row after the subtitle `sub` of a Rewind screen: the bottom-most `Rewind` title drawn right
+/// under the dialog rule (`▔▔▔`), with no input box on the screen (a prompt or a reply quoting
+/// these words is not the screen).
+fn rewind_screen(lines: &[String], sub: &str) -> Option<usize> {
+    if input_box(lines).is_some() {
+        return None;
+    }
+    let t = (1..lines.len())
+        .rev()
+        .find(|&i| lines[i].trim() == REWIND_TITLE && lines[i - 1].trim_start().starts_with('▔'))?;
+    let s = (t + 1..lines.len()).find(|&i| !lines[i].trim().is_empty())?;
+    (lines[s].trim() == sub).then_some(s + 1)
+}
+
+/// `↑ 8 more` / `↓ 3 more`: (up, count).
+fn more_marker(t: &str) -> Option<(bool, usize)> {
+    let (up, rest) = match (t.strip_prefix("↑ "), t.strip_prefix("↓ ")) {
+        (Some(r), _) => (true, r),
+        (_, Some(r)) => (false, r),
+        _ => return None,
+    };
+    Some((up, rest.strip_suffix(" more")?.trim().parse().ok()?))
+}
+
+pub fn rewind_picker(lines: &[String]) -> Option<RewindPicker> {
+    let start = rewind_screen(lines, REWIND_PICKER_SUB)?;
+    let foot = (start..lines.len()).find(|&i| lines[i].trim() == REWIND_PICKER_FOOT)?;
+    let mut p = RewindPicker {
+        rows: Vec::new(),
+        above: 0,
+        below: 0,
+    };
+    // Rows come in blank-separated groups: the prompt's line, then what its turn changed.
+    let mut first_of_group = true;
+    for line in &lines[start..foot] {
+        let t = line.trim();
+        if t.is_empty() {
+            first_of_group = true;
+            continue;
+        }
+        if let Some((up, n)) = more_marker(t) {
+            if up {
+                p.above = n
+            } else {
+                p.below = n
+            }
+            continue;
+        }
+        if first_of_group {
+            let (cursor, text) = match t.strip_prefix('❯') {
+                Some(r) => (true, r.trim_start()),
+                None => (false, t),
+            };
+            p.rows.push((text.to_string(), cursor));
+            first_of_group = false;
+        }
+    }
+    (!p.rows.is_empty() && p.rows.iter().filter(|r| r.1).count() == 1).then_some(p)
+}
+
+/// The Rewind confirm page (Enter on a picker row): the prompt quoted (at most its first rows,
+/// wrapped) and when it was sent, what happens to the code, the numbered options (a long menu
+/// scrolls: a `↓ 5.` row), and a warning when code would be restored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewindConfirm {
+    /// Quoted rows without `│ `, leaving out the `(5s ago)` row.
+    pub quote: Vec<String>,
+    /// When the prompt was sent: `5s ago`.
+    pub ago: Option<String>,
+    /// `The code will be restored -1 in w.txt.` / `The code will be unchanged.`
+    pub code: Option<String>,
+    /// The `⚠` line, without the sign.
+    pub warning: Option<String>,
+    /// Shown options: number, label, cursor on it.
+    pub options: Vec<(u32, String, bool)>,
+}
+
+impl RewindConfirm {
+    /// The same page (wherever its cursor is, however long ago it says).
+    pub fn same_page(&self, other: &RewindConfirm) -> bool {
+        let labels = |c: &RewindConfirm| -> Vec<(u32, String)> {
+            c.options.iter().map(|o| (o.0, o.1.clone())).collect()
+        };
+        // The age (`5s ago`) ticks on redraws: not part of the page.
+        self.quote == other.quote
+            && self.code == other.code
+            && self.warning == other.warning
+            && labels(self) == labels(other)
+    }
+}
+
+pub fn rewind_confirm(lines: &[String]) -> Option<RewindConfirm> {
+    let start = rewind_screen(lines, REWIND_CONFIRM_SUB)?;
+    let mut c = RewindConfirm {
+        quote: Vec::new(),
+        ago: None,
+        code: None,
+        warning: None,
+        options: Vec::new(),
+    };
+    let mut i = start;
+    while i < lines.len() && lines[i].trim().is_empty() {
+        i += 1;
+    }
+    while i < lines.len() {
+        let Some(q) = lines[i].trim_start().strip_prefix('│') else {
+            break;
+        };
+        c.quote
+            .push(q.strip_prefix(' ').unwrap_or(q).trim_end().to_string());
+        i += 1;
+    }
+    if let Some(ago) = c.quote.last().and_then(|q| {
+        let q = q.trim();
+        q.strip_prefix('(')?
+            .strip_suffix(')')
+            .filter(|a| a.ends_with(" ago"))
+    }) {
+        c.ago = Some(ago.to_string());
+        c.quote.pop();
+    }
+    if c.quote.is_empty() {
+        return None;
+    }
+    // What follows: paragraphs (the code line, the warning) and the menu; any of them may be
+    // wrapped onto more rows, which continue the paragraph or the option above.
+    enum Para {
+        None,
+        Code,
+        Warning,
+        Option,
+    }
+    let mut para = Para::None;
+    for line in &lines[i..] {
+        let t = line.trim();
+        if t.is_empty() {
+            para = Para::None;
+            continue;
+        }
+        let row = t.trim_start_matches(['❯', '↑', '↓']).trim_start();
+        let cursor = t.starts_with('❯');
+        if let Some((n, label)) = row
+            .split_once(". ")
+            .and_then(|(n, l)| Some((n.parse::<u32>().ok()?, l)))
+        {
+            c.options.push((n, label.trim().to_string(), cursor));
+            para = Para::Option;
+            continue;
+        }
+        if let Some(w) = t.strip_prefix('⚠') {
+            c.warning = Some(w.trim().to_string());
+            para = Para::Warning;
+            continue;
+        }
+        if t.starts_with("The code will be") {
+            c.code = Some(t.to_string());
+            para = Para::Code;
+            continue;
+        }
+        let more = match para {
+            Para::None => continue,
+            Para::Code => c.code.as_mut(),
+            Para::Warning => c.warning.as_mut(),
+            Para::Option => c.options.last_mut().map(|o| &mut o.1),
+        };
+        if let Some(p) = more {
+            p.push(' ');
+            p.push_str(t);
+        }
+    }
+    let numbered = c
+        .options
+        .iter()
+        .enumerate()
+        .all(|(k, o)| k == 0 || o.0 == c.options[k - 1].0 + 1);
+    (!c.options.is_empty() && numbered && c.options.iter().filter(|o| o.2).count() == 1)
+        .then_some(c)
+}
+
+/// What the Rewind screens show of a prompt, for comparing: `[Image #N]` tags and all whitespace
+/// left out (the picker trims, the confirm page wraps and breaks long words).
+pub fn rewind_key(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(at) = rest.find("[Image #") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + "[Image #".len()..];
+        let digits = tail.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 && tail[digits..].starts_with(']') {
+            rest = &tail[digits + 1..];
+        } else {
+            out.push_str("[Image #");
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out.retain(|c| !c.is_whitespace());
+    out
+}
+
+/// The prompt's first line as the picker shows it (leading blank lines left out).
+pub fn rewind_first_line(text: &str) -> &str {
+    text.trim_start().lines().next().unwrap_or_default()
+}
+
+/// A picker row may show this prompt: its first line whole, or cut (a row ending in `…`: the
+/// first of several lines, or cut at the screen's edge).
+pub fn rewind_row_matches(row: &str, text: &str) -> bool {
+    let shown = rewind_key(row.trim_end_matches('…'));
+    let want = rewind_key(rewind_first_line(text));
+    shown == want || (row.ends_with('…') && !shown.is_empty() && want.starts_with(&shown))
+}
+
+/// Rows from which the confirm page's quote may be cut short (2.1.318 shows a 30-line prompt's
+/// first 4 lines).
+const QUOTE_CUT_ROWS: usize = 4;
+
+/// The confirm page may quote this prompt: the whole of it, or its start when the quote fills the
+/// rows it may be cut at.
+pub fn rewind_quote_matches(quote: &[String], text: &str) -> bool {
+    let shown = rewind_key(&quote.concat());
+    let want = rewind_key(text);
+    shown == want
+        || (quote.len() >= QUOTE_CUT_ROWS && !shown.is_empty() && want.starts_with(&shown))
+}
+
+/// The seconds ago a confirm page's `5s ago` / `3m ago` / `2h ago` / `4d ago` stands for:
+/// `[low, high)`. Other wording: `None`.
+pub fn rewind_age(ago: &str) -> Option<(u64, u64)> {
+    let n = ago.trim().strip_suffix(" ago")?;
+    let unit = match n.chars().last()? {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86_400,
+        _ => return None,
+    };
+    let v: u64 = n[..n.len() - 1].parse().ok()?;
+    Some((v * unit, (v + 1) * unit))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1068,6 +1341,162 @@ mod tests {
         );
         assert_eq!(spinner(&l("✻ Baked for 0s · done 10:35 PM")), None);
         assert_eq!(spinner(&screen("idle_prompt.txt")), None);
+    }
+
+    #[test]
+    fn rewind_picker_rows_and_window() {
+        let p = rewind_picker(&screen("rewind_picker_current.txt")).unwrap();
+        assert_eq!(p.cursor(), Some(REWIND_CURRENT));
+        assert_eq!((p.above, p.below), (8, 0));
+        assert_eq!(p.position(), Some(11));
+        let texts: Vec<&str> = p.rows.iter().map(|r| r.0.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["steered text", "/compact", "after compact", "(current)"]
+        );
+
+        let p = rewind_picker(&screen("rewind_picker_middle.txt")).unwrap();
+        assert_eq!(p.cursor(), Some("steered text"));
+        assert_eq!((p.above, p.below), (5, 3));
+        assert_eq!(p.position(), Some(8));
+        assert_eq!(p.rows[0].0, "multi line 1…");
+
+        let p = rewind_picker(&screen("rewind_picker_top.txt")).unwrap();
+        assert_eq!(p.cursor(), Some("first plain"));
+        assert_eq!((p.above, p.below), (0, 8));
+        assert_eq!(p.position(), Some(0));
+        // Not a picker: the confirm page, an idle screen.
+        assert!(rewind_picker(&screen("rewind_confirm_code.txt")).is_none());
+        assert!(rewind_picker(&screen("rewind_restored.txt")).is_none());
+    }
+
+    #[test]
+    fn rewind_confirm_with_code_and_scrolled_menu() {
+        let c = rewind_confirm(&screen("rewind_confirm_code.txt")).unwrap();
+        assert_eq!(c.quote, ["MOCK-WRITE /tmp/proj/w2.txt code-only"]);
+        assert_eq!(c.ago.as_deref(), Some("5s ago"));
+        assert_eq!(
+            c.code.as_deref(),
+            Some("The code will be restored -1 in w2.txt.")
+        );
+        assert!(
+            c.warning
+                .as_deref()
+                .unwrap()
+                .starts_with("Restored files go back whole")
+        );
+        let labels: Vec<(u32, &str)> = c.options.iter().map(|o| (o.0, o.1.as_str())).collect();
+        assert_eq!(
+            labels,
+            [
+                (1, "Restore code and conversation"),
+                (2, "Restore conversation"),
+                (3, "Restore code"),
+                (4, "Summarize from here"),
+                (5, "Summarize up to here"),
+            ]
+        );
+        assert!(c.options[0].2);
+        assert!(rewind_confirm(&screen("rewind_picker_middle.txt")).is_none());
+    }
+
+    #[test]
+    fn rewind_confirm_quotes_the_first_rows() {
+        let c = rewind_confirm(&screen("rewind_confirm_multiline.txt")).unwrap();
+        assert_eq!(c.quote.len(), 4);
+        assert_eq!(c.ago.as_deref(), Some("11s ago"));
+        assert_eq!(c.code.as_deref(), Some("The code will be unchanged."));
+        assert_eq!(c.warning, None);
+        assert_eq!(c.options.len(), 4);
+        let multi: Vec<String> = (1..=30).map(|i| format!("multi line {i}")).collect();
+        assert!(rewind_quote_matches(&c.quote, &multi.join("\n")));
+        assert!(!rewind_quote_matches(
+            &c.quote,
+            "multi line 2\nmulti line 1"
+        ));
+
+        // A long line wraps and its long word breaks.
+        let c = rewind_confirm(&screen("rewind_confirm_wrapped.txt")).unwrap();
+        let long = format!("long-single {}", "abcdefghij".repeat(30));
+        assert!(rewind_quote_matches(&c.quote, &long));
+        assert!(!rewind_quote_matches(&c.quote, "long-single abc"));
+
+        // Images show as `[Image #N]` tags (numbered across the Session).
+        let c = rewind_confirm(&screen("rewind_confirm_image.txt")).unwrap();
+        assert!(rewind_quote_matches(&c.quote, "with image\nsecond line"));
+    }
+
+    #[test]
+    fn rewind_rows_match_prompts() {
+        assert!(rewind_row_matches("first plain", "first plain"));
+        assert!(rewind_row_matches("leading spaces", "  leading spaces  "));
+        assert!(rewind_row_matches(
+            "multi line 1…",
+            "multi line 1\nmulti line 2"
+        ));
+        assert!(rewind_row_matches(
+            "[Image #2]with image…",
+            "with image\nsecond line"
+        ));
+        assert!(rewind_row_matches("[Image #1]", ""));
+        // A row cut at the screen's edge ends in `…`; a start without it is another prompt.
+        let long = format!("long-single {}", "abcdefghij".repeat(30));
+        assert!(rewind_row_matches(&format!("{}…", &long[..80]), &long));
+        assert!(!rewind_row_matches(&long[..80], &long));
+        assert!(!rewind_row_matches("first", "first plain"));
+        assert!(!rewind_row_matches("continue", "continue later"));
+        assert!(!rewind_row_matches("(current)", "first plain"));
+        assert_eq!(rewind_key("[Image #12] a\tb [Image #x]"), "ab[Image#x]");
+    }
+
+    #[test]
+    fn rewind_quote_whole_unless_cut() {
+        let q = |rows: &[&str]| rows.iter().map(|r| r.to_string()).collect::<Vec<_>>();
+        // A short quote is the whole prompt: a longer prompt starting the same is another one.
+        assert!(rewind_quote_matches(
+            &q(&["fix the tests"]),
+            "fix the tests"
+        ));
+        assert!(!rewind_quote_matches(
+            &q(&["fix the tests"]),
+            "fix the tests in parser"
+        ));
+        // Four rows may be cut short.
+        assert!(rewind_quote_matches(
+            &q(&["a", "b", "c", "d"]),
+            "a\nb\nc\nd\ne"
+        ));
+        assert!(!rewind_quote_matches(
+            &q(&["a", "b", "c", "x"]),
+            "a\nb\nc\nd\ne"
+        ));
+        assert_eq!(rewind_age("5s ago"), Some((5, 6)));
+        assert_eq!(rewind_age("3m ago"), Some((180, 240)));
+        assert_eq!(rewind_age("2h ago"), Some((7200, 10800)));
+        assert_eq!(rewind_age("yesterday"), None);
+    }
+
+    #[test]
+    fn rewind_screens_need_their_frame() {
+        // The words quoted in the conversation, with the input box below: not the screen.
+        let mut lines = screen("rewind_confirm_code.txt");
+        lines.extend(screen("rewind_restored.txt").into_iter().skip(43));
+        assert!(rewind_confirm(&lines).is_none());
+        // Without the dialog rule above the title: not the screen.
+        let mut lines = screen("rewind_picker_middle.txt");
+        let at = lines.iter().position(|l| l.trim() == "Rewind").unwrap();
+        lines[at - 1] = String::new();
+        assert!(rewind_picker(&lines).is_none());
+        // A wrapped option continues its label.
+        let mut lines = screen("rewind_confirm_code.txt");
+        let at = lines
+            .iter()
+            .position(|l| l.contains("1. Restore code and conversation"))
+            .unwrap();
+        lines[at] = "   ❯ 1. Restore code".into();
+        lines.insert(at + 1, "        and conversation".into());
+        let c = rewind_confirm(&lines).unwrap();
+        assert_eq!(c.options[0].1, "Restore code and conversation");
     }
 }
 

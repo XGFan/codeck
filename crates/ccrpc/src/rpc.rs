@@ -116,6 +116,53 @@ pub enum Command {
         request_id: String,
         option: String,
     },
+    /// Opens the TUI's Rewind picker on a Main Line prompt and stops at its confirm page.
+    Rewind {
+        uuid: String,
+    },
+    /// Answers the rewind's confirm page: an option, or `None` to cancel.
+    AnswerRewind {
+        request_id: String,
+        option: Option<RewindOption>,
+    },
+}
+
+/// What a rewind restores (the confirm page's `Restore …` options).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewindOption {
+    Both,
+    Conversation,
+    Code,
+}
+
+impl RewindOption {
+    pub const ALL: [RewindOption; 3] = [
+        RewindOption::Both,
+        RewindOption::Conversation,
+        RewindOption::Code,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            RewindOption::Both => "both",
+            RewindOption::Conversation => "conversation",
+            RewindOption::Code => "code",
+        }
+    }
+
+    /// The option's label on the confirm page (2.1.318).
+    pub fn label(self) -> &'static str {
+        match self {
+            RewindOption::Both => "Restore code and conversation",
+            RewindOption::Conversation => "Restore conversation",
+            RewindOption::Code => "Restore code",
+        }
+    }
+
+    /// The conversation goes back to before the prompt (which returns to the input box).
+    pub fn restores_conversation(self) -> bool {
+        self != RewindOption::Code
+    }
 }
 
 /// Claude Code's permission modes, in shift+tab order.
@@ -331,6 +378,30 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             request_id: req_text(obj, kind, "request_id")?,
             option: req_text(obj, kind, "option")?,
         }),
+        "rewind" => Ok(Command::Rewind {
+            uuid: req_text(obj, kind, "uuid")?,
+        }),
+        "answer_rewind" => {
+            let request_id = req_text(obj, kind, "request_id")?;
+            let option = match opt_text(obj, kind, "option")? {
+                Some(o) => Some(
+                    RewindOption::ALL
+                        .into_iter()
+                        .find(|r| r.name() == o)
+                        .ok_or_else(|| {
+                            format!(
+                                "answer_rewind 的 option 只能是 both / conversation / code，收到 {o}"
+                            )
+                        })?,
+                ),
+                None => None,
+            };
+            let cancel = opt_bool(obj, kind, "cancel")?;
+            if option.is_some() == cancel {
+                return Err("answer_rewind 要么给 option，要么给 cancel: true".into());
+            }
+            Ok(Command::AnswerRewind { request_id, option })
+        }
         "steer" => Ok(Command::Steer {
             text: req_text(obj, kind, "text")?,
             images: opt_strings(obj, kind, "images")?,
@@ -508,6 +579,8 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::DismissFeedbackDraft => "dismiss_feedback_draft",
         Command::StopTask { .. } => "stop_task",
         Command::AnswerChoice { .. } => "answer_choice",
+        Command::Rewind { .. } => "rewind",
+        Command::AnswerRewind { .. } => "answer_rewind",
         Command::Exit { .. } => "exit",
     }
 }
@@ -581,6 +654,33 @@ mod tests {
 
     fn err(line: &str) -> RpcError {
         parse_line(line).expect_err("应该解析失败")
+    }
+
+    #[test]
+    fn rewind_commands() {
+        let r = parse(r#"{"type":"rewind","uuid":"u1","id":1}"#);
+        assert_eq!(r.command, Command::Rewind { uuid: "u1".into() });
+        let r = parse(r#"{"type":"answer_rewind","request_id":"rewind:1","option":"code"}"#);
+        assert_eq!(
+            r.command,
+            Command::AnswerRewind {
+                request_id: "rewind:1".into(),
+                option: Some(RewindOption::Code)
+            }
+        );
+        let r = parse(r#"{"type":"answer_rewind","request_id":"rewind:1","cancel":true}"#);
+        assert_eq!(
+            r.command,
+            Command::AnswerRewind {
+                request_id: "rewind:1".into(),
+                option: None
+            }
+        );
+        // One of option / cancel, and only the known options.
+        err(r#"{"type":"answer_rewind","request_id":"rewind:1"}"#);
+        err(r#"{"type":"answer_rewind","request_id":"rewind:1","option":"both","cancel":true}"#);
+        err(r#"{"type":"answer_rewind","request_id":"rewind:1","option":"summarize"}"#);
+        err(r#"{"type":"rewind"}"#);
     }
 
     #[test]
@@ -927,6 +1027,8 @@ mod tests {
             "get_tasks",
             "stop_task",
             "answer_choice",
+            "rewind",
+            "answer_rewind",
             "exit",
         ] {
             assert!(

@@ -1,0 +1,48 @@
+  multi line 24
+  multi line 25
+  multi line 26
+  multi line 27
+  multi line 28
+  multi line 29
+  multi line 30
+
+⏺ ok
+
+✻ Baked for 0s · done 9:19 PM
+
+❯ [Image #2]with image
+  second line
+  ⎿  [Image #2]
+
+⏺ ok
+
+✻ Crunched for 0s · done 9:19 PM
+
+❯ continue
+
+⏺ ok
+
+✻ Brewed for 0s · done 9:19 PM
+
+❯   leading spaces
+
+⏺ ok
+
+✻ Worked for 0s · done 9:19 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Confirm you want to restore to the point before you sent this message:
+
+   │ long-single
+   │ abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijab
+   │ cdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij
+   │ (13s ago)
+
+   This message and everything after it will be removed.
+   The code will be unchanged.
+
+   ❯ 1. Restore conversation
+     2. Summarize from here
+     3. Summarize up to here
+     4. Never mind

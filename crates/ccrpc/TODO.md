@@ -15,7 +15,6 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 
 已做：`ls --json`（带标题）、`get_state` 的 `mode` / `model` / `context_tokens` 与 `session_info` 推送、共显、目录信任框作为 choice、`exit {close_pane, stop_tasks}`、`--log`、`progress` 事件、`get_messages` 的分页 / 增量缓存 / 后台线程 / `subagents`、`permission_request` 的 `options`、`choice` / `permission_request` 的 `layout_source`、`--log` 补足（版本、识别决策、整屏）、mock 端到端录 wire（`CCRPC_E2E_WIRE_DIR`）。
 
-- rewind：`rewind {uuid, restore}` 经选择器作答（先实测提示词多时选择器的滚动与截断、恢复代码的确认菜单变体）
 - 认不出的界面：v0 先经分析器归类，归不了的 GUI 只显示屏幕原文、在 TUI 里处理（不在 GUI 里按键）
 - 斜杠命令、模型的候选列表
 
@@ -52,6 +51,8 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 - 分析进行中（最长 60 秒）整个等待都不报告，换成别的认不出的屏幕也要等它结束才降级为 `dialog`
 - 审批类工具若以审批之外的 waitingFor 出现、又被学成标题不像审批的 choice，会盖住工具（未见过）
 - 按数字键作答（编号审批框、choice、提问）时，若对话框恰在核对屏幕与按键之间被人关掉，数字会落到输入框；输入框为空且有反馈草稿卡片时，`2` 会把草稿发给 Anthropic（窗口很短，未见过）
+- 提示词里有制表符时 `prompt` 等不到 transcript 里的这条（30 秒超时，2026-11-05 rewind 实测时发现；Claude Code 大概改写了制表符，比对时没对上）
+- rewind：文字相同的提示词靠选择器里的先后对应，再以确认页上的发送时间逐页核对；其中有插话（选择器是否列出未实测）时报 `ambiguous`，只能在终端里回退。在终端里直接回退过、还没发新提示词时，ccrpc 不知道终端的对话已变短，同样文字且发送时间落在同一档（如都是 2h ago）的提示词仍可能对应错
 
 ## 维护
 

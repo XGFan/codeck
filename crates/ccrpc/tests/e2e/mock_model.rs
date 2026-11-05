@@ -10,6 +10,7 @@ use crate::harness::*;
 
 /// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
 /// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
+/// `MOCK-WRITE <path>` with a Write call,
 /// `MOCK-ASK` with an AskUserQuestion call (`MOCK-ASKS`: two questions, the second multi-select), `MOCK-BG` with a background `sleep 2`, then `sleep 1`,
 /// then ~8 s of text (the background task ends meanwhile; its notification is answered as slowly);
 /// anything else (tool results too) with text `ok`.
@@ -110,7 +111,17 @@ fn mock_model() -> String {
                         .filter(|b| b["type"] == "tool_use" && b["name"] == n)
                         .count()
                 };
-                let tool = if asked("MOCK-TOOL") > called("Bash") && has_tool("Bash") {
+                let tool = if asked("MOCK-WRITE") > called("Write") && has_tool("Write") {
+                    // `MOCK-WRITE <path>`: writes `v<n>` to that file (n = Write calls so far).
+                    let path = text
+                        .split("MOCK-WRITE ")
+                        .nth(1)
+                        .and_then(|r| r.split_whitespace().next())
+                        .unwrap_or_default()
+                        .to_string();
+                    let content = format!("v{}\n", called("Write"));
+                    Some(("Write", json!({"file_path": path, "content": content})))
+                } else if asked("MOCK-TOOL") > called("Bash") && has_tool("Bash") {
                     Some((
                         "Bash",
                         json!({"command": "touch mock-tool.txt", "description": "Create mock-tool.txt"}),
@@ -513,6 +524,184 @@ fn mock_model_add_dir() {
     assert!(st["request"].is_null(), "{st}");
     let screen = rpc.call("g2", json!({"type": "get_screen"})).to_string();
     assert!(screen.contains("Added "), "{screen}");
+}
+
+/// Rewind through the TUI's picker: `rewind` stops at the confirm page with what it offers,
+/// `answer_rewind` restores (the file Write created goes away, the prompt returns to the input box)
+/// or cancels; among prompts that look the same the one asked for is picked; no `dialog` goes out
+/// for the picker meanwhile. On the scripted model (no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_rewind() {
+    let env = setup_with("mock-key", &mock_model(), "claude-opus-4-7");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let w = env.work.join("w.txt");
+    let write = format!("MOCK-WRITE {} now", w.display());
+    run_turn_allowing(&mut rpc, "p1", "first plain");
+    run_turn_allowing(&mut rpc, "p2", &write);
+    run_turn_allowing(&mut rpc, "p3", "continue");
+    run_turn_allowing(&mut rpc, "p4", "continue");
+    settle_idle(&mut rpc);
+    assert_eq!(std::fs::read_to_string(&w).unwrap(), "v0\n");
+    let msgs = rpc.call("m1", json!({"type": "get_messages"}));
+    let prompts: Vec<(String, String)> = msgs["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["kind"] == "user")
+        .map(|b| {
+            (
+                b["uuid"].as_str().unwrap().to_string(),
+                b["text"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let uuid_of = |i: usize| prompts[i].0.clone();
+    assert_eq!(prompts.len(), 4, "{prompts:?}");
+
+    // Not a prompt of the Main Line.
+    rpc.forget();
+    rpc.send(json!({"type": "rewind", "uuid": "no-such-uuid", "id": "r0"}));
+    let r = rpc.until("r0", Duration::from_secs(30), |v| v["id"] == "r0");
+    assert_eq!(r["error"]["code"], "not_found", "{r}");
+
+    // The older of two `continue`: nothing written after it, so only the conversation.
+    rpc.forget();
+    let c = rpc.call("r1", json!({"type": "rewind", "uuid": uuid_of(2)}));
+    assert_eq!(c["text"], "continue", "{c}");
+    assert_eq!(c["code"], "The code will be unchanged.", "{c}");
+    assert_eq!(
+        c["options"],
+        json!([{"option": "conversation", "label": "Restore conversation"}])
+    );
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["request"]["request_id"], c["request_id"], "{st}");
+    assert_eq!(st["request"]["type"], "rewind", "{st}");
+    // Cancelled: back to idle, nothing changed.
+    let a = rpc.call(
+        "a1",
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "cancel": true}),
+    );
+    assert_eq!(a["state"], "idle", "{a}");
+    assert!(
+        !rpc.seen
+            .iter()
+            .any(|v| v["type"] == "dialog" || v["type"] == "unrecognized"),
+        "rewind 期间不该上报对话框：{:?}",
+        rpc.seen
+    );
+
+    // The prompt that wrote the file: code and conversation can go back.
+    rpc.forget();
+    let c = rpc.call("r2", json!({"type": "rewind", "uuid": uuid_of(1)}));
+    assert_eq!(c["text"], write.as_str(), "{c}");
+    let options: Vec<&str> = c["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["option"].as_str().unwrap())
+        .collect();
+    assert_eq!(options, ["both", "conversation", "code"], "{c}");
+    assert!(c["code"].as_str().unwrap().contains("w.txt"), "{c}");
+    assert!(c["warning"].is_string(), "{c}");
+    let a = rpc.call(
+        "a2",
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "option": "both"}),
+    );
+    assert_eq!(a["state"], "idle", "{a}");
+    assert_eq!(a["text"], write.as_str(), "{a}");
+    assert!(!w.exists(), "Write 建的文件应当被恢复掉");
+    // The input box (its last `❯` row) holds the prompt again.
+    wait_screen(&mut rpc, "s1", |ls| {
+        ls.iter()
+            .rfind(|l| l.starts_with('❯'))
+            .is_some_and(|l| l.contains("MOCK-WRITE") && l.contains("w.txt now"))
+    });
+    assert!(
+        !rpc.seen
+            .iter()
+            .any(|v| v["type"] == "dialog" || v["type"] == "unrecognized"),
+        "{:?}",
+        rpc.seen
+    );
+    // The answer was answered: no request left.
+    let st = rpc.call("g2", json!({"type": "get_state"}));
+    assert!(st["request"].is_null(), "{st}");
+
+    // A prompt from here starts another Branch.
+    rpc.forget();
+    rpc.call("p5", json!({"type": "prompt", "text": "after rewind"}));
+    let b = rpc.event("branch", Duration::from_secs(30));
+    assert!(b["at_uuid"].is_string(), "{b}");
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    // Code only: the file goes back, the conversation and the input box stay.
+    let w2 = env.work.join("w2.txt");
+    let write2 = format!("MOCK-WRITE {} code-only", w2.display());
+    run_turn_allowing(&mut rpc, "p6", &write2);
+    settle_idle(&mut rpc);
+    let msgs = rpc.call("m2", json!({"type": "get_messages"}));
+    let last_prompt = msgs["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|b| b["kind"] == "user")
+        .unwrap()["uuid"]
+        .clone();
+    let c = rpc.call("r3", json!({"type": "rewind", "uuid": last_prompt}));
+    let a = rpc.call(
+        "a3",
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "option": "code"}),
+    );
+    assert!(a["text"].is_null(), "{a}");
+    assert!(!w2.exists(), "只恢复代码也应当去掉 w2.txt");
+
+    // A newer prompt whose row looks like the target's (its first line, cut with `…`): its page
+    // quotes something else, so the walk goes back and on to the target.
+    run_turn_allowing(&mut rpc, "p7", "Please review the PR");
+    run_turn_allowing(&mut rpc, "p8", "Please review\nthe diff");
+    settle_idle(&mut rpc);
+    let msgs = rpc.call("m3", json!({"type": "get_messages"}));
+    let review = msgs["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["kind"] == "user" && b["text"] == "Please review the PR")
+        .unwrap()["uuid"]
+        .clone();
+    let c = rpc.call("r5", json!({"type": "rewind", "uuid": review}));
+    assert_eq!(c["text"], "Please review the PR", "{c}");
+    let page = wait_screen(&mut rpc, "s2", |ls| {
+        ls.iter().any(|l| l.contains("│ Please"))
+    });
+    assert!(
+        page.iter()
+            .any(|l| l.trim_end().ends_with("│ Please review the PR")),
+        "{page:#?}"
+    );
+    let a = rpc.call(
+        "a5",
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "cancel": true}),
+    );
+    assert_eq!(a["state"], "idle", "{a}");
+
+    // Esc in the TUI on the confirm page: the rewind is over, the picker is a dialog as usual.
+    rpc.forget();
+    let c = rpc.call("r4", json!({"type": "rewind", "uuid": last_prompt}));
+    rpc.call("k1", json!({"type": "send_keys", "keys": ["esc"]}));
+    rpc.until("picker dialog", Duration::from_secs(5), |v| {
+        v["type"] == "dialog"
+    });
+    let st = rpc.call("g3", json!({"type": "get_state"}));
+    assert!(st["request"]["type"] != "rewind", "{st}");
+    rpc.send(
+        json!({"type": "answer_rewind", "request_id": c["request_id"], "cancel": true, "id": "a4"}),
+    );
+    let r = rpc.until("a4", Duration::from_secs(10), |v| v["id"] == "a4");
+    assert_eq!(r["error"]["code"], "unknown_request", "{r}");
+    rpc.call("k2", json!({"type": "send_keys", "keys": ["esc"]}));
+    wait_state(&mut rpc, "idle", 10);
 }
 
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on

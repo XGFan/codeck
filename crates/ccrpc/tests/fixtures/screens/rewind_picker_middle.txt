@@ -1,0 +1,48 @@
+
+
+⏺ ok
+
+✻ Cooked for 0s · done 9:16 PM
+
+❯ MOCK-SLOW slow one
+
+⏺ slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow
+
+✻ Churned for 8s · done 9:16 PM
+
+❯ steered text
+
+⏺ slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow
+
+✻ Cogitated for 8s · done 9:16 PM
+
+❯ /compact
+  ⎿  Compacted (ctrl+o to see full summary)
+  ⎿  Read w.txt (2 lines)
+
+❯ after compact
+
+⏺ ok
+
+✻ Churned for 0s · done 9:16 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Restore the code and/or conversation to the point before…
+
+     ↑ 5 more
+     multi line 1…
+     No code changes
+
+     MOCK-WRITE /tmp/proj/w.txt now
+     w.txt +1
+
+     MOCK-SLOW slow one
+     No code changes
+
+   ❯ steered text
+     No code changes
+
+     ↓ 3 more
+
+   Enter to continue · Esc to cancel

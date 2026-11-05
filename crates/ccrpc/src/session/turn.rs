@@ -504,10 +504,19 @@ impl Engine {
                     self.note_main_usage(model.as_deref(), effort.as_deref(), &usage);
                 }
             }
-            TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
+            TxEvent::UserPrompt { uuid, text } => {
+                // A person's prompt after a rewind (a resend of the same one forks no Branch):
+                // the transcript's conversation is the TUI's again. Commands and task
+                // notifications are not.
+                if !text.starts_with(['/', '!']) && transcript::task_notification(&text).is_none() {
+                    self.rewound = None;
+                }
+                self.marks.prompt(uuid, text)
+            }
             TxEvent::Enqueued { content } => self.marks.enqueue(content),
             TxEvent::Queue(items) => self.set_queue(&items),
             TxEvent::Branch { at_uuid } => {
+                self.rewound = None;
                 self.emit(json!({"type": "branch", "at_uuid": at_uuid}));
             }
             TxEvent::Workflow(v) => self.emit(v),

@@ -5,7 +5,7 @@
 //! has pressed its last key, the rest run after it (follow-ups are only sent from the top level
 //! loop, never from inside a waiting command).
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,12 +32,14 @@ use crate::wake::{FsWatch, Wake};
 mod announce;
 mod drive;
 mod requests;
+mod rewind;
 mod startup;
 mod tasks;
 mod turn;
 
 use self::announce::Announced;
 use self::requests::{HookPrompt, HookRequest, PreTool};
+use self::rewind::RewindReq;
 pub use self::startup::{cmd_attach, cmd_new, resolve_target};
 use self::turn::{Marks, TurnTracker};
 
@@ -232,6 +234,12 @@ pub struct Engine {
     analyses: VecDeque<Instant>,
     /// Numbers the choices announced (`choice:N`).
     choice_seq: u64,
+    /// A rewind under way (the Rewind picker or its confirm page), and the ones numbered so far.
+    rewind: Option<RewindReq>,
+    rewind_seq: u64,
+    /// The prompt a conversation restore went back before: the TUI's conversation ends before it
+    /// until the transcript shows the next prompt.
+    rewound: Option<String>,
     /// What went out for the current waiting.
     announced: Option<Announced>,
     startup_checked: Option<Instant>,
@@ -328,6 +336,9 @@ impl Engine {
             analyzed: HashSet::new(),
             analyses: VecDeque::new(),
             choice_seq: 0,
+            rewind: None,
+            rewind_seq: 0,
+            rewound: None,
             announced: None,
             startup_checked: None,
             startup_last: None,
@@ -451,6 +462,7 @@ impl Engine {
         let prev = self.session_id.replace(sid.clone());
         // Also the first one after `ready` (`new`: the plugin checks in after the startup screens).
         if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
+            self.rewound = None;
             self.emit(json!({"type": "session_changed", "session_id": sid, "previous": prev}));
         }
         let mut t = Tailer::new(path);
@@ -542,6 +554,7 @@ impl Engine {
         let out = self.turns.poll(Instant::now(), idle_since);
         self.apply_turns(out);
         self.refresh_announcement();
+        self.watch_rewind();
         self.announce_requests();
         self.look_at_screen();
     }
@@ -918,7 +931,13 @@ impl Engine {
             },
             Announced::Dialog(waiting_for) => json!({"waiting_for": waiting_for}),
         });
-        v["request"] = request.unwrap_or(Value::Null);
+        // An announced rewind is the request (its confirm page waits in the TUI).
+        let rewind = self
+            .rewind
+            .as_ref()
+            .filter(|r| r.id.is_some())
+            .map(|r| r.event.clone());
+        v["request"] = rewind.or(request).unwrap_or(Value::Null);
         v["holder_id"] = json!(self.holder_id);
         v["session_id"] = json!(self.session_id);
         v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
@@ -972,6 +991,8 @@ impl Engine {
             Command::StopTask { task_id } => self.stop_task(task_id),
             Command::DismissFeedbackDraft => self.dismiss_feedback_draft(),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
+            Command::Rewind { uuid } => self.rewind(uuid),
+            Command::AnswerRewind { request_id, option } => self.answer_rewind(request_id, *option),
             Command::Steer { text, images } => self.steer(text, images),
             Command::FollowUp { text, images } => {
                 self.require(true, "")?;

@@ -1,0 +1,48 @@
+
+
+⏺ ok
+
+✻ Cooked for 0s · done 9:16 PM
+
+❯ MOCK-SLOW slow one
+
+⏺ slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow
+
+✻ Churned for 8s · done 9:16 PM
+
+❯ steered text
+
+⏺ slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow slow
+
+✻ Cogitated for 8s · done 9:16 PM
+
+❯ /compact
+  ⎿  Compacted (ctrl+o to see full summary)
+  ⎿  Read w.txt (2 lines)
+
+❯ after compact
+
+⏺ ok
+
+✻ Churned for 0s · done 9:16 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Restore the code and/or conversation to the point before…
+
+     ↑ 8 more
+     steered text
+     No code changes
+
+     /compact
+     ⚠ No code restore
+
+     after compact
+     No code changes
+
+   ❯ (current)
+
+
+
+
+   Enter to continue · Esc to cancel

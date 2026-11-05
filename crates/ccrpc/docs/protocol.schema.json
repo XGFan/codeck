@@ -447,6 +447,12 @@
           "$ref": "#/$defs/commands/answer_choice"
         },
         {
+          "$ref": "#/$defs/commands/rewind"
+        },
+        {
+          "$ref": "#/$defs/commands/answer_rewind"
+        },
+        {
           "$ref": "#/$defs/commands/exit"
         },
         {
@@ -1018,6 +1024,76 @@
         ],
         "additionalProperties": false
       },
+      "rewind": {
+        "title": "rewind",
+        "description": "idle 时打开终端的 Rewind 选择器（输入框为空时的 Esc Esc），按文字找到 Main Line 上的这条提示词、回车，停在确认页；确认页引用的须是这条提示词。终端停在确认页（waiting）期间这次回退是挂起的请求，用 answer_rewind 作答。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "rewind"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "uuid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Main Line 上一条提示词在 transcript 里的 uuid（get_messages 的 user 块的 uuid）。"
+          }
+        },
+        "required": [
+          "type",
+          "uuid"
+        ],
+        "additionalProperties": false
+      },
+      "answer_rewind": {
+        "title": "answer_rewind",
+        "description": "作答 rewind 停下的确认页：option 按下对应的恢复选项，cancel 按 Esc 退回选择器再关掉。二者给且只给一个。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "answer_rewind"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "rewind 返回的 request_id（rewind:N）。"
+          },
+          "option": {
+            "enum": [
+              "both",
+              "conversation",
+              "code"
+            ],
+            "description": "both：Restore code and conversation；conversation：Restore conversation；code：Restore code。只能是 rewind 返回的 options 之一。"
+          },
+          "cancel": {
+            "const": true,
+            "description": "不回退。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "option"
+            ]
+          },
+          {
+            "required": [
+              "cancel"
+            ]
+          }
+        ]
+      },
       "exit": {
         "title": "exit",
         "description": "idle 时输入 /exit，等 claude 进程退出；close_pane 时再结束 Pane 的 shell。",
@@ -1239,7 +1315,7 @@
             "$ref": "#/$defs/waiting"
           },
           "request": {
-            "description": "挂起的请求；挂起的 choice 为它的 choice 事件；没有为 null。",
+            "description": "挂起的请求；挂起的 choice 为它的 choice 事件，挂起的回退为 rewind 的响应（type: rewind）；没有为 null。",
             "oneOf": [
               {
                 "type": "null"
@@ -1295,6 +1371,10 @@
                 "required": [
                   "type"
                 ]
+              },
+              {
+                "$ref": "#/$defs/response_data/rewind",
+                "description": "挂起的回退：rewind 的响应。"
               }
             ]
           },
@@ -1598,6 +1678,94 @@
           "state"
         ]
       },
+      "rewind": {
+        "title": "rewind",
+        "description": "终端停在确认页时它写的内容。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "rewind"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "rewind:N，answer_rewind 用。"
+          },
+          "uuid": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "这条提示词的全文（transcript 里的）。"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "确认页上代码会怎样的原文：The code will be restored … / The code will be unchanged.；认不出为 null。"
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "确认页的 ⚠ 警告原文（有代码要恢复时才有），没有为 null。"
+          },
+          "options": {
+            "type": "array",
+            "description": "这次能选的恢复选项（确认页上有的），按确认页的顺序。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "option": {
+                  "enum": [
+                    "both",
+                    "conversation",
+                    "code"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "description": "确认页上的原文。"
+                }
+              },
+              "required": [
+                "option",
+                "label"
+              ]
+            }
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "uuid",
+          "text",
+          "code",
+          "warning",
+          "options"
+        ]
+      },
+      "answer_rewind": {
+        "title": "answer_rewind",
+        "description": "作答后回到 idle。",
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/state"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "恢复了对话时为放回输入框的提示词全文；只恢复代码或取消时为 null（取消时没有此字段）。"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
       "exit": {
         "title": "exit",
         "description": "claude 已退出（close_pane 时 Pane 也已收到 exit）。",
@@ -1875,6 +2043,26 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/answer_choice"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "rewind"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/rewind"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "answer_rewind"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/answer_rewind"
             }
           }
         },
