@@ -119,6 +119,27 @@ fn mock_model() -> String {
                         "Bash",
                         json!({"command": "sleep 300", "description": "Wait long in background", "run_in_background": true}),
                     ))
+                } else if asked("MOCK-STOPTASK") > called("TaskStop") {
+                    // Stops the background shell a tool result above announced. TaskStop is a
+                    // deferred tool (not in the request's tool list), still callable by name.
+                    let id = user.iter().rev().find_map(|b| {
+                        let t = match &b["content"] {
+                            Value::String(t) => t.clone(),
+                            Value::Array(a) => a
+                                .iter()
+                                .filter_map(|x| x["text"].as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                            _ => return None,
+                        };
+                        let rest = &t[t.find("with ID: ")? + 9..];
+                        let id: String = rest
+                            .chars()
+                            .take_while(|c| c.is_ascii_alphanumeric())
+                            .collect();
+                        (!id.is_empty()).then_some(id)
+                    });
+                    id.map(|id| ("TaskStop", json!({"task_id": id})))
                 } else if asked("MOCK-BG") > 0 && called("Bash") < 2 && has_tool("Bash") {
                     Some((
                         "Bash",
@@ -938,6 +959,32 @@ fn mock_model_exit_with_tasks() {
     );
     rpc.call("x2", json!({"type": "exit", "stop_tasks": true}));
     rpc.event("session_exit", Duration::from_secs(20));
+}
+
+/// A background shell stopped with TaskStop ends in get_tasks: Claude Code sends no notification for
+/// it, so ccrpc takes the tool's result as its end.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_task_stop_ends_the_task() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    run_turn_allowing(&mut rpc, "bg", "MOCK-LONGTASK please");
+    settle_idle(&mut rpc);
+    let shell = |rpc: &mut Rpc, id: &str| {
+        let tasks = rpc.call(id, json!({"type": "get_tasks"}));
+        tasks["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["kind"] == "shell" && t["command"] == "sleep 300")
+            .unwrap_or_else(|| panic!("没有那个后台 shell：{tasks}"))
+            .clone()
+    };
+    assert_eq!(shell(&mut rpc, "t1")["status"], "running");
+    run_turn_allowing(&mut rpc, "stop", "MOCK-STOPTASK please");
+    settle_idle(&mut rpc);
+    assert_eq!(shell(&mut rpc, "t2")["status"], "stopped");
 }
 
 /// SIGTERM (CoDeck's Disconnect fallback) while idle ends ccrpc as a closed stdin does: it exits 0,

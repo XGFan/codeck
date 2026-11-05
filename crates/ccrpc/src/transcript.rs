@@ -1108,6 +1108,18 @@ impl Tailer {
                 let tool = self.pending.remove(&tid);
                 let mut b = Block::new(BlockKind::ToolResult, uuid, i);
                 let text = nodes::result_content(rb.content.as_deref()).0;
+                // A task stopped with TaskStop gets no notification of its own (a shell's never
+                // does): its result is the only record that the task ended.
+                if agent.is_none()
+                    && rb.is_error != Some(true)
+                    && let Some(t) = tool.as_ref().filter(|t| t.name == "TaskStop")
+                    && let Some(id) = ["task_id", "shell_id"]
+                        .iter()
+                        .find_map(|k| t.input.get(*k).and_then(Value::as_str))
+                {
+                    let id = id.to_string();
+                    self.mark_stopped(&id);
+                }
                 if agent.is_none()
                     && let Some((kind, id)) = subagent::background_launch(&text)
                     && let Some(kind) = TaskKind::from_name(kind)
@@ -2023,6 +2035,57 @@ mod tests {
             (TaskKind::Shell, Some("sleep 5"))
         );
         assert!(tasks.iter().all(|t| t.status == "completed"), "{tasks:?}");
+    }
+
+    /// A foreground command moved to the background on its timeout is a task too, and TaskStop
+    /// (which sends no notification for a shell) ends it.
+    #[test]
+    fn a_task_moved_to_the_background_and_one_stopped_with_task_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let call = |id: &str, name: &str, input: Value| {
+            json!({"type": "assistant", "uuid": format!("c-{id}"), "message": {"id": format!("m-{id}"), "role": "assistant",
+                "content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}})
+        };
+        write_lines(
+            &main,
+            &[
+                call(
+                    "t1",
+                    "Bash",
+                    json!({"command": "make e2e", "description": "E2E"}),
+                ),
+                tool_result_entry(
+                    "t1",
+                    "running…\nCommand did not complete within its 120s timeout and was moved to the background (ID: bg1). Output is being written to: /x",
+                    json!({}),
+                ),
+                call(
+                    "t2",
+                    "Bash",
+                    json!({"command": "sleep 60", "description": "wait", "run_in_background": true}),
+                ),
+                tool_result_entry(
+                    "t2",
+                    "Command running in background with ID: bg2. Output is being written to: /y",
+                    json!({}),
+                ),
+                call("t3", "TaskStop", json!({"task_id": "bg2"})),
+                tool_result_entry(
+                    "t3",
+                    "{\"message\":\"Successfully stopped task: bg2 (sleep 60)\"}",
+                    json!({}),
+                ),
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        t.poll();
+        let status: Vec<_> = t
+            .tasks()
+            .iter()
+            .map(|t| (t.id.as_str(), t.status.as_str()))
+            .collect();
+        assert_eq!(status, [("bg1", "running"), ("bg2", "stopped")]);
     }
 
     /// `get_tasks` puts `BgTask` on the wire: the kind is a lowercase string, `command` only

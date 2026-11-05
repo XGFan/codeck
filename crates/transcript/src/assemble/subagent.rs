@@ -67,6 +67,11 @@ pub fn background_launch(text: &str) -> Option<(&'static str, String)> {
     if text.starts_with("Workflow launched in background") {
         return after("Task ID:").map(|id| ("workflow", id));
     }
+    // A foreground command that hit its timeout keeps running in the background; the notice
+    // follows the output it printed so far.
+    if text.contains("was moved to the background (ID:") {
+        return after("moved to the background (ID:").map(|id| ("shell", id));
+    }
     None
 }
 
@@ -431,6 +436,12 @@ mod tests {
         assert_eq!(
             background_launch("Workflow launched in background. Task ID: w_42\n"),
             Some(("workflow", "w_42".into()))
+        );
+        assert_eq!(
+            background_launch(
+                "ok\nCommand did not complete within its 120s timeout and was moved to the background (ID: b1j16ksd4). Output is being written to: /x"
+            ),
+            Some(("shell", "b1j16ksd4".into()))
         );
         assert_eq!(background_launch("done"), None);
     }

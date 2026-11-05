@@ -8,6 +8,19 @@ impl Engine {
     pub(super) fn note_background_launch(&mut self, tool_use_id: &str, i: &Value) {
         let (resp, input) = (&i["tool_response"], &i["tool_input"]);
         let text = |v: &Value| v.as_str().map(str::to_string);
+        // TaskStop ends a task without a notification of its own (a shell's never comes).
+        if i["tool_name"] == "TaskStop" {
+            let id = text(&input["task_id"]).or_else(|| text(&input["shell_id"]));
+            if let Some(id) = id
+                && self
+                    .tasks()
+                    .iter()
+                    .any(|t| t.id == id && t.status == "running")
+            {
+                self.set_task_status(&id, "stopped");
+            }
+            return;
+        }
         let task = match i["tool_name"].as_str() {
             Some("Bash") => text(&resp["backgroundTaskId"]).map(|id| (id, TaskKind::Shell)),
             Some("Agent" | "Task") if resp["isAsync"] == true => {
