@@ -194,12 +194,15 @@ pub fn local_setting(s: &str) -> Option<(Option<String>, Option<String>)> {
     (!level.is_empty()).then(|| (None, Some(level.to_lowercase())))
 }
 
-/// What a background task runs; on the wire `agent`, `shell` or `workflow`.
+/// What a background task runs; on the wire `agent`, `shell`, `monitor` or `workflow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskKind {
     Agent,
     Shell,
+    /// The Monitor tool's watch, which notifies on each event (Claude Code runs it as a background
+    /// shell, and Stop's `background_tasks` calls it `shell`).
+    Monitor,
     Workflow,
 }
 
@@ -209,13 +212,14 @@ impl TaskKind {
         match name {
             "agent" => Some(TaskKind::Agent),
             "shell" => Some(TaskKind::Shell),
+            "monitor" => Some(TaskKind::Monitor),
             "workflow" => Some(TaskKind::Workflow),
             _ => None,
         }
     }
 }
 
-/// A background task Claude Code started: a Subagent Run, a shell or a Workflow Run.
+/// A background task Claude Code started: a Subagent Run, a shell, a Monitor or a Workflow Run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BgTask {
     /// Claude Code's task id (agentId, background shell id, Workflow task id).
@@ -223,7 +227,7 @@ pub struct BgTask {
     pub kind: TaskKind,
     pub tool_use_id: String,
     pub description: Option<String>,
-    /// The shell command of a background shell.
+    /// The shell command of a background shell or a Monitor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     /// `running` until Claude Code reports it ended (`completed`, `failed`, `killed`, …).
@@ -2049,6 +2053,58 @@ mod tests {
         assert!(tasks.iter().all(|t| t.status == "completed"), "{tasks:?}");
     }
 
+    /// A Monitor is a task of its own kind; its events (notifications without a status) do not
+    /// end it, the one saying its stream ended does.
+    #[test]
+    fn a_monitor_runs_until_its_stream_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let user = |uuid: &str, text: String| json!({"type": "user", "uuid": uuid, "message": {"role": "user", "content": text}});
+        let note = |inner: &str| {
+            format!("<task-notification>\n<task-id>bm1</task-id>\n{inner}\n</task-notification>")
+        };
+        let mut lines = vec![
+            json!({"type": "assistant", "uuid": "c-t1", "message": {"id": "m-t1", "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t1", "name": "Monitor",
+                    "input": {"command": "tail -F app.log", "description": "app errors", "timeout_ms": 900000}}]}}),
+            tool_result_entry(
+                "t1",
+                "Monitor started (task bm1, timeout 900000ms). You will be notified on each event.",
+                json!({"taskId": "bm1", "timeoutMs": 900000, "persistent": false}),
+            ),
+            user(
+                "e1",
+                note("<summary>Monitor event: \"app errors\"</summary>\n<event>ERROR boom</event>"),
+            ),
+        ];
+        write_lines(&main, &lines);
+        let mut t = Tailer::new(&main);
+        t.poll();
+        let task = &t.tasks()[0];
+        assert_eq!(
+            (
+                task.kind,
+                task.description.as_deref(),
+                task.command.as_deref(),
+                task.status.as_str()
+            ),
+            (
+                TaskKind::Monitor,
+                Some("app errors"),
+                Some("tail -F app.log"),
+                "running"
+            )
+        );
+        // Appended: the stream ended.
+        lines.push(user(
+            "e2",
+            note("<status>completed</status>\n<summary>Monitor \"app errors\" stream ended</summary>"),
+        ));
+        write_lines(&main, &lines);
+        t.poll();
+        assert_eq!(t.tasks()[0].status, "completed");
+    }
+
     /// A foreground command moved to the background on its timeout is a task too, and TaskStop
     /// (which sends no notification for a shell) ends it.
     #[test]
@@ -2101,7 +2157,7 @@ mod tests {
     }
 
     /// `get_tasks` puts `BgTask` on the wire: the kind is a lowercase string, `command` only
-    /// for a shell.
+    /// for a shell or a Monitor.
     #[test]
     fn background_tasks_serialize_as_on_the_wire() {
         let task = |kind, command: Option<&str>| BgTask {
@@ -2115,6 +2171,7 @@ mod tests {
         let all = [
             task(TaskKind::Shell, Some("sleep 5")),
             task(TaskKind::Agent, None),
+            task(TaskKind::Monitor, Some("tail -F x")),
             task(TaskKind::Workflow, None),
         ];
         assert_eq!(
@@ -2122,6 +2179,7 @@ mod tests {
             concat!(
                 r#"[{"id":"t1","kind":"shell","tool_use_id":"toolu_1","description":"d","command":"sleep 5","status":"running"},"#,
                 r#"{"id":"t1","kind":"agent","tool_use_id":"toolu_1","description":"d","status":"running"},"#,
+                r#"{"id":"t1","kind":"monitor","tool_use_id":"toolu_1","description":"d","command":"tail -F x","status":"running"},"#,
                 r#"{"id":"t1","kind":"workflow","tool_use_id":"toolu_1","description":"d","status":"running"}]"#
             )
         );

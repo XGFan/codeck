@@ -196,9 +196,10 @@
           "enum": [
             "agent",
             "shell",
+            "monitor",
             "workflow"
           ],
-          "description": "任务种类。"
+          "description": "任务种类（monitor：Monitor 工具的任务）。"
         },
         "tool_use_id": {
           "type": "string",
@@ -217,7 +218,7 @@
         },
         "command": {
           "type": "string",
-          "description": "后台 shell 的命令。"
+          "description": "后台 shell 或 Monitor 的命令。"
         }
       },
       "required": [

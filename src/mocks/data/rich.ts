@@ -334,6 +334,19 @@ export const richMain: Node[] = [
       { notificationNodeId: "n-notify-bash" },
     ),
     call(
+      "tu_monitor",
+      "Monitor",
+      {
+        command: "tail -F logs/ratelimit.log | grep --line-buffered 429",
+        description: "限流 429 日志",
+        timeout_ms: 1800000,
+      },
+      {
+        text: "Monitor started (task b-mon1, timeout 1800000ms). You will be notified on each event. Keep working — do not poll or sleep.",
+        extraJson: JSON.stringify({ taskId: "b-mon1", timeoutMs: 1800000, persistent: false }),
+      },
+    ),
+    call(
       "tu_artifact",
       "Artifact",
       { action: "read", url: "https://claude.ai/artifact/M0ckDesignCanvas" },

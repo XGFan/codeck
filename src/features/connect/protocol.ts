@@ -128,7 +128,7 @@ export interface ProgressEvent {
 
 export interface Task {
   id: string;
-  kind: "agent" | "shell" | "workflow";
+  kind: "agent" | "shell" | "monitor" | "workflow";
   tool_use_id: string | null;
   description: string | null;
   command?: string | null;

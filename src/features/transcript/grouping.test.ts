@@ -137,6 +137,7 @@ describe("subagent and workflow cards", () => {
     expect(after.items.map((i) => (i.type === "call" ? i.call.toolUseId : null))).toEqual([
       "tu_mcp",
       "tu_bg_build",
+      "tu_monitor",
       "tu_artifact",
       "tu_artifact_file",
       "tu_artifact_publish",

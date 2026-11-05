@@ -4,7 +4,7 @@ use super::*;
 
 impl Engine {
     /// A background task the plugin saw start: Bash `run_in_background`, an async Agent, a
-    /// Workflow (from the tool's response).
+    /// Monitor, a Workflow (from the tool's response).
     pub(super) fn note_background_launch(&mut self, tool_use_id: &str, i: &Value) {
         let (resp, input) = (&i["tool_response"], &i["tool_input"]);
         let text = |v: &Value| v.as_str().map(str::to_string);
@@ -26,6 +26,7 @@ impl Engine {
             Some("Agent" | "Task") if resp["isAsync"] == true => {
                 text(&resp["agentId"]).map(|id| (id, TaskKind::Agent))
             }
+            Some("Monitor") => text(&resp["taskId"]).map(|id| (id, TaskKind::Monitor)),
             Some("Workflow") => text(&resp["taskId"]).map(|id| (id, TaskKind::Workflow)),
             _ => None,
         };
@@ -45,14 +46,17 @@ impl Engine {
             kind,
             tool_use_id: tool_use_id.to_string(),
             description,
-            command: (kind == TaskKind::Shell)
+            command: matches!(kind, TaskKind::Shell | TaskKind::Monitor)
                 .then(|| text(&input["command"]))
                 .flatten(),
             status: "running".into(),
         });
     }
 
-    /// Stop's `background_tasks`: running tasks ccrpc did not see start are added.
+    /// Stop's `background_tasks`: running tasks ccrpc did not see start are added. A Monitor tool's
+    /// task is listed as a `shell` there; seen start (plugin or transcript), it keeps its kind.
+    /// Claude Code's own monitors (`monitor`, e.g. an artifact's live updates) are left out: `/tasks`
+    /// does not show them and no notification ends them.
     pub(super) fn note_running_tasks(&mut self, bg: &Value) {
         for t in bg.as_array().into_iter().flatten() {
             let Some(id) = t["id"].as_str() else { continue };
@@ -132,12 +136,18 @@ impl Engine {
                 format!("后台任务 {id} 已经结束（{}）", task.status),
             );
         }
-        // The panel shows a shell by its command and an agent or a Workflow by its description.
+        // The panel's list shows a shell by its command and an agent, a Monitor or a Workflow by
+        // its description; a Monitor's details show its command (`Script:`), not its description.
         let needle = match task.kind {
             TaskKind::Shell => task.command.clone(),
             _ => task.description.clone(),
         }
         .unwrap_or_default();
+        let detail_needle = match task.kind {
+            TaskKind::Monitor => task.command.clone().unwrap_or_default(),
+            _ => needle.clone(),
+        };
+        let detail_needle = recognize::collapse_ws(&detail_needle);
         let needle = recognize::collapse_ws(&needle);
         if needle.is_empty() {
             return err(
@@ -154,7 +164,12 @@ impl Engine {
         };
         match panel {
             recognize::TasksPanel::Details(text) => {
-                if !fits(&text) || !text.contains("running") {
+                let fits_details = |t: &str| {
+                    fits(t)
+                        || (!detail_needle.is_empty()
+                            && recognize::collapse_ws(t).contains(&detail_needle))
+                };
+                if !fits_details(&text) || !text.contains("running") {
                     self.keys(key::ESC)?;
                     return Err(self.unrecognized("stop_task", Some(&s)));
                 }

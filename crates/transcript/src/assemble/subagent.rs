@@ -47,7 +47,7 @@ pub fn parse_meta(json: Option<&str>) -> AgentMeta {
 }
 
 /// A tool result saying a background task started: `(kind, task id)` with kind `agent`
-/// (Agent / Task with `run_in_background`), `shell` (Bash) or `workflow`.
+/// (Agent / Task with `run_in_background`), `shell` (Bash), `monitor` (Monitor) or `workflow`.
 pub fn background_launch(text: &str) -> Option<(&'static str, String)> {
     let after = |mark: &str| {
         let rest = &text[text.find(mark)? + mark.len()..];
@@ -66,6 +66,10 @@ pub fn background_launch(text: &str) -> Option<(&'static str, String)> {
     }
     if text.starts_with("Workflow launched in background") {
         return after("Task ID:").map(|id| ("workflow", id));
+    }
+    // The Monitor tool: `Monitor started (task b6wmxusge, timeout 900000ms). …`.
+    if text.starts_with("Monitor started (task") {
+        return after("(task").map(|id| ("monitor", id));
     }
     // A foreground command that hit its timeout keeps running in the background; the notice
     // follows the output it printed so far.
@@ -442,6 +446,12 @@ mod tests {
                 "ok\nCommand did not complete within its 120s timeout and was moved to the background (ID: b1j16ksd4). Output is being written to: /x"
             ),
             Some(("shell", "b1j16ksd4".into()))
+        );
+        assert_eq!(
+            background_launch(
+                "Monitor started (task b6wmxusge, timeout 900000ms). You will be notified on each event."
+            ),
+            Some(("monitor", "b6wmxusge".into()))
         );
         assert_eq!(background_launch("done"), None);
     }
