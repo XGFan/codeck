@@ -14,6 +14,8 @@ import type { DataRootSource } from "@/ipc/bindings";
 import { queryKeys, useAppInfo, useIndexStatus } from "@/queries";
 import { useUi } from "@/state/ui";
 import { errorText } from "@/lib/errors";
+import { cn } from "@/lib/cn";
+import { setThemePref, type ThemePref, useThemePref } from "@/lib/theme";
 
 const SOURCE_LABEL: Record<DataRootSource, string> = {
   settings: "设置",
@@ -78,10 +80,59 @@ function WeeklyResetField() {
   );
 }
 
+/** A few choices side by side, the chosen one filled (as 「新开的 Pane」 on the ccrpc tab). */
+function Segmented<T extends string | boolean>({
+  label,
+  value,
+  options,
+  onChange,
+  testId,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  testId: string;
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex w-fit gap-1 rounded-lg border border-border p-0.5">
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          data-testid={`${testId}-${String(o.value)}`}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "h-7 rounded-md px-3 text-[13px]",
+            value === o.value ? "bg-selection font-semibold text-text" : "text-secondary hover:bg-selection/60",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const THEMES: { value: ThemePref; label: string }[] = [
+  { value: "auto", label: "自动" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "暗色" },
+];
+
 function GeneralTab() {
   const { data: info } = useAppInfo();
+  const theme = useThemePref();
   return (
     <div className="divide-y divide-border">
+      <Row label="界面主题" testId="set-theme">
+        <div className="flex flex-col gap-1.5">
+          <Segmented label="界面主题" value={theme} options={THEMES} onChange={setThemePref} testId="theme" />
+          <div className="text-[12px] text-secondary">「自动」跟随系统的外观设置。</div>
+        </div>
+      </Row>
       <Row label="统计周期" testId="set-cycle">
         <WeeklyResetField />
       </Row>

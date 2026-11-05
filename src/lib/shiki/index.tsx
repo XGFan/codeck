@@ -5,7 +5,7 @@ import type { HlToken } from "./types";
 export { highlight, langFromPath, useHighlight } from "./client";
 export type { HlLines } from "./client";
 
-/** Token spans of one line; colors follow `prefers-color-scheme` through `.shk` in index.css. */
+/** Token spans of one line; colors follow the app theme (`data-theme`) through `.shk` in index.css. */
 export function TokenSpans({ tokens }: { tokens: HlToken[] }) {
   return (
     <>

@@ -113,6 +113,8 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 数据根目录按"设置中的覆盖 → `CLAUDE_CONFIG_DIR` → `~/.claude`"确定；覆盖值保存在 `~/Library/Application Support/<bundle-id>/settings.json`，切换后清空当前视图并重新扫描。
 
+- **界面主题**（设置 › 通用）：自动（默认，跟随系统外观，系统切换时跟着变）/ 浅色 / 暗色；配色由 `<html>` 的 `data-theme` 切换，窗口本身（标题栏、菜单、选目录对话框）经 Tauri 的窗口主题一起切换；选择存在 localStorage，启动时在首次绘制前套用，不闪一下另一种配色。
+
 ## Connect
 
 经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`src-tauri/src/ccrpc`）只管 ccrpc 子进程、转发 JSONL、写日志；协议解析与状态在前端（`src/features/connect`）。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。

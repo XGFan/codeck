@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* `dark:` follows the app theme (src/lib/theme.ts), not the system alone. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme {
   --color-ground: #ffffff;
   --color-sidebar: #f2f2f0;
@@ -31,31 +34,30 @@
   --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-ground: #1e1e20;
-    --color-sidebar: #262628;
-    --color-list: #232325;
-    --color-border: #38383b;
-    --color-text: #ececee;
-    --color-secondary: #a1a1a6;
-    --color-accent: #4c8df6;
-    --color-selection: #2b3e5c;
-    --color-live-waiting: #e0a030;
-    --color-code: #2c2c2f;
-    --color-error: #ff8a80;
-    --color-error-bg: #3a2220;
-    --color-diff-add: #17301f;
-    --color-diff-add-text: #8fd6a6;
-    --color-diff-del: #3a2220;
-    --color-diff-del-text: #ffb4ab;
-    --color-mark: #6b5a1c;
-    --color-mark-text: #fff4c7;
-    --color-tag: #3a2c18;
-    --color-tag-border: #6b4c22;
-    --color-tag-text: #f2c27c;
-    --color-accent-border: #34507a;
-  }
+/* The theme (src/lib/theme.ts): `data-theme` on <html>, light unless it says dark. */
+:root[data-theme="dark"] {
+  --color-ground: #1e1e20;
+  --color-sidebar: #262628;
+  --color-list: #232325;
+  --color-border: #38383b;
+  --color-text: #ececee;
+  --color-secondary: #a1a1a6;
+  --color-accent: #4c8df6;
+  --color-selection: #2b3e5c;
+  --color-live-waiting: #e0a030;
+  --color-code: #2c2c2f;
+  --color-error: #ff8a80;
+  --color-error-bg: #3a2220;
+  --color-diff-add: #17301f;
+  --color-diff-add-text: #8fd6a6;
+  --color-diff-del: #3a2220;
+  --color-diff-del-text: #ffb4ab;
+  --color-mark: #6b5a1c;
+  --color-mark-text: #fff4c7;
+  --color-tag: #3a2c18;
+  --color-tag-border: #6b4c22;
+  --color-tag-text: #f2c27c;
+  --color-accent-border: #34507a;
 }
 
 .shk {
@@ -102,10 +104,8 @@
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  .shk {
-    color: var(--shiki-dark);
-  }
+[data-theme="dark"] .shk {
+  color: var(--shiki-dark);
 }
 
 html {
@@ -131,10 +131,8 @@ body {
   --color-scroll-thumb: rgb(0 0 0 / 0.35);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-scroll-thumb: rgb(255 255 255 / 0.35);
-  }
+:root[data-theme="dark"] {
+  --color-scroll-thumb: rgb(255 255 255 / 0.35);
 }
 
 ::-webkit-scrollbar {

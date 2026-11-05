@@ -730,6 +730,8 @@ export function createMockApi(): Api {
     onSessionsChanged: (cb) => subscribe<SessionsChanged>("sessionsChanged", cb),
     onLiveChanged: (cb) => subscribe("liveChanged", cb),
     onPricesChanged: (cb) => subscribe("pricesChanged", cb),
+    // A browser has no window theme: the page follows `data-theme` alone.
+    setWindowTheme: async () => {},
     copyText: async (text) => {
       calls.push({ method: "copyText", args: [text] });
       try {

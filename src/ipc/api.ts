@@ -62,6 +62,8 @@ export interface Api {
   onPricesChanged(cb: () => void): Promise<Unlisten>;
 
   copyText(text: string): Promise<void>;
+  /** The window's own theme (title bar, menus, dialogs); null follows the system. */
+  setWindowTheme(theme: "light" | "dark" | null): Promise<void>;
 
   // ccrpc: one child process per connection, JSONL both ways, logs.
   /** ccrpc's path, `ccrpc doctor`, the analyzer, the log root; the first call reads the login shell's environment. */

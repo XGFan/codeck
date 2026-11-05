@@ -1,19 +1,9 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
 import { type ChartHandle, type ChartOption, createChart } from "@/lib/echarts";
+import { useTheme } from "@/lib/theme";
 
-const query = "(prefers-color-scheme: dark)";
-
-/** Follows the OS color scheme (the app theme is `prefers-color-scheme` driven). */
-export function useDark(): boolean {
-  return useSyncExternalStore(
-    (cb) => {
-      const mq = window.matchMedia(query);
-      mq.addEventListener("change", cb);
-      return () => mq.removeEventListener("change", cb);
-    },
-    () => window.matchMedia(query).matches,
-  );
-}
+/** Follows the app theme (src/lib/theme.ts). */
+export const useDark = (): boolean => useTheme() === "dark";
 
 interface Props {
   option: ChartOption;

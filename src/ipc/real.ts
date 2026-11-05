@@ -30,6 +30,7 @@ export function createRealApi(): Api {
     onLiveChanged: (cb) => events.liveChangedEvent.listen((e) => cb(e.payload)),
     onPricesChanged: (cb) => events.pricesChangedEvent.listen(() => cb()),
     copyText: writeText,
+    setWindowTheme: (theme) => getCurrentWindow().setTheme(theme),
     ccrpcInfo: commands.ccrpcInfo,
     ccrpcSetAnalyzer: commands.ccrpcSetAnalyzer,
     ccrpcTestAnalyzer: commands.ccrpcTestAnalyzer,
