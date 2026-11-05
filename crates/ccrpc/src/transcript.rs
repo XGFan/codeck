@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use ::transcript::assemble::{
     LoadedFile, WorkflowFiles, content, nodes, prompt, skeleton, subagent, tree, workflow,
 };
+use ::transcript::layout::{self, AgentFile};
 use ::transcript::model::FileRole;
 use ::transcript::parse::{ReadOptions, read_entries_with};
 use ::transcript::raw::{RawBlock, RawContent, RawEntry, decode_str};
@@ -305,7 +306,7 @@ pub struct Tailer {
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
 pub fn subagents_dir(main: &Path) -> PathBuf {
-    main.with_extension("").join("subagents")
+    layout::subagents_dir(&main.with_extension(""))
 }
 
 impl Tailer {
@@ -611,19 +612,19 @@ impl Tailer {
 
     fn poll_workflows(&mut self, out: &mut Vec<TxEvent>) {
         let dir = self.session_dir();
-        let json_dir = dir.join("workflows");
-        let journal_dir = dir.join("subagents").join("workflows");
+        let json_dir = layout::workflows_dir(&dir);
+        let journal_dir = layout::workflow_agents_dir(&dir);
         let mut runs: Vec<String> = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&json_dir) {
             for e in rd.flatten() {
-                if let Some(r) = e.file_name().to_str().and_then(|n| n.strip_suffix(".json")) {
+                if let Some(r) = e.file_name().to_str().and_then(layout::workflow_json_run) {
                     runs.push(r.to_string());
                 }
             }
         }
         if let Ok(rd) = std::fs::read_dir(&journal_dir) {
             for e in rd.flatten() {
-                if e.path().join("journal.jsonl").is_file()
+                if e.path().join(layout::JOURNAL).is_file()
                     && let Some(n) = e.file_name().to_str()
                 {
                     runs.push(n.to_string());
@@ -634,7 +635,7 @@ impl Tailer {
         runs.dedup();
         for run in runs {
             let json_path = json_dir.join(format!("{run}.json"));
-            let journal_path = journal_dir.join(&run).join("journal.jsonl");
+            let journal_path = journal_dir.join(&run).join(layout::JOURNAL);
             let stat = |p: &Path| {
                 std::fs::metadata(p)
                     .map(|m| (m.len(), m.modified().ok()))
@@ -676,9 +677,9 @@ impl Tailer {
     }
 
     fn discover_subs(&mut self) {
-        let dir = subagents_dir(&self.main);
-        self.discover_in(&dir, None);
-        if let Ok(rd) = std::fs::read_dir(dir.join("workflows")) {
+        let dir = self.session_dir();
+        self.discover_in(&layout::subagents_dir(&dir), None);
+        if let Ok(rd) = std::fs::read_dir(layout::workflow_agents_dir(&dir)) {
             for e in rd.flatten() {
                 if let Some(run) = e.file_name().to_str().map(str::to_string) {
                     self.discover_in(&e.path(), Some(run));
@@ -696,20 +697,17 @@ impl Tailer {
             let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let Some(stem) = name.strip_suffix(".jsonl") else {
-                continue;
-            };
-            let Some(agent_id) = stem.strip_prefix("agent-") else {
+            let Some(AgentFile::Transcript(agent_id)) = layout::agent_file(name) else {
                 continue;
             };
             if let Some(s) = self.subs.get_mut(agent_id) {
                 if s.parent_tool_use_id.is_none() && s.run_id.is_none() {
-                    s.parent_tool_use_id = read_meta_tool_use_id(dir, stem);
+                    s.parent_tool_use_id = read_meta_tool_use_id(dir, agent_id);
                 }
                 continue;
             }
             let parent = if run.is_none() {
-                read_meta_tool_use_id(dir, stem)
+                read_meta_tool_use_id(dir, agent_id)
             } else {
                 None
             };
@@ -1297,8 +1295,8 @@ fn read_capped(path: &Path) -> Option<String> {
     Some(cap(String::from_utf8_lossy(&buf).into_owned()))
 }
 
-fn read_meta_tool_use_id(dir: &Path, stem: &str) -> Option<String> {
-    let bytes = std::fs::read(dir.join(format!("{stem}.meta.json"))).ok()?;
+fn read_meta_tool_use_id(dir: &Path, agent_id: &str) -> Option<String> {
+    let bytes = std::fs::read(layout::agent_meta_path(dir, agent_id)).ok()?;
     let v: Value = serde_json::from_slice(&bytes).ok()?;
     v.get("toolUseId")
         .and_then(Value::as_str)

@@ -1,12 +1,8 @@
 //! Filesystem discovery under `<root>/projects`: symlink / (dev, ino) dedupe and
 //! path → (session, role, agent) mapping. Only `agent-*.jsonl` count as agent transcripts.
 //!
-//! Layout (per project dir, i.e. each child of `<root>/projects`, symlinks followed):
-//! - `<sid>.jsonl`: main file;
-//! - `<sid>/subagents/agent-<id>.jsonl` (+ `.meta.json`): Subagent Run;
-//! - `<sid>/subagents/workflows/<runId>/agent-<id>.jsonl` (+ `.meta.json`, `journal.jsonl`):
-//!   Workflow Run agents;
-//! - `<sid>/workflows/<runId>.json`: Workflow Run summary.
+//! Layout (per project dir, i.e. each child of `<root>/projects`, symlinks followed): `<sid>.jsonl`
+//! is the main file; `<sid>/` holds the agent and sidecar files of [`transcript::layout`].
 //!
 //! Everything else (`tool-results/`, `memory/`, …) is ignored. Directories and files are visited
 //! once per realpath and (dev, ino), so a symlinked project dir or a hard link adds nothing.
@@ -18,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::model::FileRole;
 use crate::paths::projects_dir;
+use transcript::layout::{self, AgentFile};
 
 /// A transcript file (main or agent), identified by realpath.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,16 +137,15 @@ pub fn list_session_dir(
     seen: &mut HashSet<(u64, u64)>,
 ) -> SessionDirListing {
     let mut out = SessionDirListing::default();
-    let subagents = session_dir.join("subagents");
     collect_agents(
-        &subagents,
+        &layout::subagents_dir(session_dir),
         session_id,
         FileRole::Subagent,
         None,
         seen,
         &mut out,
     );
-    if let Ok(runs) = read_dir_sorted(&subagents.join("workflows")) {
+    if let Ok(runs) = read_dir_sorted(&layout::workflow_agents_dir(session_dir)) {
         for run_dir in runs {
             if !run_dir.is_dir() {
                 continue;
@@ -166,18 +162,18 @@ pub fn list_session_dir(
                 seen,
                 &mut out,
             );
-            let journal = run_dir.join("journal.jsonl");
+            let journal = run_dir.join(layout::JOURNAL);
             if let Some(sc) = sidecar(&journal, session_id, SidecarKind::Journal { run_id }, seen) {
                 out.sidecars.push(sc);
             }
         }
     }
-    if let Ok(wfs) = read_dir_sorted(&session_dir.join("workflows")) {
+    if let Ok(wfs) = read_dir_sorted(&layout::workflows_dir(session_dir)) {
         for p in wfs {
             let Some(run_id) = p
                 .file_name()
                 .and_then(|n| n.to_str())
-                .and_then(|n| n.strip_suffix(".json"))
+                .and_then(layout::workflow_json_run)
             else {
                 continue;
             };
@@ -207,10 +203,10 @@ fn collect_agents(
         let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let Some(rest) = name.strip_prefix("agent-") else {
+        let Some(file) = layout::agent_file(name) else {
             continue;
         };
-        if let Some(agent_id) = rest.strip_suffix(".meta.json") {
+        if let AgentFile::Meta(agent_id) = file {
             let kind = SidecarKind::AgentMeta {
                 agent_id: agent_id.to_owned(),
                 role,
@@ -219,7 +215,7 @@ fn collect_agents(
             if let Some(sc) = sidecar(&p, session_id, kind, seen) {
                 out.sidecars.push(sc);
             }
-        } else if let Some(agent_id) = rest.strip_suffix(".jsonl") {
+        } else if let AgentFile::Transcript(agent_id) = file {
             let Ok(md) = fs::metadata(&p) else {
                 continue;
             };

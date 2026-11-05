@@ -6,6 +6,7 @@
 pub mod assemble;
 pub mod error;
 pub mod known;
+pub mod layout;
 pub mod live;
 pub mod model;
 pub mod parse;
