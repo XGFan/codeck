@@ -82,9 +82,9 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 - `src/ipc/`：`Api` 接口（`api.ts`）有两套实现——`real.ts` 包装生成的 bindings，`mock.ts` 用 `src/mocks/data/*` 的内存数据。`VITE_IPC=mock`（`.env.mock`，即 `pnpm dev:mock`）切到 mock。**E2E 全部跑在 mock 上**（tauri-driver 不支持 macOS），所以新增/修改 IPC 能力时要同步 `mock.ts` 和 mock 数据。
 - `src/queries/`：TanStack Query hooks 与 `queryKeys`；`events.ts` 订阅后端事件并做节流失效（实时追随、统计刷新）。
-- `src/state/ui.ts`：zustand 的 UI 状态；按 Session 的状态（scope、branchChoices、panelStack、⌘F、展开状态等）在切换 Session 时重置；栏的收起状态（`collapsed`）是全局的，存 localStorage。
+- `src/state/ui.ts`：zustand 的 UI 状态；按 Session 的状态（branchChoices、panelStack、⌘F、展开状态等）在切换 Session 时重置；展开状态的键统一由 `features/transcript/keys.ts` 生成；栏的收起状态（`collapsed`）是全局的，存 localStorage。
 - 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
-- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器）。Shiki 在 Worker 中运行。`@/` 指向 `src/`。
+- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls` 轮询在 `lsPoller.ts`，草稿持久化在 `drafts.ts`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
 
 ## 约束
 
