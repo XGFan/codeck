@@ -112,13 +112,11 @@ function DataTab() {
     mutationFn: (path: string | null) => api.setDataRoot(path),
     onSuccess: (next) => {
       setError(null);
-      qc.setQueryData(queryKeys.appInfo, next);
-      void qc.invalidateQueries({ queryKey: queryKeys.sessions() });
-      void qc.invalidateQueries({ queryKey: queryKeys.projects });
-      void qc.invalidateQueries({ queryKey: queryKeys.diagnostics });
-      // The previous root's session is gone: drop the selection and everything cached for it.
+      // Everything cached came from the previous root: drop the selection and reset every query
+      // (active ones refetch) except the app info set here and the pushed index status.
       useUi.getState().selectSession(null);
-      for (const key of ["transcript", "session", "stats"]) qc.removeQueries({ queryKey: [key] });
+      void qc.resetQueries({ predicate: (q) => q.queryKey[0] !== "appInfo" && q.queryKey[0] !== "indexStatus" });
+      qc.setQueryData(queryKeys.appInfo, next);
     },
     onError: (e) => setError(errText(e)),
   });

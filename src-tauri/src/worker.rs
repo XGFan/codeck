@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use codeck_core::model::{AppInfo, IndexStatus, SessionsChanged};
+use codeck_core::model::{AppInfo, IndexStatus, LiveChanged, SessionsChanged};
 use codeck_core::{ChangeSet, CoreError, CoreResult, Engine, paths};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use parking_lot::Mutex;
@@ -264,6 +264,17 @@ impl Worker {
                 *self.app.state::<AppState>().engine.write() = engine.clone();
                 let _ = reply.send(Ok(engine.app_info()));
                 self.restart_watcher(&engine);
+                // A new Engine reports Live Sessions only once there are some: replace the
+                // previous root's list now, even with an empty one.
+                let live = match engine.poll_live() {
+                    Ok(Some(live)) => live,
+                    Ok(None) => LiveChanged { live: Vec::new() },
+                    Err(e) => {
+                        log_err("poll_live", &e);
+                        LiveChanged { live: Vec::new() }
+                    }
+                };
+                let _ = LiveChangedEvent(live).emit(&self.app);
                 self.full_scan(&engine);
             }
             Err(e) => {
