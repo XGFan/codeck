@@ -325,12 +325,13 @@ export function ConnectTail() {
   if (!c || c.procExit) return null;
   if (c.state === "busy")
     return (
-      <div className="flex items-center gap-2 pt-[18px] text-[13px] text-claude" data-testid="progress">
+      // Grey with a passing highlight (as in Codex): Claude's clay reads as an error here.
+      <div className="flex items-center gap-2 pt-[18px] text-[13px] text-secondary" data-testid="progress">
         <span
-          className="size-3 shrink-0 animate-spin rounded-full border-2 border-claude/25 border-t-claude"
+          className="size-3 shrink-0 animate-spin rounded-full border-2 border-secondary/25 border-t-secondary"
           aria-hidden
         />
-        <span className="min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
+        <span className="shimmer-text min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
       </div>
     );
   return c.lastTurn ? <LastTurn ev={c.lastTurn} /> : null;
