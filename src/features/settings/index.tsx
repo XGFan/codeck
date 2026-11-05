@@ -125,12 +125,31 @@ const THEMES: { value: ThemePref; label: string }[] = [
 function GeneralTab() {
   const { data: info } = useAppInfo();
   const theme = useThemePref();
+  const autoConnect = useUi((s) => s.autoConnect);
+  const setAutoConnect = useUi((s) => s.setAutoConnect);
   return (
     <div className="divide-y divide-border">
       <Row label="界面主题" testId="set-theme">
         <div className="flex flex-col gap-1.5">
           <Segmented label="界面主题" value={theme} options={THEMES} onChange={setThemePref} testId="theme" />
           <div className="text-[12px] text-secondary">「自动」跟随系统的外观设置。</div>
+        </div>
+      </Row>
+      <Row label="自动 Connect" testId="set-auto-connect">
+        <div className="flex flex-col gap-1.5">
+          <Segmented
+            label="自动 Connect"
+            value={autoConnect}
+            options={[
+              { value: true, label: "开启" },
+              { value: false, label: "关闭" },
+            ]}
+            onChange={setAutoConnect}
+            testId="auto-connect"
+          />
+          <div className="text-[12px] text-secondary">
+            打开可以 Connect 的 Session 时自动 Connect；Disconnect 后要再次打开才会再连。
+          </div>
         </div>
       </Row>
       <Row label="统计周期" testId="set-cycle">

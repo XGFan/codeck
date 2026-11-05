@@ -1,6 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openRich, RICH_TITLE } from "./helpers";
 
+// The index's Live state, not a connection's: 自动 Connect off (it is tested in connect.spec.ts).
+test.beforeEach(({ page }) =>
+  page.addInitScript(
+    () => localStorage.getItem("codeck.autoConnect") ?? localStorage.setItem("codeck.autoConnect", '{"on":false}'),
+  ),
+);
+
 /** Filters the session list by a Project picked in the search dialog. */
 async function filterProject(page: Page, name: string) {
   await page.keyboard.press("Meta+K");

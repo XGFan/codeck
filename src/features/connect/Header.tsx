@@ -1,5 +1,5 @@
 import { ChevronDown, Eye, EyeOff, Power, RotateCcw, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -11,6 +11,7 @@ import {
 import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
+import { useUi } from "@/state/ui";
 import type { ConnState } from "./conn";
 import { ModelPicker } from "./Model";
 import { resumeOffer } from "./resume";
@@ -31,6 +32,9 @@ export const STATE_WORD: Record<string, string> = {
   waiting: "等待作答",
   exited: "已结束",
 };
+
+/** How long an opened Session stays open before 自动 Connect connects it. */
+const AUTO_CONNECT_DELAY_MS = 300;
 
 const pill =
   "flex h-7 items-center gap-1.5 rounded-md border border-border bg-ground px-2.5 text-[12px] hover:bg-selection disabled:opacity-50 disabled:hover:bg-ground";
@@ -62,6 +66,30 @@ export function ConnectButton({
   const startResume = useConnect((s) => s.resume);
   const resuming = useConnect((s) => !!s.resuming[sessionId]);
   const [connecting, setConnecting] = useState(false);
+  /** This opening (the button is keyed by Session) has had a connection, or tried one: 自动 Connect is done. */
+  const autoTried = useRef(false);
+  if (c) autoTried.current = true;
+  const doConnect = async (holderId: string) => {
+    autoTried.current = true;
+    setConnecting(true);
+    await connect(holderId, sessionId);
+    setConnecting(false);
+  };
+  // 自动 Connect: opening a Session that can be Connected connects it, once per opening (not again after a
+  // Disconnect, a failure or an ended connection, nor when it was connected already when opened); only after it stays
+  // open a moment, so passing over Sessions with ↑↓ connects none of them.
+  const autoConnect = useUi((s) => s.autoConnect);
+  const autoHolder =
+    autoConnect && entry?.plugin && !connecting && !c && !taken && !error && !resuming && !ccrpcError
+      ? entry.holder_id
+      : null;
+  useEffect(() => {
+    if (!autoHolder || autoTried.current) return;
+    const t = window.setTimeout(() => void doConnect(autoHolder), AUTO_CONNECT_DELAY_MS);
+    return () => window.clearTimeout(t);
+    // doConnect is this render's (the button is keyed by Session).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoHolder]);
 
   // A Resume on its way: until ccrpc names the Session, or its failure is dealt with.
   if (resuming)
@@ -125,11 +153,7 @@ export function ConnectButton({
         title={
           entry.plugin ? "经 ccrpc Connect，在这里发提示词、作答审批" : "ccrpc 插件未加载，重启 claude 后可 Connect"
         }
-        onClick={async () => {
-          setConnecting(true);
-          await connect(entry.holder_id, sessionId);
-          setConnecting(false);
-        }}
+        onClick={() => void doConnect(entry.holder_id)}
         className={pill}
       >
         <ShipWheel size={13} strokeWidth={1.6} aria-hidden />

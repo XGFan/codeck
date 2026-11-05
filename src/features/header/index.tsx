@@ -54,7 +54,8 @@ export function SessionHeader() {
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">新 Session</h1>
           <PaneButton sessionId={sessionId} />
-          <ConnectButton sessionId={sessionId} />
+          {/* Keyed: one per opening of a Session (自动 Connect tries once per opening). */}
+          <ConnectButton key={sessionId} sessionId={sessionId} />
         </div>
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
           <StateWord sessionId={sessionId} live={null} lastActiveMs={null} />
@@ -77,7 +78,11 @@ export function SessionHeader() {
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
         <PaneButton sessionId={sessionId} />
-        <ConnectButton sessionId={sessionId} resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }} />
+        <ConnectButton
+          key={sessionId}
+          sessionId={sessionId}
+          resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }}
+        />
         <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} />
       </div>
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">

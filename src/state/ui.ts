@@ -7,6 +7,7 @@ export type CollapsiblePane = "sessions";
 const COLLAPSED_KEY = "codeck.collapsedPanes";
 const WEEKLY_RESET_KEY = "codeck.weeklyReset";
 const CONV_WIDTH_KEY = "codeck.conversationWidth";
+const AUTO_CONNECT_KEY = "codeck.autoConnect";
 
 /** The conversation column's width (px): dragged at its edges, centered; double-click goes back to the default. */
 export const CONV_WIDTH = { default: 720, min: 480, max: 1600 };
@@ -87,6 +88,9 @@ interface UiState {
   setConvWidth: (px: number) => void;
   /** When the stats page's weekly cycle starts over; remembered across launches. */
   weeklyReset: WeeklyReset;
+  /** Opening a Session that can be Connected connects it (on by default); remembered across launches. */
+  autoConnect: boolean;
+  setAutoConnect: (on: boolean) => void;
 
   setProjectIds: (ids: string[]) => void;
   /** Switches session (resetting per-session state); a no-op when the id is unchanged. */
@@ -128,6 +132,11 @@ export const useUi = create<UiState>()((set) => ({
   settingsOpen: false,
   collapsed: load(COLLAPSED_KEY, { sessions: false }),
   weeklyReset: load(WEEKLY_RESET_KEY, { weekday: 0, minutes: 0 }),
+  autoConnect: load(AUTO_CONNECT_KEY, { on: true }).on !== false,
+  setAutoConnect: (on) => {
+    save(AUTO_CONNECT_KEY, { on });
+    set({ autoConnect: on });
+  },
   convWidth: clampWidth(load(CONV_WIDTH_KEY, { px: CONV_WIDTH.default }).px),
   setConvWidth: (px) => {
     const convWidth = clampWidth(px);

@@ -114,6 +114,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 数据根目录按"设置中的覆盖 → `CLAUDE_CONFIG_DIR` → `~/.claude`"确定；覆盖值保存在 `~/Library/Application Support/<bundle-id>/settings.json`，切换后清空当前视图并重新扫描。
 
 - **界面主题**（设置 › 通用）：自动（默认，跟随系统外观，系统切换时跟着变）/ 浅色 / 暗色；配色由 `<html>` 的 `data-theme` 切换，窗口本身（标题栏、菜单、选目录对话框）经 Tauri 的窗口主题一起切换；选择存在 localStorage，启动时在首次绘制前套用，不闪一下另一种配色。
+- **自动 Connect**（设置 › 通用，默认开启）：打开可以 Connect 的 Session（在 `ccrpc ls` 里、插件已报到、没有连接、它的 Holder 没被别的连接占着）并停留 300ms 后自动 Connect（用 ↑↓ 经过的 Session 不连）；每次打开只试一次：手动 Connect、Disconnect、连接失败或连接已结束后都不再自动连，换到别的 Session 再回来才会再试。存在 localStorage。
 
 ## Connect
 

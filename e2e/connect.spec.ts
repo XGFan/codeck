@@ -68,6 +68,13 @@ async function send(page: Page, text: string, mod?: "Meta") {
 
 const state = (page: Page) => page.getByTestId("connect-state");
 
+// Connected by hand here (「Connect」 would race 自动 Connect); 自动 Connect has a test of its own.
+test.beforeEach(({ page }) =>
+  page.addInitScript(
+    () => localStorage.getItem("codeck.autoConnect") ?? localStorage.setItem("codeck.autoConnect", '{"on":false}'),
+  ),
+);
+
 /** Pastes a 1×1 PNG into the input box. */
 async function pasteImage(page: Page) {
   await page.getByTestId("connect-input").focus();
@@ -225,6 +232,58 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   await q.getByTestId("submit-answer").click();
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", toolsTurns[2]);
   expect(await lastSent(page, "answer_question")).toMatchObject({ answers: [{ options: ["Blue"] }] });
+});
+
+test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后不再自动连，再次打开才会；可在设置里关掉", async ({
+  page,
+}) => {
+  // The default (on): once, not again on the reload below.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("e2e-default")) return;
+    sessionStorage.setItem("e2e-default", "1");
+    localStorage.removeItem("codeck.autoConnect");
+  });
+  await page.goto("/");
+  // Visited once, so its header comes from the cache when opened again below (the header is not remounted).
+  await open(page, NOT_LISTED);
+  // On by default.
+  await open(page, RICH);
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("connect-disconnect").click();
+  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("connect-button")).toBeVisible();
+  // Opened again: connected again.
+  await open(page, NOT_LISTED);
+  await open(page, RICH);
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  // Opened while connected already (another Session connected meanwhile): a Disconnect stays.
+  await open(page, TOOLS);
+  await expect(page.getByTestId("connect-disconnect")).toBeVisible();
+  await open(page, RICH);
+  await page.getByTestId("connect-disconnect").click();
+  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("connect-button")).toBeVisible();
+  // Not a Session whose plugin has not reported.
+  await open(page, NO_PLUGIN);
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("connect-button")).toBeDisabled();
+
+  // Off in Settings › 通用, and remembered.
+  await page.getByTestId("settings-button").click();
+  await page.getByRole("tab", { name: "通用" }).click();
+  await expect(page.getByTestId("auto-connect-true")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("auto-connect-false").click();
+  await page.keyboard.press("Escape");
+  await open(page, TURNS);
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId("connect-button")).toBeEnabled();
+  await page.reload();
+  await page.getByTestId("settings-button").click();
+  await page.getByRole("tab", { name: "通用" }).click();
+  await expect(page.getByTestId("auto-connect-false")).toHaveAttribute("aria-checked", "true");
 });
 
 test("多选题可以同时勾选项与「其他」，一起发出", async ({ page }) => {
