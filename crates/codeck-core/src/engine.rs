@@ -494,6 +494,11 @@ impl Engine {
                         })
                         .collect()
                 };
+                let was_cached: HashSet<String> = jobs
+                    .iter()
+                    .filter(|(_, c)| c.is_some())
+                    .map(|(p, _)| p.sid.clone())
+                    .collect();
                 let works: Vec<SessionWork> = jobs
                     .into_par_iter()
                     .map(|(plan, cached)| {
@@ -516,8 +521,10 @@ impl Engine {
                 {
                     let mut cache = self.sessions.lock();
                     for w in works {
-                        if let Some(c) = w.cache {
-                            cache.put(w.sid, c);
+                        match w.cache {
+                            Some(c) if was_cached.contains(&w.sid) => cache.put(w.sid, c),
+                            Some(c) => cache.put_cold(w.sid, c),
+                            None => {}
                         }
                     }
                 }
@@ -843,6 +850,15 @@ impl<K: PartialEq, V> Lru<K, V> {
         self.items.retain(|(key, _)| *key != k);
         self.items.insert(0, (k, v));
         self.items.truncate(self.cap);
+    }
+
+    /// Keeps `v` only if there is room: it evicts nothing (a sync warming the cache with the
+    /// sessions it parsed must not push out the ones being read).
+    fn put_cold(&mut self, k: K, v: V) {
+        self.items.retain(|(key, _)| *key != k);
+        if self.items.len() < self.cap {
+            self.items.push((k, v));
+        }
     }
 }
 
@@ -1786,5 +1802,16 @@ mod tests {
         l.put(3, "c");
         assert_eq!(l.take(&1), None);
         assert_eq!(l.take(&3), Some("c"));
+    }
+
+    #[test]
+    fn lru_cold_put_evicts_nothing() {
+        let mut l = Lru::new(2);
+        l.put_cold(1, "a");
+        l.put(2, "b");
+        l.put_cold(3, "c");
+        assert_eq!(l.take(&3), None);
+        assert_eq!(l.take(&2), Some("b"));
+        assert_eq!(l.take(&1), Some("a"));
     }
 }
