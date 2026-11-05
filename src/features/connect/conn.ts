@@ -36,6 +36,14 @@ export interface Rewound {
   keptDraft: boolean;
 }
 
+/** A prompt sent and not in the indexed transcript yet: a placeholder bubble at its end. */
+export interface PendingPrompt {
+  /** Its transcript entry (ccrpc's answer); null until ccrpc answers. */
+  uuid: string | null;
+  /** When it was sent (ms), for the log line on its arrival. */
+  at: number;
+}
+
 export interface ConnState {
   conn: string;
   holderId: string | null;
@@ -76,6 +84,7 @@ export interface ConnState {
    * (checked where it is shown), the Session changes or the connection ends.
    */
   rewound: Rewound | null;
+  pending: PendingPrompt | null;
 }
 
 export function initial(conn: string, holderId: string | null, resumeOf: string | null = null): ConnState {
@@ -106,6 +115,7 @@ export function initial(conn: string, holderId: string | null, resumeOf: string 
     picking: false,
     rewinding: null,
     rewound: null,
+    pending: null,
   };
 }
 
@@ -237,6 +247,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         picking: false,
         rewinding: null,
         rewound: null,
+        pending: null,
       };
     default:
       // Responses, and content events (block text, branch, workflow): not state.

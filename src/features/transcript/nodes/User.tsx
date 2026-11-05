@@ -1,8 +1,9 @@
 import { ArrowUp, ChevronDown, ChevronRight, Clock } from "lucide-react";
 import { CopyButton } from "@/components/ui/copy-button";
-import { RewindButton } from "@/features/connect";
+import { arrived, isFresh, RewindButton } from "@/features/connect";
 import type { BranchPoint, Node } from "@/ipc/bindings";
 import { stripAnsi } from "@/lib/ansi";
+import { cn } from "@/lib/cn";
 import { Markdown } from "@/lib/markdown";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
@@ -34,11 +35,18 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
       </div>
     );
   }
+  // Just sent from the input box: it settles in where its placeholder was (once).
+  const fresh = isFresh(node.id);
   return (
     <Anchor nodeId={node.id} className="group/copy flex flex-col items-end gap-1">
       <div
         data-testid="user-bubble"
-        className="max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap"
+        data-arrived={fresh || undefined}
+        onAnimationEnd={fresh ? () => arrived(node.id) : undefined}
+        className={cn(
+          "max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap",
+          fresh && "prompt-arrive",
+        )}
       >
         {o.kind === "command" ? (
           <>
@@ -55,7 +63,10 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
       </div>
       {body.images.length > 0 && <PromptImages node={node} body={body} />}
       {/* Under the bubble, as in Codex: time, rewind and copy on hover, the branch switcher at a branch head. */}
-      <div data-testid="prompt-meta" className="flex items-center gap-1.5 text-[11.5px] text-secondary">
+      <div
+        data-testid="prompt-meta"
+        className={cn("flex items-center gap-1.5 text-[11.5px] text-secondary", fresh && "prompt-arrive-meta")}
+      >
         {rewindable.has(node.id) && <RewindButton nodeId={node.id} />}
         <CopyButton text={o.kind === "command" ? commandLine(o.name, o.args) : body.text} />
         {branch && <BranchSwitcher point={branch} />}

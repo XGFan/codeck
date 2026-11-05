@@ -13,6 +13,7 @@ import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
+import { markFresh } from "./pending";
 import { RewindPickNotice } from "./RewindViews";
 import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
@@ -112,6 +113,7 @@ export function Composer({ c }: { c: ConnState }) {
   const answerRewind = useConnect((s) => s.answerRewind);
   const setPicking = useConnect((s) => s.setPicking);
   const rewoundSent = useConnect((s) => s.rewoundSent);
+  const setPending = useConnect((s) => s.setPending);
   const key = draftKey(c);
   const { text, images } = useConnect((s) => s.drafts[key]) ?? EMPTY_DRAFT;
   const setDraft = useConnect((s) => s.setDraft);
@@ -251,19 +253,42 @@ export function Composer({ c }: { c: ConnState }) {
     } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);
+    const prompt = msg.type === "prompt";
+    const sent = images;
+    const gone = new Set(sent.map((i) => i.path));
+    const at = Date.now();
+    if (prompt) {
+      // A placeholder at the transcript's end at once, and the box is free again (both back if it fails).
+      setPending(c.conn, { uuid: null, at });
+      setText((t) => (t.trim() === body ? "" : t));
+      setImages((x) => x.filter((i) => !gone.has(i.path)));
+    }
     const r = await command(c.conn, msg);
     setSending(false);
-    if (!r.success) return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
-    // A new prompt: what was rewound becomes another Branch (the marker goes once that is indexed).
-    if (msg.type === "prompt") rewoundSent(c.conn);
-    // It is in the transcript by now: indexed at once, not after the watcher's debounce.
-    if (msg.type === "prompt" && c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
+    if (!r.success) {
+      if (prompt) {
+        setPending(c.conn, null);
+        setText((t) => (t.trim() ? `${body}\n${t}` : body));
+        setImages((x) => [...sent, ...x.filter((i) => !gone.has(i.path))]);
+      }
+      return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
+    }
+    if (prompt) {
+      // Into Claude Code's queue (the turn had not quite ended): shown in the queue card, not as a prompt yet.
+      const uuid = r.data?.delivered_as !== "queued" && typeof r.data?.uuid === "string" ? r.data.uuid : null;
+      if (uuid) markFresh(uuid);
+      setPending(c.conn, uuid ? { uuid, at } : null);
+      // A new prompt: what was rewound becomes another Branch (the marker goes once that is indexed).
+      rewoundSent(c.conn);
+      // It is in the transcript by now: indexed at once, not after the watcher's debounce.
+      if (c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
+      return;
+    }
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
     // Keep what was typed while it was being sent.
     setText((t) => (t.trim() === body ? "" : t));
     // Only the images that went with it: one pasted meanwhile stays.
-    const gone = new Set(images.map((i) => i.path));
     setImages((x) => x.filter((i) => !gone.has(i.path)));
   };
 

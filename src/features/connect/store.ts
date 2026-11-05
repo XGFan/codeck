@@ -3,7 +3,7 @@ import { api } from "@/ipc";
 import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { createCcrpcClient } from "./client";
-import { apply, initial, rewindAnswered, rewindShown, type ConnState } from "./conn";
+import { apply, initial, rewindAnswered, rewindShown, type ConnState, type PendingPrompt } from "./conn";
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
 import { createLsWatch } from "./lsWatch";
 import { resumeFailure } from "./resume";
@@ -74,6 +74,8 @@ interface ConnectStore {
   clearRewound(conn: string): void;
   /** A prompt went out: the line about the kept draft goes (the marker stays until the new Branch is indexed). */
   rewoundSent(conn: string): void;
+  /** The placeholder bubble of a prompt being sent (`uuid` once ccrpc answers), or none. */
+  setPending(conn: string, p: PendingPrompt | null): void;
   dismissNotice(conn: string, id: number): void;
   setError(key: string, e: string | null): void;
   setNewError(e: string | null): void;
@@ -536,6 +538,10 @@ export const useConnect = create<ConnectStore>((set, get) => {
 
     clearRewound(conn) {
       update(conn, (c) => (c.rewound ? { ...c, rewound: null } : c));
+    },
+
+    setPending(conn, p) {
+      update(conn, (c) => (c.pending === p ? c : { ...c, pending: p }));
     },
 
     rewoundSent(conn) {

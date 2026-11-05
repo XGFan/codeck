@@ -9,11 +9,13 @@ import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
 import { ErrorNotice, NoticeCard } from "./Notice";
+import { arrived, PENDING_MAX_MS } from "./pending";
 import { Requests } from "./Requests";
 import { resumeOffer } from "./resume";
 import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } from "./store";
 
 export { ConnectButton, PaneButton, STATE_WORD, useConnectDebugInfo } from "./Header";
+export { arrived, isFresh } from "./pending";
 export { QuestionForm } from "./QuestionForm";
 export { RewindButton, RewoundDivider, useRewindView, type RewindView } from "./RewindViews";
 export { CcrpcSettings } from "./Settings";
@@ -318,25 +320,80 @@ function SessionExited({ c }: { c: ConnState }) {
 }
 
 /**
- * The foot of the open Session's transcript while connected: Claude Code's progress line while busy (as in the
- * terminal, under the last message), else the last turn's end. Nothing when not connected.
+ * The foot of the open Session's transcript while connected: the last turn's end, a prompt just sent (a placeholder
+ * until its node is in `promptIds`, the prompts shown), and Claude Code's progress line while busy (as in the
+ * terminal, under the last message). Nothing when not connected.
  */
-export function ConnectTail() {
+export function ConnectTail({ promptIds }: { promptIds?: ReadonlySet<string> }) {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
   if (!c || c.procExit) return null;
-  if (c.state === "busy")
-    return (
-      // Grey with a passing highlight (as in Codex): Claude's clay reads as an error here.
-      <div className="flex items-center gap-2 pt-[18px] text-[13px] text-secondary" data-testid="progress">
-        <span
-          className="size-3 shrink-0 animate-spin rounded-full border-2 border-secondary/25 border-t-secondary"
-          aria-hidden
-        />
-        <span className="shimmer-text min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
+  return (
+    <>
+      {c.state !== "busy" && c.lastTurn && <LastTurn ev={c.lastTurn} />}
+      {/* Not under a new Session's empty transcript (its first prompt shows with the transcript). */}
+      {c.pending && promptIds && <PendingPrompt c={c} promptIds={promptIds} />}
+      {c.state === "busy" && <Progress c={c} />}
+    </>
+  );
+}
+
+/**
+ * A prompt sent, before its node is in the transcript: a bubble of bouncing dots where it will be (not its text: the
+ * transcript draws it as indexed). It goes once the node shows (which plays its arrival), or after `PENDING_MAX_MS`.
+ */
+function PendingPrompt({ c, promptIds }: { c: ConnState; promptIds: ReadonlySet<string> }) {
+  const setPending = useConnect((s) => s.setPending);
+  const p = c.pending!;
+  const shown = !!p.uuid && promptIds.has(p.uuid);
+  const conn = c.conn;
+  useEffect(() => {
+    if (!shown) return;
+    void api.ccrpcGuiLog(conn, `prompt shown ${Date.now() - p.at}ms after send`).catch(() => {});
+    setPending(conn, null);
+  }, [shown, conn, p.at, setPending]);
+  useEffect(() => {
+    if (!p.uuid) return;
+    const uuid = p.uuid;
+    const t = window.setTimeout(() => {
+      arrived(uuid);
+      setPending(conn, null);
+    }, PENDING_MAX_MS);
+    return () => window.clearTimeout(t);
+  }, [p.uuid, conn, setPending]);
+  if (shown) return null;
+  return (
+    <div data-testid="pending-prompt" className="flex flex-col items-end gap-1 pt-[18px]">
+      <div
+        className="pending-in flex h-[38px] items-center gap-1 rounded-2xl bg-selection/60 px-3.5"
+        aria-label="发送中"
+      >
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="typing-dot size-1.5 rounded-full bg-secondary"
+            style={{ animationDelay: `${i * 160}ms` }}
+            aria-hidden
+          />
+        ))}
       </div>
-    );
-  return c.lastTurn ? <LastTurn ev={c.lastTurn} /> : null;
+      {/* The meta line's room (time, copy) so nothing moves when the bubble arrives. */}
+      <div className="h-5" aria-hidden />
+    </div>
+  );
+}
+
+function Progress({ c }: { c: ConnState }) {
+  return (
+    // Grey with a passing highlight (as in Codex): Claude's clay reads as an error here.
+    <div className="flex items-center gap-2 pt-[18px] text-[13px] text-secondary" data-testid="progress">
+      <span
+        className="size-3 shrink-0 animate-spin rounded-full border-2 border-secondary/25 border-t-secondary"
+        aria-hidden
+      />
+      <span className="shimmer-text min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
+    </div>
+  );
 }
 
 /** The last turn's end: duration, tokens, estimated cost; error; aborted. */

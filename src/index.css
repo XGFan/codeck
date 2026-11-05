@@ -88,6 +88,52 @@
   animation: shimmer-text 2s linear infinite;
 }
 
+/* A prompt just sent (features/connect/pending.ts): its placeholder comes in, its dots bounce as in a chat app, and
+   the bubble that replaces it settles in where the placeholder was. */
+.pending-in {
+  transform-origin: bottom right;
+  animation: pending-in 180ms ease-out;
+}
+.typing-dot {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.prompt-arrive {
+  transform-origin: bottom right;
+  animation: prompt-arrive 220ms ease-out;
+}
+.prompt-arrive-meta {
+  animation: fade-in 200ms ease-out;
+}
+@keyframes pending-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+}
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+@keyframes prompt-arrive {
+  from {
+    opacity: 0.4;
+    transform: scale(0.96);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 @keyframes shimmer-text {
   to {
     background-position:
@@ -97,6 +143,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .pending-in,
+  .typing-dot,
+  .prompt-arrive,
+  .prompt-arrive-meta {
+    animation: none;
+  }
   .shimmer-text {
     animation: none;
     background: none;

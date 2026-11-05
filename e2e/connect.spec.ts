@@ -290,6 +290,61 @@ test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后�
   await expect(page.getByTestId("auto-connect-false")).toHaveAttribute("aria-checked", "true");
 });
 
+/** The `uuid` ccrpc answered the n-th `prompt` of a recording with (the prompt's transcript entry). */
+function recordedPromptUuid(name: string, n: number): string {
+  return readFileSync(`src/mocks/data/connect/${name}.jsonl`, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.dir === "recv" && l.msg?.type === "response" && l.msg.command === "prompt")[n]!.msg.data.uuid;
+}
+
+test("发出提示词：输入框立即清空，对话末尾先是跳动省略号的占位气泡，提示词进索引后换成它；发送失败时占位去掉、文字回到输入框", async ({
+  page,
+}) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  const input = page.getByTestId("connect-input");
+  const pending = page.getByTestId("pending-prompt");
+
+  // Refused: the placeholder goes, the text is back in the box, the error says why.
+  await page.evaluate(() => ((window.__cvCcrpc as unknown as { failNext: string }).failNext = "prompt"));
+  await send(page, "MOCK-TOOL please");
+  await expect(input).toHaveValue("");
+  await expect(pending).toBeVisible();
+  await expect(pending).toHaveCount(0);
+  await expect(input).toHaveValue("MOCK-TOOL please");
+  await expect(page.getByTestId("connect-error")).toContainText("发送失败");
+
+  // Sent: dots only (not the text: the transcript draws it as indexed) until the prompt is indexed.
+  await input.press("Enter");
+  await expect(input).toHaveValue("");
+  await expect(pending.locator(".typing-dot")).toHaveCount(3);
+  await expect(pending).not.toContainText("MOCK-TOOL");
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "MOCK-TOOL please" });
+  await page.waitForTimeout(500);
+  await expect(pending).toBeVisible();
+  const uuid = recordedPromptUuid("tools", 0);
+  await page.evaluate(
+    ({ sid, id }) => {
+      window.__cvMock!.appendNode(sid, {
+        id,
+        timestampMs: Date.now(),
+        hidden: false,
+        inherited: false,
+        body: { kind: "userPrompt", text: "MOCK-TOOL please", images: [], origin: { kind: "human" } },
+      });
+      window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
+    },
+    { sid: "a7c63e92-0008-4000-8000-000000000008", id: uuid },
+  );
+  // Replaced by the prompt, which settles in where the placeholder was.
+  await expect(pending).toHaveCount(0);
+  const bubble = page.getByTestId("user-bubble").filter({ hasText: "MOCK-TOOL please" });
+  await expect(bubble).toBeVisible();
+  await expect(bubble).toHaveAttribute("data-arrived", "true");
+});
+
 test("多选题可以同时勾选项与「其他」，一起发出", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");

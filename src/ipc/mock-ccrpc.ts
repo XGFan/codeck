@@ -142,6 +142,8 @@ export interface CcrpcProbe {
   list: (name: string) => void;
   /** Sends `msg` on every open connection, as if ccrpc had written it (what no recording has). */
   emit: (msg: Record<string, unknown>) => void;
+  /** The next command of this type is refused (after a moment, as ccrpc would answer). */
+  failNext?: string;
 }
 const probe: CcrpcProbe = {
   sent: [],
@@ -435,6 +437,10 @@ export function createMockCcrpc(): CcrpcApi {
       probe.sent.push({ conn: id, msg });
       const c = conns.get(id);
       if (!c || c.closed) throw appError("invalidQuery", "ccrpc 已退出");
+      if (probe.failNext === msg.type) {
+        probe.failNext = undefined;
+        return void setTimeout(() => respond(id, msg, null, "mock 拒绝"), 300);
+      }
       const next = c.fx.lines[c.cursor];
       if (next?.dir === "send" && next.msg?.type === msg.type) {
         c.cursor++;

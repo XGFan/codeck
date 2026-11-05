@@ -148,6 +148,8 @@ export function TranscriptList({
   const rows = grouping.rows;
   const rewind = useRewindView(scope.kind === "main" ? transcript : null, rows);
   const rewindable = rewind?.rewindable ?? NO_PROMPTS;
+  // The prompts shown: a prompt just sent stays a placeholder at the end until it is among them.
+  const promptIds = useMemo(() => new Set(rows.flatMap((r) => (r.kind === "prompt" ? [r.node.id] : []))), [rows]);
 
   const ctx = useMemo<TranscriptCtx>(() => {
     const runs = new Map<string, SubagentRun>();
@@ -256,7 +258,7 @@ export function TranscriptList({
               className="mx-auto -mt-5 max-w-(--conv-w)"
               style={{ paddingBottom: "calc(var(--connect-h, 0px) + 20px)" }}
             >
-              <ConnectTail />
+              <ConnectTail promptIds={promptIds} />
             </div>
           )}
         </div>
