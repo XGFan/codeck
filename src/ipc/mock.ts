@@ -39,6 +39,7 @@ import {
   diagnostics,
   indexStatus as indexStatusSeed,
   slashCommands,
+  completeMockDirs,
   stats as statsSeed,
 } from "@/mocks/data/misc";
 import { parseQuery } from "@/features/search/match";
@@ -724,6 +725,7 @@ export function createMockApi(): Api {
     getStats: (req) => later(() => getStats(req)),
     getDiagnostics: () => later(() => diagnostics),
     listSlashCommands: () => later(() => slashCommands),
+    completeDirs: (cwd, partial) => later(() => completeMockDirs(cwd, partial)),
     onIndexStatus: (cb) => subscribe("indexStatus", cb),
     onSessionsChanged: (cb) => subscribe<SessionsChanged>("sessionsChanged", cb),
     onLiveChanged: (cb) => subscribe("liveChanged", cb),

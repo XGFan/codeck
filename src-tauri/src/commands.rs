@@ -187,3 +187,17 @@ pub async fn list_slash_commands(
 ) -> CmdResult<Vec<SlashCommand>> {
     with_engine(&state, move |e| Ok(e.slash_commands(cwd.as_deref()))).await
 }
+
+/// Directories to complete `/add-dir <partial>` with, in a Session started in `cwd`.
+#[tauri::command]
+#[specta::specta]
+pub async fn complete_dirs(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+    partial: String,
+) -> CmdResult<Vec<String>> {
+    with_engine(&state, move |e| {
+        Ok(e.complete_dirs(cwd.as_deref(), &partial))
+    })
+    .await
+}

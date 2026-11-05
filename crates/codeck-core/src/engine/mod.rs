@@ -443,6 +443,11 @@ impl Engine {
         crate::slash::slash_commands(&self.cfg.data_root, cwd.map(Path::new))
     }
 
+    /// Directories to complete `/add-dir <partial>` with, in a Session started in `cwd`.
+    pub fn complete_dirs(&self, cwd: Option<&str>, partial: &str) -> Vec<String> {
+        crate::slash::complete_dirs(cwd.map(Path::new), partial)
+    }
+
     // ---------------------------------------------------------------- live
 
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {

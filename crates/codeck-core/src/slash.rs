@@ -383,6 +383,60 @@ fn cut(s: String) -> String {
     t
 }
 
+/// At most this many directories are offered for `/add-dir`.
+const DIR_LIMIT: usize = 50;
+
+/// Completions for the directory typed after `/add-dir` (`partial`, as typed): each is `partial` up to its last `/`,
+/// then the name of a directory there and `/`. Relative to the Session's `cwd`; `~/` is the home directory; `..` goes
+/// up (`../` is offered for `.` and `..`); hidden directories only once the name typed starts with `.`. Only lists
+/// directories (read-only); what cannot be read yields nothing.
+pub fn complete_dirs(cwd: Option<&Path>, partial: &str) -> Vec<String> {
+    if partial == "~" {
+        return vec!["~/".to_owned()];
+    }
+    let (head, prefix) = match partial.rfind('/') {
+        Some(i) => partial.split_at(i + 1),
+        None => ("", partial),
+    };
+    let base = if head.starts_with('/') {
+        PathBuf::from(head)
+    } else if let Some(rest) = head.strip_prefix("~/") {
+        match dirs::home_dir() {
+            Some(h) => h.join(rest),
+            None => return Vec::new(),
+        }
+    } else {
+        match cwd {
+            Some(c) => c.join(head),
+            None => return Vec::new(),
+        }
+    };
+    let Ok(rd) = fs::read_dir(&base) else {
+        return Vec::new();
+    };
+    let lower = prefix.to_lowercase();
+    let mut names: Vec<String> = rd
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().into_string().ok()?;
+            let wanted = (prefix.starts_with('.') || !n.starts_with('.'))
+                && n.to_lowercase().starts_with(&lower);
+            // The type comes with the listing; only a link is followed (a link to a directory is one too).
+            let t = e.file_type().ok()?;
+            (wanted && (t.is_dir() || (t.is_symlink() && e.path().is_dir()))).then_some(n)
+        })
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    if prefix == "." || prefix == ".." {
+        names.insert(0, "..".to_owned());
+    }
+    names
+        .into_iter()
+        .take(DIR_LIMIT)
+        .map(|n| format!("{head}{n}/"))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,5 +568,43 @@ mod tests {
             Some(Path::new("/nonexistent/cwd")),
         );
         assert_eq!(list.len(), BUILTIN.len());
+    }
+
+    #[test]
+    fn add_dir_completes_directories_relative_to_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for d in ["proj/src", "proj/Docs", "proj/.git", "sibling", "Shared"] {
+            fs::create_dir_all(root.join(d)).unwrap();
+        }
+        fs::write(root.join("proj/notes.md"), "x").unwrap();
+        // A link to a directory is listed; one to a file, or to nothing, is not.
+        std::os::unix::fs::symlink(root.join("Shared"), root.join("proj/linked")).unwrap();
+        std::os::unix::fs::symlink(root.join("proj/notes.md"), root.join("proj/note-link"))
+            .unwrap();
+        std::os::unix::fs::symlink(root.join("gone"), root.join("proj/broken")).unwrap();
+        let cwd = root.join("proj");
+        let at = |p: &str| complete_dirs(Some(&cwd), p);
+        // Directories only, case-insensitive order; hidden ones once a `.` is typed.
+        assert_eq!(at(""), ["Docs/", "linked/", "src/"]);
+        assert_eq!(at("d"), ["Docs/"]);
+        assert_eq!(at(".g"), [".git/"]);
+        // Up a level, as typed.
+        assert_eq!(at(".."), ["../"]);
+        assert_eq!(at("../"), ["../proj/", "../Shared/", "../sibling/"]);
+        assert_eq!(at("../s"), ["../Shared/", "../sibling/"]);
+        assert_eq!(at("../proj/s"), ["../proj/src/"]);
+        // Absolute paths; nothing for what is not there, or a relative path with no cwd.
+        let abs = format!("{}/s", root.display());
+        assert_eq!(
+            complete_dirs(None, &abs),
+            [
+                format!("{}/Shared/", root.display()),
+                format!("{}/sibling/", root.display())
+            ]
+        );
+        assert!(at("nope/").is_empty());
+        assert!(complete_dirs(None, "src").is_empty());
+        assert_eq!(at("~"), ["~/"]);
     }
 }

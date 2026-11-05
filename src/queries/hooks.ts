@@ -28,6 +28,7 @@ export const queryKeys = {
   stats: (req: StatsRequest) => ["stats", req] as const,
   diagnostics: ["diagnostics"] as const,
   slashCommands: (cwd: string | null) => ["slashCommands", cwd] as const,
+  dirCompletions: (cwd: string | null, partial: string) => ["dirCompletions", cwd, partial] as const,
 };
 
 export const useAppInfo = () => useQuery({ queryKey: queryKeys.appInfo, queryFn: () => api.getAppInfo() });
@@ -127,6 +128,16 @@ export const useStats = (req: StatsRequest) =>
 export const useDiagnostics = () => useQuery({ queryKey: queryKeys.diagnostics, queryFn: () => api.getDiagnostics() });
 
 /** Slash commands for a Connected Session started in `cwd`; asked again when stale (commands are files that change). */
+/** Directories to complete `/add-dir <partial>` with; the last list stays while the next one loads. */
+export const useDirCompletions = (cwd: string | null, partial: string, enabled: boolean) =>
+  useQuery({
+    queryKey: queryKeys.dirCompletions(cwd, partial),
+    queryFn: () => api.completeDirs(cwd, partial),
+    staleTime: 5_000,
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+
 export const useSlashCommands = (cwd: string | null, enabled = true) =>
   useQuery({
     queryKey: queryKeys.slashCommands(cwd),

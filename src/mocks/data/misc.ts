@@ -95,6 +95,7 @@ export const stats = {
 
 /** Completion while driving (`listSlashCommands`): a few built-in commands, a project command, a plugin skill. */
 export const slashCommands: SlashCommand[] = [
+  { name: "add-dir", description: "添加工作目录", source: "builtin", interactive: false },
   { name: "clear", description: "清空对话，开始新的 Session", source: "builtin", interactive: false },
   { name: "compact", description: "压缩对话上下文（可附压缩说明）", source: "builtin", interactive: false },
   { name: "cost", description: "查看用量与花费", source: "builtin", interactive: true },
@@ -106,3 +107,41 @@ export const slashCommands: SlashCommand[] = [
   { name: "help", description: "帮助与命令列表", source: "builtin", interactive: true },
   { name: "vim", description: "切换 Vim 编辑模式", source: "builtin", interactive: false },
 ];
+
+/** The directories `completeDirs` knows (`/add-dir` completion), as on a disk. */
+const mockDirs = [
+  "/work/demo/apps",
+  "/work/demo/apps/kestrel",
+  "/work/demo/clusters",
+  "/work/demo/.github",
+  "/work/infra",
+  "/work/infra-modules",
+  "/work/notes",
+  "/Users/dev/Downloads",
+];
+
+/** `completeDirs` over `mockDirs`, as the Engine does it (relative to `cwd`, `..` up, hidden ones after a `.`). */
+export function completeMockDirs(cwd: string | null, partial: string): string[] {
+  if (partial === "~") return ["~/"];
+  const cut = partial.lastIndexOf("/") + 1;
+  const [head, prefix] = [partial.slice(0, cut), partial.slice(cut)];
+  const from = head.startsWith("/")
+    ? head
+    : head.startsWith("~/")
+      ? `/Users/dev/${head.slice(2)}`
+      : cwd && `${cwd}/${head}`;
+  if (!from) return [];
+  const parts: string[] = [];
+  for (const p of from.split("/")) {
+    if (p === "..") parts.pop();
+    else if (p && p !== ".") parts.push(p);
+  }
+  const base = `/${parts.join("/")}`.replace(/\/$/, "") + "/";
+  const names = mockDirs
+    .filter((d) => d.startsWith(base) && !d.slice(base.length).includes("/") && d.length > base.length)
+    .map((d) => d.slice(base.length))
+    .filter((n) => (prefix.startsWith(".") || !n.startsWith(".")) && n.toLowerCase().startsWith(prefix.toLowerCase()))
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  if (prefix === "." || prefix === "..") names.unshift("..");
+  return names.map((n) => `${head}${n}/`);
+}

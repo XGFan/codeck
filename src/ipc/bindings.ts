@@ -28,6 +28,8 @@ export const commands = {
 	getDiagnostics: () => __TAURI_INVOKE<Diagnostics>("get_diagnostics"),
 	/**  Slash commands for completion while connected to a Session started in `cwd`. */
 	listSlashCommands: (cwd: string | null) => __TAURI_INVOKE<SlashCommand[]>("list_slash_commands", { cwd }),
+	/**  Directories to complete `/add-dir <partial>` with, in a Session started in `cwd`. */
+	completeDirs: (cwd: string | null, partial: string) => __TAURI_INVOKE<string[]>("complete_dirs", { cwd, partial }),
 	ccrpcInfo: () => __TAURI_INVOKE<CcrpcInfo>("ccrpc_info"),
 	/**
 	 *  Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`

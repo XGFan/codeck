@@ -1,11 +1,11 @@
-import { ArrowUp, Clock, ImageIcon, MessageSquareText, Square, X } from "lucide-react";
+import { ArrowUp, Clock, Folder, ImageIcon, MessageSquareText, Square, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/ipc";
 import type { SlashCommand, SlashSource } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
-import { queryKeys, useSlashCommands } from "@/queries";
+import { queryKeys, useDirCompletions, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
 import type { FeedbackDraft } from "./protocol";
 import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
@@ -142,10 +142,47 @@ export function Composer({ c }: { c: ConnState }) {
   const [hiddenFor, setHiddenFor] = useState<string | null>(null);
   const matches = typed != null && live && commands && hiddenFor !== text ? matchCommands(commands, typed) : [];
   const picked = matches[Math.min(pick, matches.length - 1)];
+  // How much of the text is a known command's `/name`.
+  // Not while an input method composes: the textarea's own text carries the marked-text underline.
+  const [composing, setComposing] = useState(false);
+  const named = live && !composing ? commandOf(text, commands) : null;
+  const highlight = named ? named.name.length + 1 : 0;
+  const mirror = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  // The copy wraps and shows the lines the textarea does: as wide as its text (a scroll bar, index.css gives it
+  // width, takes some once the text overflows), at its scroll also when it appears on a textarea already scrolled.
+  useLayoutEffect(() => {
+    const m = mirror.current;
+    const t = input.current;
+    if (!m || !t) return;
+    m.style.right = `${t.offsetWidth - t.clientWidth}px`;
+    m.scrollTop = t.scrollTop;
+  }, [text, highlight]);
   const complete = (cmd: SlashCommand) => {
     setText(`/${cmd.name} `);
     setPick(0);
   };
+  // `/add-dir <path>`: directories there (relative to the Session's cwd, `../` and `~/` as in a shell).
+  const dirArg = live ? (/^\/add-dir +([^\n]*)$/.exec(text)?.[1] ?? null) : null;
+  const { data: dirs } = useDirCompletions(c.cwd, dirArg ?? "", dirArg != null);
+  // The list kept from the last path while this one loads: only what still fits.
+  const dirMatches =
+    dirArg != null && dirs && hiddenFor !== text
+      ? dirs.filter((d) => d.toLowerCase().startsWith(dirArg.toLowerCase()))
+      : [];
+  const pickedDir = dirMatches[Math.min(pick, dirMatches.length - 1)];
+  /** ↑↓ moved the pick since the last edit: Enter takes it (otherwise Enter sends what is typed). */
+  const [navigated, setNavigated] = useState(false);
+  const completeDir = (d: string) => {
+    setText(`/add-dir ${d}`);
+    setPick(0);
+    setNavigated(false);
+  };
+  // A fresh list: a pick made on the one kept meanwhile may point elsewhere now.
+  useEffect(() => {
+    setPick(0);
+    setNavigated(false);
+  }, [dirs]);
 
   const abort = async () => {
     // ccrpc is in the terminal's Rewind picker: not to be interrupted.
@@ -289,7 +326,9 @@ export function Composer({ c }: { c: ConnState }) {
                   ref={
                     m === picked
                       ? (el) => {
-                          if (el && keyMoved.current) el.scrollIntoView({ block: "nearest" });
+                          // Not on detaching (null, before the next pick attaches): that would drop the move.
+                          if (!el) return;
+                          if (keyMoved.current) el.scrollIntoView({ block: "nearest" });
                           keyMoved.current = false;
                         }
                       : undefined
@@ -323,6 +362,48 @@ export function Composer({ c }: { c: ConnState }) {
             </div>
           </div>
         )}
+        {dirMatches.length > 0 && (
+          <div
+            data-testid="dir-menu"
+            className="absolute right-0 bottom-full left-0 mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-ground shadow-lg"
+          >
+            <ul role="listbox" aria-label="目录" className="max-h-72 overflow-y-auto py-1">
+              {dirMatches.map((d) => (
+                <li
+                  key={d}
+                  role="option"
+                  aria-selected={d === pickedDir}
+                  data-testid="dir-option"
+                  ref={
+                    d === pickedDir
+                      ? (el) => {
+                          // Not on detaching (null, before the next pick attaches): that would drop the move.
+                          if (!el) return;
+                          if (keyMoved.current) el.scrollIntoView({ block: "nearest" });
+                          keyMoved.current = false;
+                        }
+                      : undefined
+                  }
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    completeDir(d);
+                  }}
+                  onMouseEnter={() => setPick(dirMatches.indexOf(d))}
+                  className={cn(
+                    "flex cursor-default items-center gap-2 px-3 py-1 font-mono text-[12px]",
+                    d === pickedDir && "bg-selection",
+                  )}
+                >
+                  <Folder size={13} strokeWidth={1.7} className="shrink-0 text-secondary" aria-hidden />
+                  <span className="min-w-0 truncate">{d}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="border-t border-border px-3 py-1 text-[11px] text-secondary">
+              ↑↓ 选择 · Tab 补全 · Enter 发送 · Esc 收起
+            </div>
+          </div>
+        )}
         {images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="images">
             {images.map((img, i) => (
@@ -340,50 +421,97 @@ export function Composer({ c }: { c: ConnState }) {
             ))}
           </div>
         )}
-        <textarea
-          value={text}
-          rows={Math.min(10, Math.max(2, text.split("\n").length))}
-          disabled={!live}
-          onChange={(e) => {
-            setText(e.target.value);
-            setPick(0);
-          }}
-          onPaste={(e) => void onPaste(e)}
-          onKeyDown={(e) => {
-            if (isComposingKey(e.nativeEvent)) return;
-            if (picked) {
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                e.preventDefault();
-                const n = matches.length;
-                keyMoved.current = true;
-                setPick((matches.indexOf(picked) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
-                return;
+        <div className="relative">
+          {/* The command named at the start, in color: drawn on a copy of the text under the (then clear) textarea. */}
+          {highlight > 0 && (
+            <div
+              ref={mirror}
+              aria-hidden
+              data-testid="command-highlight"
+              className="pointer-events-none absolute inset-0 overflow-hidden pr-1.5 text-[14px] leading-[1.5] break-words whitespace-pre-wrap"
+            >
+              <span className="text-accent">{text.slice(0, highlight)}</span>
+              {text.slice(highlight)}
+              {/* A last empty line still takes its height, as in the textarea. */}
+              {"\u200b"}
+            </div>
+          )}
+          <textarea
+            ref={input}
+            value={text}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => setComposing(false)}
+            rows={Math.min(10, Math.max(2, text.split("\n").length))}
+            disabled={!live}
+            onChange={(e) => {
+              setText(e.target.value);
+              setPick(0);
+              setNavigated(false);
+            }}
+            onPaste={(e) => void onPaste(e)}
+            onKeyDown={(e) => {
+              if (isComposingKey(e.nativeEvent)) return;
+              if (pickedDir) {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  const n = dirMatches.length;
+                  keyMoved.current = true;
+                  setNavigated(true);
+                  setPick((dirMatches.indexOf(pickedDir) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+                  return;
+                }
+                if (e.key === "Tab" || (e.key === "Enter" && navigated && !e.shiftKey && !e.metaKey && !e.ctrlKey)) {
+                  e.preventDefault();
+                  completeDir(pickedDir);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setHiddenFor(text);
+                  return;
+                }
               }
-              if (
-                e.key === "Tab" ||
-                (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && picked.name !== typed)
-              ) {
-                e.preventDefault();
-                complete(picked);
-                return;
+              if (picked) {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  const n = matches.length;
+                  keyMoved.current = true;
+                  setPick((matches.indexOf(picked) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+                  return;
+                }
+                if (
+                  e.key === "Tab" ||
+                  (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && picked.name !== typed)
+                ) {
+                  e.preventDefault();
+                  complete(picked);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  // Only the list: not an abort, not closing a panel.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setHiddenFor(text);
+                  return;
+                }
               }
-              if (e.key === "Escape") {
-                // Only the list: not an abort, not closing a panel.
-                e.preventDefault();
-                e.stopPropagation();
-                setHiddenFor(text);
-                return;
-              }
-            }
-            if (e.key !== "Enter" || e.shiftKey) return;
-            e.preventDefault();
-            void submit(e.metaKey || e.ctrlKey);
-          }}
-          placeholder={placeholder}
-          aria-label="给 Claude 发消息"
-          className="block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary"
-          data-testid="connect-input"
-        />
+              if (e.key !== "Enter" || e.shiftKey) return;
+              e.preventDefault();
+              void submit(e.metaKey || e.ctrlKey);
+            }}
+            placeholder={placeholder}
+            aria-label="给 Claude 发消息"
+            onScroll={(e) => {
+              if (mirror.current) mirror.current.scrollTop = e.currentTarget.scrollTop;
+            }}
+            className={cn(
+              "relative block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary",
+              highlight > 0 && "text-transparent caret-text",
+            )}
+            data-testid="connect-input"
+          />
+        </div>
         <div className="-ml-2 flex items-center gap-1 pt-1.5">
           <ConnectFooter c={c}>
             {images.length > 0 && (

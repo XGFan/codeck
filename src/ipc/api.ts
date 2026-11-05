@@ -53,6 +53,8 @@ export interface Api {
   getDiagnostics(): Promise<Diagnostics>;
   /** Slash commands for completion while connected to a Session started in `cwd`. */
   listSlashCommands(cwd: string | null): Promise<SlashCommand[]>;
+  /** Directories to complete `/add-dir <partial>` with, in a Session started in `cwd`. */
+  completeDirs(cwd: string | null, partial: string): Promise<string[]>;
 
   onIndexStatus(cb: (payload: IndexStatusEvent) => void): Promise<Unlisten>;
   onSessionsChanged(cb: (payload: SessionsChanged) => void): Promise<Unlisten>;

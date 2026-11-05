@@ -277,6 +277,69 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     });
 });
 
+test("输入框里的斜杠命令高亮；/add-dir 补全目录，支持 ../", async ({ page }) => {
+  await connectTo(page, RICH);
+  await expect(state(page)).toContainText("空闲");
+  const input = page.getByTestId("connect-input");
+  const highlight = page.getByTestId("command-highlight");
+  // A known command at the start is drawn in color; not inside a sentence, nor an unknown name.
+  await input.fill("/compact 只留结论");
+  await expect(highlight.locator("span.text-accent")).toHaveText("/compact");
+  await page.screenshot({ path: "test-results/command-highlight.png" });
+  // Long enough to scroll: the copy wraps and scrolls as the textarea does.
+  await input.fill(`/compact ${"只留结论，".repeat(400)}`);
+  await input.evaluate((t) => (t.scrollTop = t.scrollHeight));
+  const sizes = () =>
+    input.evaluate((t) => {
+      const m = t.parentElement!.querySelector<HTMLElement>("[data-testid=command-highlight]")!;
+      return { t: [t.clientWidth, t.scrollHeight, t.scrollTop], m: [m.clientWidth, m.scrollHeight, m.scrollTop] };
+    });
+  await expect.poll(async () => (await sizes()).t[2]).toBeGreaterThan(0);
+  await expect.poll(async () => (await sizes()).m).toEqual((await sizes()).t);
+  await input.fill("先 /compact");
+  await expect(highlight).toHaveCount(0);
+  // Nothing else drawn in the box (a stray "0" once showed under the text).
+  expect(
+    await input.evaluate((t) =>
+      [...t.parentElement!.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent),
+    ),
+  ).toEqual([]);
+  await input.fill("/nope x");
+  await expect(highlight).toHaveCount(0);
+
+  // The Session's cwd is /work/demo: its directories, hidden ones only after a `.`.
+  const menu = page.getByTestId("dir-menu");
+  const options = menu.getByTestId("dir-option");
+  await input.fill("/add-dir ");
+  await expect(highlight.locator("span.text-accent")).toHaveText("/add-dir");
+  await expect(options).toHaveText(["apps/", "clusters/"]);
+  await input.pressSequentially("a");
+  await expect(options).toHaveText(["apps/"]);
+  // Tab completes; the list goes on inside it.
+  await input.press("Tab");
+  await expect(input).toHaveValue("/add-dir apps/");
+  await expect(options).toHaveText(["apps/kestrel/"]);
+  // Up a level as typed.
+  await input.fill("/add-dir ..");
+  await expect(options).toHaveText(["../"]);
+  await input.fill("/add-dir ../in");
+  await expect(options).toHaveText(["../infra/", "../infra-modules/"]);
+  await page.screenshot({ path: "test-results/dir-menu.png" });
+  // Enter takes a pick moved to with ↑↓, otherwise sends what is typed.
+  await input.press("ArrowDown");
+  await input.press("Enter");
+  await expect(input).toHaveValue("/add-dir ../infra-modules/");
+  await expect(menu).toHaveCount(0);
+  await input.press("Enter");
+  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "add-dir ../infra-modules/" });
+  // Esc hides the list only.
+  await input.fill("/add-dir ../");
+  await expect(menu).toBeVisible();
+  await input.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(input).toHaveValue("/add-dir ../");
+});
+
 test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({
   page,
 }) => {
@@ -545,7 +608,7 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
 
   // `/` alone lists every command; the list scrolls with the pick.
   await input.fill("/");
-  await expect(options).toHaveCount(10);
+  await expect(options).toHaveCount(11);
   await input.press("ArrowUp");
   await expect(options.last()).toHaveAttribute("aria-selected", "true");
   await expect(options.last()).toBeInViewport();
