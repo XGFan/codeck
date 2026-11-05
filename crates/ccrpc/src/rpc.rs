@@ -115,6 +115,7 @@ pub enum Command {
     StopTask {
         task_id: String,
     },
+    DismissFeedbackDraft,
     AnswerChoice {
         request_id: String,
         option: String,
@@ -329,6 +330,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             Ok(Command::SetMode { mode })
         }
         "get_tasks" => Ok(Command::GetTasks),
+        "dismiss_feedback_draft" => Ok(Command::DismissFeedbackDraft),
         "stop_task" => Ok(Command::StopTask {
             task_id: req_text(obj, kind, "task_id")?,
         }),
@@ -511,6 +513,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::Reclaim { .. } => "reclaim",
         Command::SetMode { .. } => "set_mode",
         Command::GetTasks => "get_tasks",
+        Command::DismissFeedbackDraft => "dismiss_feedback_draft",
         Command::StopTask { .. } => "stop_task",
         Command::AnswerChoice { .. } => "answer_choice",
         Command::Exit { .. } => "exit",

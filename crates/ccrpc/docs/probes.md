@@ -82,6 +82,23 @@
 - Deny：工具返回空授权（`allowedApps` 为空），PostToolUse 照常，本轮继续（不像工具审批的 No 那样中断）。Allow：本 Session 内获准，同一应用再申请不再弹框；获准的 Session 持有 `~/.claude/computer-use.lock`，直到它退出。
 - 窄屏只列得下部分应用，其余写明 `not shown, and not included in this grant`，按钮上的数字是这次真正授权的应用数。
 
+## 模型起草的产品反馈（2.1.318）
+
+模型调用 `SendFeedback` 后，草稿只存在本机，本轮照常结束（idle），输入框上方出现一张卡片：
+
+```
+╭──────────────────────────────────────────────╮
+│ ✻ Product feedback drafted: <标题>           │
+│ │ - What happened: …                         │
+│ │ - Repro: …                                 │
+│ 1 to review · 2 to send · 0 to dismiss       │
+╰──────────────────────────────────────────────╯
+```
+
+- 不是阻塞的对话框：照常能发提示词，卡片跨轮次留着，直到按键处理；本轮进行中卡片隐藏，回到 idle 再显示；模式行末尾另有 `· 1 feedback draft`。80×24 的 Pane 里卡片把输入框挤出屏幕（此时认不出输入框，发不了提示词）。
+- 粘贴（bracketed paste）进输入框的数字是文字：提示词 `1` 照常发出，不会打开 `/feedback`；只有按键才是卡片的快捷键。
+- 输入框为空时：`1` 等于 `/feedback`，打开草稿面板（本 Session 与其他 Session 的草稿、`+ Write new feedback`；❯ 选择，Enter 查看，`d` 立即删除、不再确认，Esc 关面板，卡片随之消失）；`0` 关掉卡片，草稿仍在 `/feedback` 里（30 天后过期），之后的轮次不再出现；`2` 发给 Anthropic（未实测）。
+
 ## AskUserQuestion（2.1.316）
 
 多题时顶部有标签行，最后一个是 Submit：

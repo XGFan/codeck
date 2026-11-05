@@ -236,6 +236,80 @@ pub fn permission_body(lines: &[String]) -> Option<String> {
     )
 }
 
+/// What a row of a `╭…╯` box holds, without its frame.
+fn box_text(l: &str) -> &str {
+    l.trim()
+        .trim_start_matches('│')
+        .trim_end_matches('│')
+        .trim()
+}
+
+/// The feedback draft card's key row (the draft goes out only by one of these keys).
+const KEYS: &str = "1 to review · 2 to send · 0 to dismiss";
+
+/// The card above the input box once the model drafted product feedback (`SendFeedback`, 2.1.318).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackCard {
+    /// The title as its row shows it (cut, ending `…`, on a narrow screen).
+    pub title: String,
+    /// The row of the card's bottom frame.
+    pub bottom: usize,
+}
+
+/// The feedback draft card: a box drawn from column 0 starting `✻ Product feedback drafted: <title>`,
+/// its last row the keys `1 to review · 2 to send · 0 to dismiss` (then `· +1 more queued` while
+/// more drafts wait) right above its bottom frame, and
+/// below it only blank rows or the effort mark until the input box's top rule or the end of the
+/// screen (on a short screen the card pushes the input box off it). The same text quoted in the
+/// conversation is indented and has the conversation below it: not the card.
+pub fn feedback_draft(lines: &[String]) -> Option<FeedbackCard> {
+    let keys = lines.iter().rposition(|l| {
+        let t = box_text(l);
+        t == KEYS
+            || t.strip_prefix(KEYS)
+                .is_some_and(|rest| rest.starts_with(" · "))
+    })?;
+    let bottom = keys + 1;
+    if !lines.get(bottom)?.starts_with('╰') {
+        return None;
+    }
+    let below_ok = lines[bottom + 1..]
+        .iter()
+        .find(|l| !l.trim().is_empty() && effort(std::slice::from_ref(*l)).is_none())
+        .is_none_or(|l| is_input_rule(l));
+    if !below_ok {
+        return None;
+    }
+    let top = lines[..keys].iter().rposition(|l| l.starts_with('╭'))?;
+    let title = lines[top + 1..keys].iter().find_map(|l| {
+        box_text(l)
+            .strip_prefix("✻ Product feedback drafted:")
+            .map(|t| t.trim().to_string())
+    })?;
+    Some(FeedbackCard { title, bottom })
+}
+
+/// The input box below row `below` is empty and has the cursor: one row, nothing typed after
+/// `❯` (spaces or a line break typed there would make a key text), the cursor right after it.
+/// `None` when no input box shows below that row.
+pub fn input_empty_below(s: &crate::screen::Screen, below: usize) -> Option<bool> {
+    let rules: Vec<usize> = (below + 1..s.lines.len())
+        .filter(|&i| is_input_rule(&s.lines[i]))
+        .collect();
+    let (&top, &bottom) = (rules.first()?, rules.get(1)?);
+    if bottom == top + 1 {
+        return None;
+    }
+    let rows = if s.undimmed.len() == s.lines.len() {
+        &s.undimmed
+    } else {
+        &s.lines
+    };
+    let empty =
+        bottom == top + 2 && rows[top + 1].trim_end() == "❯" && s.cursor == ((top + 1) as u16, 2);
+    Some(empty)
+}
+
 /// The AskUserQuestion UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AskScreen {
@@ -846,6 +920,78 @@ mod tests {
         assert_eq!(input_text(&s).as_deref(), Some(""));
         assert_eq!(input_text(&box_("hello")).as_deref(), Some("hello"));
     }
+    #[test]
+    fn feedback_draft_card_above_the_input_box() {
+        // 2.1.318 at 80 columns (the input box pushed off a 24-row screen).
+        let card = lines(&[
+            "✻ Cogitated for 14s · done 6:54 PM",
+            "",
+            "╭──────────────────────────────────────────────────────────────────────────────╮",
+            "│ ✻ Product feedback drafted: ccrpc 界面识别测试，请勿处理                     │",
+            "│ │ - What happened: 这是一次本地界面测试，没有真实问题。用户要求模型起草一条  │",
+            "│ │ - Repro: 在 …                                                              │",
+            "│ 1 to review · 2 to send · 0 to dismiss                                       │",
+            "╰──────────────────────────────────────────────────────────────────────────────╯",
+            "",
+        ]);
+        assert_eq!(
+            feedback_draft(&card).map(|c| (c.title, c.bottom)),
+            Some(("ccrpc 界面识别测试，请勿处理".to_string(), 7))
+        );
+        // With the effort mark and the input box below it (160 columns).
+        let mut wide = card.clone();
+        wide.extend(lines(&[
+            "                                ◉ xhigh · /effort",
+            "─────",
+            "❯",
+            "─────",
+            "  ⏵⏵ bypass permissions on · 1 feedback draft",
+        ]));
+        assert!(feedback_draft(&wide).is_some());
+        // Quoted in the conversation: indented, or more conversation below it.
+        let quoted: Vec<String> = card.iter().map(|l| format!("  {l}")).collect();
+        assert!(feedback_draft(&quoted).is_none());
+        let mut above_reply = card.clone();
+        above_reply.push("⏺ 这是卡片的样子。".into());
+        assert!(feedback_draft(&above_reply).is_none());
+        // More drafts waiting behind it.
+        let mut queued = card.clone();
+        queued[6] =
+            "│ 1 to review · 2 to send · 0 to dismiss · +1 more queued                       │"
+                .into();
+        assert!(feedback_draft(&queued).is_some());
+        // Without its key line it is not the card (the keys would mean something else).
+        let mut no_keys = card.clone();
+        no_keys[6] =
+            "│ 1 to review · 2 to send                                                      │"
+                .into();
+        assert!(feedback_draft(&no_keys).is_none());
+        assert!(feedback_draft(&lines(&["❯ 1 to review · 2 to send · 0 to dismiss"])).is_none());
+    }
+
+    #[test]
+    fn empty_input_box_below_the_card() {
+        use crate::screen::Screen;
+        let screen = |rows: &[&str], cursor: (u16, u16)| Screen {
+            lines: lines(rows),
+            undimmed: lines(rows),
+            cursor,
+        };
+        let base = ["╰────╯", "", "─────", "❯", "─────"];
+        assert_eq!(input_empty_below(&screen(&base, (3, 2)), 0), Some(true));
+        // Something typed; a typed space hidden by trimming (the cursor moved on); two rows.
+        let typed = ["╰────╯", "", "─────", "❯ 2", "─────"];
+        assert_eq!(input_empty_below(&screen(&typed, (3, 4)), 0), Some(false));
+        assert_eq!(input_empty_below(&screen(&base, (3, 3)), 0), Some(false));
+        let two = ["╰────╯", "─────", "❯", "", "─────"];
+        assert_eq!(input_empty_below(&screen(&two, (2, 2)), 0), Some(false));
+        // No input box under the card (a short screen).
+        assert_eq!(
+            input_empty_below(&screen(&["╰────╯", "", ""], (2, 0)), 0),
+            None
+        );
+    }
+
     #[test]
     fn trust_folder_dialog() {
         let lines = screen("trust_folder.txt");

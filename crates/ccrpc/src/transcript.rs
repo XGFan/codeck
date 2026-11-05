@@ -302,6 +302,9 @@ pub struct Tailer {
     keep_offsets: bool,
     /// Claude Code's input queue as the main file's `queue-operation` entries leave it.
     queue: Vec<String>,
+    /// The main line's last `SendFeedback` call `(tool_use id, input)`: the draft behind the card
+    /// Claude Code shows above the input box.
+    last_feedback: Option<(String, Value)>,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -333,6 +336,7 @@ impl Tailer {
             usage_seen: HashSet::new(),
             tasks: Vec::new(),
             queue: Vec::new(),
+            last_feedback: None,
         }
     }
 
@@ -391,6 +395,11 @@ impl Tailer {
 
     pub fn main_path(&self) -> &Path {
         &self.main
+    }
+
+    /// The main line's last `SendFeedback` call: `(tool_use id, input)`.
+    pub fn last_feedback(&self) -> Option<&(String, Value)> {
+        self.last_feedback.as_ref()
     }
 
     /// Last assistant text block seen in the main file.
@@ -1086,6 +1095,9 @@ impl Tailer {
                     .as_deref()
                     .and_then(|r| serde_json::from_str::<Value>(r.get()).ok())
                     .unwrap_or(Value::Null);
+                if name == "SendFeedback" && agent.is_none() {
+                    self.last_feedback = Some((id.clone(), input.clone()));
+                }
                 self.seq += 1;
                 self.pending.insert(
                     id.clone(),

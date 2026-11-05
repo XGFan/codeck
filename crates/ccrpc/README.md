@@ -116,6 +116,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `set_mode {mode}` | 切权限模式：`manual` / `accept_edits` / `plan` / `auto` |
 | `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
 | `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Workflow Run |
+| `dismiss_feedback_draft` | 关掉模型起草的反馈卡片（终端里的 `0`）；发送只能在终端里做 |
 | `reclaim {force?}` | 接手的人离开后取回控制 |
 | `exit {close_pane?, stop_tasks?}` | 退出 claude；`close_pane` 时连 Pane 一起结束 |
 
@@ -139,6 +140,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
 | `session_info` | 权限模式、模型、思考等级、上下文大小变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
+| `feedback_draft` | 模型起草了产品反馈（输入框上方的卡片）出现 / 消失，带 SendFeedback 的标题与全文 |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |
 
 响应两种：

@@ -87,6 +87,12 @@ pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316", "2.1.317"];
 /// At most this many analyses an hour.
 const MAX_ANALYSES_PER_HOUR: usize = 10;
 
+/// A feedback draft as the caller gets it: `title`, `tool_use_id`, `input` (the `SendFeedback`
+/// call, null when the transcript has none for the card).
+fn public_draft(d: &Value) -> Value {
+    json!({"title": d["title"], "tool_use_id": d["tool_use_id"], "input": d["input"]})
+}
+
 /// Tools that never ask for permission themselves (their inner tools do).
 const NO_PERMISSION_TOOLS: &[&str] = &["AskUserQuestion", "Agent", "Task"];
 /// Tools whose approval is a menu of ways to go on, answered as a choice.
@@ -180,6 +186,10 @@ pub struct Engine {
     screen_mode: Option<String>,
     /// `session_info` last sent.
     info_sent: Option<Value>,
+    /// The feedback draft card last reported (`feedback_draft`), and since when it has been off
+    /// the screen.
+    feedback: Option<Value>,
+    feedback_gone_since: Option<Instant>,
     /// Screen generation last looked at for the mode line and the spinner, and when.
     looked_gen: u64,
     looked_at: Option<Instant>,
@@ -316,6 +326,8 @@ impl Engine {
             hook_mode: None,
             screen_mode: None,
             info_sent: None,
+            feedback: None,
+            feedback_gone_since: None,
             looked_gen: u64::MAX,
             looked_at: None,
             progress_sent: None,
@@ -582,6 +594,116 @@ impl Engine {
         })
     }
 
+    /// The feedback draft card on a new screen, judged only while idle: Claude Code hides it during
+    /// a turn and a dialog covers it, while the draft stays. Reported when it appears or stands for
+    /// another draft; gone only once the input box shows without it. With the `SendFeedback` call
+    /// behind it: the transcript's last one, titled as the card (or starting so when the card cuts
+    /// the title).
+    fn see_feedback_draft(&mut self, s: &Screen) {
+        if self.state != State::Idle {
+            self.feedback_gone_since = None;
+            return;
+        }
+        let Some(card) = recognize::feedback_draft(&s.lines) else {
+            if recognize::input_box(&s.lines).is_some() {
+                self.feedback_gone_since.get_or_insert_with(Instant::now);
+            } else {
+                self.feedback_gone_since = None;
+            }
+            return;
+        };
+        self.feedback_gone_since = None;
+        let squeeze = |t: &str| -> String { t.chars().filter(|c| !c.is_whitespace()).collect() };
+        let cut = card.title.ends_with('…');
+        let want = squeeze(card.title.trim_end_matches('…'));
+        let call = self
+            .tailer
+            .as_ref()
+            .and_then(|t| t.last_feedback())
+            .filter(|(_, input)| {
+                let title = squeeze(input["title"].as_str().unwrap_or_default());
+                !want.is_empty() && (title == want || (cut && title.starts_with(&want)))
+            });
+        let id = call.map(|(id, _)| id.clone());
+        // The same card: reported again only when its call is found now. A later draft (queued
+        // behind it) or a new transcript (/clear) does not take back the details found before.
+        if self.feedback.as_ref().is_some_and(|d| {
+            d["shown"].as_str() == Some(card.title.as_str())
+                && (id.is_none() || d["tool_use_id"].as_str() == id.as_deref())
+        }) {
+            return;
+        }
+        let draft = json!({
+            "title": call.and_then(|(_, i)| i["title"].as_str()).unwrap_or(&card.title),
+            "tool_use_id": id,
+            "input": call.map(|(_, i)| i),
+            "shown": card.title,
+        });
+        crate::clog!("recognize feedback draft {:?}", draft["title"]);
+        self.emit(json!({"type": "feedback_draft", "draft": public_draft(&draft)}));
+        self.feedback = Some(draft);
+    }
+
+    /// The input box has shown without the card for a second while idle: `feedback_draft` null.
+    fn feedback_draft_gone(&mut self) {
+        if self.state == State::Idle
+            && self.feedback.is_some()
+            && self
+                .feedback_gone_since
+                .is_some_and(|t| t.elapsed() >= Duration::from_secs(1))
+        {
+            self.feedback = None;
+            self.feedback_gone_since = None;
+            self.emit(json!({"type": "feedback_draft", "draft": null}));
+        }
+    }
+
+    /// Dismisses the feedback draft card (its `0`; the draft stays in `/feedback` until it expires).
+    /// Only while idle (the card is hidden during a turn), with the card on a fresh Snapshot and
+    /// the empty input box under it holding the cursor: there the key is the card's, anywhere else
+    /// it would be typed. Done once the card is gone (or shows another draft) and the box is still
+    /// empty.
+    fn dismiss_feedback_draft(&mut self) -> CmdResult {
+        self.require(self.state == State::Idle, "not_idle")?;
+        let s = self.fresh_screen()?;
+        let Some(card) = recognize::feedback_draft(&s.lines) else {
+            return err("no_feedback_draft", "屏幕上没有反馈草稿卡片");
+        };
+        match recognize::input_empty_below(&s, card.bottom) {
+            Some(true) => {}
+            Some(false) => return err("input_not_empty", "输入框里有字，0 会被当作输入"),
+            None => {
+                return err(
+                    "unrecognized_screen",
+                    "卡片下方看不到输入框（窗格太矮），没有按键",
+                );
+            }
+        }
+        self.keys(b"0")?;
+        let title = card.title.clone();
+        let done = self.wait_screen(
+            Duration::from_secs(3),
+            |_, s| match recognize::feedback_draft(&s.lines) {
+                Some(c) if c.title == title => None,
+                other => Some(other.is_none()),
+            },
+        );
+        let Some((gone, after)) = done else {
+            return err("timeout", "按 0 后反馈草稿卡片仍在");
+        };
+        if recognize::input_text(&after).is_none_or(|t| !t.is_empty()) {
+            return err(
+                "input_not_empty",
+                "按 0 后输入框里多了字，卡片没有收到这个键",
+            );
+        }
+        if gone && self.feedback.take().is_some() {
+            self.feedback_gone_since = None;
+            self.emit(json!({"type": "feedback_draft", "draft": null}));
+        }
+        Ok(json!({}))
+    }
+
     fn session_info(&self) -> Value {
         json!({"mode": self.mode(), "model": self.model, "effort": self.effort, "context_tokens": self.context_tokens})
     }
@@ -602,7 +724,9 @@ impl Engine {
             if let Some(e) = recognize::effort(&s.lines) {
                 self.effort = Some(e);
             }
+            self.see_feedback_draft(&s);
         }
+        self.feedback_draft_gone();
         let info = self.session_info();
         if self.info_sent.as_ref() != Some(&info)
             && (info["mode"].is_string() || info["model"].is_string())
@@ -693,6 +817,9 @@ impl Engine {
         // waiting hooks). A background Subagent's request may show its dialog only now.
         if s == State::Idle {
             self.idle_at = Some(Instant::now());
+            // The screen may have settled before the Process File said idle: look at it again
+            // (the feedback draft card is judged only while idle).
+            self.looked_gen = u64::MAX;
             // A background one whose tool is no longer pending (its Subagent was stopped) is over
             // too; a new one may not have its tool_use in the transcript yet.
             let pending = |id: &str| {
@@ -828,6 +955,7 @@ impl Engine {
             v[k] = info[k].clone();
         }
         v["co_display"] = json!(self.co_display);
+        v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
         v
     }
 
@@ -882,6 +1010,7 @@ impl Engine {
             Command::SetMode { mode } => self.set_mode(*mode),
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
             Command::StopTask { task_id } => self.stop_task(task_id),
+            Command::DismissFeedbackDraft => self.dismiss_feedback_draft(),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Steer { text, images } => self.steer(text, images),
             Command::FollowUp { text, images } => {
@@ -981,6 +1110,8 @@ impl Engine {
         v["taken_over"] = json!(self.taken_over);
         v["co_display"] = json!(self.co_display);
         v["queue"] = json!(self.queue);
+        // Seen by the first look, before events went out.
+        v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
         let info = self.session_info();
         for k in ["mode", "model", "effort", "context_tokens"] {
             v[k] = info[k].clone();

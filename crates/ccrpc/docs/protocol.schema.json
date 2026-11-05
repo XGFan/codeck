@@ -245,7 +245,8 @@
         "input_not_empty",
         "timeout",
         "exited",
-        "io"
+        "io",
+        "no_feedback_draft"
       ]
     },
     "choice_option": {
@@ -451,6 +452,9 @@
         },
         {
           "$ref": "#/$defs/commands/exit"
+        },
+        {
+          "$ref": "#/$defs/commands/dismiss_feedback_draft"
         }
       ]
     },
@@ -1063,6 +1067,23 @@
           "type"
         ],
         "additionalProperties": false
+      },
+      "dismiss_feedback_draft": {
+        "title": "dismiss_feedback_draft",
+        "description": "关掉反馈草稿卡片（卡片的 0；草稿留在 /feedback 里直到过期）。只在 idle、卡片在屏幕上、卡片下方的输入框为空且光标在 ❯ 之后时按键；不提供发送（发送只在终端里按 2 或用 /feedback）。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "dismiss_feedback_draft"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
       }
     },
     "response_data": {
@@ -1164,7 +1185,11 @@
           },
           "message_delivered_as": {
             "type": "string",
-            "enum": ["prompt", "queued", "follow_up"],
+            "enum": [
+              "prompt",
+              "queued",
+              "follow_up"
+            ],
             "description": "拒绝工具自己弹的对话框（computer use 的授权框）且有 message 时 message 的去向：本轮继续时作为插话（同 steer 的 delivered_as），本轮已结束或又停在别的对话框时为 follow_up（排进 follow_up 队列）。"
           }
         },
@@ -1370,6 +1395,9 @@
               "type": "string"
             },
             "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
+          },
+          "feedback_draft": {
+            "$ref": "#/$defs/feedback_draft"
           }
         },
         "required": [
@@ -1617,6 +1645,12 @@
       "exit": {
         "title": "exit",
         "description": "claude 已退出（close_pane 时 Pane 也已收到 exit）。",
+        "type": "object",
+        "properties": {}
+      },
+      "dismiss_feedback_draft": {
+        "title": "dismiss_feedback_draft",
+        "description": "卡片已消失。",
         "type": "object",
         "properties": {}
       }
@@ -1897,6 +1931,16 @@
               "$ref": "#/$defs/response_data/answer_choice"
             }
           }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "dismiss_feedback_draft"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/dismiss_feedback_draft"
+            }
+          }
         }
       ]
     },
@@ -2067,6 +2111,9 @@
               "type": "string"
             },
             "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
+          },
+          "feedback_draft": {
+            "$ref": "#/$defs/feedback_draft"
           }
         },
         "required": [
@@ -2832,6 +2879,23 @@
           "elapsed_s",
           "tokens"
         ]
+      },
+      "feedback_draft": {
+        "title": "feedback_draft",
+        "description": "反馈草稿卡片出现（draft）或消失（null）。只在 idle 时判定（本轮进行中 Claude Code 隐藏卡片、对话框会盖住它，期间草稿照旧算在）；idle 时输入框显示而卡片不在满 1 秒、或经 dismiss_feedback_draft 关掉时为 null。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "feedback_draft"
+          },
+          "draft": {
+            "$ref": "#/$defs/feedback_draft"
+          }
+        },
+        "required": [
+          "type",
+          "draft"
+        ]
       }
     },
     "event": {
@@ -2899,6 +2963,9 @@
         },
         {
           "$ref": "#/$defs/events/progress"
+        },
+        {
+          "$ref": "#/$defs/events/feedback_draft"
         }
       ]
     },
@@ -2922,6 +2989,35 @@
       "required": [
         "label",
         "meaning"
+      ]
+    },
+    "feedback_draft": {
+      "description": "模型起草的产品反馈（Claude Code 输入框上方的「Product feedback drafted」卡片）：title、tool_use_id 与 input（模型的 SendFeedback 调用；transcript 里没有对应的调用时为 null）。",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "tool_use_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "tool_use_id",
+        "input"
       ]
     }
   }
