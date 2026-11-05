@@ -585,10 +585,7 @@ fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>
         return false;
     }
     // Used in a path: only a Holder ID of the expected form (as `connect` requires).
-    let Some(h) = v["holder_id"]
-        .as_str()
-        .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
-    else {
+    let Some(h) = v["holder_id"].as_str().filter(|h| valid_holder_id(h)) else {
         return true;
     };
     let mut d = dir.lock();
