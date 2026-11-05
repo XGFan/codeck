@@ -9,10 +9,21 @@ import { formatCount } from "@/lib/format";
 
 const cmpVersion = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
-function versionRange(d: Diagnostics): string | null {
-  const vs = d.versions.map((v) => v.version).sort(cmpVersion);
-  if (vs.length === 0) return null;
-  return vs.length === 1 ? vs[0] : `${vs[0]} – ${vs[vs.length - 1]}`;
+/**
+ * The line under 「Claude Code 版本」: how many versions, from which to which, and how many the table lists.
+ * `unattributed`: the page shows failed lines or unknown items although no version has any (they come from
+ * entries without a version, or Sessions with none).
+ */
+export function versionSummary(versions: string[], listed: number, unattributed: boolean): string {
+  const vs = [...versions].sort(cmpVersion);
+  if (vs.length === 0) return "没有记录到版本";
+  const range = vs.length === 1 ? vs[0] : `从 ${vs[0]} 到 ${vs[vs.length - 1]}`;
+  const rest = listed
+    ? `；下表只列出有失败行或未知项的 ${listed} 个`
+    : unattributed
+      ? "；失败行与未知项都对应不到版本"
+      : "，都没有失败行和未知项";
+  return `共 ${vs.length} 个版本，${range}${rest}`;
 }
 
 function nameCountRows(title: string, rows: NameCount[]): string[] {
@@ -136,7 +147,9 @@ export function DiagnosticsContent() {
   if (!d) return <div className="p-6 text-xs text-secondary">正在读取诊断数据…</div>;
 
   const busy = phase === "scanning" || phase === "indexingText" || rescan.isPending;
-  const range = versionRange(d);
+  const flagged = d.versions
+    .filter((v) => v.failedLines > 0 || v.unknownItems > 0)
+    .sort((a, b) => cmpVersion(b.version, a.version));
   const unknownTypes = d.unknownEntryTypes.length + d.unknownBlockTypes.length + d.unknownSystemSubtypes.length;
 
   return (
@@ -147,7 +160,6 @@ export function DiagnosticsContent() {
           <div className="text-xs text-secondary">
             {formatCount(d.filesScanned)} 个文件 · {formatCount(d.sessions)} 个 Session（空{" "}
             {formatCount(d.emptySessions)} 个）
-            {range ? ` · 涉及 Claude Code ${range}` : ""}
           </div>
         </div>
         <Button variant="outline" disabled={busy} onClick={() => rescan.mutate()}>
@@ -192,12 +204,19 @@ export function DiagnosticsContent() {
 
       <section data-testid="diag-versions" className="flex flex-col gap-1.5">
         <h3 className="m-0 text-[13px] font-semibold">Claude Code 版本</h3>
-        <Table head={["版本", "Session 数", "失败行", "未知项", "最后出现"]}>
-          {[...d.versions]
-            .sort((a, b) => cmpVersion(b.version, a.version))
-            .map((v) => (
+        <div data-testid="diag-versions-summary" className="text-xs text-secondary">
+          {versionSummary(
+            d.versions.map((v) => v.version),
+            flagged.length,
+            d.failedLines > 0 || unknownTypes > 0 || d.unknownTools.length > 0,
+          )}
+        </div>
+        {flagged.length > 0 && (
+          <Table head={["版本", "Session 数", "失败行", "未知项", "最后出现"]}>
+            {flagged.map((v) => (
               <div
                 key={v.version}
+                data-testid="diag-version-row"
                 className="grid gap-3 border-b border-border px-3 py-1.5 text-xs tabular-nums last:border-b-0"
                 style={{ gridTemplateColumns: "2fr repeat(4, 1fr)" }}
               >
@@ -208,7 +227,8 @@ export function DiagnosticsContent() {
                 <span className="text-right text-secondary">{new Date(v.lastSeenMs).toLocaleDateString("zh-CN")}</span>
               </div>
             ))}
-        </Table>
+          </Table>
+        )}
       </section>
 
       <section data-testid="diag-failures" className="flex flex-col gap-1.5">

@@ -12,7 +12,11 @@ test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) =
   await expect(dialog.getByTestId("diag-card-tools")).toContainText("1 个");
   await expect(dialog.getByTestId("diag-entry-types")).toContainText("frame-link");
   await expect(dialog.getByTestId("diag-tools")).toContainText("ScheduleWakeup");
-  await expect(dialog.getByTestId("diag-versions")).toContainText("2.1.88");
+  // Only the versions with failed lines or unknown items are listed; the line above says the whole range.
+  await expect(dialog.getByTestId("diag-versions-summary")).toHaveText(
+    "共 3 个版本，从 2.1.76 到 2.1.91；下表只列出有失败行或未知项的 2 个",
+  );
+  await expect(dialog.getByTestId("diag-version-row").locator("code")).toHaveText(["2.1.91", "2.1.88"]);
   await expect(dialog.getByTestId("diag-failures")).toContainText("5e1c0b7a-0006");
   await expect(dialog.getByTestId("diag-integrity")).toContainText("2");
   await page.screenshot({ path: process.env.SHOT ?? "test-results/m4-diag.png" });
