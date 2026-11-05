@@ -42,6 +42,8 @@ pub fn failed(message: impl Into<String>) -> AppError {
 
 /// How long a one-shot subcommand (`doctor`, `ls`, `hide`, `show`) may run before it is killed.
 const SUBCOMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long `ccrpc analyzer test` may run: its request to the model is bounded at 60 s.
+const ANALYZER_TEST_TIMEOUT: Duration = Duration::from_secs(75);
 /// How much of a connection's stderr its exit event carries.
 const STDERR_TAIL_CHARS: usize = 4000;
 /// How long Disconnect waits for a `send` that holds ccrpc's stdin (one stuck writing into a
@@ -89,6 +91,14 @@ struct Conn {
 pub struct DoctorLine {
     pub level: String,
     pub text: String,
+}
+
+/// `ccrpc analyzer test` passed: the analyzer described a built-in dialog in a way ccrpc accepts.
+#[derive(Serialize, Clone, Debug, PartialEq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzerTest {
+    pub model: String,
+    pub elapsed_ms: u32,
 }
 
 pub struct App {
@@ -154,15 +164,42 @@ impl App {
 
     /// Runs the one-shot subcommand `args`, killed after `sub_timeout`.
     fn run(&self, args: &[&str]) -> R<Output> {
-        let mut cmd = self.command();
+        self.run_with(self.command(), args, self.sub_timeout)
+    }
+
+    /// Runs `args` on `cmd` (a ccrpc command), killed after `timeout`.
+    fn run_with(&self, mut cmd: Command, args: &[&str], timeout: Duration) -> R<Output> {
         cmd.args(args);
-        output_within(cmd, self.sub_timeout).map_err(|e| match e.kind() {
+        output_within(cmd, timeout).map_err(|e| match e.kind() {
             std::io::ErrorKind::TimedOut => io(format!(
                 "ccrpc {} 没有在 {} 秒内结束",
-                args[0],
-                self.sub_timeout.as_secs_f64()
+                args.join(" "),
+                timeout.as_secs_f64()
             )),
             _ => io(format!("运行不了 {}：{e}", self.ccrpc.display())),
+        })
+    }
+
+    /// `ccrpc analyzer test` with `analyzer` over the login shell's variables, as a connection
+    /// would get them once these settings are saved.
+    pub fn test_analyzer(&self, analyzer: &crate::settings::AnalyzerSettings) -> R<AnalyzerTest> {
+        let mut cmd = Command::new(&self.ccrpc);
+        cmd.env_clear()
+            .envs(super::env::with_analyzer(&self.env, analyzer));
+        let out = self.run_with(cmd, &["analyzer", "test"], ANALYZER_TEST_TIMEOUT)?;
+        if !out.status.success() {
+            let e = self.stderr_error("analyzer test", &out.stderr);
+            // A ccrpc from before the subcommand answers with its usage.
+            if e.message.starts_with("用法：") {
+                return Err(failed("这个 ccrpc 不支持测试分析器，请更新 ccrpc"));
+            }
+            return Err(e);
+        }
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .map_err(|e| failed(format!("ccrpc analyzer test 的输出不是 JSON：{e}")))?;
+        Ok(AnalyzerTest {
+            model: v["model"].as_str().unwrap_or_default().to_string(),
+            elapsed_ms: v["elapsed_ms"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
         })
     }
 
@@ -856,6 +893,47 @@ mod tests {
             assert!(Instant::now() < deadline, "grandchild {pid} still running");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// `analyzer test` gets the settings over the login shell's variables (a blank one leaves the
+    /// shell's); an old ccrpc that does not know the subcommand is reported as such.
+    #[test]
+    fn analyzer_test_uses_the_given_settings_over_the_login_shell() {
+        use crate::settings::AnalyzerSettings;
+        let d = tempfile::tempdir().unwrap();
+        let mut app = fake_ccrpc(
+            d.path(),
+            r#"[ "$1 $2" = "analyzer test" ] || exit 2
+printf '{"model":"%s","elapsed_ms":1234,"kind":"choice","options":2}\n' "$CCRPC_ANALYZER_MODEL|$CCRPC_ANALYZER_API_KEY""#,
+        );
+        app.env = [
+            ("CCRPC_ANALYZER_API_KEY", "shell-key"),
+            ("CCRPC_ANALYZER_MODEL", "shell-model"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let a = AnalyzerSettings {
+            api_key: None,
+            base_url: None,
+            model: Some("form-model".into()),
+        };
+        assert_eq!(
+            app.test_analyzer(&a).unwrap(),
+            AnalyzerTest {
+                model: "form-model|shell-key".into(),
+                elapsed_ms: 1234
+            }
+        );
+
+        let old = fake_ccrpc(
+            d.path(),
+            "printf 'ccrpc: 用法：ccrpc [--toh-state-dir DIR] <命令>\\n  ccrpc doctor\\n' >&2; exit 1",
+        );
+        assert_eq!(
+            old.test_analyzer(&a).unwrap_err().message,
+            "这个 ccrpc 不支持测试分析器，请更新 ccrpc"
+        );
     }
 
     /// A failing subcommand's stderr: its first line is the message, all of it goes to gui.log;

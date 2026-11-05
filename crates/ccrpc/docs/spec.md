@@ -20,6 +20,7 @@ ccrpc attach [--force] [--co-display] [--log FILE] [--size COLSxROWS] <Holder ID
 ccrpc ls [--json]                           # 本机 clay 里运行中的 Claude Code：Holder ID、sessionId、status、cwd、plugin（已报到）或 -（制表符分隔）；--json 为数组：holder_id、session_id、status、cwd、plugin、hidden、claude_pid、version、title
 ccrpc hide | show <Holder ID>               # 经 toh hide / toh show 在 Mac 上隐藏 / 显示这个 clay Pane
 ccrpc doctor                                # 检查 toh、claude 版本、目录、TUI、ccrpc 插件、布局库、分析器（每行 ok / warn / fail）
+ccrpc analyzer test                         # 让环境变量设定的分析器识别一个内置对话框（Change effort level?），结果须过布局的结构检查且类型一致；成功时输出一行 JSON：model、elapsed_ms、kind、options，不存布局库；失败时 stderr 写原因、退出码 1
 ccrpc plugin install | uninstall            # 生成并安装 / 卸载 ccrpc 插件（用户级，已在运行的 claude 要重启才加载）
 ccrpc plugin generate <目录>                 # 只生成插件（marketplace 在 <目录>，插件在 <目录>/ccrpc，供 claude --plugin-dir）
 ccrpc layouts list                          # 布局库里的布局（id、builtin / learned、kind、title）

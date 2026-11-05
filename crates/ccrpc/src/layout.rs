@@ -208,7 +208,7 @@ impl Layout {
 }
 
 /// Built-in layouts (`layouts/*.json`, embedded at build time).
-fn builtin() -> Vec<Layout> {
+pub(crate) fn builtin() -> Vec<Layout> {
     let list: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/builtin_layouts.rs"));
     list.iter()
         .filter_map(|(name, json)| match serde_json::from_str::<Layout>(json) {

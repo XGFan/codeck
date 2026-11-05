@@ -13,6 +13,7 @@ const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir D
   ccrpc hide | show <Holder ID>
   ccrpc plugin install | uninstall | generate <目录>
   ccrpc doctor
+  ccrpc analyzer test
   ccrpc layouts list
   ccrpc layouts export <仓库目录>
   ccrpc debug replay <transcript.jsonl>…
@@ -46,6 +47,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
         Some("ls") => cmd_ls(&roots, &args[1..]),
         Some(c @ ("hide" | "show")) => cmd_place(&roots, c, &args[1..]),
         Some("doctor") => cmd_doctor(&roots),
+        Some("analyzer") => cmd_analyzer(&args[1..]),
         Some("layouts") => cmd_layouts(&args[1..]),
         Some("debug") if args.get(1).map(String::as_str) == Some("replay") => {
             cmd_replay(&args[2..])
@@ -336,6 +338,26 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
     if failed {
         bail!("有检查未通过");
     }
+    Ok(())
+}
+
+/// `analyzer test`: one analysis of a built-in dialog with the analyzer the environment sets; prints
+/// `{"model", "elapsed_ms", "kind", "options"}` on success.
+fn cmd_analyzer(args: &[String]) -> Result<()> {
+    if !matches!(args, [a] if a == "test") {
+        bail!("用法：ccrpc analyzer test");
+    }
+    let a = crate::analyze::Analyzer::from_env().context("没设 CCRPC_ANALYZER_API_KEY")?;
+    let (layout, elapsed) = a.test()?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "model": a.model,
+            "elapsed_ms": elapsed.as_millis() as u64,
+            "kind": layout.kind,
+            "options": layout.options.len(),
+        })
+    );
     Ok(())
 }
 

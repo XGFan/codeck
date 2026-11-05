@@ -539,6 +539,17 @@ test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分
   await page.getByTestId("analyzer-clear-key").click();
   await expect(status).toContainText("来自登录 shell");
   expect((await probe(page)).analyzerSaves).toBe(3);
+
+  // 「测试」 tries the values in the form without saving them: the model typed here, a key typed here.
+  const box = page.getByTestId("set-analyzer");
+  await page.getByTestId("analyzer-test").click();
+  await expect(box).toContainText("可用：claude-haiku-4-5 用时 2.3 秒");
+  await page.getByTestId("analyzer-key").fill("sk-bad");
+  await page.getByTestId("analyzer-test").click();
+  await expect(box).toContainText("不可用：分析器请求失败：http status: 401");
+  await expect(page.getByTestId("analyzer-key")).toHaveValue("sk-bad");
+  await expect(status).toContainText("来自登录 shell");
+  expect((await probe(page)).analyzerSaves).toBe(3);
 });
 
 test("设置 › ccrpc › 启动参数：选目录、填参数、保存；参数为空的目录保存时去掉，可删除", async ({ page }) => {

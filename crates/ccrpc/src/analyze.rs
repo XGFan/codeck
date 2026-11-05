@@ -2,7 +2,7 @@
 //! unrecognized dialog is and returns it as a [`Layout`] (ADR-0002). It sends the whole screen and
 //! the pending tool calls. Configured by environment variables; without a key it is off.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
@@ -38,6 +38,9 @@ fn is_loopback(url: &str) -> bool {
     let host = authority.split(':').next().unwrap_or_default();
     matches!(host, "localhost" | "127.0.0.1")
 }
+
+/// The built-in dialog `ccrpc analyzer test` shows the analyzer (a short screen: a cheap request).
+const TEST_DIALOG: &str = "Change effort level?";
 
 /// Largest response read from the model service.
 const MAX_RESPONSE: u64 = 1 << 20;
@@ -117,6 +120,28 @@ impl Analyzer {
         layout.screen = req.lines.to_vec();
         layout.id = layout.compute_id();
         Ok(layout)
+    }
+
+    /// `ccrpc analyzer test`: asks about a built-in dialog and accepts the answer only as a learned
+    /// layout would be (its structural checks on that screen), and of the built-in layout's kind.
+    /// Returns the layout and how long the request took; nothing goes into the layout library.
+    pub fn test(&self) -> Result<(Layout, Duration)> {
+        let sample = crate::layout::builtin()
+            .into_iter()
+            .find(|l| l.title == TEST_DIALOG)
+            .ok_or_else(|| anyhow!("内置布局里没有测试用的对话框"))?;
+        let started = Instant::now();
+        let got = self.analyze(&Request {
+            lines: &sample.screen,
+            waiting_for: "input needed",
+            pending: Vec::new(),
+            claude_version: sample.claude_version.clone(),
+        })?;
+        let elapsed = started.elapsed();
+        if got.kind != sample.kind || got.match_screen(&sample.screen).is_none() {
+            bail!("分析结果与屏幕对不上");
+        }
+        Ok((got, elapsed))
     }
 }
 
@@ -268,6 +293,63 @@ mod tests {
         assert!(parse_answer("{\"kind\":\"none\",\"options\":[]}").is_err());
         assert!(parse_answer("{\"kind\":\"menu\",\"options\":[]}").is_err());
         assert!(parse_answer("no json here").is_err());
+    }
+
+    /// A model service on this machine answering each request with the next of `texts` as the
+    /// reply's text.
+    fn serve_answers(texts: Vec<String>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for text in texts {
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut len = 0;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                }
+                reader.read_exact(&mut vec![0; len]).unwrap();
+                let body = json!({"content": [{"type": "text", "text": text}]}).to_string();
+                let mut stream = stream;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        (base_url, server)
+    }
+
+    #[test]
+    fn test_accepts_only_an_answer_that_fits_the_sample_dialog() {
+        let right = json!({"kind": "choice", "title": TEST_DIALOG, "options": [
+            {"number": 1, "label": "Yes, switch to", "meaning": "allow"},
+            {"number": 2, "label": "No, go back", "meaning": "deny"}]});
+        // Labels not on the screen: the structural checks refuse it, as they would a learned layout.
+        let wrong = json!({"kind": "choice", "title": TEST_DIALOG, "options": [
+            {"number": 1, "label": "Yes", "meaning": "allow"},
+            {"number": 2, "label": "Cancel", "meaning": "deny"}]});
+        let (base_url, server) = serve_answers(vec![right.to_string(), wrong.to_string()]);
+        let a = Analyzer {
+            base_url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        let (layout, _) = a.test().unwrap();
+        assert_eq!(layout.kind, LayoutKind::Choice);
+        assert_eq!(layout.options.len(), 2);
+        let err = a.test().unwrap_err().to_string();
+        assert_eq!(err, "分析结果与屏幕对不上");
+        server.join().unwrap();
     }
 
     #[test]

@@ -34,6 +34,11 @@ export const commands = {
 	 *  removes it. Applies to the connections made from now on.
 	 */
 	ccrpcSetAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerInfo>("ccrpc_set_analyzer", { apiKey, baseUrl, model }),
+	/**
+	 *  Tests the analyzer with these values (as `ccrpc_set_analyzer` takes them, `api_key: None` = the saved
+	 *  key) without saving them: `ccrpc analyzer test`, one analysis of a built-in dialog.
+	 */
+	ccrpcTestAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerTest>("ccrpc_test_analyzer", { apiKey, baseUrl, model }),
 	/**  Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved. */
 	ccrpcSetLaunchRules: (rules: LaunchRule[]) => __TAURI_INVOKE<LaunchRule[]>("ccrpc_set_launch_rules", { rules }),
 	/**  Saves 「新开的 Pane」: whether the Sessions CoDeck starts from now on open hidden on the ToH Mac Client. */
@@ -101,6 +106,12 @@ export type AnalyzerInfo = {
 	/**  From the login shell (null: not set there; ccrpc's default then applies). */
 	shellBaseUrl: string | null,
 	shellModel: string | null,
+};
+
+/**  `ccrpc analyzer test` passed: the analyzer described a built-in dialog in a way ccrpc accepts. */
+export type AnalyzerTest = {
+	model: string,
+	elapsedMs: number,
 };
 
 /**  Error returned by every command. `message` is one Chinese sentence for display. */

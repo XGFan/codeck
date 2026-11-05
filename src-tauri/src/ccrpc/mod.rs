@@ -196,6 +196,33 @@ pub async fn ccrpc_set_analyzer(
     .await
 }
 
+/// Tests the analyzer with these values (as `ccrpc_set_analyzer` takes them, `api_key: None` = the saved
+/// key) without saving them: `ccrpc analyzer test`, one analysis of a built-in dialog.
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_test_analyzer(
+    state: State<'_, CcrpcState>,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> CmdResult<relay::AnalyzerTest> {
+    with_ccrpc(&state, move |app| {
+        let mut a = crate::settings::load().analyzer;
+        if let Some(k) = api_key {
+            a.api_key = Some(k);
+        }
+        a.base_url = base_url;
+        a.model = model;
+        let r = app.test_analyzer(&a);
+        app.gui_line(&match &r {
+            Ok(t) => format!("analyzer test ok: {} {} ms", t.model, t.elapsed_ms),
+            Err(e) => format!("analyzer test failed: {}", e.message),
+        });
+        r
+    })
+    .await
+}
+
 /// Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved.
 #[tauri::command]
 #[specta::specta]

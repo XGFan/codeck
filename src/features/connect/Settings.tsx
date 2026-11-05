@@ -100,17 +100,17 @@ const DEFAULT_MODEL = "deepseek-flash";
 
 /**
  * The analyzer ccrpc hands unrecognized dialogs to: key, endpoint and model saved here go over the login shell's
- * `CCRPC_ANALYZER_*` for the connections made from now on.
+ * `CCRPC_ANALYZER_*` for the connections made from now on. 「测试」 tries the values in the form without saving them.
  */
 function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
   const save = useConnect((s) => s.saveAnalyzer);
   const [key, setKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(a.baseUrl ?? "");
   const [model, setModel] = useState(a.model ?? "");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const submit = async (apiKey: string | null) => {
-    setBusy(true);
+    setBusy("save");
     setResult(null);
     try {
       await save(apiKey, baseUrl, model);
@@ -122,8 +122,26 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
         text: `保存失败：${errorText(e)}`,
       });
     }
-    setBusy(false);
+    setBusy(null);
   };
+  const test = async () => {
+    setBusy("test");
+    setResult(null);
+    try {
+      const t = await api.ccrpcTestAnalyzer(key.trim() ? key : null, baseUrl, model);
+      setResult({ ok: true, text: `可用：${t.model} 用时 ${(t.elapsedMs / 1000).toFixed(1)} 秒` });
+    } catch (e) {
+      setResult({ ok: false, text: `不可用：${errorText(e)}` });
+    }
+    setBusy(null);
+  };
+  // A result describes the values it was made with: editing a field clears it.
+  const edit = (set: (v: string) => void, v: string) => {
+    set(v);
+    setResult(null);
+  };
+  // No key in the form, the settings or the login shell: nothing to test with.
+  const noKey = !a.enabled && !key.trim();
   const keyNote =
     a.keySource === "settings"
       ? `已开启 · Key 保存在这里（…${a.keyHint}）`
@@ -148,7 +166,8 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
           type="password"
           autoComplete="off"
           value={key}
-          onChange={(e) => setKey(e.target.value)}
+          onChange={(e) => edit(setKey, e.target.value)}
+          disabled={busy !== null}
           placeholder={a.keySource === "settings" ? "留空不改" : "填入后覆盖登录 shell 的设置"}
           data-testid="analyzer-key"
         />
@@ -157,7 +176,8 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
         <span className="text-secondary">Endpoint</span>
         <Input
           value={baseUrl}
-          onChange={(e) => setBaseUrl(e.target.value)}
+          onChange={(e) => edit(setBaseUrl, e.target.value)}
+          disabled={busy !== null}
           placeholder={a.shellBaseUrl ?? DEFAULT_BASE_URL}
           data-testid="analyzer-base-url"
         />
@@ -166,21 +186,33 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
         <span className="text-secondary">模型</span>
         <Input
           value={model}
-          onChange={(e) => setModel(e.target.value)}
+          onChange={(e) => edit(setModel, e.target.value)}
+          disabled={busy !== null}
           placeholder={a.shellModel ?? DEFAULT_MODEL}
           data-testid="analyzer-model"
         />
       </label>
       <div className="flex items-center gap-2">
-        <Button type="submit" className="h-8" disabled={busy} data-testid="analyzer-save">
+        <Button type="submit" className="h-8" disabled={busy !== null} data-testid="analyzer-save">
           保存
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-8"
+          disabled={busy !== null || noKey}
+          title={noKey ? "没有 API Key" : undefined}
+          onClick={() => void test()}
+          data-testid="analyzer-test"
+        >
+          {busy === "test" ? "正在测试…" : "测试"}
         </Button>
         {a.keySource === "settings" && (
           <Button
             type="button"
             variant="outline"
             className="h-8"
-            disabled={busy}
+            disabled={busy !== null}
             onClick={() => void submit("")}
             data-testid="analyzer-clear-key"
           >
@@ -193,7 +225,8 @@ function AnalyzerForm({ a }: { a: AnalyzerInfo }) {
       </div>
       <div className="text-[12px] text-secondary">
         Anthropic Messages 协议（POST Endpoint/v1/messages），留空的项用登录 shell 的 CCRPC_ANALYZER_* 或 ccrpc
-        的默认值。Key 存在本机设置文件，仅本人可读。
+        的默认值。Key 存在本机设置文件，仅本人可读。「测试」用框里的值（Key
+        留空用已有的）让分析器识别一个内置对话框，不保存。
       </div>
     </form>
   );

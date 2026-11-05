@@ -257,6 +257,7 @@ type CcrpcApi = Pick<
   Api,
   | "ccrpcInfo"
   | "ccrpcSetAnalyzer"
+  | "ccrpcTestAnalyzer"
   | "ccrpcSetLaunchRules"
   | "ccrpcSetHideNewPanes"
   | "ccrpcSetPaneHidden"
@@ -340,6 +341,12 @@ export function createMockCcrpc(): CcrpcApi {
       analyzer.baseUrl = blank(baseUrl);
       analyzer.model = blank(model);
       return analyzerInfo();
+    },
+    // A key ending in "bad" is refused like a wrong key; otherwise the test passes.
+    ccrpcTestAnalyzer: async (apiKey, _baseUrl, model) => {
+      const key = apiKey?.trim() || analyzer.apiKey || SHELL_KEY;
+      if (key.endsWith("bad")) throw appError("internal", "分析器请求失败：http status: 401");
+      return { model: model?.trim() || "deepseek-flash", elapsedMs: 2345 };
     },
     ccrpcSetLaunchRules: async (rules) => {
       launchRules = rules

@@ -31,6 +31,7 @@ export function createRealApi(): Api {
     copyText: writeText,
     ccrpcInfo: commands.ccrpcInfo,
     ccrpcSetAnalyzer: commands.ccrpcSetAnalyzer,
+    ccrpcTestAnalyzer: commands.ccrpcTestAnalyzer,
     ccrpcSetLaunchRules: commands.ccrpcSetLaunchRules,
     ccrpcSetHideNewPanes: commands.ccrpcSetHideNewPanes,
     ccrpcSetPaneHidden: async (holderId, hidden) => void (await commands.ccrpcSetPaneHidden(holderId, hidden)),
