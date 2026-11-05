@@ -25,6 +25,23 @@ pub struct TokenTotals {
     pub cache_creation: f64,
 }
 
+impl TokenTotals {
+    /// Field-wise max: the fragments of one `message.id` each repeat (part of) its usage.
+    pub fn max_with(&mut self, u: &TokenTotals) {
+        self.input = self.input.max(u.input);
+        self.output = self.output.max(u.output);
+        self.cache_read = self.cache_read.max(u.cache_read);
+        self.cache_creation = self.cache_creation.max(u.cache_creation);
+    }
+
+    pub fn add(&mut self, u: &TokenTotals) {
+        self.input += u.input;
+        self.output += u.output;
+        self.cache_read += u.cache_read;
+        self.cache_creation += u.cache_creation;
+    }
+}
+
 /// Inclusive range of unix-epoch milliseconds; either bound may be open.
 #[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]

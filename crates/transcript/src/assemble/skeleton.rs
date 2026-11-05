@@ -349,11 +349,7 @@ pub fn tokens_by_message(s: &SessionSkeleton) -> HashMap<&str, TokenTotals> {
         let (Some(m), Some(u)) = (n.message_id.as_deref(), n.usage.as_ref()) else {
             continue;
         };
-        let t = out.entry(m).or_default();
-        t.input = t.input.max(u.input);
-        t.output = t.output.max(u.output);
-        t.cache_read = t.cache_read.max(u.cache_read);
-        t.cache_creation = t.cache_creation.max(u.cache_creation);
+        out.entry(m).or_default().max_with(u);
     }
     out
 }

@@ -204,11 +204,7 @@ fn assistant_body(ctx: &RenderCtx<'_>, frags: &[usize], shown: &[bool]) -> NodeB
         model = model.or_else(|| n.model.clone());
         is_api_error |= n.is_api_error;
         if let Some(u) = &n.usage {
-            let t = usage.get_or_insert_with(TokenTotals::default);
-            t.input = t.input.max(u.input);
-            t.output = t.output.max(u.output);
-            t.cache_read = t.cache_read.max(u.cache_read);
-            t.cache_creation = t.cache_creation.max(u.cache_creation);
+            usage.get_or_insert_with(TokenTotals::default).max_with(u);
         }
         for (bi, b) in e.blocks().iter().enumerate() {
             match b.block_type() {

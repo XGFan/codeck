@@ -42,7 +42,7 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
         if n.message_id.is_none() {
             no_id_assistants += 1;
             if let Some(u) = &n.usage {
-                add(&mut tokens, u);
+                tokens.add(u);
             }
         }
         if n.is_head
@@ -58,7 +58,7 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
     }
     let per_message = tokens_by_message(s);
     for u in per_message.values() {
-        add(&mut tokens, u);
+        tokens.add(u);
     }
     let message_count = humans + s.fragments.len() as u32 + no_id_assistants;
 
@@ -104,11 +104,4 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
         is_empty: message_count == 0,
         duplicate_uuids: s.duplicate_uuids,
     }
-}
-
-fn add(t: &mut TokenTotals, u: &TokenTotals) {
-    t.input += u.input;
-    t.output += u.output;
-    t.cache_read += u.cache_read;
-    t.cache_creation += u.cache_creation;
 }
