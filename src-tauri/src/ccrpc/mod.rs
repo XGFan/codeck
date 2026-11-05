@@ -23,10 +23,11 @@ use crate::state::AppState;
 
 type CmdResult<T> = Result<T, AppError>;
 
+/// The blocking task itself failed (as commands.rs words it).
 fn internal(e: impl std::fmt::Display) -> AppError {
     AppError {
         code: ErrorCode::Internal,
-        message: e.to_string(),
+        message: format!("后台任务失败：{e}"),
     }
 }
 
@@ -44,7 +45,7 @@ struct Cell {
 }
 
 impl Cell {
-    fn get(&self) -> Result<&App, String> {
+    fn get(&self) -> relay::R<&App> {
         if let Some(app) = self.app.get() {
             return Ok(app);
         }
@@ -67,7 +68,7 @@ impl CcrpcState {
     }
 }
 
-fn init() -> Result<App, String> {
+fn init() -> relay::R<App> {
     let env = env::login_env();
     let home = PathBuf::from(env.get("HOME").cloned().unwrap_or_default());
     let ccrpc = env::ccrpc_path(&env);
@@ -83,15 +84,12 @@ fn init() -> Result<App, String> {
 async fn with_ccrpc<T, F>(state: &State<'_, CcrpcState>, f: F) -> CmdResult<T>
 where
     T: Send + 'static,
-    F: FnOnce(&App) -> Result<T, String> + Send + 'static,
+    F: FnOnce(&App) -> relay::R<T> + Send + 'static,
 {
     let cell = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || match cell.get() {
-        Ok(app) => f(app).map_err(internal),
-        Err(e) => Err(internal(e)),
-    })
-    .await
-    .map_err(internal)?
+    tauri::async_runtime::spawn_blocking(move || f(cell.get()?))
+        .await
+        .map_err(internal)?
 }
 
 /// ccrpc's lines and exits, as typed events.
@@ -198,7 +196,7 @@ pub async fn ccrpc_set_analyzer(
             s.analyzer.base_url = blank(base_url);
             s.analyzer.model = blank(model);
         })
-        .map_err(|e| format!("保存设置失败：{e}"))?;
+        .map_err(|e| relay::io(format!("保存设置失败：{e}")))?;
         app.gui_line("analyzer settings saved");
         Ok(analyzer_info(app))
     })
@@ -213,9 +211,9 @@ pub async fn ccrpc_set_launch_rules(
     rules: Vec<crate::settings::LaunchRule>,
 ) -> CmdResult<Vec<crate::settings::LaunchRule>> {
     with_ccrpc(&state, move |app| {
-        let rules = launch::normalize(rules, &app.env)?;
+        let rules = launch::normalize(rules, &app.env).map_err(relay::invalid)?;
         crate::settings::update(|s| s.launch_rules = rules.clone())
-            .map_err(|e| format!("保存设置失败：{e}"))?;
+            .map_err(|e| relay::io(format!("保存设置失败：{e}")))?;
         app.gui_line(&format!("launch rules saved ({})", rules.len()));
         Ok(rules)
     })
@@ -228,7 +226,7 @@ pub async fn ccrpc_set_launch_rules(
 pub async fn ccrpc_set_hide_new_panes(state: State<'_, CcrpcState>, hide: bool) -> CmdResult<bool> {
     with_ccrpc(&state, move |app| {
         crate::settings::update(|s| s.hide_new_panes = hide)
-            .map_err(|e| format!("保存设置失败：{e}"))?;
+            .map_err(|e| relay::io(format!("保存设置失败：{e}")))?;
         app.gui_line(&format!("hide new panes: {hide}"));
         Ok(hide)
     })
@@ -268,7 +266,8 @@ pub async fn ccrpc_info(state: State<'_, CcrpcState>) -> CmdResult<CcrpcInfo> {
 pub async fn ccrpc_list(state: State<'_, CcrpcState>) -> CmdResult<String> {
     with_ccrpc(&state, |app| {
         let v = app.list_sessions()?;
-        serde_json::to_string(&v).map_err(|e| format!("ccrpc ls 的输出不是 JSON：{e}"))
+        serde_json::to_string(&v)
+            .map_err(|e| relay::failed(format!("ccrpc ls 的输出不是 JSON：{e}")))
     })
     .await
 }
@@ -311,7 +310,7 @@ pub async fn ccrpc_resume(
 ) -> CmdResult<String> {
     // Checked again here, not from the last poll: two claude processes would write one transcript.
     if app_state.engine().is_live(&session_id) {
-        return Err(internal("Session 仍在运行"));
+        return Err(relay::invalid("Session 仍在运行"));
     }
     let sink = sink(&handle);
     with_ccrpc(&state, move |app| {
@@ -334,7 +333,7 @@ pub async fn ccrpc_disconnect(state: State<'_, CcrpcState>, conn: String) -> Cmd
         if app.disconnect(&conn) {
             Ok(())
         } else {
-            Err("ccrpc 已退出".into())
+            Err(relay::invalid("ccrpc 已退出"))
         }
     })
     .await

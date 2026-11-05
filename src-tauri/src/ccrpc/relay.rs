@@ -9,13 +9,36 @@ use std::process::{ChildStdin, Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
+use codeck_core::model::{AppError, ErrorCode};
 use parking_lot::Mutex;
 use serde::Serialize;
 
 use super::logs::{self, Wire};
 use crate::settings::LaunchRule;
 
-pub type R<T> = Result<T, String>;
+pub type R<T> = Result<T, AppError>;
+
+fn error(code: ErrorCode, message: impl Into<String>) -> AppError {
+    AppError {
+        code,
+        message: message.into(),
+    }
+}
+
+/// What the caller asked for is not valid (an ID, a directory, an image, a connection that is gone).
+pub fn invalid(message: impl Into<String>) -> AppError {
+    error(ErrorCode::InvalidQuery, message)
+}
+
+/// A file, pipe or process could not be used.
+pub fn io(message: impl Into<String>) -> AppError {
+    error(ErrorCode::Io, message)
+}
+
+/// ccrpc failed (its own error, or output that is not what it should be).
+pub fn failed(message: impl Into<String>) -> AppError {
+    error(ErrorCode::Internal, message)
+}
 
 /// How long a one-shot subcommand (`doctor`, `ls`, `hide`, `show`) may run before it is killed.
 const SUBCOMMAND_TIMEOUT: Duration = Duration::from_secs(10);
@@ -73,11 +96,11 @@ impl App {
         images: PathBuf,
     ) -> R<App> {
         logs::mkdir(&log_root)
-            .map_err(|e| format!("建不了日志目录 {}：{e}", log_root.display()))?;
+            .map_err(|e| io(format!("建不了日志目录 {}：{e}", log_root.display())))?;
         logs::prune(&log_root, chrono::Local::now().date_naive());
         logs::prune_files(&images);
-        let gui =
-            logs::append(&log_root.join("gui.log")).map_err(|e| format!("打不开 gui.log：{e}"))?;
+        let gui = logs::append(&log_root.join("gui.log"))
+            .map_err(|e| io(format!("打不开 gui.log：{e}")))?;
         let app = App {
             env,
             ccrpc,
@@ -114,13 +137,23 @@ impl App {
         let mut cmd = self.command();
         cmd.args(args);
         output_within(cmd, self.sub_timeout).map_err(|e| match e.kind() {
-            std::io::ErrorKind::TimedOut => format!(
+            std::io::ErrorKind::TimedOut => io(format!(
                 "ccrpc {} 没有在 {} 秒内结束",
                 args[0],
                 self.sub_timeout.as_secs_f64()
-            ),
-            _ => format!("运行不了 {}：{e}", self.ccrpc.display()),
+            )),
+            _ => io(format!("运行不了 {}：{e}", self.ccrpc.display())),
         })
+    }
+
+    /// A subcommand's failure: the first line of its stderr (without `ccrpc: `) as the message,
+    /// all of it in gui.log.
+    fn stderr_error(&self, sub: &str, stderr: &[u8]) -> AppError {
+        let text = String::from_utf8_lossy(stderr);
+        let text = text.trim();
+        self.gui_line(&format!("{sub} stderr: {}", text.replace('\n', " | ")));
+        let first = text.lines().map(str::trim).find(|l| !l.is_empty());
+        failed(first.unwrap_or("").trim_start_matches("ccrpc: "))
     }
 
     fn next(&self) -> u64 {
@@ -150,7 +183,7 @@ impl App {
                 .collect(),
             Err(e) => vec![DoctorLine {
                 level: "fail".into(),
-                text: format!("fail\tccrpc\t{e}"),
+                text: format!("fail\tccrpc\t{}", e.message),
             }],
         };
         for l in d.iter().filter(|l| l.level != "ok") {
@@ -163,24 +196,22 @@ impl App {
     pub fn list_sessions(&self) -> R<serde_json::Value> {
         let out = self.run(&["ls", "--json"])?;
         if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+            return Err(self.stderr_error("ls", &out.stderr));
         }
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("ccrpc ls 的输出不是 JSON：{e}"))
+        serde_json::from_slice(&out.stdout)
+            .map_err(|e| failed(format!("ccrpc ls 的输出不是 JSON：{e}")))
     }
 
     /// `ccrpc hide|show <holder>`: hides the Pane on the ToH Mac Client, or shows it again (ToH ADR-0050).
     pub fn set_pane_hidden(&self, holder_id: &str, hidden: bool) -> R<()> {
         if !valid_holder_id(holder_id) {
-            return Err("Holder ID 不对".into());
+            return Err(invalid("Holder ID 不对"));
         }
         let verb = if hidden { "hide" } else { "show" };
         let out = self.run(&[verb, holder_id])?;
         self.gui_line(&format!("{verb} {holder_id} → {}", out.status));
         if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr)
-                .trim()
-                .trim_start_matches("ccrpc: ")
-                .to_string());
+            return Err(self.stderr_error(verb, &out.stderr));
         }
         Ok(())
     }
@@ -188,7 +219,7 @@ impl App {
     /// `ccrpc attach --co-display <holder>`.
     pub fn connect(&self, sink: Sink, holder_id: &str) -> R<String> {
         if !valid_holder_id(holder_id) {
-            return Err("Holder ID 不对".into());
+            return Err(invalid("Holder ID 不对"));
         }
         self.spawn(sink, "attach", &[holder_id.to_string()], holder_id)
     }
@@ -202,11 +233,11 @@ impl App {
         hidden: bool,
     ) -> R<String> {
         if !Path::new(cwd).is_dir() {
-            return Err(format!("{cwd} 不是目录"));
+            return Err(invalid(format!("{cwd} 不是目录")));
         }
         let mut args = hidden_arg(hidden);
         args.extend(["--cwd".to_string(), cwd.to_string()]);
-        let extra = super::launch::args_for(rules, Path::new(cwd), &self.env)?;
+        let extra = super::launch::args_for(rules, Path::new(cwd), &self.env).map_err(invalid)?;
         if !extra.is_empty() {
             args.push("--".into());
             args.extend(extra);
@@ -226,14 +257,14 @@ impl App {
     ) -> R<String> {
         // toh types the command into the Pane's shell: only a Session ID goes through.
         if !is_session_id(session_id) {
-            return Err("Session ID 不对".into());
+            return Err(invalid("Session ID 不对"));
         }
         if !Path::new(cwd).is_dir() {
-            return Err(format!("{cwd} 不是目录"));
+            return Err(invalid(format!("{cwd} 不是目录")));
         }
         let mut args = hidden_arg(hidden);
         args.extend(["--cwd".to_string(), cwd.to_string(), "--".into()]);
-        args.extend(super::launch::args_for(rules, Path::new(cwd), &self.env)?);
+        args.extend(super::launch::args_for(rules, Path::new(cwd), &self.env).map_err(invalid)?);
         args.extend(["--resume".to_string(), session_id.to_string()]);
         // Named like a new Session's (`new` → its Holder ID once `ready` says it); gui.log has the arguments.
         self.spawn(sink, "new", &args, "new")
@@ -242,13 +273,13 @@ impl App {
     /// Starts ccrpc `sub` with `args` and relays it to `sink` as a new connection.
     fn spawn(&self, sink: Sink, sub: &str, args: &[String], dir_name: &str) -> R<String> {
         let id = format!("c{}", self.next());
-        let dir =
-            logs::conn_dir(&self.log_root, dir_name).map_err(|e| format!("建不了日志目录：{e}"))?;
+        let dir = logs::conn_dir(&self.log_root, dir_name)
+            .map_err(|e| io(format!("建不了日志目录：{e}")))?;
         let wire = Arc::new(Mutex::new(
-            Wire::open(dir.join("wire.jsonl")).map_err(|e| e.to_string())?,
+            Wire::open(dir.join("wire.jsonl")).map_err(|e| io(e.to_string()))?,
         ));
         let gui = Arc::new(Mutex::new(
-            logs::append(&dir.join("gui.log")).map_err(|e| e.to_string())?,
+            logs::append(&dir.join("gui.log")).map_err(|e| io(e.to_string()))?,
         ));
         let mut cmd = self.command();
         cmd.arg(sub)
@@ -265,9 +296,9 @@ impl App {
         );
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("运行不了 {}：{e}", self.ccrpc.display()))?;
-        let stdout = child.stdout.take().ok_or("没有 stdout")?;
-        let stderr = child.stderr.take().ok_or("没有 stderr")?;
+            .map_err(|e| io(format!("运行不了 {}：{e}", self.ccrpc.display())))?;
+        let stdout = child.stdout.take().ok_or_else(|| io("没有 stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| io("没有 stderr"))?;
         self.gui_line(&format!(
             "{id} {sub} {} → {}",
             args.join(" "),
@@ -345,17 +376,17 @@ impl App {
     pub fn send(&self, conn: &str, line: &str) -> R<()> {
         let (stdin, wire) = {
             let conns = self.conns.lock();
-            let c = conns.get(conn).ok_or("ccrpc 已退出")?;
+            let c = conns.get(conn).ok_or_else(|| invalid("ccrpc 已退出"))?;
             (c.stdin.clone(), c.wire.clone())
         };
         let one = line.replace(['\n', '\r'], " ");
         let mut stdin = stdin.lock();
-        let w = stdin.as_mut().ok_or("已断开")?;
+        let w = stdin.as_mut().ok_or_else(|| invalid("已断开"))?;
         // Logged before it is written, so the response never precedes its command in the wire.
         wire.lock().write("send", &one);
         w.write_all(format!("{one}\n").as_bytes())
             .and_then(|_| w.flush())
-            .map_err(|e| format!("写不进 ccrpc：{e}"))
+            .map_err(|e| io(format!("写不进 ccrpc：{e}")))
     }
 
     /// Closes ccrpc's stdin: it detaches and exits; the Session keeps running.
@@ -405,20 +436,20 @@ impl App {
         let ext = ext.to_ascii_lowercase();
         // About 20 MB once decoded.
         if base64.len() > 28 * 1024 * 1024 {
-            return Err("图片超过 20 MB".into());
+            return Err(invalid("图片超过 20 MB"));
         }
         if !["png", "jpg", "jpeg", "gif", "webp"].contains(&ext.as_str()) {
-            return Err(format!("不支持的图片格式 {ext}"));
+            return Err(invalid(format!("不支持的图片格式 {ext}")));
         }
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(base64.as_bytes())
-            .map_err(|e| format!("图片数据不对：{e}"))?;
-        logs::mkdir(&self.images).map_err(|e| e.to_string())?;
+            .map_err(|e| invalid(format!("图片数据不对：{e}")))?;
+        logs::mkdir(&self.images).map_err(|e| io(e.to_string()))?;
         let path = self
             .images
             .join(format!("{}-{}.{ext}", logs::now_ms(), self.next()));
-        let mut f = logs::append(&path).map_err(|e| e.to_string())?;
-        f.write_all(&bytes).map_err(|e| e.to_string())?;
+        let mut f = logs::append(&path).map_err(|e| io(e.to_string()))?;
+        f.write_all(&bytes).map_err(|e| io(e.to_string()))?;
         Ok(path.display().to_string())
     }
 }
@@ -646,13 +677,46 @@ mod tests {
         let t = Instant::now();
         let err = app.list_sessions().unwrap_err();
         assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
-        assert!(err.contains("没有在"), "{err}");
+        assert_eq!(err.code, ErrorCode::Io);
+        assert!(err.message.contains("没有在"), "{err}");
         assert_eq!(app.doctor()[0].level, "fail");
 
         let app = fake_ccrpc(d.path(), r#"echo '{"sessions":[]}'"#);
         assert_eq!(
             app.list_sessions().unwrap(),
             serde_json::json!({"sessions": []})
+        );
+    }
+
+    /// A failing subcommand's stderr: its first line is the message, all of it goes to gui.log;
+    /// what the caller got wrong is `InvalidQuery`.
+    #[test]
+    fn errors_say_what_kind_and_one_line() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(
+            d.path(),
+            "printf 'ccrpc: 找不到 Holder m1\\n  caused by: no such file\\n' >&2; exit 1",
+        );
+        let err = app.set_pane_hidden("m1", true).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Internal);
+        assert_eq!(err.message, "找不到 Holder m1");
+        let log = std::fs::read_to_string(d.path().join("logs/gui.log")).unwrap();
+        assert!(log.contains("caused by: no such file"), "{log}");
+        let err = app.list_sessions().unwrap_err();
+        assert_eq!(err.message, "找不到 Holder m1");
+
+        assert_eq!(
+            app.set_pane_hidden("x; rm", true).unwrap_err().code,
+            ErrorCode::InvalidQuery
+        );
+        assert_eq!(
+            app.save_image("AAAA", "exe").unwrap_err().code,
+            ErrorCode::InvalidQuery
+        );
+        let gone = app.send("c404", "{}").unwrap_err();
+        assert_eq!(
+            (gone.code, gone.message.as_str()),
+            (ErrorCode::InvalidQuery, "ccrpc 已退出")
         );
     }
 
