@@ -17,6 +17,8 @@ import { useUi } from "@/state/ui";
 import { pendingSessions, type PendingSession } from "./pending";
 
 const ROW_HEIGHT = 60;
+/** Stable while the list loads, so the rows are not rebuilt on every render. */
+const NO_SESSIONS: SessionSummary[] = [];
 const nf = new Intl.NumberFormat("en-US");
 
 const SORTS: { value: SessionSort; menu: string; order: string }[] = [
@@ -71,7 +73,7 @@ export function SessionList() {
   const setProjectIds = useUi((s) => s.setProjectIds);
 
   const pending = usePending(data, projects);
-  const list = data ?? [];
+  const list = data ?? NO_SESSIONS;
   const items = useMemo<Item[]>(
     () => [
       ...pending.map((p) => ({ kind: "pending" as const, p })),

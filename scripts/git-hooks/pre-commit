@@ -11,3 +11,8 @@ if ! git diff --cached --name-only -z --diff-filter=ACMR | xargs -0 pnpm exec pr
   echo "pre-commit: 前端代码没有按 Prettier 排版。运行 pnpm format，再把改动 add 后重新提交。" >&2
   exit 1
 fi
+src=$(echo "$staged" | grep -E '^src/.*\.tsx?$' | grep -v '^src/ipc/bindings\.ts$')
+if [ -n "$src" ] && ! echo "$src" | tr '\n' '\0' | xargs -0 pnpm exec eslint >/dev/null 2>&1; then
+  echo "pre-commit: 前端代码违反 React hooks 规则。运行 pnpm lint 查看。" >&2
+  exit 1
+fi

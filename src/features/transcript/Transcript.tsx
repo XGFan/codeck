@@ -186,6 +186,8 @@ export function TranscriptList({
   const built = useMemo(() => buildRows(input), [input]);
   // Only the fold keys' state: expanding a tool call or a group does not fold the rows again.
   const folds = useUi((s) => foldState(s.expanded));
+  // `folds` is the trigger; the fold keys are read from the store when it changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const grouping = useMemo(() => foldTurns(built, useUi.getState().expanded), [built, folds]);
   const rows = grouping.rows;
 

@@ -78,8 +78,8 @@ cargo test --workspace                                  # 解析、组装、索�
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all                # 提交前格式化 Rust 代码
 pnpm format                    # 提交前格式化前端代码（Prettier）；pnpm format:check 只检查
-scripts/install-git-hooks.sh   # 一次性：装 pre-commit 钩子，Rust 或前端代码没格式化时拦下提交
-pnpm typecheck && pnpm test                             # 前端类型检查与单元测试
+scripts/install-git-hooks.sh   # 一次性：装 pre-commit 钩子，Rust 或前端代码没格式化、hooks 规则不过时拦下提交
+pnpm typecheck && pnpm lint && pnpm test                # 前端类型检查、hooks 规则检查（ESLint）与单元测试
 pnpm exec playwright install webkit && pnpm test:e2e    # E2E（mock 模式，WebKit）
 ```
 

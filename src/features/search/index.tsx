@@ -328,6 +328,8 @@ export function SearchOverlay() {
   // A new query or scope selects the first result; arriving results keep the selection unless it vanished.
   useEffect(() => {
     setSelected(allKeys[0] ?? "");
+    // Keyed on the query only: results arriving for it go through the next effect instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, scope, open]);
   useEffect(() => {
     if (!allKeys.includes(selected)) setSelected(allKeys[0] ?? "");

@@ -11,7 +11,6 @@ export interface AnsiSpan {
   underline?: boolean;
 }
 
-// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;?]*[A-Za-z]/g;
 
 export const stripAnsi = (s: string): string => s.replace(ANSI_RE, "");
