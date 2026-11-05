@@ -451,6 +451,10 @@ fn append_makes_new_text_searchable_including_cjk_and_quotes() {
         "the appended prompt extends the Main Line"
     );
     assert!(hit.snippet.iter().any(|p| p.hit && p.text == "重试"));
+    // Short terms with and without ASCII letters together, and as an exclusion.
+    assert_eq!(env.search("JI 重试").total_hits, 1);
+    assert_eq!(env.search("jitter -重试").total_hits, 0);
+    assert_eq!(env.search("jitter -试重").total_hits, 1);
 
     let three = env.search("重试逻");
     assert_eq!(three.mode, SearchMode::Fts);

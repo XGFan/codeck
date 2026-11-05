@@ -2,6 +2,7 @@
 //!
 //! - Positive terms of ≥ 3 characters become an FTS5 phrase expression (`Fts`); shorter terms and
 //!   exclusions become `instr(lower(body), lower(?))` predicates on the joined `msg_text`
+//!   (`instr(body, ?)` for a term without ASCII letters)
 //!   (`Mixed`). Without any FTS-able positive term the scan runs over `msg_text` alone (`Like`),
 //!   with FTS-able exclusions as `id NOT IN (… MATCH …)` (`Mixed`).
 //! - The LIKE fallback is ASCII-case-insensitive only (SQLite `lower()`); trigram FTS folds case.
@@ -87,12 +88,21 @@ pub fn run(conn: &Connection, r: &SearchRequest, force_like: bool) -> CoreResult
             "msg_text t"
         }
     };
+    // SQLite's `lower()` folds ASCII only, so a term without ASCII letters matches the same rows
+    // without it (and the scan skips lowering every body).
+    let instr = |t: &str| {
+        if t.bytes().any(|b| b.is_ascii_alphabetic()) {
+            "instr(lower(t.body), lower(?))"
+        } else {
+            "instr(t.body, ?)"
+        }
+    };
     for t in &like_inc {
-        conds.push("instr(lower(t.body), lower(?)) > 0".into());
+        conds.push(format!("{} > 0", instr(t)));
         args.push(Value::Text((*t).clone()));
     }
     for t in &like_exc {
-        conds.push("instr(lower(t.body), lower(?)) = 0".into());
+        conds.push(format!("{} = 0", instr(t)));
         args.push(Value::Text((*t).clone()));
     }
     if let Some(p) = &r.project_id {
