@@ -1,0 +1,48 @@
+
+ ▐▛███▛█   Claude Code v2.1.318
+▝▜██████▀  Sonnet 4.5 · API Usage Billing
+ ▝▝   ▝▝   /Users/me/proj
+
+
+❯ MOCK-LONGTASK please
+
+  Ran 1 shell command
+
+⏺ ok
+
+✻ Crunched for 0s · done 12:05 PM · 1 shell still running
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Background work is running
+   The following will stop when you exit:
+
+   shell · sleep 300
+
+   ❯ 1. Exit and stop tasks
+     2. Move to background and exit
+     3. Stay
+
+   Enter to confirm · Esc to cancel

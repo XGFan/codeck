@@ -334,18 +334,34 @@ pub fn sanitize(text: &str) -> String {
         .collect()
 }
 
+/// The keys ccrpc presses itself (legacy xterm encodings, as Claude Code reads them from a plain
+/// PTY); the same bytes as their names in [`key_bytes`].
+pub mod key {
+    pub const ENTER: &[u8] = b"\r";
+    pub const ESC: &[u8] = b"\x1b";
+    pub const SHIFT_TAB: &[u8] = b"\x1b[Z";
+    pub const BACKSPACE: &[u8] = b"\x7f";
+    pub const UP: &[u8] = b"\x1b[A";
+    pub const DOWN: &[u8] = b"\x1b[B";
+    pub const RIGHT: &[u8] = b"\x1b[C";
+    pub const CTRL_U: &[u8] = b"\x15";
+    /// `ctrl+enter` (kitty keyboard protocol): send what waits in Claude Code's queue now. Not
+    /// offered to `send_keys` by name.
+    pub const CTRL_ENTER: &[u8] = b"\x1b[13;5u";
+}
+
 /// Named key → bytes (legacy xterm encodings, as Claude Code reads them from a plain PTY).
 pub fn key_bytes(name: &str) -> Option<&'static [u8]> {
     Some(match name {
-        "enter" | "return" => b"\r",
-        "esc" | "escape" => b"\x1b",
+        "enter" | "return" => key::ENTER,
+        "esc" | "escape" => key::ESC,
         "tab" => b"\t",
-        "shift+tab" | "backtab" => b"\x1b[Z",
-        "backspace" => b"\x7f",
+        "shift+tab" | "backtab" => key::SHIFT_TAB,
+        "backspace" => key::BACKSPACE,
         "space" => b" ",
-        "up" => b"\x1b[A",
-        "down" => b"\x1b[B",
-        "right" => b"\x1b[C",
+        "up" => key::UP,
+        "down" => key::DOWN,
+        "right" => key::RIGHT,
         "left" => b"\x1b[D",
         "home" => b"\x1b[H",
         "end" => b"\x1b[F",
@@ -354,7 +370,7 @@ pub fn key_bytes(name: &str) -> Option<&'static [u8]> {
         "delete" => b"\x1b[3~",
         "ctrl+c" => b"\x03",
         "ctrl+d" => b"\x04",
-        "ctrl+u" => b"\x15",
+        "ctrl+u" => key::CTRL_U,
         "ctrl+l" => b"\x0c",
         "ctrl+o" => b"\x0f",
         "ctrl+r" => b"\x12",

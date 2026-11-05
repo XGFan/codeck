@@ -1497,6 +1497,11 @@ fn mock_model() -> String {
                         "Bash",
                         json!({"command": "touch mock-tool.txt", "description": "Create mock-tool.txt"}),
                     ))
+                } else if asked("MOCK-LONGTASK") > called("Bash") && has_tool("Bash") {
+                    Some((
+                        "Bash",
+                        json!({"command": "sleep 300", "description": "Wait long in background", "run_in_background": true}),
+                    ))
                 } else if asked("MOCK-BG") > 0 && called("Bash") < 2 && has_tool("Bash") {
                     Some((
                         "Bash",
@@ -2179,4 +2184,31 @@ fn mock_model_follow_up() {
         enqueues.is_empty(),
         "follow_up 进了 Claude Code 的队列：{enqueues:?}"
     );
+}
+
+/// `exit` while a background task runs: Claude Code asks first; without `stop_tasks` the question is
+/// dismissed and `exit` fails, with it the tasks are stopped and claude exits (on the scripted model).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_exit_with_tasks() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    run_turn_allowing(&mut rpc, "bg", "MOCK-LONGTASK please");
+    settle_idle(&mut rpc);
+    rpc.send(json!({"id": "x1", "type": "exit"}));
+    let r = rpc.until("x1", Duration::from_secs(30), |v| v["id"] == "x1");
+    assert_eq!(r["error"]["code"], "not_idle", "{r}");
+    // The question is dismissed: back at the input box, claude still running.
+    wait_screen(&mut rpc, "x1s", |lines| {
+        !lines
+            .iter()
+            .any(|l| l.contains("Background work is running"))
+    });
+    assert_eq!(
+        rpc.call("x1g", json!({"type": "get_state"}))["state"],
+        "idle"
+    );
+    rpc.call("x2", json!({"type": "exit", "stop_tasks": true}));
+    rpc.event("session_exit", Duration::from_secs(20));
 }

@@ -19,7 +19,7 @@ use crate::hook::{self, HookMsg, HookServer};
 use crate::layout::{self, Layout, LayoutKind, Library, Meaning};
 use crate::locate::{self, Roots};
 use crate::procfile::{self, ProcessFile};
-use crate::pty::{self, HolderConn, Owner};
+use crate::pty::{self, HolderConn, Owner, key};
 use crate::recognize::{self, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
@@ -1642,7 +1642,7 @@ impl Engine {
                 return Err(self.unrecognized("answer_choice", Some(&now)));
             };
             if on_yes == want_yes {
-                self.keys(b"\r")?;
+                self.keys(key::ENTER)?;
                 let gone = self.wait_screen(Duration::from_secs(10), |_, s| {
                     recognize::trust_folder(&s.lines).is_none().then_some(())
                 });
@@ -1652,7 +1652,7 @@ impl Engine {
                 self.announced = None;
                 return Ok(json!({"state": self.state.name()}));
             }
-            self.keys(if want_yes { b"\x1b[B" } else { b"\x1b[A" })?;
+            self.keys(if want_yes { key::DOWN } else { key::UP })?;
             self.wait_screen(Duration::from_millis(500), |_, s| {
                 (recognize::trust_folder(&s.lines) == Some(want_yes)).then_some(())
             });
@@ -2364,9 +2364,9 @@ impl Engine {
             let n = text.lines().count().max(1);
             let mut b = Vec::new();
             for i in 0..n {
-                b.extend_from_slice(b"\x15");
+                b.extend_from_slice(key::CTRL_U);
                 if i + 1 < n {
-                    b.extend_from_slice(b"\x7f");
+                    b.extend_from_slice(key::BACKSPACE);
                 }
             }
             self.keys(&b)?;
@@ -2394,7 +2394,7 @@ impl Engine {
             recognize::input_text(s).filter(|t| !t.is_empty() && *t != before)
         });
         self.input_box_now()?;
-        self.keys(b"\r")
+        self.keys(key::ENTER)
     }
 
     // ---- commands ----------------------------------------------------------------------------
@@ -2518,12 +2518,13 @@ impl Engine {
     /// Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
     fn paste_images(&mut self, paths: &[String]) -> std::result::Result<(), CmdErr> {
         for p in paths {
-            let had = self.input_box_now()?.matches("[Image #").count();
+            let had = recognize::image_placeholders(&self.input_box_now()?);
             self.paste(p)?;
             // One more `[Image #n]` placeholder, and the path itself is gone from the box.
             let shown = self.wait_screen(Duration::from_secs(3), |_, s| {
-                recognize::input_text(s)
-                    .filter(|t| !t.contains(p.as_str()) && t.matches("[Image #").count() == had + 1)
+                recognize::input_text(s).filter(|t| {
+                    !t.contains(p.as_str()) && recognize::image_placeholders(t) == had + 1
+                })
             });
             if shown.is_none() {
                 return Err(("bad_request", format!("Claude Code 没有把 {p} 当成图片")));
@@ -2567,7 +2568,7 @@ impl Engine {
             matches!(self.state, State::Busy | State::Waiting { .. }),
             "not_busy",
         )?;
-        self.keys(b"\x1b")?;
+        self.keys(key::ESC)?;
         if self.wait_until(Duration::from_secs(10), |e| {
             !matches!(e.state, State::Busy | State::Waiting { .. })
         }) {
@@ -2815,7 +2816,7 @@ impl Engine {
         self.turn.provisional = true;
         self.turn_active = true;
         self.last_text = None;
-        self.keys(b"\x1b[13;5u")?;
+        self.keys(key::CTRL_ENTER)?;
         if self.wait_until(Duration::from_secs(5), |e| e.queue.is_empty()) {
             Ok(json!({}))
         } else {
@@ -2937,7 +2938,7 @@ impl Engine {
                 }
                 let clean = pty::sanitize(text).replace(['\n', '\t'], " ");
                 self.keys(clean.as_bytes())?;
-                self.keys(b"\r")?;
+                self.keys(key::ENTER)?;
             }
             Answer::Options(chosen) if !multi => {
                 let Some(o) = q.options.iter().find(|o| o.label == chosen[0]) else {
@@ -2955,7 +2956,7 @@ impl Engine {
                     }
                 }
                 if q.tabbed {
-                    self.keys(b"\x1b[C")?;
+                    self.keys(key::RIGHT)?;
                 } else {
                     // A single multi-select question: move the cursor onto the Submit row, Enter.
                     let (Some(sub), Some(cur)) = (q.submit_row, q.cursor_row) else {
@@ -2968,20 +2969,20 @@ impl Engine {
                         .count()
                         + usize::from(q.other.is_some());
                     for _ in 0..rows_between {
-                        self.keys(b"\x1b[B")?;
+                        self.keys(key::DOWN)?;
                     }
                     let on_submit = self
                         .wait_screen(Duration::from_secs(2), |_, s| {
                             s.lines
                                 .get(sub)
-                                .filter(|l| l.trim_start().starts_with("❯ Submit"))
+                                .filter(|l| recognize::on_submit_row(l))
                                 .map(|_| ())
                         })
                         .is_some();
                     if !on_submit {
                         return Err(self.unrecognized("answer_question", None));
                     }
-                    self.keys(b"\r")?;
+                    self.keys(key::ENTER)?;
                 }
             }
         }
@@ -3001,7 +3002,7 @@ impl Engine {
             recognize::input_text(s).filter(|t| t.starts_with(&typed))
         });
         self.input_box_now()?;
-        self.keys(b"\r")?;
+        self.keys(key::ENTER)?;
         // Submitted once the command left the input box (or a picker replaced the box).
         self.wait_screen(Duration::from_secs(2), |_, s| {
             match recognize::input_text(s) {
@@ -3098,7 +3099,7 @@ impl Engine {
             if cur == mode {
                 return Ok(json!({"mode": mode.name()}));
             }
-            self.keys(b"\x1b[Z")?;
+            self.keys(key::SHIFT_TAB)?;
             let was = cur;
             let next = self.wait_screen(Duration::from_secs(2), |_, s| {
                 recognize::permission_mode(&s.lines).filter(|m| *m != was)
@@ -3165,7 +3166,7 @@ impl Engine {
         match panel {
             recognize::TasksPanel::Details(text) => {
                 if !fits(&text) || !text.contains("running") {
-                    self.keys(b"\x1b")?;
+                    self.keys(key::ESC)?;
                     return Err(self.unrecognized("stop_task", Some(&s)));
                 }
             }
@@ -3173,7 +3174,7 @@ impl Engine {
                 match recognize::task_row(&rows, &needle) {
                     Ok(_) => {}
                     Err(why) => {
-                        self.keys(b"\x1b")?;
+                        self.keys(key::ESC)?;
                         self.emit(json!({"type": "unrecognized", "context": format!("stop_task：{why}"), "lines": s.lines}));
                         return err("unrecognized_screen", format!("stop_task：{why}"));
                     }
@@ -3200,13 +3201,12 @@ impl Engine {
                         moved = true;
                         break;
                     }
-                    let key: &[u8] = if want > cur { b"\x1b[B" } else { b"\x1b[A" };
                     let before = self.conn.generation();
-                    self.keys(key)?;
+                    self.keys(if want > cur { key::DOWN } else { key::UP })?;
                     self.conn.wait_change(before, Duration::from_millis(500));
                 }
                 if !moved {
-                    self.keys(b"\x1b")?;
+                    self.keys(key::ESC)?;
                     return Err(self.unrecognized("stop_task", None));
                 }
             }
@@ -3229,7 +3229,7 @@ impl Engine {
             .and_then(|s| recognize::tasks_panel(&s.lines))
             .is_some()
         {
-            self.keys(b"\x1b")?;
+            self.keys(key::ESC)?;
         }
         if ended.is_none() {
             return err("timeout", format!("5 秒内面板上的后台任务 {id} 仍在运行"));
@@ -3318,23 +3318,26 @@ impl Engine {
                 return err("not_idle", "还没找到 claude 进程");
             };
             self.slash("exit")?;
-            // Background tasks still running make Claude Code ask first.
+            // Background tasks still running make Claude Code ask first: answered only when the
+            // question is the known one (`Some(cursor on "Exit and stop tasks")`).
             let asked = self.wait_screen(Duration::from_secs(10), |_, s| {
-                let text = s.lines.join("\n");
                 if !::transcript::live::pid_exists(pid) {
-                    return Some(false);
+                    return Some(None);
                 }
-                text.contains("Exit and stop tasks").then_some(true)
+                recognize::exit_with_tasks(&s.lines).map(Some)
             });
-            if asked.as_ref().is_some_and(|(a, _)| *a) {
-                if !stop_tasks {
-                    self.keys(b"\x1b")?;
+            match asked {
+                Some((Some(_), _)) if !stop_tasks => {
+                    self.keys(key::ESC)?;
                     return err(
                         "not_idle",
                         "还有后台任务在运行：加 stop_tasks 退出并停掉它们",
                     );
                 }
-                self.keys(b"\r")?;
+                Some((Some(true), _)) => self.keys(key::ENTER)?,
+                Some((Some(false), s)) => return Err(self.unrecognized("exit", Some(&s))),
+                // Gone, or neither gone nor asking what is known: no key; wait for it to exit.
+                Some((None, _)) | None => {}
             }
             if !self.wait_until(Duration::from_secs(15), |_| {
                 !::transcript::live::pid_exists(pid)
@@ -3345,7 +3348,7 @@ impl Engine {
         }
         if close_pane {
             // The Pane is a login shell that ran claude; ending it ends the Pane.
-            self.keys(b"exit\r")?;
+            self.keys(&[b"exit".as_slice(), key::ENTER].concat())?;
         }
         Ok(json!({}))
     }

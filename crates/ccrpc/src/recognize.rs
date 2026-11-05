@@ -129,7 +129,17 @@ fn permission_question(lines: &[String]) -> Option<(usize, usize)> {
 /// A strictly sequential numbered menu starting on row `i`: option 1 first, each next option on
 /// the following row or after continuation rows indented deeper than the number, exactly one
 /// `❯`, and no further numbered row below it. `(number, full label)`; anything else is refused.
-pub fn strict_menu(lines: &[String], mut i: usize) -> Option<Vec<(u32, String)>> {
+pub fn strict_menu(lines: &[String], i: usize) -> Option<Vec<(u32, String)>> {
+    Some(
+        strict_menu_rows(lines, i)?
+            .into_iter()
+            .map(|(n, l, _)| (n, l))
+            .collect(),
+    )
+}
+
+/// [`strict_menu`] with whether the `❯` cursor is on each option.
+fn strict_menu_rows(lines: &[String], mut i: usize) -> Option<Vec<(u32, String, bool)>> {
     let mut opts: Vec<(u32, String, bool, usize)> = Vec::new(); // number, label, cursor, indent
     while i < lines.len() {
         let line = &lines[i];
@@ -162,7 +172,7 @@ pub fn strict_menu(lines: &[String], mut i: usize) -> Option<Vec<(u32, String)>>
     if lines[i..].iter().any(|l| parse_option(l).is_some()) {
         return None;
     }
-    Some(opts.into_iter().map(|(n, l, _, _)| (n, l)).collect())
+    Some(opts.into_iter().map(|(n, l, c, _)| (n, l, c)).collect())
 }
 
 /// Row of the last option numbered 1 after row `from` (the menu of a dialog whose body may
@@ -421,6 +431,38 @@ pub fn trust_folder(lines: &[String]) -> Option<bool> {
 pub const TRUST_YES: &str = "Yes, I trust this folder";
 pub const TRUST_NO: &str = "No, exit";
 pub const TRUST_TITLE: &str = "Is this a project you created or one you trust?";
+
+/// The option of [`exit_with_tasks`] that stops the tasks and exits.
+pub const EXIT_STOP_TASKS: &str = "Exit and stop tasks";
+
+/// What `/exit` asks while background tasks run (2.1.318, `tests/fixtures/screens/exit_with_tasks.txt`):
+/// `Background work is running` above a [`strict_menu`] holding `Exit and stop tasks`, then
+/// `Enter to confirm · Esc to cancel`. `Some(true)` when the cursor is on `Exit and stop tasks`;
+/// anything else is refused.
+pub fn exit_with_tasks(lines: &[String]) -> Option<bool> {
+    let q = lines
+        .iter()
+        .rposition(|l| l.trim() == "Background work is running")?;
+    let start = last_menu_start(lines, q)?;
+    let (_, _, cursor) = strict_menu_rows(lines, start)?
+        .into_iter()
+        .find(|(_, label, _)| label == EXIT_STOP_TASKS)?;
+    let footer = lines[start..].iter().any(|l| {
+        let t = l.trim();
+        t.starts_with("Enter to confirm") && t.contains("Esc to cancel")
+    });
+    footer.then_some(cursor)
+}
+
+/// How many pasted images the input box text shows (`[Image #n]` placeholders).
+pub fn image_placeholders(input: &str) -> usize {
+    input.matches("[Image #").count()
+}
+
+/// The `❯` cursor is on the unnumbered `Submit` row of a multi-select question.
+pub fn on_submit_row(line: &str) -> bool {
+    line.trim_start().starts_with("❯ Submit")
+}
 
 /// The spinner line above the input box while Claude Code works, such as
 /// `✻ Deliberating… (7s · ↓ 10 tokens)` or `✶ Brewing… (running PreToolUse hook · 2s · ↓ 46 tokens)`.
@@ -808,6 +850,46 @@ mod tests {
             .collect();
         assert_eq!(trust_folder(&moved), Some(true));
         assert_eq!(trust_folder(&screen("idle_prompt.txt")), None);
+    }
+
+    #[test]
+    fn exit_question_with_tasks_running() {
+        let lines = screen("exit_with_tasks.txt");
+        assert_eq!(
+            exit_with_tasks(&lines),
+            Some(true),
+            "the cursor starts on it"
+        );
+        let moved: Vec<String> = lines
+            .iter()
+            .map(|l| match l.trim() {
+                "❯ 1. Exit and stop tasks" => "     1. Exit and stop tasks".to_string(),
+                "2. Move to background and exit" => {
+                    "   ❯ 2. Move to background and exit".to_string()
+                }
+                _ => l.clone(),
+            })
+            .collect();
+        assert_eq!(exit_with_tasks(&moved), Some(false));
+        // Not the known question: no title, no option of that name, or no footer.
+        let without = |drop: &str| -> Vec<String> {
+            lines.iter().filter(|l| l.trim() != drop).cloned().collect()
+        };
+        assert_eq!(
+            exit_with_tasks(&without("Background work is running")),
+            None
+        );
+        assert_eq!(
+            exit_with_tasks(&without("Enter to confirm · Esc to cancel")),
+            None
+        );
+        let renamed: Vec<String> = lines
+            .iter()
+            .map(|l| l.replace("Exit and stop tasks", "Exit"))
+            .collect();
+        assert_eq!(exit_with_tasks(&renamed), None);
+        assert_eq!(exit_with_tasks(&screen("idle_prompt.txt")), None);
+        assert_eq!(exit_with_tasks(&screen("trust_folder.txt")), None);
     }
 
     #[test]
