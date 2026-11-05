@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 
 use codeck_core::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, SubagentMetaFile, WorkflowFiles, assemble,
-    build_skeleton, content, summarize, transcript,
+    build_skeleton, content, find, summarize, transcript,
 };
 use codeck_core::model::{
-    AssistantBlock, DetailSource, FileRole, ForkOrigin, ImageRequest, NodeBody, PromptOrigin,
-    TitleSource, ToolCall, ToolDetailRequest, ToolPart, Transcript, TranscriptRequest,
-    TranscriptScope,
+    AssistantBlock, BranchChoice, DetailSource, FileRole, FindLocation, FindRequest, ForkOrigin,
+    ImageRequest, NodeBody, PromptOrigin, TitleSource, ToolCall, ToolDetailRequest, ToolPart,
+    Transcript, TranscriptRequest, TranscriptScope,
 };
 use codeck_core::parse::{parse_bytes, read_entries};
 use common::{fixture_dir, ids};
@@ -945,6 +945,95 @@ fn persisted_output_never_leaves_tool_results() {
         DetailSource::Inline
     );
     assert!(content::persisted_path(&session_dir, "../secret.txt").is_none());
+}
+
+fn find_tool_output(s: &AssembledSession, choices: Vec<BranchChoice>, query: &str) -> u32 {
+    let r = find::find(
+        s,
+        &FindRequest {
+            session_id: "s".into(),
+            scope: TranscriptScope::Main,
+            branch_choices: choices,
+            include_hidden: false,
+            query: query.into(),
+        },
+        None,
+    )
+    .unwrap();
+    r.matches
+        .iter()
+        .filter(|m| matches!(m.location, FindLocation::ToolOutput { .. }))
+        .map(|m| m.count)
+        .sum()
+}
+
+#[test]
+fn card_and_find_take_the_result_on_the_selected_branch() {
+    // The same tool_use id on two Branches (rewind to the root prompt), each with its own result.
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"p1","parentUuid":null,"message":{"role":"user","content":"one"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"p1","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"x"}}]}}"#,
+        r#"{"type":"user","uuid":"r1","parentUuid":"a1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"alpha out"}]}}"#,
+        r#"{"type":"user","uuid":"p2","parentUuid":null,"message":{"role":"user","content":"two"}}"#,
+        r#"{"type":"assistant","uuid":"a2","parentUuid":"p2","message":{"id":"m2","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"x"}}]}}"#,
+        r#"{"type":"user","uuid":"r2","parentUuid":"a2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"beta out"}]}}"#,
+    ]);
+    let s = assemble(
+        "s",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    let choose = |head: &str| {
+        vec![BranchChoice {
+            anchor_key: "root".into(),
+            head_id: head.into(),
+        }]
+    };
+    for (choices, shown, other) in [
+        (Vec::new(), "beta out", "alpha"),
+        (choose("p1"), "alpha out", "beta"),
+        (choose("p2"), "beta out", "alpha"),
+    ] {
+        let t = transcript(
+            &s,
+            &TranscriptRequest {
+                session_id: "s".into(),
+                scope: TranscriptScope::Main,
+                branch_choices: choices.clone(),
+                include_hidden: false,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(call(&t, "t1").result.as_ref().unwrap().text, shown);
+        assert_eq!(find_tool_output(&s, choices.clone(), shown), 1);
+        assert_eq!(find_tool_output(&s, choices, other), 0);
+    }
+}
+
+#[test]
+fn persisted_output_symlinks_are_not_followed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let session_dir = tmp.path().join("sid");
+    fs::create_dir_all(session_dir.join("tool-results")).unwrap();
+    fs::write(tmp.path().join("secret.txt"), "outside the session").unwrap();
+    std::os::unix::fs::symlink(
+        tmp.path().join("secret.txt"),
+        session_dir.join("tool-results/link.txt"),
+    )
+    .unwrap();
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"x"}}]}}"#,
+        r#"{"type":"user","uuid":"r1","parentUuid":"a1","toolUseResult":{"persistedOutputPath":"/x/tool-results/link.txt","persistedOutputSize":19},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"<persisted-output>\nFull output saved to: /x/tool-results/link.txt\n\nPreview:\nabc\n</persisted-output>"}]}}"#,
+    ]);
+    let s = assemble("sid", &session_dir, vec![f], SessionSidecar::default());
+    let d = detail(&s, "t1", ToolPart::Output);
+    assert_eq!(d.source, DetailSource::Missing);
+    assert!(!d.text.contains("outside"));
+    assert_eq!(find_tool_output(&s, Vec::new(), "outside"), 0);
+    assert_eq!(find_tool_output(&s, Vec::new(), "preview"), 1);
 }
 
 #[test]

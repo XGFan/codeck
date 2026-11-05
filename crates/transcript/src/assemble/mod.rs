@@ -22,7 +22,7 @@ use crate::model::{
     Transcript, TranscriptRequest, TranscriptScope, WorkflowRun,
 };
 use crate::parse::EntryRecord;
-use crate::raw::RawEntry;
+use crate::raw::{RawBlock, RawEntry};
 
 /// One parsed source file of a Session.
 #[derive(Debug)]
@@ -162,6 +162,42 @@ impl SessionSkeleton {
     pub fn entry<'a>(&self, files: &'a [LoadedFile], i: usize) -> &'a RawEntry {
         let n = &self.nodes[i];
         &files[n.file as usize].records[n.record as usize].entry
+    }
+
+    /// The tool_use block `id` and the node holding it (the first such node, as in `tool_use_at`).
+    pub fn tool_use_block<'a>(
+        &self,
+        files: &'a [LoadedFile],
+        id: &str,
+    ) -> Option<(usize, &'a RawBlock)> {
+        let &i = self.tool_use_at.get(id)?;
+        let b = self
+            .entry(files, i)
+            .blocks()
+            .iter()
+            .find(|b| b.block_type() == "tool_use" && b.id.as_deref() == Some(id))?;
+        Some((i, b))
+    }
+
+    /// The tool_result block for tool_use `id`, with its node and entry: with `shown` (the
+    /// display set), one on it if any, else the first in merged file order (see
+    /// [`tree::chosen_result`]); without, always the first.
+    pub fn tool_result_block<'a>(
+        &self,
+        files: &'a [LoadedFile],
+        id: &str,
+        shown: Option<&[bool]>,
+    ) -> Option<(usize, &'a RawEntry, &'a RawBlock)> {
+        let r = match shown {
+            Some(shown) => tree::chosen_result(self, id, shown)?,
+            None => *self.results_for.get(id)?.first()?,
+        };
+        let e = self.entry(files, r);
+        let b = e
+            .blocks()
+            .iter()
+            .find(|b| b.block_type() == "tool_result" && b.tool_use_id.as_deref() == Some(id))?;
+        Some((r, e, b))
     }
 
     /// `(path, byte offset)` of node `i`'s source line.

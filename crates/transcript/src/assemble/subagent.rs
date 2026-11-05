@@ -202,14 +202,8 @@ struct AgentInput {
 }
 
 fn agent_input(s: &SessionSkeleton, files: &[LoadedFile], tool_use_id: &str) -> AgentInput {
-    let Some(&i) = s.tool_use_at.get(tool_use_id) else {
-        return AgentInput::default();
-    };
-    s.entry(files, i)
-        .blocks()
-        .iter()
-        .find(|b| b.id.as_deref() == Some(tool_use_id))
-        .and_then(|b| b.input.as_deref())
+    s.tool_use_block(files, tool_use_id)
+        .and_then(|(_, b)| b.input.as_deref())
         .and_then(|raw| serde_json::from_str(raw.get()).ok())
         .unwrap_or_default()
 }
@@ -220,12 +214,8 @@ fn result_of(
     files: &[LoadedFile],
     tool_use_id: &str,
 ) -> Option<(Option<String>, bool)> {
-    let &r = s.results_for.get(tool_use_id)?.first()?;
-    let block = s
-        .entry(files, r)
-        .blocks()
-        .iter()
-        .find(|b| b.tool_use_id.as_deref() == Some(tool_use_id))?;
+    // Session-wide, not per display path: a run's outcome does not change with branch choices.
+    let (_, _, block) = s.tool_result_block(files, tool_use_id, None)?;
     let (text, _) = nodes::result_content(block.content.as_deref());
     let text = text.trim();
     let text = (!text.is_empty()).then(|| nodes::cap_text(text, RESULT_BYTES, RESULT_LINES).0);

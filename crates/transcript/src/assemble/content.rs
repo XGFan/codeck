@@ -70,9 +70,15 @@ fn capped(text: String) -> (String, bool) {
     (text[..cut].to_owned(), true)
 }
 
-/// Reads at most [`DETAIL_BYTES`] of a file (read-only); returns `(text, truncated, size)`.
-fn read_capped(path: &Path) -> std::io::Result<(String, bool, u64)> {
-    let f = std::fs::File::open(path)?;
+/// Reads at most [`DETAIL_BYTES`] of a persisted output file (read-only); returns
+/// `(text, truncated, size)`. A symlink is refused (`O_NOFOLLOW`, as ccrpc does), so a link
+/// planted in `tool-results/` cannot point the read elsewhere.
+pub(crate) fn read_capped(path: &Path) -> std::io::Result<(String, bool, u64)> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
     let size = f.metadata()?.len();
     let mut buf = Vec::with_capacity(size.min(DETAIL_BYTES as u64) as usize);
     f.take(DETAIL_BYTES as u64).read_to_end(&mut buf)?;
@@ -101,12 +107,12 @@ pub fn tool_detail(
     let id = r.tool_use_id.as_str();
     match r.part {
         ToolPart::Input => {
-            let &i = sk
-                .tool_use_at
-                .get(id)
-                .ok_or_else(|| TranscriptError::NotFound("该工具调用".to_owned()))?;
-            let raw = find_block(sk.entry(files, i), "tool_use", id)
-                .and_then(|b| b.input.as_deref())
+            if !sk.tool_use_at.contains_key(id) {
+                return Err(TranscriptError::NotFound("该工具调用".to_owned()));
+            }
+            let raw = sk
+                .tool_use_block(files, id)
+                .and_then(|(_, b)| b.input.as_deref())
                 .map(|v| v.get().to_owned())
                 .unwrap_or_else(|| "{}".to_owned());
             let total = raw.len() as f64;
@@ -119,13 +125,9 @@ pub fn tool_detail(
             })
         }
         ToolPart::Output => {
-            let found = sk.results_for.get(id).and_then(|rs| {
-                rs.iter().find_map(|&ri| {
-                    let e = sk.entry(files, ri);
-                    find_block(e, "tool_result", id).map(|b| (e, b))
-                })
-            });
-            let Some((e, block)) = found else {
+            // Always the first result: the request carries no branch choices, so the display
+            // path (which the card and ⌘F prefer) is unknown here.
+            let Some((_, e, block)) = sk.tool_result_block(files, id, None) else {
                 if !sk.tool_use_at.contains_key(id) {
                     return Err(TranscriptError::NotFound("该工具调用".to_owned()));
                 }

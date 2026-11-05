@@ -2,17 +2,17 @@
 //!
 //! Walks the same nodes the transcript shows (scope, branch choices, hidden toggle). Text and
 //! thinking come from the nodes; tool inputs are matched on their string values and tool outputs
-//! on the full result text, read from `tool-results/<basename>` when persisted (≤ 8 MB).
+//! on the full result text of the result the card shows, read from `tool-results/<basename>`
+//! when persisted (≤ 8 MB).
 //! Matching is case-insensitive (Unicode lowercase); counts are non-overlapping occurrences.
 
 use std::borrow::Cow;
-use std::io::Read;
 
 use serde_json::Value;
 
-use super::content::{self, DETAIL_BYTES};
+use super::content;
 use super::nodes::{persisted_ref, result_content};
-use super::{AssembledSession, LoadedFile, SessionSkeleton, skeleton};
+use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, skeleton, tree};
 use crate::error::TranscriptResult;
 use crate::model::{
     AssistantBlock, FindLocation, FindMatch, FindRequest, FindResult, NodeBody, TranscriptRequest,
@@ -48,6 +48,11 @@ pub fn find(
         }
         _ => (Cow::Borrowed(&s.skeleton), &s.main_files),
     };
+    // The display set of the transcript above, so outputs come from the result its cards show.
+    let mut shown = vec![false; sk.nodes.len()];
+    for i in tree::display_entries(&sk, &branch::resolve_path(&sk, &r.branch_choices)) {
+        shown[i] = true;
+    }
     let count = |text: &str| text.to_lowercase().matches(needle.as_str()).count() as u32;
     let mut matches = Vec::new();
     for node in &t.nodes {
@@ -81,7 +86,7 @@ pub fn find(
                                 FindLocation::ToolOutput {
                                     tool_use_id: id.clone(),
                                 },
-                                count(&tool_output(s, &sk, files, id)),
+                                count(&tool_output(s, &sk, files, &shown, id)),
                             );
                         }
                     }
@@ -127,15 +132,9 @@ impl<'a> NodeMatches<'a> {
 
 /// String values of a tool input, joined by `\n`.
 fn tool_input(sk: &SessionSkeleton, files: &[LoadedFile], id: &str) -> String {
-    let Some(&i) = sk.tool_use_at.get(id) else {
-        return String::new();
-    };
     let input = sk
-        .entry(files, i)
-        .blocks()
-        .iter()
-        .find(|b| b.block_type() == "tool_use" && b.id.as_deref() == Some(id))
-        .and_then(|b| b.input.as_deref())
+        .tool_use_block(files, id)
+        .and_then(|(_, b)| b.input.as_deref())
         .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok());
     let mut out = Vec::new();
     if let Some(v) = &input {
@@ -153,36 +152,22 @@ fn leaves<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
     }
 }
 
-/// Full output of a tool call: the persisted file when present, else the inline result text.
+/// Full output of a tool call (the result in `shown` first, as on its card): the persisted file
+/// when present, else the inline result text.
 fn tool_output(
     s: &AssembledSession,
     sk: &SessionSkeleton,
     files: &[LoadedFile],
+    shown: &[bool],
     id: &str,
 ) -> String {
-    let found = sk.results_for.get(id).and_then(|rs| {
-        rs.iter().find_map(|&ri| {
-            let e = sk.entry(files, ri);
-            e.blocks()
-                .iter()
-                .find(|b| b.block_type() == "tool_result" && b.tool_use_id.as_deref() == Some(id))
-                .map(|b| (e, b))
-        })
-    });
-    let Some((e, block)) = found else {
+    let Some((_, e, block)) = sk.tool_result_block(files, id, Some(shown)) else {
         return String::new();
     };
     let (inline, _) = result_content(block.content.as_deref());
     persisted_ref(e, &inline)
         .and_then(|p| content::persisted_path(&s.session_dir, &p.file_name))
-        .and_then(|path| {
-            let mut buf = Vec::new();
-            std::fs::File::open(path)
-                .ok()?
-                .take(DETAIL_BYTES as u64)
-                .read_to_end(&mut buf)
-                .ok()?;
-            Some(String::from_utf8_lossy(&buf).into_owned())
-        })
+        .and_then(|path| content::read_capped(&path).ok())
+        .map(|(text, _, _)| text)
         .unwrap_or(inline)
 }

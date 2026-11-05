@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
-use super::{LoadedFile, SessionSkeleton, content, prompt, tree};
+use super::{LoadedFile, SessionSkeleton, content, prompt};
 use crate::model::{
     AgentId, AssistantBlock, ImageRef, Node, NodeBody, NodeId, PersistedRef, PromptOrigin,
     TokenTotals, ToolCall, ToolResult,
@@ -44,7 +44,7 @@ pub struct Rendered {
     pub hidden_count: u32,
 }
 
-/// Renders the display entries (see [`tree::display_entries`]) into nodes.
+/// Renders the display entries (see [`super::tree::display_entries`]) into nodes.
 pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
     let s = ctx.skeleton;
     let mut shown = vec![false; s.nodes.len()];
@@ -254,13 +254,9 @@ fn tool_call(ctx: &RenderCtx<'_>, b: &RawBlock, shown: &[bool], node_id: &str) -
         Some(raw) => cap_json(raw.get(), INPUT_STRING_BYTES),
         None => ("{}".to_owned(), false),
     };
-    let result = tree::chosen_result(s, &id, shown).and_then(|r| {
-        let e = s.entry(ctx.files, r);
-        let block = e.blocks().iter().find(|rb| {
-            rb.block_type() == "tool_result" && rb.tool_use_id.as_deref() == Some(&id)
-        })?;
-        Some(tool_result(e, block, &name, node_id, &id))
-    });
+    let result = s
+        .tool_result_block(ctx.files, &id, Some(shown))
+        .map(|(_, e, block)| tool_result(e, block, &name, node_id, &id));
     ToolCall {
         subagent_id: ctx.subagent_by_tool.get(&id).cloned(),
         workflow_run_id: ctx.workflow_by_tool.get(&id).cloned(),
