@@ -116,6 +116,11 @@ impl Analyzer {
             .filter_map(|b| b["text"].as_str())
             .collect();
         let mut layout = parse_answer(&text)?;
+        // A tool approval needs a pending tool call: with none, the menu is a choice (a slash
+        // command's confirmation, such as /add-dir's, reads like a tool approval).
+        if req.pending.is_empty() && layout.kind == LayoutKind::Permission {
+            layout.kind = LayoutKind::Choice;
+        }
         layout.claude_version = req.claude_version.clone();
         layout.screen = req.lines.to_vec();
         layout.id = layout.compute_id();
@@ -183,8 +188,8 @@ Describe the dialog at the bottom of the screen as JSON:
     {{"number": 1, "label": "<the start of the option's text, copied exactly; leave out parts that change from one call to the next such as commands, paths or file names>", "meaning": "allow" | "allow_always" | "deny" | "other", "description": "<what choosing it does, in a few words>"}}
   ]
 }}
-- "permission": the dialog asks whether to let a pending tool call run. Then "allow" lets it run once, "allow_always" lets it run and stops asking for similar calls, "deny" refuses. It must have at least one "allow" and one "deny" option.
-- "choice": any other numbered menu waiting for the user (approving a plan, confirming an exit, a startup notice). Use "allow" for options that go ahead, "deny" for options that refuse or cancel, "other" for the rest.
+- "permission": the dialog asks whether to let one of the pending tool calls above run (never when there are none). Then "allow" lets it run once, "allow_always" lets it run and stops asking for similar calls, "deny" refuses. It must have at least one "allow" and one "deny" option.
+- "choice": any other numbered menu waiting for the user (approving a plan, confirming an exit, a startup notice, confirming a slash command). Use "allow" for options that go ahead, "deny" for options that refuse or cancel, "other" for the rest.
 - "none": there is no menu waiting for an answer.
 - "select": "number" when every option is shown with its number ("❯ 1. Yes"); "cursor" when the options have no numbers and the one marked ❯ is picked with the arrow keys and Enter. Then "number" is the option's position, from 1.
 - List every option of that menu, in order, with its number as shown (its position for "cursor")."#,
@@ -377,6 +382,44 @@ mod tests {
         assert_eq!(layout.options.len(), 2);
         let err = a.test().unwrap_err().to_string();
         assert_eq!(err, "分析结果与屏幕对不上");
+        server.join().unwrap();
+    }
+
+    /// /add-dir's confirmation reads like a tool approval, and the analyzer took it for one (seen
+    /// live): with no pending tool call it is a choice, else it could never be announced.
+    #[test]
+    fn a_permission_answer_without_a_pending_tool_is_a_choice() {
+        let screen = crate::layout::builtin()
+            .into_iter()
+            .find(|l| l.title == "Add directory to workspace")
+            .unwrap()
+            .screen;
+        let answer =
+            json!({"kind": "permission", "title": "Add directory to workspace", "options": [
+            {"number": 1, "label": "Yes, for this session", "meaning": "allow"},
+            {"number": 2, "label": "Yes, and remember this directory", "meaning": "allow_always"},
+            {"number": 3, "label": "No", "meaning": "deny"}]})
+            .to_string();
+        let (base_url, server) = serve_answers(vec![answer.clone(), answer]);
+        let a = Analyzer {
+            base_url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        let ask = |pending: Vec<(String, Value)>| {
+            a.analyze(&Request {
+                lines: &screen,
+                waiting_for: "dialog open",
+                pending,
+                claude_version: None,
+            })
+            .unwrap()
+        };
+        let l = ask(Vec::new());
+        assert_eq!(l.kind, LayoutKind::Choice);
+        assert!(l.match_screen(&screen).is_some());
+        let bash = vec![("Bash".to_string(), json!({"command": "ls"}))];
+        assert_eq!(ask(bash).kind, LayoutKind::Permission);
         server.join().unwrap();
     }
 

@@ -136,7 +136,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
 | `taken_over` / `reclaimed` | 有人在 ToH 上接手了这个 Session，之后只读 / 已取回 |
-| `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
+| `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框、`/add-dir` 的确认框），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
 | `session_info` | 权限模式、模型、思考等级、上下文大小变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |

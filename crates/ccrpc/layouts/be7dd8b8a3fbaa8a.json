@@ -1,0 +1,41 @@
+{
+  "id": "be7dd8b8a3fbaa8a",
+  "kind": "choice",
+  "title": "Add directory to workspace",
+  "options": [
+    {
+      "number": 1,
+      "label": "Yes, for this session",
+      "meaning": "allow",
+      "description": "只在本 Session 加入该目录"
+    },
+    {
+      "number": 2,
+      "label": "Yes, and remember this directory",
+      "meaning": "allow_always",
+      "description": "加入该目录并记住，以后不再问"
+    },
+    {
+      "number": 3,
+      "label": "No",
+      "meaning": "deny",
+      "description": "不加入该目录"
+    }
+  ],
+  "claude_version": "2.1.318",
+  "screen": [
+    "",
+    "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◉ xhigh · /effort ▔",
+    "   Add directory to workspace",
+    "",
+    "   /private/var/folders/38/0jtkc9vs6s510gr3wky46hqm0000gn/T/.tmpflTFAz",
+    "",
+    "   Claude Code will be able to read files in this directory and make edits when auto-accept edits is on.",
+    "",
+    "   ❯ 1. Yes, for this session",
+    "     2. Yes, and remember this directory",
+    "     3. No",
+    "",
+    "   Enter to confirm · Esc to cancel"
+  ]
+}

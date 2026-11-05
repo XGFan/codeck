@@ -178,7 +178,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 - **超时**：PermissionRequest hook 设 `timeout: 700`，阻塞到 663s 仍在，723s 前被 SIGTERM（超过缺省 600s 的值生效）；超时后审批框仍在、进程文件仍 `waiting`，人照常可答。
 - **插话（steer）**：忙时输入在入队时触发 UserPromptSubmit，`prompt` 为插话正文，`prompt_id` **与当前一轮相同**；本轮只有一个 Stop。transcript 的用户条目带 `promptId`。
-- **斜杠命令与 `!` 命令**：`/status`、`/model …` 不触发任何 hook（`/model` 弹出 `Switch model?` 确认框）；`!echo bang` 不触发 UserPromptSubmit，但触发一次 Stop（新的 `prompt_id`，`last_assistant_message` 为空），transcript 里是同一 `promptId` 的 `<bash-input>` / `<bash-stdout>`。
+- **斜杠命令与 `!` 命令**：`/status`、`/model …` 不触发任何 hook（`/model` 弹出 `Switch model?` 确认框；`/add-dir <目录>` 弹出 `Add directory to workspace` 确认框，进程文件为 `dialog open`，2.1.318 实测）；`!echo bang` 不触发 UserPromptSubmit，但触发一次 Stop（新的 `prompt_id`，`last_assistant_message` 为空），transcript 里是同一 `promptId` 的 `<bash-input>` / `<bash-stdout>`。
 - **“总是允许”**：Bash `touch` 的审批框第 2 项是 `Yes, and always allow access to <cwd> from this project`；`permission_suggestions` 为 `addDirectories`（`destination: "session"`）与 `setMode acceptEdits`。在 TUI 选第 2 项不写任何 settings 文件、不切模式（仍 manual），下一次同样的 `touch` 仍要审批。
 - **deny 加 `interrupt: true`**：与在审批框选 No 相同——显示 `Interrupted · What should Claude do instead?`，回 idle，不触发 Stop。
 - **Workflow**：`Run a dynamic workflow?` 审批同样触发 PermissionRequest（`tool_input` 只有 `script`，没有 `permission_suggestions`），审批框与 hook 同时出现；hook 回 `allow` 生效。

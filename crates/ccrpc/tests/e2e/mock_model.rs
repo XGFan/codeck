@@ -463,6 +463,57 @@ fn mock_model_model_and_effort() {
     assert_eq!(st["model"], "Fable 5.1", "{st}");
 }
 
+/// `/add-dir` asks before adding a directory: a choice from the built-in layout (no tool call is
+/// pending, so it is not a tool approval), answered with `answer_choice`.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_add_dir() {
+    let env = setup_with("mock-key", &mock_model(), "claude-opus-4-7");
+    let extra = tempfile::tempdir().unwrap();
+    let extra = extra.path().canonicalize().unwrap();
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    rpc.forget();
+    rpc.call(
+        "s1",
+        json!({"type": "slash", "command": format!("add-dir {}", extra.display())}),
+    );
+    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+        v["type"] == "choice" || v["type"] == "dialog"
+    });
+    assert_eq!(c["type"], "choice", "{c}");
+    assert_eq!(c["title"], "Add directory to workspace", "{c}");
+    assert_eq!(c["layout_source"], "builtin", "{c}");
+    assert!(c["tool_use_id"].is_null(), "{c}");
+    let labels: Vec<&str> = c["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|o| o["label"].as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Yes, for this session",
+            "Yes, and remember this directory",
+            "No"
+        ],
+        "{c}"
+    );
+    rpc.call(
+        "c1",
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, for this session"}),
+    );
+    rpc.until("idle", Duration::from_secs(10), |v| {
+        v["type"] == "state" && v["state"] == "idle"
+    });
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["state"], "idle", "{st}");
+    assert!(st["request"].is_null(), "{st}");
+    let screen = rpc.call("g2", json!({"type": "get_screen"})).to_string();
+    assert!(screen.contains("Added "), "{screen}");
+}
+
 /// Starting in a folder not trusted yet, the status line, progress, paging, the log and exit, on
 /// the scripted model (no credits).
 #[test]
