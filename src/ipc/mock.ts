@@ -1,7 +1,6 @@
 import type {
   Activity,
   ActivityBucket,
-  AppError,
   AppInfo,
   BranchChoice,
   FindMatch,
@@ -33,7 +32,7 @@ import type {
   TranscriptScope,
 } from "./bindings";
 import type { Api, Unlisten } from "./api";
-import { createMockCcrpc } from "./mock-ccrpc";
+import { appError, createMockCcrpc } from "./mock-ccrpc";
 import { DAY, NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
 import {
   appInfo,
@@ -72,8 +71,6 @@ declare global {
     };
   }
 }
-
-const appError = (code: AppError["code"], message: string): AppError => ({ code, message });
 
 /** Local calendar day `YYYY-MM-DD`. */
 function localDay(ms: number): string {
@@ -614,6 +611,12 @@ export function createMockApi(): Api {
     }),
   });
 
+  const allChanged = (): SessionsChanged => ({
+    changed: sessionData.map((d) => d.summary.id),
+    removed: [],
+    projectsChanged: true,
+  });
+
   const calls: NonNullable<Window["__cvCalls"]> = [];
   window.__cvCalls = calls;
   window.__cvMock = {
@@ -636,12 +639,19 @@ export function createMockApi(): Api {
 
   return {
     getAppInfo: () => later((): AppInfo => appInfo),
+    // Like the backend: a blank path resets to the default; the directory must exist (here: any absolute path).
+    // Then the new root's Live Sessions and its full scan's changes follow the reply.
     setDataRoot: (path) =>
-      later((): AppInfo => ({
-        ...appInfo,
-        dataRoot: path ?? appInfo.dataRoot,
-        dataRootSource: path ? "settings" : "default",
-      })),
+      later((): AppInfo => {
+        const root = path?.trim() || null;
+        if (root && !root.startsWith("/")) throw appError("invalidQuery", `目录不存在：${root}`);
+        setTimeout(() => {
+          dispatch("liveChanged", liveSnapshot());
+          dispatch("sessionsChanged", allChanged());
+          dispatch("indexStatus", currentIndexStatus);
+        }, 0);
+        return { ...appInfo, dataRoot: root ?? appInfo.dataRoot, dataRootSource: root ? "settings" : "default" };
+      }),
     getIndexStatus: () => later(() => currentIndexStatus),
     rebuildIndex: () =>
       later(() => {
@@ -654,6 +664,8 @@ export function createMockApi(): Api {
         } satisfies IndexStatus);
         setTimeout(() => {
           currentIndexStatus = { ...indexStatusSeed, filesDone: total };
+          // Like the backend: a rebuild reports every Session and the Projects as changed.
+          dispatch("sessionsChanged", allChanged());
           dispatch("indexStatus", currentIndexStatus);
         }, 300);
         return null;

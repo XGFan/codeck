@@ -44,3 +44,27 @@ describe("mock list_sessions", () => {
     expect(alt.nodes.some((n) => n.id === "n05")).toBe(false);
   });
 });
+
+describe("mock 与后端一致的数据目录与重建", () => {
+  it("set_data_root：空白回到默认，相对路径按目录不存在拒绝，之后发 Live 与 Session 变化", async () => {
+    const live = vi.fn();
+    const changed = vi.fn();
+    await api.onLiveChanged(live);
+    await api.onSessionsChanged(changed);
+    await expect(api.setDataRoot("relative/dir")).rejects.toEqual({
+      code: "invalidQuery",
+      message: "目录不存在：relative/dir",
+    });
+    const info = await api.setDataRoot("  ");
+    expect(info.dataRootSource).toBe("default");
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledWith(expect.objectContaining({ projectsChanged: true })));
+    expect(live).toHaveBeenCalled();
+  });
+
+  it("rebuild_index 完成时发 projectsChanged 的 sessionsChanged", async () => {
+    const changed = vi.fn();
+    await api.onSessionsChanged(changed);
+    await api.rebuildIndex();
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledWith(expect.objectContaining({ projectsChanged: true })));
+  });
+});

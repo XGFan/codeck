@@ -11,7 +11,10 @@
 
 import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
-import type { AnalyzerInfo, LaunchRule } from "./bindings";
+import type { AnalyzerInfo, AppError, LaunchRule } from "./bindings";
+
+/** A rejected IPC call as the backend rejects it (`AppError`, not an `Error`). */
+export const appError = (code: AppError["code"], message: string): AppError => ({ code, message });
 
 interface WireLine {
   t?: number;
@@ -327,7 +330,7 @@ export function createMockCcrpc(): CcrpcApi {
     ccrpcSetHideNewPanes: async (hide) => (probe.hideNewPanes = hide),
     ccrpcSetPaneHidden: async (holderId, hidden) => {
       probe.paneHides.push({ holderId, hidden });
-      if (!fixtures.some((f) => f.ls.holder_id === holderId)) throw new Error(`没有会话 ${holderId}`);
+      if (!fixtures.some((f) => f.ls.holder_id === holderId)) throw appError("internal", `没有会话 ${holderId}`);
       paneHidden.set(holderId, hidden);
     },
     ccrpcSetAnalyzer: async (apiKey, baseUrl, model) => {
@@ -346,7 +349,7 @@ export function createMockCcrpc(): CcrpcApi {
     },
     ccrpcConnect: async (holderId) => {
       const fx = fixtures.find((f) => f.ls.holder_id === holderId);
-      if (!fx) throw new Error(`没有 ${holderId} 的录制`);
+      if (!fx) throw appError("internal", `没有 ${holderId} 的录制`);
       const id = open(fx);
       // Tauri does not promise the command's answer before the connection's first events.
       if (fx.connectDelayMs) await new Promise((r) => setTimeout(r, fx.connectDelayMs));
@@ -355,7 +358,7 @@ export function createMockCcrpc(): CcrpcApi {
     ccrpcResume: async (sessionId) => {
       const name = sessionId === RESUME_FAILS ? "resume-failed" : "resume";
       const fx = fixtures.find((f) => f.name === name);
-      if (!fx) throw new Error(`没有 ${name} 的录制`);
+      if (!fx) throw appError("internal", `没有 ${name} 的录制`);
       const inReady = !!probe.resumeNamedInReady;
       probe.resumeNamedInReady = false;
       const lines = fx.lines
@@ -369,14 +372,14 @@ export function createMockCcrpc(): CcrpcApi {
     },
     ccrpcNew: async () => {
       const fx = fixtures.find((f) => f.name === "new-session");
-      if (!fx) throw new Error("没有 new-session 的录制");
+      if (!fx) throw appError("internal", "没有 new-session 的录制");
       return open(fx);
     },
     ccrpcSend: async (id, m) => {
       const msg = m as Record<string, unknown>;
       probe.sent.push({ conn: id, msg });
       const c = conns.get(id);
-      if (!c || c.closed) throw new Error("ccrpc 已退出");
+      if (!c || c.closed) throw appError("invalidQuery", "ccrpc 已退出");
       const next = c.fx.lines[c.cursor];
       if (next?.dir === "send" && next.msg?.type === msg.type) {
         c.cursor++;
@@ -388,7 +391,7 @@ export function createMockCcrpc(): CcrpcApi {
     ccrpcDisconnect: async (id) => {
       const c = conns.get(id);
       // Like the backend: a connection whose ccrpc has exited is unknown.
-      if (!c || c.closed) throw new Error("ccrpc 已退出");
+      if (!c || c.closed) throw appError("invalidQuery", "ccrpc 已退出");
       c.closed = true;
       later(() => exitCbs.forEach((cb) => cb(id, 0, "")));
     },
