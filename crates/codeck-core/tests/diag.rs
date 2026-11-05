@@ -6,37 +6,14 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use codeck_core::model::{DataRootSource, Diagnostics, NameCount, SessionQuery};
+use codeck_core::model::{Diagnostics, NameCount, SessionQuery};
 use codeck_core::paths::index_db_path;
-use codeck_core::{Engine, EngineConfig};
-use common::{copy_dir_all, fixture_dir, ids};
+use common::engine::{Env, data_root};
+use common::ids;
 use serde_json::Value;
-use tempfile::TempDir;
-
-struct Env {
-    root: TempDir,
-    cache: TempDir,
-    engine: Engine,
-}
 
 fn scanned(scenarios: &[&str]) -> Env {
-    let root = tempfile::tempdir().unwrap();
-    for s in scenarios {
-        copy_dir_all(&fixture_dir(s), root.path()).unwrap();
-    }
-    let cache = tempfile::tempdir().unwrap();
-    let engine = Engine::open(EngineConfig {
-        data_root: root.path().to_path_buf(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.path().to_path_buf(),
-    })
-    .unwrap();
-    engine.scan_all(&|_| {}).unwrap();
-    Env {
-        root,
-        cache,
-        engine,
-    }
+    Env::scanned(data_root(scenarios))
 }
 
 fn transcripts(dir: &Path, out: &mut Vec<PathBuf>) {

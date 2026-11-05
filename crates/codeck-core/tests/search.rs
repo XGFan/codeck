@@ -15,61 +15,23 @@ use codeck_core::model::{
 use codeck_core::search::query::{fts_phrase, is_fts_term};
 use codeck_core::search::{fts, parse_query};
 use codeck_core::{Engine, EngineConfig};
-use common::{copy_dir_all, fixture_dir, fixture_root, ids};
+use common::engine::{Env, data_root, open_engine};
+use common::{fixture_root, ids};
 use rusqlite::Connection;
 use serde_json::Value;
-use tempfile::TempDir;
-
-struct Env {
-    root: PathBuf,
-    _root_dir: TempDir,
-    cache: TempDir,
-    engine: Engine,
-}
 
 /// A data root holding the given fixture scenarios, scanned and fully text-indexed.
 fn indexed(scenarios: &[&str]) -> Env {
-    let root_dir = match scenarios {
-        [one] => fixture_root(one),
-        many => {
-            let tmp = tempfile::tempdir().unwrap();
-            for s in many {
-                copy_dir_all(&fixture_dir(s), tmp.path()).unwrap();
-            }
-            tmp
-        }
-    };
-    let root = root_dir.path().to_path_buf();
-    let cache = tempfile::tempdir().unwrap();
-    let engine = Engine::open(EngineConfig {
-        data_root: root.clone(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.path().to_path_buf(),
-    })
-    .unwrap();
-    engine.scan_all(&|_| {}).unwrap();
-    engine
-        .index_text_backlog(&|_| {}, &AtomicBool::new(false))
-        .unwrap();
-    Env {
-        root,
-        _root_dir: root_dir,
-        cache,
-        engine,
-    }
+    Env::indexed(data_root(scenarios))
 }
 
 impl Env {
-    fn db(&self) -> Connection {
-        Connection::open(self.cache.path().join("index.sqlite")).unwrap()
-    }
-
     fn search(&self, query: &str) -> SearchResponse {
         self.engine.search(&req(query)).unwrap()
     }
 
     fn file(&self, rel: &str) -> PathBuf {
-        self.root.join("projects").join(rel)
+        self.root.path().join("projects").join(rel)
     }
 }
 
@@ -502,12 +464,7 @@ fn append_makes_new_text_searchable_including_cjk_and_quotes() {
 fn backlog_commits_a_transaction_even_when_asked_to_yield() {
     let root = fixture_root("basic");
     let cache = tempfile::tempdir().unwrap();
-    let engine = Engine::open(EngineConfig {
-        data_root: root.path().to_path_buf(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.path().to_path_buf(),
-    })
-    .unwrap();
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
     let r = engine.search(&req("retry")).unwrap();
     assert!(!r.index_complete && r.total_hits == 0);

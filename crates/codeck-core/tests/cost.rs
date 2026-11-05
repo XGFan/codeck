@@ -8,19 +8,11 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
-use codeck_core::model::{DataRootSource, SessionQuery, SessionSort, StatsRequest};
-use codeck_core::{Engine, EngineConfig};
+use codeck_core::Engine;
+use codeck_core::model::{SessionQuery, SessionSort, StatsRequest};
+use common::engine::open_engine;
 use common::{fixture_root, ids};
 use tempfile::TempDir;
-
-fn open(root: &Path, cache: &Path) -> Engine {
-    Engine::open(EngineConfig {
-        data_root: root.to_path_buf(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.to_path_buf(),
-    })
-    .expect("open engine")
-}
 
 fn assistant(uuid: &str, msg_id: &str, model: &str, usage: &str) -> String {
     format!(
@@ -37,7 +29,7 @@ fn close(a: f64, b: f64) -> bool {
 fn with_known_messages() -> (TempDir, TempDir, Engine, f64) {
     let root = fixture_root("basic");
     let cache = tempfile::tempdir().unwrap();
-    let engine = open(root.path(), cache.path());
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
     let before = engine.get_session(ids::BASIC).unwrap().summary.cost;
 
@@ -139,7 +131,7 @@ fn a_new_price_list_reprices_and_is_cached() {
 
     // A fresh engine starts from the cached list.
     drop(engine);
-    let again = open(root.path(), cache.path());
+    let again = open_engine(root.path(), cache.path());
     let d2 = again.get_session(ids::BASIC).unwrap();
     assert!(close(d2.summary.cost, d.summary.cost));
     assert!(again.update_prices("not json").is_err());
@@ -149,7 +141,7 @@ fn a_new_price_list_reprices_and_is_cached() {
 fn list_sorts_by_cost_and_stats_sum_it() {
     let root = fixture_root("subagents");
     let cache = tempfile::tempdir().unwrap();
-    let engine = open(root.path(), cache.path());
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
 
     let list = engine
@@ -206,7 +198,7 @@ fn distinct_output(files: &[&Path]) -> std::collections::HashMap<String, f64> {
 fn a_fork_is_billed_only_for_its_own_messages_until_the_origin_is_gone() {
     let root = fixture_root("fork");
     let cache = tempfile::tempdir().unwrap();
-    let engine = open(root.path(), cache.path());
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
     let dir = root.path().join("projects").join(ids::FORK_DIR);
     let origin_file = dir.join(format!("{}.jsonl", ids::FORK_ORIGIN));
@@ -240,7 +232,7 @@ fn a_fork_is_billed_only_for_its_own_messages_until_the_origin_is_gone() {
 fn a_sync_stopped_before_billing_is_rebilled_by_the_next_one() {
     let root = fixture_root("basic");
     let cache = tempfile::tempdir().unwrap();
-    let engine = open(root.path(), cache.path());
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
     let billed = engine.get_session(ids::BASIC).unwrap().summary;
     assert!(billed.cost > 0.0);
@@ -258,7 +250,7 @@ fn a_sync_stopped_before_billing_is_rebilled_by_the_next_one() {
     .unwrap();
     drop(conn);
 
-    let engine = open(root.path(), cache.path());
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
     let after = engine.get_session(ids::BASIC).unwrap().summary;
     assert!(

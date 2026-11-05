@@ -5,18 +5,14 @@ use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use codeck_core::model::{DataRootSource, LiveChanged, LiveState, LiveStatus};
-use codeck_core::{Engine, EngineConfig};
+use codeck_core::Engine;
+use codeck_core::model::{LiveChanged, LiveState, LiveStatus};
+use common::engine::open_engine;
 use common::{fixture_root, fixture_root_with_pids, ids, proc_start};
 use tempfile::TempDir;
 
 fn engine(root: &Path, cache: &TempDir) -> Engine {
-    let e = Engine::open(EngineConfig {
-        data_root: root.to_path_buf(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.path().to_path_buf(),
-    })
-    .unwrap();
+    let e = open_engine(root, cache.path());
     e.scan_all(&|_| {}).unwrap();
     e
 }

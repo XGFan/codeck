@@ -7,44 +7,16 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use codeck_core::model::DataRootSource;
-use codeck_core::{ChangeSet, Engine, EngineConfig};
+use codeck_core::ChangeSet;
+use common::engine::{Env, open_engine};
 use common::{fixture_root, ids};
 use rusqlite::{Connection, params};
-use tempfile::TempDir;
-
-struct Env {
-    root: TempDir,
-    cache: TempDir,
-    engine: Engine,
-}
-
-fn open(root: &Path, cache: &Path) -> Engine {
-    Engine::open(EngineConfig {
-        data_root: root.to_path_buf(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.to_path_buf(),
-    })
-    .expect("open engine")
-}
 
 fn scanned(scenario: &str) -> Env {
-    let root = fixture_root(scenario);
-    let cache = tempfile::tempdir().unwrap();
-    let engine = open(root.path(), cache.path());
-    engine.scan_all(&|_| {}).expect("scan_all");
-    Env {
-        root,
-        cache,
-        engine,
-    }
+    Env::scanned(fixture_root(scenario))
 }
 
 impl Env {
-    fn db(&self) -> Connection {
-        Connection::open(self.cache.path().join("index.sqlite")).unwrap()
-    }
-
     /// Canonical path of a main file (temp dirs live under a symlinked /var on macOS).
     fn main_file(&self, dir: &str, sid: &str) -> PathBuf {
         fs::canonicalize(
@@ -269,7 +241,7 @@ fn schema_or_root_mismatch_rebuilds() {
             .unwrap()
     };
     {
-        let engine = open(root.path(), cache.path());
+        let engine = open_engine(root.path(), cache.path());
         engine.scan_all(&|_| {}).unwrap();
     }
     let db_path = cache.path().join("index.sqlite");
@@ -279,7 +251,7 @@ fn schema_or_root_mismatch_rebuilds() {
         c.pragma_update(None, "user_version", 999).unwrap();
     }
     {
-        let engine = open(root.path(), cache.path());
+        let engine = open_engine(root.path(), cache.path());
         let c = Connection::open(&db_path).unwrap();
         let v: u32 = c
             .query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -291,7 +263,7 @@ fn schema_or_root_mismatch_rebuilds() {
         assert_eq!(files(&c), 1);
     }
     let other_root = fixture_root("live");
-    let _engine = open(other_root.path(), cache.path());
+    let _engine = open_engine(other_root.path(), cache.path());
     let c = Connection::open(&db_path).unwrap();
     assert_eq!(files(&c), 0, "data root mismatch: index recreated");
 }
@@ -544,9 +516,15 @@ fn sidecar_changed_while_closed_is_picked_up() {
     }
     let main = subagents.parent().unwrap().with_extension("jsonl");
     set_mtime(&main, t0);
-    open(root.path(), cache.path()).scan_all(&|_| {}).unwrap();
+    open_engine(root.path(), cache.path())
+        .scan_all(&|_| {})
+        .unwrap();
     // Restart without changes: nothing is recomputed.
-    let restarted = || open(root.path(), cache.path()).scan_all(&|_| {}).unwrap();
+    let restarted = || {
+        open_engine(root.path(), cache.path())
+            .scan_all(&|_| {})
+            .unwrap()
+    };
     assert_eq!(restarted(), ChangeSet::default());
 
     let meta = subagents.join("agent-a87b5e24025a157e4.meta.json");
@@ -654,7 +632,7 @@ fn session_belongs_to_its_start_project_and_the_projects_it_edited() {
     )
     .unwrap();
     let cache = tempfile::tempdir().unwrap();
-    let engine = open(root.path(), cache.path());
+    let engine = open_engine(root.path(), cache.path());
     engine.scan_all(&|_| {}).unwrap();
 
     let id = |name: &str| ws.join(name).to_string_lossy().into_owned();

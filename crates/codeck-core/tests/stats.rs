@@ -9,11 +9,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone};
-use codeck_core::model::{
-    DataRootSource, Drill, SessionQuery, SessionSort, Stats, StatsRequest, TimeRange,
-};
-use codeck_core::{Engine, EngineConfig};
-use common::{copy_dir_all, fixture_dir, ids};
+use codeck_core::Engine;
+use codeck_core::model::{Drill, SessionQuery, SessionSort, Stats, StatsRequest, TimeRange};
+use common::engine::data_root;
+use common::ids;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -33,18 +32,11 @@ struct Env {
 }
 
 fn scanned(scenarios: &[&str]) -> Env {
-    let root = tempfile::tempdir().unwrap();
-    for s in scenarios {
-        copy_dir_all(&fixture_dir(s), root.path()).unwrap();
-    }
-    let cache = tempfile::tempdir().unwrap();
-    let engine = Engine::open(EngineConfig {
-        data_root: root.path().to_path_buf(),
-        data_root_source: DataRootSource::Settings,
-        cache_dir: cache.path().to_path_buf(),
-    })
-    .unwrap();
-    engine.scan_all(&|_| {}).unwrap();
+    let common::engine::Env {
+        root,
+        cache,
+        engine,
+    } = common::engine::Env::scanned(data_root(scenarios));
     let oracle = Oracle::read(root.path());
     Env {
         _root: root,

@@ -11,6 +11,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
+pub mod engine;
 mod fixtures;
 #[allow(unused_imports)]
 pub use fixtures::{FIXTURES, fixture_dir, ids};
