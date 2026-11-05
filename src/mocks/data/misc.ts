@@ -108,20 +108,23 @@ export const slashCommands: SlashCommand[] = [
   { name: "vim", description: "切换 Vim 编辑模式", source: "builtin", interactive: false },
 ];
 
-/** The directories `completeDirs` knows (`/add-dir` completion), as on a disk. */
-const mockDirs = [
-  "/work/demo/apps",
-  "/work/demo/apps/kestrel",
-  "/work/demo/clusters",
-  "/work/demo/.github",
-  "/work/infra",
-  "/work/infra-modules",
-  "/work/notes",
-  "/Users/dev/Downloads",
+/** The paths `completePaths` knows (`/add-dir` and `@` completion), as on a disk: a directory ends in `/`. */
+const mockPaths = [
+  "/work/demo/apps/",
+  "/work/demo/apps/kestrel/",
+  "/work/demo/apps/kestrel/main.go",
+  "/work/demo/clusters/",
+  "/work/demo/.github/",
+  "/work/demo/README.md",
+  "/work/demo/Cargo.toml",
+  "/work/infra/",
+  "/work/infra-modules/",
+  "/work/notes/",
+  "/Users/dev/Downloads/",
 ];
 
-/** `completeDirs` over `mockDirs`, as the Engine does it (relative to `cwd`, `..` up, hidden ones after a `.`). */
-export function completeMockDirs(cwd: string | null, partial: string): string[] {
+/** `completePaths` over `mockPaths`, as the Engine does it (relative to `cwd`, `..` up, hidden ones after a `.`). */
+export function completeMockPaths(cwd: string | null, partial: string, files: boolean): string[] {
   if (partial === "~") return ["~/"];
   const cut = partial.lastIndexOf("/") + 1;
   const [head, prefix] = [partial.slice(0, cut), partial.slice(cut)];
@@ -137,11 +140,13 @@ export function completeMockDirs(cwd: string | null, partial: string): string[] 
     else if (p && p !== ".") parts.push(p);
   }
   const base = `/${parts.join("/")}`.replace(/\/$/, "") + "/";
-  const names = mockDirs
-    .filter((d) => d.startsWith(base) && !d.slice(base.length).includes("/") && d.length > base.length)
+  const names = mockPaths
+    .filter((d) => d.startsWith(base) && d.length > base.length && !d.slice(base.length, -1).includes("/"))
     .map((d) => d.slice(base.length))
+    .filter((n) => files || n.endsWith("/"))
     .filter((n) => (prefix.startsWith(".") || !n.startsWith(".")) && n.toLowerCase().startsWith(prefix.toLowerCase()))
-    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-  if (prefix === "." || prefix === "..") names.unshift("..");
-  return names.map((n) => `${head}${n}/`);
+    // By name, as the Engine sorts (without the directory's `/`).
+    .sort((a, b) => a.replace(/\/$/, "").toLowerCase().localeCompare(b.replace(/\/$/, "").toLowerCase()));
+  if (prefix === "." || prefix === "..") names.unshift("../");
+  return names.map((n) => `${head}${n}`);
 }

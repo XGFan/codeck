@@ -28,7 +28,8 @@ export const queryKeys = {
   stats: (req: StatsRequest) => ["stats", req] as const,
   diagnostics: ["diagnostics"] as const,
   slashCommands: (cwd: string | null) => ["slashCommands", cwd] as const,
-  dirCompletions: (cwd: string | null, partial: string) => ["dirCompletions", cwd, partial] as const,
+  pathCompletions: (cwd: string | null, partial: string, files: boolean) =>
+    ["pathCompletions", cwd, partial, files] as const,
 };
 
 export const useAppInfo = () => useQuery({ queryKey: queryKeys.appInfo, queryFn: () => api.getAppInfo() });
@@ -128,11 +129,11 @@ export const useStats = (req: StatsRequest) =>
 export const useDiagnostics = () => useQuery({ queryKey: queryKeys.diagnostics, queryFn: () => api.getDiagnostics() });
 
 /** Slash commands for a Connected Session started in `cwd`; asked again when stale (commands are files that change). */
-/** Directories to complete `/add-dir <partial>` with; the last list stays while the next one loads. */
-export const useDirCompletions = (cwd: string | null, partial: string, enabled: boolean) =>
+/** Paths to complete `partial` with (`/add-dir`: directories; `@`: `files` too); the last list stays while the next loads. */
+export const usePathCompletions = (cwd: string | null, partial: string, files: boolean, enabled: boolean) =>
   useQuery({
-    queryKey: queryKeys.dirCompletions(cwd, partial),
-    queryFn: () => api.completeDirs(cwd, partial),
+    queryKey: queryKeys.pathCompletions(cwd, partial, files),
+    queryFn: () => api.completePaths(cwd, partial, files),
     staleTime: 5_000,
     placeholderData: keepPreviousData,
     enabled,

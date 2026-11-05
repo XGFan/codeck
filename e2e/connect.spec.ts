@@ -281,7 +281,7 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     });
 });
 
-test("输入框里的斜杠命令高亮；/add-dir 补全目录，支持 ../", async ({ page }) => {
+test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件，支持 ../", async ({ page }) => {
   await connectTo(page, RICH);
   await expect(state(page)).toContainText("空闲");
   const input = page.getByTestId("connect-input");
@@ -312,8 +312,8 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录，支持 ../", a
   await expect(highlight).toHaveCount(0);
 
   // The Session's cwd is /work/demo: its directories, hidden ones only after a `.`.
-  const menu = page.getByTestId("dir-menu");
-  const options = menu.getByTestId("dir-option");
+  const menu = page.getByTestId("path-menu");
+  const options = menu.getByTestId("path-option");
   await input.fill("/add-dir ");
   await expect(highlight.locator("span.text-accent")).toHaveText("/add-dir");
   await expect(options).toHaveText(["apps/", "clusters/"]);
@@ -342,6 +342,31 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录，支持 ../", a
   await input.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(input).toHaveValue("/add-dir ../");
+
+  // `@` in a prompt: files too, the word the caret is in.
+  await input.fill("看看 @");
+  await expect(options).toHaveText(["apps/", "Cargo.toml", "clusters/", "README.md"]);
+  await input.pressSequentially("ap");
+  await input.press("Tab");
+  await expect(input).toHaveValue("看看 @apps/");
+  await expect(options).toHaveText(["apps/kestrel/"]);
+  await input.press("Tab");
+  await expect(input).toHaveValue("看看 @apps/kestrel/");
+  await expect(options).toHaveText(["apps/kestrel/main.go"]);
+  // A file ends the word: a space after it, the list gone.
+  await input.press("Tab");
+  await expect(input).toHaveValue("看看 @apps/kestrel/main.go ");
+  await expect(menu).toHaveCount(0);
+  // In the middle of the text, with the caret after `@RE`.
+  await input.fill("改 @RE 里的说明");
+  for (let i = 0; i < 5; i++) await input.press("ArrowLeft");
+  await expect(options).toHaveText(["README.md"]);
+  await input.press("Tab");
+  await expect(input).toHaveValue("改 @README.md 里的说明");
+  expect(await input.evaluate((t: HTMLTextAreaElement) => t.selectionStart)).toBe(13);
+  // Not after a letter (an address), nor once past the word.
+  await input.fill("发到 me@host");
+  await expect(menu).toHaveCount(0);
 });
 
 test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({

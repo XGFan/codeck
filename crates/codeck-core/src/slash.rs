@@ -383,14 +383,15 @@ fn cut(s: String) -> String {
     t
 }
 
-/// At most this many directories are offered for `/add-dir`.
-const DIR_LIMIT: usize = 50;
+/// At most this many paths are offered for `/add-dir` or `@`.
+const PATH_LIMIT: usize = 50;
 
-/// Completions for the directory typed after `/add-dir` (`partial`, as typed): each is `partial` up to its last `/`,
-/// then the name of a directory there and `/`. Relative to the Session's `cwd`; `~/` is the home directory; `..` goes
-/// up (`../` is offered for `.` and `..`); hidden directories only once the name typed starts with `.`. Only lists
-/// directories (read-only); what cannot be read yields nothing.
-pub fn complete_dirs(cwd: Option<&Path>, partial: &str) -> Vec<String> {
+/// Completions for a path being typed (`partial`, as typed): after `/add-dir` directories only, after `@` (`files`)
+/// files too. Each is `partial` up to its last `/`, then the name of an entry there, and `/` for a directory. Relative
+/// to the Session's `cwd`; `~/` is the home directory; `..` goes up (`../` is offered for `.` and `..`); hidden entries
+/// only once the name typed starts with `.`; with `files`, names with white space are left out (`@` ends at a space).
+/// Only lists (read-only); what cannot be read yields nothing.
+pub fn complete_paths(cwd: Option<&Path>, partial: &str, files: bool) -> Vec<String> {
     if partial == "~" {
         return vec!["~/".to_owned()];
     }
@@ -415,25 +416,35 @@ pub fn complete_dirs(cwd: Option<&Path>, partial: &str) -> Vec<String> {
         return Vec::new();
     };
     let lower = prefix.to_lowercase();
-    let mut names: Vec<String> = rd
+    let mut names: Vec<(String, bool)> = rd
         .flatten()
         .filter_map(|e| {
             let n = e.file_name().into_string().ok()?;
             let wanted = (prefix.starts_with('.') || !n.starts_with('.'))
-                && n.to_lowercase().starts_with(&lower);
+                && n.to_lowercase().starts_with(&lower)
+                && !(files && n.contains(char::is_whitespace));
+            if !wanted {
+                return None;
+            }
             // The type comes with the listing; only a link is followed (a link to a directory is one too).
             let t = e.file_type().ok()?;
-            (wanted && (t.is_dir() || (t.is_symlink() && e.path().is_dir()))).then_some(n)
+            // A link to nothing is left out.
+            let dir = if t.is_symlink() {
+                fs::metadata(e.path()).ok()?.is_dir()
+            } else {
+                t.is_dir()
+            };
+            (dir || files).then_some((n, dir))
         })
         .collect();
-    names.sort_by_key(|n| n.to_lowercase());
+    names.sort_by_key(|(n, _)| n.to_lowercase());
     if prefix == "." || prefix == ".." {
-        names.insert(0, "..".to_owned());
+        names.insert(0, ("..".to_owned(), true));
     }
     names
         .into_iter()
-        .take(DIR_LIMIT)
-        .map(|n| format!("{head}{n}/"))
+        .take(PATH_LIMIT)
+        .map(|(n, dir)| format!("{head}{n}{}", if dir { "/" } else { "" }))
         .collect()
 }
 
@@ -571,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn add_dir_completes_directories_relative_to_cwd() {
+    fn completes_paths_relative_to_cwd() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         for d in ["proj/src", "proj/Docs", "proj/.git", "sibling", "Shared"] {
@@ -584,7 +595,7 @@ mod tests {
             .unwrap();
         std::os::unix::fs::symlink(root.join("gone"), root.join("proj/broken")).unwrap();
         let cwd = root.join("proj");
-        let at = |p: &str| complete_dirs(Some(&cwd), p);
+        let at = |p: &str| complete_paths(Some(&cwd), p, false);
         // Directories only, case-insensitive order; hidden ones once a `.` is typed.
         assert_eq!(at(""), ["Docs/", "linked/", "src/"]);
         assert_eq!(at("d"), ["Docs/"]);
@@ -597,14 +608,22 @@ mod tests {
         // Absolute paths; nothing for what is not there, or a relative path with no cwd.
         let abs = format!("{}/s", root.display());
         assert_eq!(
-            complete_dirs(None, &abs),
+            complete_paths(None, &abs, false),
             [
                 format!("{}/Shared/", root.display()),
                 format!("{}/sibling/", root.display())
             ]
         );
         assert!(at("nope/").is_empty());
-        assert!(complete_dirs(None, "src").is_empty());
+        assert!(complete_paths(None, "src", false).is_empty());
         assert_eq!(at("~"), ["~/"]);
+        // After `@`: files too (a link to a file is one), directories still end in `/`; none with a space.
+        fs::write(root.join("proj/src/main.rs"), "x").unwrap();
+        fs::write(root.join("proj/my notes.md"), "x").unwrap();
+        let files = |p: &str| complete_paths(Some(&cwd), p, true);
+        assert_eq!(files("n"), ["note-link", "notes.md"]);
+        assert_eq!(files("src/"), ["src/main.rs"]);
+        assert_eq!(files("../proj/s"), ["../proj/src/"]);
+        assert!(!files("").iter().any(|p| p.contains(' ') || p == "broken"));
     }
 }

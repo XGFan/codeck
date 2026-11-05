@@ -443,9 +443,9 @@ impl Engine {
         crate::slash::slash_commands(&self.cfg.data_root, cwd.map(Path::new))
     }
 
-    /// Directories to complete `/add-dir <partial>` with, in a Session started in `cwd`.
-    pub fn complete_dirs(&self, cwd: Option<&str>, partial: &str) -> Vec<String> {
-        crate::slash::complete_dirs(cwd.map(Path::new), partial)
+    /// Paths to complete `partial` with in a Session started in `cwd`: directories (`/add-dir`), or files too (`@`).
+    pub fn complete_paths(&self, cwd: Option<&str>, partial: &str, files: bool) -> Vec<String> {
+        crate::slash::complete_paths(cwd.map(Path::new), partial, files)
     }
 
     // ---------------------------------------------------------------- live

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "@/ipc/bindings";
-import { matchCommands, slashCommand, typedCommand } from "./slash";
+import { applyPath, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
 
 const cmd = (name: string, source: SlashCommand["source"] = "builtin"): SlashCommand => ({
   name,
@@ -52,5 +52,33 @@ describe("slashCommand", () => {
     expect(slashCommand("/cost", true, LIST)).toBeNull();
     expect(slashCommand("/", false, LIST)).toBeNull();
     expect(slashCommand("hello", false, LIST)).toBeNull();
+  });
+});
+
+describe("pathAt / applyPath", () => {
+  it("/add-dir completes its whole argument, directories only", () => {
+    expect(pathAt("/add-dir ../in", 3)).toEqual({ partial: "../in", start: 9, end: 14, files: false });
+    expect(pathAt("/add-dir", 8)).toBeNull();
+  });
+
+  it("@ completes the word the caret is in, files too", () => {
+    const t = "看看 @src/ma 和 @docs";
+    expect(pathAt(t, 10)).toEqual({ partial: "src/ma", start: 4, end: 10, files: true });
+    // Caret inside the word: the word up to its end.
+    expect(pathAt(t, 7)).toEqual({ partial: "src/ma", start: 4, end: 10, files: true });
+    expect(pathAt("@", 1)).toEqual({ partial: "", start: 1, end: 1, files: true });
+    // Not after a letter (an email), not past a space.
+    expect(pathAt("me@host", 7)).toBeNull();
+    expect(pathAt("@src next", 9)).toBeNull();
+  });
+
+  it("a file is followed by a space, a directory is not; the caret goes after it", () => {
+    const p = pathAt("看 @src/ma 吧", 9)!;
+    expect(applyPath("看 @src/ma 吧", p, "src/main.rs")).toEqual({ text: "看 @src/main.rs 吧", caret: 15 });
+    const q = pathAt("看 @sr", 5)!;
+    expect(applyPath("看 @sr", q, "src/")).toEqual({ text: "看 @src/", caret: 7 });
+    expect(applyPath("看 @sr", q, "src/a.rs")).toEqual({ text: "看 @src/a.rs ", caret: 12 });
+    const d = pathAt("/add-dir ap", 11)!;
+    expect(applyPath("/add-dir ap", d, "apps/")).toEqual({ text: "/add-dir apps/", caret: 14 });
   });
 });

@@ -47,3 +47,33 @@ export function slashCommand(body: string, withImages: boolean, list: SlashComma
   const known = commandOf(body, list);
   return known && known.source !== "builtin" ? null : body.slice(1);
 }
+
+/** A path being typed: `partial` spans `start`–`end` of the text; `files` when files are offered too. */
+export interface PathAt {
+  partial: string;
+  start: number;
+  end: number;
+  files: boolean;
+}
+
+/**
+ * The path to complete with the caret at `caret`: the whole argument of `/add-dir <path>` (directories), or the
+ * `@path` word the caret is in (files too; `@` at the start or after white space, the word up to the next white space).
+ */
+export function pathAt(text: string, caret: number): PathAt | null {
+  const dir = /^\/add-dir +([^\n]*)$/.exec(text);
+  if (dir) return { partial: dir[1]!, start: text.length - dir[1]!.length, end: text.length, files: false };
+  const at = /(?:^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
+  if (!at) return null;
+  const rest = /^[^\s]*/.exec(text.slice(caret))![0];
+  return { partial: at[1]! + rest, start: caret - at[1]!.length, end: caret + rest.length, files: true };
+}
+
+/** `text` with the path at `p` replaced by `completion`, and the caret after it (a file is followed by a space). */
+export function applyPath(text: string, p: PathAt, completion: string): { text: string; caret: number } {
+  const after = text.slice(p.end);
+  const file = p.files && !completion.endsWith("/");
+  // A file ends the word: past the space after it (added when there is none).
+  const ins = file && !/^\s/.test(after) ? `${completion} ` : completion;
+  return { text: text.slice(0, p.start) + ins + after, caret: p.start + completion.length + (file ? 1 : 0) };
+}

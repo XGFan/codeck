@@ -1,14 +1,14 @@
-import { ArrowUp, Clock, Folder, ImageIcon, MessageSquareText, Square, X } from "lucide-react";
+import { ArrowUp, Clock, File, Folder, ImageIcon, MessageSquareText, Square, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/ipc";
 import type { SlashCommand, SlashSource } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
-import { queryKeys, useDirCompletions, useSlashCommands } from "@/queries";
+import { queryKeys, usePathCompletions, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
 import type { FeedbackDraft } from "./protocol";
-import { commandOf, matchCommands, slashCommand, typedCommand } from "./slash";
+import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
 import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
@@ -162,27 +162,44 @@ export function Composer({ c }: { c: ConnState }) {
     setText(`/${cmd.name} `);
     setPick(0);
   };
-  // `/add-dir <path>`: directories there (relative to the Session's cwd, `../` and `~/` as in a shell).
-  const dirArg = live ? (/^\/add-dir +([^\n]*)$/.exec(text)?.[1] ?? null) : null;
-  const { data: dirs } = useDirCompletions(c.cwd, dirArg ?? "", dirArg != null);
-  // The list kept from the last path while this one loads: only what still fits.
-  const dirMatches =
-    dirArg != null && dirs && hiddenFor !== text
-      ? dirs.filter((d) => d.toLowerCase().startsWith(dirArg.toLowerCase()))
+  // A path being typed (`/add-dir <dir>`, `@file`): what is there (relative to the Session's cwd, `../` and `~/`
+  // as in a shell).
+  const [caret, setCaret] = useState(0);
+  const at = live ? pathAt(text, caret) : null;
+  const { data: paths } = usePathCompletions(c.cwd, at?.partial ?? "", !!at?.files, at != null);
+  // The list kept from the last path while this one loads: only what still fits, and not what is typed already.
+  const pathMatches =
+    at && paths && hiddenFor !== text
+      ? paths.filter((d) => {
+          const [l, p] = [d.toLowerCase(), at.partial.toLowerCase()];
+          return l.startsWith(p) && l !== p;
+        })
       : [];
-  const pickedDir = dirMatches[Math.min(pick, dirMatches.length - 1)];
+  const pickedPath = pathMatches[Math.min(pick, pathMatches.length - 1)];
   /** ↑↓ moved the pick since the last edit: Enter takes it (otherwise Enter sends what is typed). */
   const [navigated, setNavigated] = useState(false);
-  const completeDir = (d: string) => {
-    setText(`/add-dir ${d}`);
+  /** Where the caret goes once a completion is in the box. */
+  const caretAfter = useRef<number | null>(null);
+  const completePath = (d: string) => {
+    if (!at) return;
+    const r = applyPath(text, at, d);
+    setText(r.text);
+    setCaret(r.caret);
+    caretAfter.current = r.caret;
     setPick(0);
     setNavigated(false);
   };
+  useLayoutEffect(() => {
+    const n = caretAfter.current;
+    if (n == null || !input.current) return;
+    caretAfter.current = null;
+    input.current.setSelectionRange(n, n);
+  }, [text]);
   // A fresh list: a pick made on the one kept meanwhile may point elsewhere now.
   useEffect(() => {
     setPick(0);
     setNavigated(false);
-  }, [dirs]);
+  }, [paths]);
 
   const abort = async () => {
     // ccrpc is in the terminal's Rewind picker: not to be interrupted.
@@ -362,20 +379,20 @@ export function Composer({ c }: { c: ConnState }) {
             </div>
           </div>
         )}
-        {dirMatches.length > 0 && (
+        {pathMatches.length > 0 && (
           <div
-            data-testid="dir-menu"
+            data-testid="path-menu"
             className="absolute right-0 bottom-full left-0 mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-ground shadow-lg"
           >
-            <ul role="listbox" aria-label="目录" className="max-h-72 overflow-y-auto py-1">
-              {dirMatches.map((d) => (
+            <ul role="listbox" aria-label="路径" className="max-h-72 overflow-y-auto py-1">
+              {pathMatches.map((d) => (
                 <li
                   key={d}
                   role="option"
-                  aria-selected={d === pickedDir}
-                  data-testid="dir-option"
+                  aria-selected={d === pickedPath}
+                  data-testid="path-option"
                   ref={
-                    d === pickedDir
+                    d === pickedPath
                       ? (el) => {
                           // Not on detaching (null, before the next pick attaches): that would drop the move.
                           if (!el) return;
@@ -386,15 +403,19 @@ export function Composer({ c }: { c: ConnState }) {
                   }
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    completeDir(d);
+                    completePath(d);
                   }}
-                  onMouseEnter={() => setPick(dirMatches.indexOf(d))}
+                  onMouseEnter={() => setPick(pathMatches.indexOf(d))}
                   className={cn(
                     "flex cursor-default items-center gap-2 px-3 py-1 font-mono text-[12px]",
-                    d === pickedDir && "bg-selection",
+                    d === pickedPath && "bg-selection",
                   )}
                 >
-                  <Folder size={13} strokeWidth={1.7} className="shrink-0 text-secondary" aria-hidden />
+                  {d.endsWith("/") ? (
+                    <Folder size={13} strokeWidth={1.7} className="shrink-0 text-secondary" aria-hidden />
+                  ) : (
+                    <File size={13} strokeWidth={1.7} className="shrink-0 text-secondary" aria-hidden />
+                  )}
                   <span className="min-w-0 truncate">{d}</span>
                 </li>
               ))}
@@ -439,30 +460,32 @@ export function Composer({ c }: { c: ConnState }) {
           <textarea
             ref={input}
             value={text}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
             rows={Math.min(10, Math.max(2, text.split("\n").length))}
             disabled={!live}
             onChange={(e) => {
               setText(e.target.value);
+              setCaret(e.target.selectionStart);
               setPick(0);
               setNavigated(false);
             }}
             onPaste={(e) => void onPaste(e)}
             onKeyDown={(e) => {
               if (isComposingKey(e.nativeEvent)) return;
-              if (pickedDir) {
+              if (pickedPath) {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault();
-                  const n = dirMatches.length;
+                  const n = pathMatches.length;
                   keyMoved.current = true;
                   setNavigated(true);
-                  setPick((dirMatches.indexOf(pickedDir) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+                  setPick((pathMatches.indexOf(pickedPath) + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
                   return;
                 }
                 if (e.key === "Tab" || (e.key === "Enter" && navigated && !e.shiftKey && !e.metaKey && !e.ctrlKey)) {
                   e.preventDefault();
-                  completeDir(pickedDir);
+                  completePath(pickedPath);
                   return;
                 }
                 if (e.key === "Escape") {
