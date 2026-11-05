@@ -235,3 +235,47 @@ fn a_fork_is_billed_only_for_its_own_messages_until_the_origin_is_gone() {
     assert!(cs.changed.contains(&ids::FORK_CHILD.to_owned()), "{cs:?}");
     assert_eq!(out(ids::FORK_CHILD), child_msgs.values().sum::<f64>());
 }
+
+#[test]
+fn a_sync_stopped_before_billing_is_rebilled_by_the_next_one() {
+    let root = fixture_root("basic");
+    let cache = tempfile::tempdir().unwrap();
+    let engine = open(root.path(), cache.path());
+    engine.scan_all(&|_| {}).unwrap();
+    let billed = engine.get_session(ids::BASIC).unwrap().summary;
+    assert!(billed.cost > 0.0);
+    drop(engine);
+
+    // What a sync leaves when it stops after writing session rows: billing columns at their
+    // defaults, the pending flag set.
+    let db = codeck_core::paths::index_db_path(cache.path());
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "UPDATE messages SET billed = 0;
+         UPDATE sessions SET in_tok = 0, out_tok = 0, cr_tok = 0, cc_tok = 0, cost = 0;
+         INSERT INTO meta(key, value) VALUES ('rebill_pending', '1');",
+    )
+    .unwrap();
+    drop(conn);
+
+    let engine = open(root.path(), cache.path());
+    engine.scan_all(&|_| {}).unwrap();
+    let after = engine.get_session(ids::BASIC).unwrap().summary;
+    assert!(
+        close(after.cost, billed.cost),
+        "{} vs {}",
+        after.cost,
+        billed.cost
+    );
+    assert_eq!(after.tokens, billed.tokens);
+    drop(engine);
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let pending: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM meta WHERE key='rebill_pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(pending, 0);
+}

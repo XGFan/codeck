@@ -310,6 +310,26 @@ pub fn rebill(conn: &Connection, sessions: Option<&HashSet<String>>) -> CoreResu
     Ok(())
 }
 
+/// Whether a sync committed session rows but stopped before re-billing them (their token and cost
+/// columns are then stale until a full `rebill`).
+pub fn rebill_pending(conn: &Connection) -> CoreResult<bool> {
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM meta WHERE key='rebill_pending'")?
+        .exists([])?)
+}
+
+pub fn set_rebill_pending(conn: &Connection, pending: bool) -> CoreResult<()> {
+    if pending {
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('rebill_pending', '1')",
+            [],
+        )?;
+    } else {
+        conn.execute("DELETE FROM meta WHERE key='rebill_pending'", [])?;
+    }
+    Ok(())
+}
+
 /// Recomputes every message's cost with the current price table, then every session's total.
 pub fn reprice_all(conn: &Connection) -> CoreResult<()> {
     conn.execute(

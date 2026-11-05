@@ -461,9 +461,16 @@ impl Engine {
         // Sessions sharing a message with a removed or rewritten one (billing may move to them).
         let mut neighbors: HashSet<String> = HashSet::new();
         let mut resolver = project::Resolver::for_data_root(&self.cfg.data_root);
+        // Session rows are committed batch by batch, billing only at the end: a sync that stops in
+        // between leaves the flag set, and the next one re-bills everything.
+        let mut rebill_all = false;
         let result = (|| -> CoreResult<()> {
             self.index.write(|conn| {
                 let tx = conn.transaction()?;
+                rebill_all = writer::rebill_pending(&tx)?;
+                if !removed.is_empty() || !plans.is_empty() {
+                    writer::set_rebill_pending(&tx, true)?;
+                }
                 for sid in &removed {
                     self.sessions.lock().take(sid);
                     if session_exists(&tx, sid)?.is_some() {
@@ -524,7 +531,12 @@ impl Engine {
             }
             self.index.write(|conn| {
                 let tx = conn.transaction()?;
-                rebill_changed(&tx, &mut cs, neighbors)?;
+                if rebill_all {
+                    writer::rebill(&tx, None)?;
+                } else {
+                    rebill_changed(&tx, &mut cs, neighbors)?;
+                }
+                writer::set_rebill_pending(&tx, false)?;
                 if writer::prune_projects(&tx)? > 0 {
                     cs.projects_changed = true;
                 }
