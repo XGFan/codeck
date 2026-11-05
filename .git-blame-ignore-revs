@@ -1,0 +1,3 @@
+# Formatting-only commits, skipped by `git blame` (git config blame.ignoreRevsFile .git-blame-ignore-revs; GitHub does this by itself).
+# style: 用 Prettier 排版全部前端代码
+73627e80f375442815d02bbb2db39d1eac005c4a
