@@ -14,6 +14,7 @@ import { EMPTY_DRAFT, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { markFresh } from "./pending";
+import { scrollToBottom } from "@/features/transcript/nodes/scroll";
 import { RewindPickNotice } from "./RewindViews";
 import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
@@ -253,6 +254,8 @@ export function Composer({ c }: { c: ConnState }) {
     } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);
+    // Sent: to the end of the transcript (its placeholder, the queue, the reply), as a chat app does.
+    scrollToBottom();
     const prompt = msg.type === "prompt";
     const sent = images;
     const gone = new Set(sent.map((i) => i.path));

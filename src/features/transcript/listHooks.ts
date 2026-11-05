@@ -6,7 +6,7 @@ import { useUi } from "@/state/ui";
 import { foldTurns } from "./fold";
 import { anchorKey, buildRows, type Grouping, type GroupingInput, type Row, rowIndexOf } from "./grouping";
 import { INHERITED_KEY, isFoldKey } from "./keys";
-import { clearScroll, type PendingScroll, usePendingScroll } from "./nodes/scroll";
+import { clearScroll, onScrollToBottom, type PendingScroll, usePendingScroll } from "./nodes/scroll";
 import { resetReading, setCurrentTurn, setTurns, useReading } from "./reading";
 import { resolveScrollTarget, SCROLL_RETRY_MS, type ScrollMiss } from "./scrollTarget";
 import { commandLine } from "./util";
@@ -158,6 +158,18 @@ export function useFollowBottom(
     toBottom();
     setUnread(false);
   }, [toBottom]);
+  // A message sent from the input box: to the end, as a chat app does; again on the next frame, past what the send
+  // adds at the end (its placeholder), which would otherwise leave it short and unpinned.
+  useEffect(
+    () =>
+      follow
+        ? onScrollToBottom(() => {
+            jumpToBottom();
+            requestAnimationFrame(jumpToBottom);
+          })
+        : undefined,
+    [follow, jumpToBottom],
+  );
 
   return { pinned, unread, onScroll, tailRef, total, jumpToBottom };
 }

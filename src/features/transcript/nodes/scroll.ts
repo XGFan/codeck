@@ -82,3 +82,16 @@ export function useTranscriptCtx(): TranscriptCtx {
   if (!c) throw new Error("TranscriptContext missing");
   return c;
 }
+
+const bottomListeners = new Set<() => void>();
+
+/** The followed transcript (the open Session's, live) jumps to its end and stays there: a message was just sent. */
+export function scrollToBottom() {
+  for (const f of bottomListeners) f();
+}
+
+/** `f` runs on `scrollToBottom`; returns the unsubscribe. */
+export function onScrollToBottom(f: () => void): () => void {
+  bottomListeners.add(f);
+  return () => void bottomListeners.delete(f);
+}

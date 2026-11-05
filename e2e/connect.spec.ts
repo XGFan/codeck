@@ -345,6 +345,20 @@ test("发出提示词：输入框立即清空，对话末尾先是跳动省略�
   await expect(bubble).toHaveAttribute("data-arrived", "true");
 });
 
+test("发出消息后对话记录滚到底，看得到占位气泡", async ({ page }) => {
+  await connectTo(page, RICH);
+  await expect(state(page)).toContainText("空闲");
+  const transcript = page.getByTestId("transcript");
+  const fromBottom = () => transcript.evaluate((e) => e.scrollHeight - e.scrollTop - e.clientHeight);
+  // Reading further up.
+  await transcript.evaluate((e) => (e.scrollTop = 0));
+  await expect.poll(fromBottom).toBeGreaterThan(100);
+  await send(page, "接着做");
+  await expect.poll(fromBottom).toBeLessThan(4);
+  await expect(page.getByTestId("pending-prompt")).toBeInViewport();
+  await expect(page.getByTestId("new-messages")).toHaveCount(0);
+});
+
 test("多选题可以同时勾选项与「其他」，一起发出", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");
