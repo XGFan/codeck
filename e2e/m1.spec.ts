@@ -166,8 +166,18 @@ test("本地命令的输出去掉标签和控制码，按命令输出显示", as
   await page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }).click();
   const transcript = page.getByTestId("transcript");
   await expect(transcript.getByTestId("command-name").last()).toHaveText("/rename");
-  const output = transcript.getByTestId("command-output");
+  const output = transcript.getByTestId("command-output").last();
   await expect(output).toHaveText("命令输出Session renamed to: 订单列表页审查");
+});
+
+test("! shell 命令按输入的样子显示，输出按命令输出显示", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }).click();
+  const transcript = page.getByTestId("transcript");
+  const name = transcript.getByTestId("command-name").nth(1);
+  await expect(name).toHaveText("!");
+  await expect(name.locator("..")).toHaveText("!git status");
+  await expect(transcript.getByTestId("command-output").first()).toHaveText("命令输出On branch feat/orders");
 });
 
 test("触摸板下拉不会把整个页面拉出空白", async ({ page }) => {

@@ -202,6 +202,7 @@ const defs: Def[] = [
     tokens: tok(8_900, 5_400, 420_000, 12_000),
     turns: [
       { u: "/review 订单列表页", a: "发现 2 个问题：分页参数未做上限校验；列表在筛选变化时未取消上一个请求。" },
+      { u: "!git status", out: "<bash-stdout>On branch feat/orders</bash-stdout><bash-stderr></bash-stderr>" },
       {
         u: "/rename 订单列表页审查",
         out: "<local-command-stdout>Session renamed to: \u001b[1m订单列表页审查\u001b[22m</local-command-stdout>",
@@ -278,7 +279,7 @@ function turnNodes(prefix: string, startMs: number, turns: Turn[], inheritedCoun
   turns.forEach((turn, i) => {
     const t0 = startMs + i * 3 * MIN;
     const uInherited = nodes.length < inheritedCount;
-    const cmd = turn.u.match(/^(\/\S+)\s*(.*)$/s);
+    const cmd = turn.u.match(/^(\/\S+|!)\s*(.*)$/s);
     const origin = cmd ? ({ kind: "command", name: cmd[1]!, args: cmd[2]! } as const) : undefined;
     nodes.push(userNode(`${prefix}-u${i}`, t0, turn.u, { inherited: uInherited, origin }));
     if (turn.out) nodes.push(userNode(`${prefix}-o${i}`, t0, turn.out, { origin: { kind: "commandOutput" } }));

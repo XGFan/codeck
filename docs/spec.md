@@ -29,7 +29,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **Fork 判定**：条目带 `forkedFrom` 的即为 Fork，继承部分以此标记；没有该字段时，以和更早的 Session 共享首条消息作为兜底。
 - **Live Session**：`~/.claude/sessions/<pid>.json` 存在、进程存活且 `procStart` 一致；`status` 区分 busy、waiting 和 idle。不看 transcript 的修改时间：Claude Code 退出时删掉进程文件，刚写过的 Session 也可能已经结束。
 - 标题优先级：`custom-title` > `ai-title` > 第一条用户输入。
-- **用户输入的判定**：只有用户亲手输入的内容和斜杠命令算作"你"的消息；系统注入、任务通知、命令输出、compact 摘要和 Teammate Message 都不算，不参与消息数、分支、标题和"你"角色的搜索。Claude 工作期间输入、排队到下一轮才送达的内容，文件里只记为 `queued_command` 附件（没有对应的 `user` 条目），按同样的规则当作用户消息处理：亲手输入的算"你"的消息，排队的任务通知、Teammate 消息按各自类型显示。新版 Claude Code 把 `/rename`、`/model` 这类本地执行的斜杠命令及其输出记成 `system`（`local_command`）条目，旧版记成 `user` 条目，两种按同样的规则处理：命令算"你"的消息，输出按命令输出显示，空输出隐藏。长段粘贴被 Claude Code 包在 `<pasted_content id="xxxx">` 标签里时（账号级开关），显示、标题和搜索都用去掉标签后的原文。
+- **用户输入的判定**：只有用户亲手输入的内容、斜杠命令和 `!` shell 命令算作"你"的消息；系统注入、任务通知、命令输出、compact 摘要和 Teammate Message 都不算，不参与消息数、分支、标题和"你"角色的搜索。Claude 工作期间输入、排队到下一轮才送达的内容，文件里只记为 `queued_command` 附件（没有对应的 `user` 条目），按同样的规则当作用户消息处理：亲手输入的算"你"的消息，排队的任务通知、Teammate 消息按各自类型显示。新版 Claude Code 把 `/rename`、`/model` 这类本地执行的斜杠命令及其输出记成 `system`（`local_command`）条目，旧版记成 `user` 条目，两种按同样的规则处理：命令算"你"的消息，输出按命令输出显示，空输出隐藏。长段粘贴被 Claude Code 包在 `<pasted_content id="xxxx">` 标签里时（账号级开关），显示、标题和搜索都用去掉标签后的原文。
 - **计数口径**：消息数 = 用户输入 + assistant 消息（按 `message.id` 合并拆分的片段），只计主对话；token 按 `message.id` 只计一次，每个字段取各片段的最大值；Session 的 token 合计包含其 Subagent。同一条 assistant 消息出现在多个 Session 中时（resume / Fork 会把之前的对话复制进新 Session 的文件），token 和 Cost 只计入最早创建的那个 Session，统计也只计一次（与 ccusage 一致）；Session 被删除后，归属转给下一个仍包含它的 Session。消息数不受影响。
 - **Cost**：参照 ccusage 的算法，按 LiteLLM 价格表逐条计算 assistant 消息：输入、输出、缓存读取、缓存写入各按单价计；缓存写入区分 5 分钟和 1 小时（1 小时按价格表中的单价，没有时按输入单价的 2 倍）；模型有 200K 以上单价时，各项超过 200K 的部分按该单价计；fast 模式乘以模型的 fast 倍率；条目自带 `costUSD`（旧版 Claude Code）时直接采用。模型名去掉 `[1m]`、`@地区`、日期后缀再匹配；匹配不到的消息不计入金额并单独计数，界面上提示"无价格"。
 - **价格表**：内置一份 LiteLLM 中 `claude-*` 模型的快照；启动时以及之后每 10 分钟检查一次，缓存超过一天就在后台重新下载 LiteLLM 价格表（ADR-0005），存到 Caches 下的 `pricing.json`，价格有变化时重新计算全部 Cost。下载失败沿用缓存或内置快照，不提示。
@@ -83,7 +83,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - compact 边界显示为分隔线；`tool-results/*.txt` 按需加载；图片显示缩略图（斜杠命令里粘贴的图片记在命令之后的元数据条目里，显示在命令上）。
   - Branch 用 `‹ i/n ›` 切换；如果被放弃的分支只是原样重发且后面没有回复，不显示切换器。
   - 任务通知、Teammate Message 是没有边框的灰色细行（任务通知居中）。
-  - 斜杠命令像终端一样高亮：命令名用等宽强调色，参数保持正文字体。
+  - 斜杠命令像终端一样高亮：命令名用等宽强调色，参数保持正文字体。`!` shell 命令（文件里是 `<bash-input>`）同样处理，显示为 `!git status`，标题也是这个样子；它的输出（`<bash-stdout>` / `<bash-stderr>`）按命令输出显示。
   - Teammate Message 显示为可折叠的"Teammate · <id>"卡片，不显示为用户气泡。
   - 当前 Session 读取失败时显示一行错误；源文件被删除时回到空状态。
 - Subagent：主对话中显示为卡片（任务 + 结果 + 状态：运行中 / 已完成 / 失败 / 未收到完成通知），右侧面板的头部也写状态；后台 agent 以结束通知为准，收到之前不算结束（Session 不再活跃时写「未收到完成通知」），结果取通知里的 `<result>`（没有时取 summary；resume 后再次结束会再通知，状态与结果取最后一次，再次运行期间仍显示上一次的结束），启动时的工具结果不当作结果；"查看完整过程"在右侧面板打开，嵌套时显示面包屑；Subagent Run 里派出方后来发来的消息（SendMessage，Claude Code 记为元数据，`origin.kind` 为 `coordinator`）去掉外层套话后显示为「主对话发来的消息」（嵌套时为「上级 Subagent 发来的消息」）卡片，开始新的一轮；后台 agent 的卡片、后台命令的工具调用和结束通知互相链接，被 SendMessage 续接过的 agent 再结束时通知指向那次 SendMessage，通知行的「查看派出位置」仍到最初的 Agent 调用，另有「查看续接位置」；后台任务结束的通知（`<task-notification>`）一行显示，按 summary 的前缀标明是后台 agent、后台命令、Monitor 还是 Workflow，写出描述（没有描述的后台命令写命令本身，过长截断）、状态，以及非 0 的退出码或失败原因，认不出的写「后台任务」加原文；summary 里的 XML 转义（`&gt;` 等）还原后显示；Workflow 显示为一张总卡片。

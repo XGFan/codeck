@@ -7,7 +7,7 @@ import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
 import { ImageRefs } from "../tools";
-import { clock, prettyJson } from "../util";
+import { clock, commandLine, prettyJson } from "../util";
 import { TaskPromptCard } from "./Agents";
 import { Anchor } from "./Anchor";
 import { scrollToNode, useTranscriptCtx } from "./scroll";
@@ -44,7 +44,8 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
             <code data-testid="command-name" className="font-mono text-[12.5px] font-semibold text-accent">
               {o.name}
             </code>
-            {o.args && <> {o.args}</>}
+            {/* `!` shell commands read as typed: `!git status`. */}
+            {o.args && (o.name === "!" ? o.args : <> {o.args}</>)}
           </>
         ) : (
           body.text
@@ -53,7 +54,7 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
       {body.images.length > 0 && <PromptImages node={node} body={body} />}
       {/* Under the bubble, as in Codex: time, copy on hover, the branch switcher at a branch head. */}
       <div data-testid="prompt-meta" className="flex items-center gap-1.5 text-[11.5px] text-secondary">
-        <CopyButton text={o.kind === "command" ? `${o.name} ${o.args}`.trim() : body.text} />
+        <CopyButton text={o.kind === "command" ? commandLine(o.name, o.args) : body.text} />
         {branch && <BranchSwitcher point={branch} />}
         <span>{clock(node.timestampMs)}</span>
       </div>

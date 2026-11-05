@@ -169,6 +169,15 @@ pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
             args: tag(t, "command-args").unwrap_or_default(),
         };
     }
+    // A `!` shell command: typed by the user, like a slash command.
+    if t.starts_with("<bash-input>")
+        && let Some(line) = tag(t, "bash-input")
+    {
+        return PromptOrigin::Command {
+            name: "!".into(),
+            args: line,
+        };
+    }
     if t.starts_with("<local-command-stdout>")
         || t.starts_with("<local-command-stderr>")
         || t.starts_with("<bash-stdout>")
@@ -221,10 +230,11 @@ pub fn is_human_prompt(e: &RawEntry) -> bool {
     is_human(e, &classify(e, &text))
 }
 
-/// Title form of a prompt: `"name args"` for a command, else the text; whitespace collapsed,
-/// truncated to [`TITLE_CHARS`] characters.
+/// Title form of a prompt: `"name args"` for a command (`"!line"` for a `!` shell command), else
+/// the text; whitespace collapsed, truncated to [`TITLE_CHARS`] characters.
 pub fn title_text(origin: &PromptOrigin, text: &str) -> String {
     let raw = match origin {
+        PromptOrigin::Command { name, args } if name == "!" => format!("!{args}"),
         PromptOrigin::Command { name, args } => format!("{name} {args}"),
         _ => text.to_owned(),
     };
@@ -294,6 +304,25 @@ mod tests {
             matches!(classify(&e, bare), PromptOrigin::Command { name, .. } if name == "/codex-cli-runtime")
         );
         assert!(is_human(&e, &o));
+
+        let bang = "<bash-input>goland .</bash-input>";
+        let o = classify(&e, bang);
+        assert_eq!(
+            o,
+            PromptOrigin::Command {
+                name: "!".into(),
+                args: "goland .".into()
+            }
+        );
+        assert_eq!(title_text(&o, bang), "!goland .");
+        assert!(is_human(&e, &o));
+        assert_eq!(
+            classify(
+                &e,
+                "<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>"
+            ),
+            PromptOrigin::CommandOutput
+        );
 
         let n = "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>";
         match classify(&e, n) {

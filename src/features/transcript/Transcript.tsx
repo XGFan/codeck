@@ -20,6 +20,7 @@ import {
 } from "./nodes/scroll";
 import { resetReading, setCurrentTurn, setTurns, useReading } from "./reading";
 import { toolKey } from "./tools";
+import { commandLine } from "./util";
 
 /**
  * Scroll + highlight API for other features (⌘F / T4.2, outline, links):
@@ -265,7 +266,7 @@ export function TranscriptList({
       rows.flatMap((r) => {
         if (r.kind !== "prompt") return [];
         const o = r.body.origin;
-        const text = o.kind === "command" ? `${o.name} ${o.args}`.trim() : r.body.text;
+        const text = o.kind === "command" ? commandLine(o.name, o.args) : r.body.text;
         return [{ turn: r.turn, nodeId: r.node.id, text: text.replace(/\s+/g, " ").trim() }];
       }),
     );
