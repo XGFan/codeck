@@ -838,3 +838,32 @@ fn mock_model_exit_with_tasks() {
     rpc.call("x2", json!({"type": "exit", "stop_tasks": true}));
     rpc.event("session_exit", Duration::from_secs(20));
 }
+
+/// SIGTERM (CoDeck's Disconnect fallback) while idle ends ccrpc as a closed stdin does: it exits 0,
+/// detached, and the Session can be attached again at once (on the scripted model).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_sigterm_detaches() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+    let pid = rpc.child.id();
+    // SAFETY: plain kill(2) on this test's own ccrpc child, not reaped yet.
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(s) = rpc.child.try_wait().unwrap() {
+            break s;
+        }
+        assert!(Instant::now() < deadline, "SIGTERM 后 ccrpc 没有退出");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status:?}");
+    let holder_pid = rpc.holder_pid.take();
+    drop(rpc);
+    let mut next = Rpc::attach(&env, &["--co-display", &holder]);
+    next.holder_pid = holder_pid;
+    let r = next.event("ready", Duration::from_secs(20));
+    assert_eq!(r["state"], "idle", "{r}");
+}

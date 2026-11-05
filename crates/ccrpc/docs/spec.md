@@ -28,7 +28,7 @@ ccrpc debug replay <transcript.jsonl>…      # 逐行回放 transcript：实时
 ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按键、写 bracketed paste
 ```
 
-- RPC 循环：stdin 每行一条命令，stdout 每行一条响应或事件；stderr 只写错误。stdin 关闭即断开（发 Detach），Session 不受影响。
+- RPC 循环：stdin 每行一条命令，stdout 每行一条响应或事件；stderr 只写错误。stdin 关闭即断开（发 Detach），Session 不受影响。收到 SIGTERM 时同样断开，但等正在执行的命令做完（不会停在按键序列中间）。
 - PTY 尺寸：连上后 ccrpc 把 PTY 设为 `--size`（缺省 160×48）。尺寸归最后操作者，ToH 的 Client 只在把 Pane 切到前台或按键时才抢尺寸，所以尺寸所有者就是“谁在用”。
 - 有人在用：`attach` 时尺寸所有者是另一个在线的 Client，就报错退出（`Session 正被 <client> 使用，加 --force 强制连接`）；`--force` 跳过。`new` 自己启动的 Pane 不检查。Holder 不报告尺寸所有者（旧版本）时放行，并在 stderr 提示。
 - `debug` 子命令只看、只写，不改 PTY 尺寸。

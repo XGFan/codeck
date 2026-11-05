@@ -21,7 +21,24 @@ fn stdin_lines(wake: Arc<Wake>) -> Receiver<String> {
     rx
 }
 
+/// SIGTERM came: the engine ends as when stdin closes.
+static TERMINATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn on_sigterm(_: libc::c_int) {
+    TERMINATED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// SIGTERM was received (CoDeck's Disconnect fallback): the run loop detaches from the Holder and
+/// exits once the command in progress is done, never halfway through its keys.
+pub(super) fn terminated() -> bool {
+    TERMINATED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 fn run_engine(e: Engine) -> Result<()> {
+    // SAFETY: the handler only stores to an atomic, which is async-signal-safe; system calls it
+    // interrupts are restarted (BSD `signal` semantics on macOS).
+    let handler: extern "C" fn(libc::c_int) = on_sigterm;
+    unsafe { libc::signal(libc::SIGTERM, handler as *const () as libc::sighandler_t) };
     let lines = stdin_lines(e.wake.clone());
     e.run(lines)
 }

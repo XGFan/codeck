@@ -1026,13 +1026,21 @@ impl Engine {
                 self.conn.detach();
                 bail!(f);
             }
+            // Between commands only: a command in progress is never cut off.
+            if startup::terminated() {
+                crate::clog!("SIGTERM: detaching");
+                break;
+            }
             // Taken before looking at stdin: a line arriving now still wakes the wait below.
             let seen = self.wake.seen();
             match input.try_recv() {
                 Ok(line) => self.handle_line(&line),
                 Err(TryRecvError::Empty) => {
                     self.tick();
-                    self.drain_follow_ups();
+                    // A SIGTERM during the tick: no queued prompt goes out after it.
+                    if !startup::terminated() {
+                        self.drain_follow_ups();
+                    }
                     self.wake.wait(seen, IDLE_TICK);
                 }
                 Err(TryRecvError::Disconnected) => break,

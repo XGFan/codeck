@@ -49,6 +49,9 @@ const STDERR_TAIL_CHARS: usize = 4000;
 const STDIN_LOCK_WAIT: Duration = Duration::from_secs(1);
 /// After Disconnect closed its stdin, how long ccrpc has to detach and exit before it gets SIGTERM.
 const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
+/// On SIGTERM ccrpc detaches once the command in progress is done (the longest one waits up to
+/// 120 s, `get_messages`); one still running this long after it gets SIGKILL.
+const KILL_AFTER: Duration = Duration::from_secs(150);
 /// How often a connection's waiter looks whether its ccrpc exited.
 const EXIT_POLL: Duration = Duration::from_millis(100);
 /// Once ccrpc exited, how long to wait for each further line it wrote (a process it left behind
@@ -99,6 +102,7 @@ pub struct App {
     pub doctor: Mutex<Option<Vec<DoctorLine>>>,
     sub_timeout: Duration,
     disconnect_grace: Duration,
+    kill_after: Duration,
 }
 
 impl App {
@@ -126,6 +130,7 @@ impl App {
             doctor: Mutex::new(None),
             sub_timeout: SUBCOMMAND_TIMEOUT,
             disconnect_grace: DISCONNECT_GRACE,
+            kill_after: KILL_AFTER,
         };
         app.gui_line(&format!("start ccrpc={}", app.ccrpc.display()));
         Ok(app)
@@ -451,8 +456,9 @@ impl App {
 
     /// Disconnect: closes ccrpc's stdin, so it detaches and exits; the Session keeps running. A
     /// ccrpc that cannot take the close (a `send` stuck writing to it holds its stdin) or is still
-    /// running [`DISCONNECT_GRACE`] later gets SIGTERM. False when the connection is unknown (its
-    /// ccrpc already exited).
+    /// running [`DISCONNECT_GRACE`] later gets SIGTERM, on which it detaches after the command in
+    /// progress; [`KILL_AFTER`] later SIGKILL. False when the connection is unknown (its ccrpc
+    /// already exited).
     pub fn disconnect(&self, conn: &str) -> bool {
         let Some((stdin, gui)) = self
             .conns
@@ -463,16 +469,25 @@ impl App {
             return false;
         };
         logs::line(&mut gui.lock(), "disconnect");
-        let Some(mut stdin) = stdin.try_lock_for(STDIN_LOCK_WAIT) else {
-            terminate(&self.conns, conn, "stdin busy");
-            return true;
+        let grace = match stdin.try_lock_for(STDIN_LOCK_WAIT) {
+            Some(mut stdin) => {
+                stdin.take();
+                self.disconnect_grace
+            }
+            None => Duration::ZERO,
         };
-        stdin.take();
-        drop(stdin);
-        let (conns, conn, grace) = (self.conns.clone(), conn.to_string(), self.disconnect_grace);
+        let (conns, conn, kill_after) = (self.conns.clone(), conn.to_string(), self.kill_after);
         std::thread::spawn(move || {
             std::thread::sleep(grace);
-            terminate(&conns, &conn, "still running after Disconnect");
+            let why = if grace.is_zero() {
+                "stdin busy"
+            } else {
+                "still running after Disconnect"
+            };
+            if terminate(&conns, &conn, libc::SIGTERM, why) {
+                std::thread::sleep(kill_after);
+                terminate(&conns, &conn, libc::SIGKILL, "still running after SIGTERM");
+            }
         });
         true
     }
@@ -490,7 +505,7 @@ impl App {
             match s.try_lock_for(STDIN_LOCK_WAIT) {
                 Some(mut s) => drop(s.take()),
                 None => {
-                    terminate(&self.conns, &id, "stdin busy");
+                    terminate(&self.conns, &id, libc::SIGTERM, "stdin busy");
                 }
             }
         }
@@ -532,10 +547,16 @@ impl App {
     }
 }
 
-/// SIGTERM to the connection's ccrpc while it still runs (ccrpc only detaches from the Session in
-/// clay; the Session is not touched). Checked under the connection table's lock and then the
-/// child's own: a ccrpc already reaped (its pid possibly reused) is never signalled. True when sent.
-fn terminate(conns: &Mutex<HashMap<String, Conn>>, conn: &str, why: &str) -> bool {
+/// `sig` (SIGTERM, SIGKILL) to the connection's ccrpc while it still runs (ccrpc only detaches from
+/// the Session in clay; the Session is not touched). Checked under the connection table's lock and
+/// then the child's own: a ccrpc already reaped (its pid possibly reused) is never signalled. True
+/// when sent.
+fn terminate(
+    conns: &Mutex<HashMap<String, Conn>>,
+    conn: &str,
+    sig: libc::c_int,
+    why: &str,
+) -> bool {
     let conns = conns.lock();
     let Some(c) = conns.get(conn) else {
         return false;
@@ -547,10 +568,10 @@ fn terminate(conns: &Mutex<HashMap<String, Conn>>, conn: &str, why: &str) -> boo
     let pid = child.id();
     logs::line(
         &mut c.gui.lock(),
-        &format!("SIGTERM ccrpc pid={pid} ({why})"),
+        &format!("signal {sig} to ccrpc pid={pid} ({why})"),
     );
     // SAFETY: plain kill(2) on our own child, not reaped yet (checked under its lock just now).
-    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    unsafe { libc::kill(pid as libc::pid_t, sig) };
     true
 }
 
@@ -858,6 +879,21 @@ mod tests {
         assert_eq!(exit.code, None, "ended by a signal");
         assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
         assert!(!app.disconnect(&conn), "the connection is gone");
+    }
+
+    /// A ccrpc that does not end on SIGTERM (stuck in a command) gets SIGKILL after the longer
+    /// bound.
+    #[test]
+    fn a_ccrpc_ignoring_sigterm_is_killed_later() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = fake_ccrpc(d.path(), "trap '' TERM; exec sleep 30");
+        app.disconnect_grace = Duration::from_millis(200);
+        app.kill_after = Duration::from_millis(300);
+        let (sink, rx) = channel_sink();
+        let conn = app.connect(sink, "m1").unwrap();
+        assert!(app.disconnect(&conn));
+        let exit = exit_once(&rx, &conn, Duration::from_secs(5));
+        assert_eq!(exit.code, None, "ended by a signal");
     }
 
     /// A `send` blocked on a full pipe holds ccrpc's stdin: Disconnect does not wait for it.
