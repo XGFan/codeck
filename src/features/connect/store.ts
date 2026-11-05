@@ -2,84 +2,13 @@ import { create } from "zustand";
 import { api } from "@/ipc";
 import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
+import { createCcrpcClient } from "./client";
 import { apply, initial, type ConnState } from "./conn";
+import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
+import { createLsPoller } from "./lsPoller";
 import { resumeFailure } from "./resume";
-import { createEarlyBuffer } from "./early";
 import type { InMsg, LsEntry, ResponseMsg, Task } from "./protocol";
 import { errorText } from "@/lib/errors";
-
-const POLL_MS = 2000;
-
-/** A pasted image waiting to be sent: its saved path and a preview `data:` URL. */
-export interface DraftImage {
-  path: string;
-  url: string;
-}
-
-/** What is typed in a Session's input box and not sent yet. */
-export interface Draft {
-  text: string;
-  images: DraftImage[];
-}
-
-export const EMPTY_DRAFT: Draft = { text: "", images: [] };
-
-const DRAFTS_KEY = "codeck.connect.drafts";
-/** Where drafts were kept before the rename to Connect: read when the new key is absent, removed on the next save. */
-const OLD_DRAFTS_KEY = "codeck.drive.drafts";
-// A Session's id; a connection's key dies with it, so only these are kept across restarts.
-const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const isDraft = (d: unknown): d is Draft =>
-  !!d &&
-  typeof (d as Draft).text === "string" &&
-  Array.isArray((d as Draft).images) &&
-  (d as Draft).images.every((i) => typeof i?.path === "string" && typeof i?.url === "string");
-
-function loadDrafts(): Record<string, Draft> {
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? localStorage.getItem(OLD_DRAFTS_KEY) ?? "{}");
-    if (!v || typeof v !== "object") return {};
-    return Object.fromEntries(Object.entries(v).filter(([k, d]) => SESSION_ID.test(k) && isDraft(d)));
-  } catch {
-    return {};
-  }
-}
-
-let pendingDrafts: Record<string, Draft> | null = null;
-let draftsTimer: ReturnType<typeof setTimeout> | undefined;
-
-function flushDrafts() {
-  clearTimeout(draftsTimer);
-  const drafts = pendingDrafts;
-  pendingDrafts = null;
-  if (!drafts) return;
-  const keep = Object.fromEntries(
-    Object.entries(drafts).filter(([k, d]) => SESSION_ID.test(k) && (d.text.trim() || d.images.length)),
-  );
-  try {
-    localStorage.removeItem(OLD_DRAFTS_KEY);
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(keep));
-  } catch {
-    // Over the storage quota with the images' previews: keep the text at least.
-    try {
-      localStorage.setItem(
-        DRAFTS_KEY,
-        JSON.stringify(Object.fromEntries(Object.entries(keep).map(([k, d]) => [k, { text: d.text, images: [] }]))),
-      );
-    } catch {
-      // Storage unavailable: the drafts last until the app quits.
-    }
-  }
-}
-
-/** Unsent input survives a restart: written shortly after it changes, and when the page goes away. */
-function saveDrafts(drafts: Record<string, Draft>) {
-  pendingDrafts = drafts;
-  clearTimeout(draftsTimer);
-  draftsTimer = setTimeout(flushDrafts, 300);
-}
-if (typeof window !== "undefined") window.addEventListener("pagehide", flushDrafts);
 
 interface ConnectStore {
   /** `ccrpcInfo`, asked for when first needed (its first call reads the login shell's environment). */
@@ -138,33 +67,8 @@ interface ConnectStore {
   setDraft(key: string, f: (d: Draft) => Draft): void;
 }
 
-interface Pending {
-  conn: string;
-  resolve: (r: ResponseMsg) => void;
-}
-
-const pending = new Map<string, Pending>();
-/** Waiting for a connection's ccrpc to exit (reconnect: one ccrpc per Session at a time). */
-const exitWaiters = new Map<string, () => void>();
-/** Connections being disconnected on purpose: their exit is not a failure. */
-const closing = new Set<string>();
 /** How long a Resume may take to name its Session before it counts as failed. */
 const RESUME_TIMEOUT_MS = 30_000;
-/** Resume connections being given up (one failure per connection). */
-const failingResumes = new Set<string>();
-/** New Sessions to select once they have a session id. */
-const selectOnReady = new Set<string>();
-/** Events of connections whose id has not come back from `ccrpcConnect` / `ccrpcNew` yet. */
-const early = createEarlyBuffer();
-/** Connections already removed: their late events are dropped, not held. */
-const removed = new Set<string>();
-let cmdSeq = 0;
-let pollTimer: number | undefined;
-let polling = false;
-/** Bumped whenever polling stops: a `ccrpc ls` answer from an older generation is dropped. */
-let pollGen = 0;
-let lastLs = "";
-let wanted = false;
 
 type Lookup = { ls: LsEntry[]; conns: Record<string, ConnState> };
 
@@ -203,25 +107,30 @@ export const draftKey = (c: ConnState) => c.sessionId ?? c.conn;
 export const errorKey = draftKey;
 
 export const useConnect = create<ConnectStore>((set, get) => {
+  const client = createCcrpcClient(api);
+  /** Connections being disconnected on purpose: their exit is not a failure. */
+  const closing = new Set<string>();
+  /** Resume connections being given up (one failure per connection). */
+  const failingResumes = new Set<string>();
+  /** New Sessions to select once they have a session id. */
+  const selectOnReady = new Set<string>();
+  const poller = createLsPoller({
+    list: () => api.ccrpcList(),
+    onLs: (ls) => set({ ls }),
+    onError: (e) => set({ lsError: `ccrpc ls 失败：${errorText(e)}` }),
+    // Polled only while the window is visible, and not after ccrpc failed.
+    canPoll: () => document.visibilityState === "visible" && !get().lsError && !get().infoError,
+  });
+
   const update = (conn: string, f: (c: ConnState) => ConnState) =>
     set((s) => (s.conns[conn] ? { conns: { ...s.conns, [conn]: f(s.conns[conn]) } } : {}));
 
   const select = (sessionId: string) => useUi.getState().selectSession(sessionId);
 
   const onLine = (conn: string, msg: InMsg) => {
-    if (msg.type === "response") {
-      const p = msg.id != null ? pending.get(String(msg.id)) : undefined;
-      if (p) {
-        pending.delete(String(msg.id));
-        p.resolve(msg);
-      }
-      return;
-    }
+    if (msg.type === "response") return client.answer(msg);
     const before = get().conns[conn];
-    if (!before) {
-      if (!removed.has(conn)) early.push(conn, { kind: "line", msg });
-      return;
-    }
+    if (!before) return client.hold(conn, { kind: "line", msg });
     update(conn, (c) => apply(c, msg));
     const after = get().conns[conn]!;
     // A Resume is through once its Session is named: in `ready` (checked in already) or a later `session_changed`.
@@ -254,13 +163,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
   };
 
   const onExit = (conn: string, code: number | null, stderr: string) => {
-    if (!get().conns[conn]) {
-      if (!removed.has(conn)) early.push(conn, { kind: "exit", code, stderr });
-      return;
-    }
-    exitWaiters.get(conn)?.();
-    exitWaiters.delete(conn);
-    failPending(conn);
+    if (!get().conns[conn]) return client.hold(conn, { kind: "exit", code, stderr });
+    client.exited(conn);
+    client.failPending(conn);
     selectOnReady.delete(conn);
     const c = get().conns[conn];
     // ccrpc itself ended before naming the Session: that Resume is over (its card says why).
@@ -272,32 +177,15 @@ export const useConnect = create<ConnectStore>((set, get) => {
   /** Adds a connection, then replays what arrived for it before its id came back. */
   const addConn = (conn: string, holderId: string | null, resumeOf: string | null = null) => {
     set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId, resumeOf) } }));
-    for (const e of early.take(conn)) {
+    for (const e of client.take(conn)) {
       if (e.kind === "line") onLine(conn, e.msg);
       else onExit(conn, e.code, e.stderr);
     }
   };
-  /** Commands still waiting on `conn` get a failure (its ccrpc exited or is no longer followed). */
-  const failPending = (conn: string) => {
-    for (const [id, p] of pending) {
-      if (p.conn !== conn) continue;
-      pending.delete(id);
-      p.resolve({
-        type: "response",
-        id,
-        command: "",
-        success: false,
-        error: { code: "exited", message: "ccrpc 已退出" },
-      });
-    }
-  };
   const removeConn = (conn: string) => {
     // Its exit may still come and is then dropped: nothing would answer what waits on it.
-    failPending(conn);
-    removed.add(conn);
+    client.forget(conn);
     closing.delete(conn);
-    exitWaiters.get(conn)?.();
-    exitWaiters.delete(conn);
     set((s) => {
       const conns = { ...s.conns };
       delete conns[conn];
@@ -309,14 +197,10 @@ export const useConnect = create<ConnectStore>((set, get) => {
     const c = get().conns[conn];
     void api.ccrpcGuiLog(conn, "close (replaced)");
     if (c && !c.procExit) {
-      const gone = new Promise<void>((resolve) => {
-        exitWaiters.set(conn, resolve);
-        window.setTimeout(resolve, 5000);
-      });
+      const gone = client.waitExit(conn, 5000);
       closing.add(conn);
       await api.ccrpcDisconnect(conn).catch(() => removeConn(conn));
       await gone;
-      exitWaiters.delete(conn);
     }
     removeConn(conn);
   };
@@ -361,40 +245,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
       return { errors };
     });
 
-  /** Polls while wanted, visible and not failed; when it starts again it asks at once. */
-  const sync = () => {
-    const go = wanted && document.visibilityState === "visible" && !get().lsError && !get().infoError;
-    if (go && !polling) {
-      polling = true;
-      void poll(++pollGen);
-    } else if (!go && polling) {
-      stopPolling();
-    }
-  };
-  const stopPolling = () => {
-    polling = false;
-    pollGen++;
-    window.clearTimeout(pollTimer);
-    pollTimer = undefined;
-  };
-  /** One `ccrpc ls`; the next is scheduled only after it answers. */
-  const poll = async (gen: number) => {
-    try {
-      const ls = await api.ccrpcList();
-      if (gen !== pollGen) return;
-      const text = JSON.stringify(ls);
-      if (text !== lastLs) {
-        lastLs = text;
-        set({ ls });
-      }
-    } catch (e) {
-      if (gen !== pollGen) return;
-      set({ lsError: `ccrpc ls 失败：${errorText(e)}` });
-      return sync();
-    }
-    pollTimer = window.setTimeout(() => void poll(gen), POLL_MS);
-  };
-
   /** The Session on screen has been seen. */
   const markSeen = () => {
     const c = connFor(get(), useUi.getState().sessionId);
@@ -422,7 +272,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       keep(api.onCcrpcExit((conn, code, stderr) => onExit(conn, code, stderr)));
       keep(api.onLiveChanged((p) => set({ live: p.live })));
       const onVisible = () => {
-        sync();
+        poller.sync();
         if (document.visibilityState === "visible") markSeen();
       };
       document.addEventListener("visibilitychange", onVisible);
@@ -434,24 +284,18 @@ export const useConnect = create<ConnectStore>((set, get) => {
         offs.forEach((f) => f());
         document.removeEventListener("visibilitychange", onVisible);
         unUi();
-        stopPolling();
+        poller.stop();
       };
     },
 
     setWanted(w) {
-      if (w === wanted) return sync();
-      wanted = w;
       // Nothing Live and nothing connected: what `ccrpc ls` said last is stale.
-      if (!w) {
-        lastLs = "";
-        set({ ls: [] });
-      }
-      sync();
+      poller.setWanted(w);
     },
 
     retry() {
       set({ lsError: null, infoError: null });
-      sync();
+      poller.sync();
     },
 
     async saveAnalyzer(apiKey, baseUrl, model) {
@@ -476,10 +320,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
         // Shown at once; a `ccrpc ls` already under way may have read the old state, so its answer is dropped and
         // the next one asked at once.
         set((s) => ({ ls: s.ls.map((e) => (e.holder_id === holderId ? { ...e, hidden } : e)) }));
-        if (polling) {
-          stopPolling();
-          sync();
-        }
+        poller.restart();
       } catch (e) {
         setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errorText(e)}`);
       }
@@ -492,7 +333,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       } catch (e) {
         const why = `读取 ccrpc 信息失败：${errorText(e)}`;
         set({ infoError: why });
-        sync();
+        poller.sync();
       }
     },
 
@@ -562,29 +403,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
     },
 
     command(conn, msg) {
-      const id = `g${++cmdSeq}`;
-      const full = { ...msg, id };
-      void api.ccrpcGuiLog(conn, `command ${String(msg.type)} id=${id}`);
-      return new Promise<ResponseMsg>((resolve) => {
-        pending.set(id, {
-          conn,
-          resolve: (r) => {
-            if (!r.success)
-              void api.ccrpcGuiLog(conn, `failed ${String(msg.type)} id=${id} ${r.error?.code}: ${r.error?.message}`);
-            resolve(r);
-          },
-        });
-        api.ccrpcSend(conn, full).catch((e: unknown) => {
-          pending.delete(id);
-          resolve({
-            type: "response",
-            id,
-            command: String(msg.type),
-            success: false,
-            error: { code: "io", message: errorText(e) },
-          });
-        });
-      });
+      return client.command(conn, msg);
     },
 
     async disconnect(conn) {
