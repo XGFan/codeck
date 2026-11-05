@@ -1,7 +1,13 @@
 #!/bin/sh
-# Rejects a commit with Rust files that `cargo fmt` would change. Install: scripts/install-git-hooks.sh
-git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$' || exit 0
-if ! cargo fmt --all -- --check >/dev/null 2>&1; then
+# Rejects a commit with files that `cargo fmt` or Prettier would change. Install: scripts/install-git-hooks.sh
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -n "$staged" ] || exit 0
+if echo "$staged" | grep -q '\.rs$' && ! cargo fmt --all -- --check >/dev/null 2>&1; then
   echo "pre-commit: Rust 代码没有按 rustfmt 排版。运行 cargo fmt --all，再把改动 add 后重新提交。" >&2
+  exit 1
+fi
+# Files outside Prettier's scope (.prettierignore, unknown types) are skipped.
+if ! git diff --cached --name-only -z --diff-filter=ACMR | xargs -0 pnpm exec prettier --check --ignore-unknown >/dev/null 2>&1; then
+  echo "pre-commit: 前端代码没有按 Prettier 排版。运行 pnpm format，再把改动 add 后重新提交。" >&2
   exit 1
 fi

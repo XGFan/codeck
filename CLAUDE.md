@@ -29,7 +29,8 @@ cargo test -p codeck-core --test parse                 # 单个集成测试文�
 cargo test -p codeck-core --test branch <name>         # 单个用例
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all                # Rust 格式化（默认 rustfmt 配置）；提交前必须是格式化过的
-scripts/install-git-hooks.sh   # 装 pre-commit 钩子：提交含 .rs 时跑 cargo fmt --check，没格式化就拦下
+pnpm format                    # 前端格式化（Prettier，printWidth 120；范围见 .prettierignore：不含 crates、src-tauri、Markdown、bindings.ts）；提交前必须是格式化过的
+scripts/install-git-hooks.sh   # 装 pre-commit 钩子：暂存了没按 rustfmt / Prettier 排版的文件就拦下
 
 pnpm typecheck && pnpm test                        # tsc + vitest（src/**/*.test.ts）
 pnpm vitest run src/lib/diff.test.ts               # 单个前端单测
