@@ -40,12 +40,15 @@ fn with_known_messages() -> (TempDir, TempDir, Engine, f64) {
         .join(format!("{}.jsonl", ids::BASIC));
     let usage = r#"{"input_tokens":1000,"output_tokens":1000,"cache_read_input_tokens":10000,"cache_creation_input_tokens":2000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":1000}}"#;
     let mut f = OpenOptions::new().append(true).open(&path).unwrap();
-    // Two fragments of one reply (same message id) count once; an unknown model is unpriced.
+    // Two fragments of one reply (same message id) count once; an unknown model is unpriced,
+    // unless the message carries no tokens.
     f.write_all(assistant("c-1", "msg-cost", "claude-sonnet-4-6", usage).as_bytes())
         .unwrap();
     f.write_all(assistant("c-2", "msg-cost", "claude-sonnet-4-6", usage).as_bytes())
         .unwrap();
     f.write_all(assistant("c-3", "msg-nope", "claude-nope-1", r#"{"input_tokens":5}"#).as_bytes())
+        .unwrap();
+    f.write_all(assistant("c-4", "msg-empty", "claude-nope-1", r#"{"input_tokens":0}"#).as_bytes())
         .unwrap();
     drop(f);
     engine.apply_changes(&[path]).unwrap();

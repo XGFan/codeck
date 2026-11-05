@@ -47,6 +47,19 @@ pub(crate) fn range_bounds(r: Option<&TimeRange>) -> (i64, i64) {
     (from, to)
 }
 
+/// SQL predicate on a `messages` row: a main-file message (what message counts, days and activity
+/// count). Columns are unqualified, so inside a subquery over `messages` they resolve to its row.
+pub(crate) const MAIN_FILE_SQL: &str = "agent_id = ''";
+
+/// SQL predicate on a `messages` row: an assistant message that carries tokens and is billed (what
+/// tokens, cost and the per-model breakdown count). Unqualified columns, as [`MAIN_FILE_SQL`].
+pub(crate) fn billed_tokens_sql() -> String {
+    format!(
+        "role = {MSG_ASSISTANT} AND billed = 1
+            AND (in_tok > 0 OR out_tok > 0 OR cr_tok > 0 OR cc_tok > 0)"
+    )
+}
+
 /// Length of the session ranking.
 pub const TOP_SESSIONS: usize = 10;
 
@@ -81,9 +94,11 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
     let mut hourly: BTreeMap<NaiveDateTime, u32> = BTreeMap::new();
     let mut daily: BTreeMap<(NaiveDate, String), [f64; 4]> = BTreeMap::new();
     {
-        let mut sql = "SELECT session_id, agent_id = '', ts_ms, role, model, in_tok, out_tok,
-            cr_tok, cc_tok, cost, billed FROM messages"
-            .to_owned();
+        let mut sql = format!(
+            "SELECT session_id, {MAIN_FILE_SQL}, ts_ms, {billed}, model, in_tok, out_tok, cr_tok,
+                cc_tok, cost FROM messages",
+            billed = billed_tokens_sql()
+        );
         // Unranged: a plain table scan beats walking `messages_ts` back into the table.
         let bounds = if ranged { vec![from, to] } else { vec![] };
         if ranged {
@@ -106,18 +121,15 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
                 *heat_daily.entry(day).or_default() += 1;
                 *hourly.entry(floor(ActivityBucket::Hour1, t)).or_default() += 1;
             }
+            if !row.get::<_, bool>(3)? {
+                continue;
+            }
             let tok: [f64; 4] = [
                 row.get::<_, i64>(5)? as f64,
                 row.get::<_, i64>(6)? as f64,
                 row.get::<_, i64>(7)? as f64,
                 row.get::<_, i64>(8)? as f64,
             ];
-            if row.get::<_, i64>(3)? != MSG_ASSISTANT
-                || tok.iter().all(|&v| v == 0.0)
-                || !row.get::<_, bool>(10)?
-            {
-                continue;
-            }
             output += tok[1];
             sess_output[si] += tok[1];
             match row.get::<_, Option<f64>>(9)? {

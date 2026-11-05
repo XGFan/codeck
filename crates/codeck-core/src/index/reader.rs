@@ -6,14 +6,13 @@ use chrono::{Local, NaiveDate, TimeZone};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
-use super::schema::MSG_ASSISTANT;
 use super::writer::{role_from_db, title_source_from_db};
 use crate::error::CoreResult;
 use crate::model::{
     Drill, FileRole, ForkChild, ForkOrigin, ModelCost, ProjectSummary, SessionQuery, SessionSort,
     SessionSummary, TokenTotals,
 };
-use crate::stats;
+use crate::stats::{self, MAIN_FILE_SQL, billed_tokens_sql};
 use transcript::assemble::AgentStats;
 
 /// A `files` row.
@@ -175,7 +174,8 @@ pub fn project_match(ids: &[String], args: &mut Vec<Value>) -> String {
 /// Non-empty sessions matching `q` (live filtering and `live` states are applied by the engine).
 ///
 /// Without a drill, the time range keeps sessions whose span overlaps it. With a drill, the
-/// session must have a contributing row inside the range, mirroring `stats::compute` exactly:
+/// session must have a contributing row inside the range, mirroring `stats::compute` exactly
+/// (both use the predicates `stats::MAIN_FILE_SQL` and `stats::billed_tokens_sql`):
 /// - `Day`: a main-file message on that local day;
 /// - `Model`: a main or Subagent message of that model that carries tokens;
 /// - `Span`: a main-file message in `[from_ms, to_ms)` (an activity bar).
@@ -212,22 +212,20 @@ pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<Sess
     match &q.drill {
         Some(Drill::Day { day }) => match local_day_bounds_ms(day) {
             Some((start, end)) => {
-                conds.push(
-                    "s.id IN (SELECT m.session_id FROM messages m WHERE m.agent_id = ''
+                conds.push(format!(
+                    "s.id IN (SELECT m.session_id FROM messages m WHERE {MAIN_FILE_SQL}
                         AND m.ts_ms >= ? AND m.ts_ms <= ?)"
-                        .into(),
-                );
+                ));
                 args.push(Value::Integer(start.max(from)));
                 args.push(Value::Integer((end - 1).min(to)));
             }
             None => conds.push("0".into()),
         },
         Some(Drill::Span { from_ms, to_ms }) => {
-            conds.push(
-                "s.id IN (SELECT m.session_id FROM messages m WHERE m.agent_id = ''
+            conds.push(format!(
+                "s.id IN (SELECT m.session_id FROM messages m WHERE {MAIN_FILE_SQL}
                     AND m.ts_ms >= ? AND m.ts_ms <= ?)"
-                    .into(),
-            );
+            ));
             args.push(Value::Integer((*from_ms as i64).max(from)));
             args.push(Value::Integer((*to_ms as i64 - 1).min(to)));
         }
@@ -237,8 +235,8 @@ pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<Sess
             let range = in_range("m.ts_ms", &mut args);
             conds.push(format!(
                 "EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id
-                    AND coalesce(m.model, ?) = ? AND m.role = {MSG_ASSISTANT} AND m.billed = 1
-                    AND (m.in_tok > 0 OR m.out_tok > 0 OR m.cr_tok > 0 OR m.cc_tok > 0){range})"
+                    AND coalesce(m.model, ?) = ? AND {billed}{range})",
+                billed = billed_tokens_sql()
             ));
         }
         None => {}
@@ -337,9 +335,9 @@ pub fn session_detail(conn: &Connection, id: &str) -> CoreResult<Option<SessionD
 pub fn model_costs(conn: &Connection, session_id: &str) -> CoreResult<Vec<ModelCost>> {
     let mut st = conn.prepare_cached(&format!(
         "SELECT coalesce(model, ?2), coalesce(sum(cost), 0), count(*) FILTER (WHERE cost IS NULL)
-         FROM messages WHERE session_id = ?1 AND role = {MSG_ASSISTANT} AND billed = 1
-            AND (in_tok > 0 OR out_tok > 0 OR cr_tok > 0 OR cc_tok > 0)
-         GROUP BY 1 ORDER BY 2 DESC, 1"
+         FROM messages WHERE session_id = ?1 AND {billed}
+         GROUP BY 1 ORDER BY 2 DESC, 1",
+        billed = billed_tokens_sql()
     ))?;
     let rows = st.query_map(params![session_id, stats::UNKNOWN], |r| {
         Ok(ModelCost {

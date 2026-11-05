@@ -298,9 +298,10 @@ pub fn rebill(conn: &Connection, sessions: Option<&HashSet<String>>) -> CoreResu
                     coalesce(sum(out_tok) FILTER (WHERE agent_id = ''), 0),
                     coalesce(sum(cr_tok) FILTER (WHERE agent_id = ''), 0),
                     coalesce(sum(cc_tok) FILTER (WHERE agent_id = ''), 0),
-                    coalesce(sum(cost), 0), count(*) FILTER (WHERE cost IS NULL)
+                    coalesce(sum(cost), 0), count(*) FILTER (WHERE cost IS NULL AND {billed})
                 FROM messages m WHERE m.session_id = sessions.id AND m.role = {MSG_ASSISTANT}
-                    AND m.billed = 1){session_scope}"
+                    AND m.billed = 1){session_scope}",
+            billed = crate::stats::billed_tokens_sql()
         ),
         [],
     )?;
