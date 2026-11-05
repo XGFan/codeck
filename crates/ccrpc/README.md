@@ -153,7 +153,7 @@ ToH 状态目录与 Claude Code 配置目录缺省取 `TOH_STATE_DIR`、`CLAUDE_
 - 必须装 ccrpc 插件（[ADR-0003](docs/adr/0003-require-ccrpc-plugin.md)）：只含 hooks，只在 clay Pane 里生效，不占上下文，不改变 Claude Code 的表现（人在 TUI 上看到、能做的与没有插件时一样）。不加 MCP、channel，不用 `-p`。
 - 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录与 ToH 状态目录下的文件只读（插件由 `claude plugin` 命令安装）。
 - 只服务本机 clay 里的 Session，调用方也只在 Host 本机；不与人共用 Session（[ADR-0001](docs/adr/0001-own-pty-size-and-yield-on-takeover.md)）。
-- 命令按到达顺序逐条执行；排队只有 `follow_up`。
+- 命令按到达顺序逐条执行；排队只有 `follow_up`。例外：命令等待期间，不写入、不等待的命令（`get_state`、`get_screen` 等）立即作答，`abort` 在那条命令按完最后一个键后立即执行；它们只可能先于正在执行的那条，绝不先于更早收到的命令（见 spec 5 节）。
 - 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316 / 2.1.317，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
 
 ## 测试

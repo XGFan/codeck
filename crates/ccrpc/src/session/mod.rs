@@ -1,7 +1,9 @@
 //! The Controlled Session: one engine thread owns the Holder connection, the Process File view
 //! and the transcript tail; it executes commands in order and emits events. Commands that wait
-//! keep ticking, so events keep flowing while they wait (follow-ups are only sent from the top
-//! level loop, never from inside a waiting command).
+//! keep ticking, so events keep flowing while they wait, and stdin is still read: commands that
+//! neither write to the Pane nor wait are answered at once, `abort` runs once the waiting command
+//! has pressed its last key, the rest run after it (follow-ups are only sent from the top level
+//! loop, never from inside a waiting command).
 
 use std::collections::{HashSet, VecDeque};
 use std::os::unix::net::UnixStream;
@@ -249,6 +251,26 @@ pub struct Engine {
     exited: bool,
     /// Events are suppressed (initial settle).
     quiet: bool,
+    /// stdin's lines (set by `run`).
+    input: Option<Receiver<String>>,
+    /// Lines read while a command ran and not served then: run after it, in order.
+    deferred: VecDeque<String>,
+    /// The running command has pressed its last key and only waits: an `abort` may run now.
+    abort_point: bool,
+}
+
+/// Commands answered even while another one waits: they neither write to the Pane nor wait.
+fn serves_in_wait(c: &Command) -> bool {
+    matches!(
+        c,
+        Command::GetState
+            | Command::GetScreen
+            | Command::GetTasks
+            | Command::GetToolResult { .. }
+            | Command::GetImage { .. }
+            | Command::FollowUp { .. }
+            | Command::CancelFollowUp { .. }
+    )
 }
 
 impl Engine {
@@ -353,6 +375,9 @@ impl Engine {
             procfile_warned: false,
             exited: false,
             quiet: false,
+            input: None,
+            deferred: VecDeque::new(),
+            abort_point: false,
         })
     }
 
@@ -850,7 +875,8 @@ impl Engine {
             };
             let rx = self.history.page(&path, history::Query { ..q });
             let mut got = None;
-            self.wait_until(Duration::from_secs(120), |_| {
+            // It writes nothing to the Pane: an `abort` meanwhile need not wait for the page.
+            self.wait_after_keys(Duration::from_secs(120), |_| {
                 if got.is_none() {
                     got = rx.try_recv().ok();
                 }
@@ -1011,6 +1037,7 @@ impl Engine {
 
     /// Runs until stdin closes.
     pub fn run(mut self, input: Receiver<String>) -> Result<()> {
+        self.input = Some(input);
         self.settle();
         if let Some(f) = self.fatal.take() {
             self.conn.detach();
@@ -1031,9 +1058,18 @@ impl Engine {
                 crate::clog!("SIGTERM: detaching");
                 break;
             }
+            // Lines read while the last command ran come first, in order.
+            if let Some(line) = self.deferred.pop_front() {
+                self.handle_line(&line);
+                continue;
+            }
             // Taken before looking at stdin: a line arriving now still wakes the wait below.
             let seen = self.wake.seen();
-            match input.try_recv() {
+            let next = self
+                .input
+                .as_ref()
+                .map_or(Err(TryRecvError::Disconnected), Receiver::try_recv);
+            match next {
                 Ok(line) => self.handle_line(&line),
                 Err(TryRecvError::Empty) => {
                     self.tick();
@@ -1068,6 +1104,44 @@ impl Engine {
         self.announced = None;
         self.startup_checked = None;
         self.startup_last = None;
+    }
+
+    /// While a command waits: lines from stdin that neither write to the Pane nor wait (reads, the
+    /// follow-up queue) and bad lines are answered at once; at an abort point (the command pressed
+    /// its last key) an `abort` runs now, once there is a turn to abort. Never ahead of a line
+    /// that came earlier: once one waits for the command to end, the ones after it wait too.
+    /// Everything else runs after the command, in order. Only the `abort` waits (up to 10 s for
+    /// the turn to stop), nesting one level: `abort_point` is off meanwhile, so its own wait
+    /// answers reads but runs no second abort.
+    pub(super) fn serve_input(&mut self) {
+        let mut fresh = Vec::new();
+        if let Some(rx) = &self.input {
+            while let Ok(line) = rx.try_recv() {
+                fresh.push(line);
+            }
+        }
+        for line in fresh {
+            let now = self.deferred.is_empty()
+                && !matches!(rpc::parse_line(&line), Ok(r) if !serves_in_wait(&r.command));
+            if now {
+                self.handle_line(&line);
+            } else {
+                self.deferred.push_back(line);
+            }
+        }
+        if self.abort_point
+            && matches!(self.state, State::Busy | State::Waiting { .. })
+            && self
+                .deferred
+                .front()
+                .is_some_and(|l| rpc::parse_line(l).is_ok_and(|r| r.command == Command::Abort))
+            && let Some(line) = self.deferred.pop_front()
+        {
+            // Its own wait is no abort point: a second abort waits for it.
+            self.abort_point = false;
+            self.handle_line(&line);
+            self.abort_point = true;
+        }
     }
 
     fn handle_line(&mut self, line: &str) {

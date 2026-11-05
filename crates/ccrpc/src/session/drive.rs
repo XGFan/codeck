@@ -71,7 +71,7 @@ impl Engine {
         }
     }
 
-    /// Ticks until `cond` holds or `timeout` passes.
+    /// Ticks (and serves stdin, see [`Self::serve_input`]) until `cond` holds or `timeout` passes.
     pub(super) fn wait_until(
         &mut self,
         timeout: Duration,
@@ -81,6 +81,7 @@ impl Engine {
         loop {
             let seen = self.wake.seen();
             self.tick();
+            self.serve_input();
             if cond(self) {
                 return true;
             }
@@ -91,7 +92,20 @@ impl Engine {
         }
     }
 
-    /// Polls the screen until `f` returns `Some`.
+    /// [`Self::wait_until`] where the command has pressed its last key and only waits for the
+    /// outcome: an `abort` arriving meanwhile runs at once instead of after the command.
+    pub(super) fn wait_after_keys(
+        &mut self,
+        timeout: Duration,
+        cond: impl FnMut(&Engine) -> bool,
+    ) -> bool {
+        let was = std::mem::replace(&mut self.abort_point, true);
+        let ok = self.wait_until(timeout, cond);
+        self.abort_point = was;
+        ok
+    }
+
+    /// Polls the screen (serving stdin) until `f` returns `Some`.
     pub(super) fn wait_screen<T>(
         &mut self,
         timeout: Duration,
@@ -101,6 +115,7 @@ impl Engine {
         loop {
             let seen = self.conn.generation();
             self.tick();
+            self.serve_input();
             if let Ok(s) = self.screen()
                 && let Some(v) = f(self, &s)
             {
@@ -280,7 +295,7 @@ impl Engine {
             e.marks
                 .prompt_enqueued_after(before, &clean, !images.is_empty())
         };
-        let ok = self.wait_until(Duration::from_secs(30), |e| {
+        let ok = self.wait_after_keys(Duration::from_secs(30), |e| {
             found(e).is_some() || queued(e) || e.marks.blank_enqueued_after(before)
         });
         if !ok {
@@ -289,7 +304,7 @@ impl Engine {
         if found(self).is_none() && !queued(self) {
             // A blank enqueue may be another session's message: it is this prompt only when no
             // user entry follows at once and the text has left the input box.
-            self.wait_until(Duration::from_secs(2), |e| found(e).is_some() || queued(e));
+            self.wait_after_keys(Duration::from_secs(2), |e| found(e).is_some() || queued(e));
             let needle: String = clean
                 .trim()
                 .lines()
@@ -320,7 +335,7 @@ impl Engine {
                 .map(|(_, p, _)| p.clone())
         };
         if hook_prompt(self).is_none() {
-            self.wait_until(Duration::from_secs(1), |e| hook_prompt(e).is_some());
+            self.wait_after_keys(Duration::from_secs(1), |e| hook_prompt(e).is_some());
         }
         let prompt_id = hook_prompt(self);
         Ok(json!({"uuid": found(self), "prompt_id": prompt_id, "delivered_as": "prompt"}))
@@ -354,7 +369,7 @@ impl Engine {
         let before = self.marks.seq;
         self.paste_and_submit(&clean)?;
         let mut how = None;
-        self.wait_until(Duration::from_secs(10), |e| {
+        self.wait_after_keys(Duration::from_secs(10), |e| {
             // With images, the recorded text starts with their `[Image #n]` placeholders.
             let prompt = if with_images {
                 e.marks.prompt_with_images_after(before, &clean)
@@ -409,7 +424,7 @@ impl Engine {
         self.turn_active = true;
         self.last_text = None;
         self.keys(key::CTRL_ENTER)?;
-        if self.wait_until(Duration::from_secs(5), |e| e.queue.is_empty()) {
+        if self.wait_after_keys(Duration::from_secs(5), |e| e.queue.is_empty()) {
             Ok(json!({}))
         } else {
             err("timeout", "5 秒内队列里的内容没有发出")

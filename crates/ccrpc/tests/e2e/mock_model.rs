@@ -812,6 +812,107 @@ fn mock_model_follow_up() {
     );
 }
 
+/// While a command waits (here `prompt` of a slash command that opens a panel and leaves no record,
+/// ~30 s), commands that neither write nor wait are answered at once, in between, and `abort` runs
+/// at once; anything after a command that has to wait waits too (on the scripted model).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_reads_while_waiting() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.send(json!({"id": "w1", "type": "prompt", "text": "/status"}));
+    // The panel is up (a dialog): the prompt now waits for the transcript.
+    wait_state(&mut rpc, "waiting", 10);
+    let answered = |rpc: &Rpc, id: &str| {
+        rpc.seen
+            .iter()
+            .any(|v| v["type"] == "response" && v["id"] == id)
+    };
+    let t = Instant::now();
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert!(st["state"].is_string(), "{st}");
+    let q = rpc.call("f1", json!({"type": "follow_up", "text": "LATER"}));
+    assert_eq!(q["queued"], 1, "{q}");
+    let c = rpc.call("c1", json!({"type": "cancel_follow_up"}));
+    assert_eq!(c["removed"], 1, "{c}");
+    assert!(
+        t.elapsed() < Duration::from_secs(3),
+        "等待中的命令期间只读命令没有立即作答：{:?}",
+        t.elapsed()
+    );
+    assert!(!answered(&rpc, "w1"), "prompt 没在等待：{:?}", rpc.seen);
+    // The prompt pressed its last key and only waits: `abort` runs now (Esc closes the panel),
+    // and the prompt still ends on its own afterwards.
+    let t = Instant::now();
+    let a = rpc.call("a1", json!({"type": "abort"}));
+    assert!(
+        t.elapsed() < Duration::from_secs(3),
+        "等待中的命令期间 abort 没有立即执行：{:?}",
+        t.elapsed()
+    );
+    assert_eq!(a["state"], "idle", "{a}");
+    assert!(!answered(&rpc, "w1"), "prompt 在 abort 之前就结束了");
+    // A command that writes waits for the prompt (already in manual mode: set_mode presses no
+    // key), and so does a read sent after it (never ahead of a command received earlier).
+    rpc.send(json!({"id": "k2", "type": "set_mode", "mode": "manual"}));
+    rpc.send(json!({"id": "g2", "type": "get_state"}));
+    let r = rpc.until("w1", Duration::from_secs(40), |v| v["id"] == "w1");
+    assert_eq!(r["error"]["code"], "timeout", "{r}");
+    assert!(
+        !answered(&rpc, "k2") && !answered(&rpc, "g2"),
+        "排在后面的命令先于 prompt 作答：{:?}",
+        rpc.seen
+    );
+    let k = rpc.until("k2", Duration::from_secs(5), |v| v["id"] == "k2");
+    assert_eq!(k["success"], true, "{k}");
+    assert!(
+        !answered(&rpc, "g2"),
+        "get_state 先于更早收到的 set_mode 作答"
+    );
+    let g = rpc.until("g2", Duration::from_secs(5), |v| v["id"] == "g2");
+    assert_eq!(g["data"]["state"], "idle", "{g}");
+    settle_idle(&mut rpc);
+}
+
+/// `abort` sent while a follow-up goes out ends the follow-up's turn (it runs once the follow-up
+/// has been typed, during the wait for the transcript or right after it), and the follow-up is not
+/// reported failed (on the scripted model).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_abort_follow_up() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.call(
+        "f1",
+        json!({"type": "follow_up", "text": "MOCK-SLOW again"}),
+    );
+    let t1 = rpc.event("turn_end", Duration::from_secs(60));
+    assert_eq!(t1["aborted"], false, "{t1}");
+    // The follow-up is being sent: its prompt shows up in the transcript.
+    rpc.until("follow-up", Duration::from_secs(20), |v| {
+        v["type"] == "block" && v["kind"] == "user" && v["text"] == "MOCK-SLOW again"
+    });
+    rpc.send(json!({"id": "a1", "type": "abort"}));
+    let a = rpc.until("a1", Duration::from_secs(15), |v| v["id"] == "a1");
+    assert_eq!(a["success"], true, "{a}");
+    let t2 = rpc.until("turn_end", Duration::from_secs(15), |v| {
+        v["type"] == "turn_end" || v["type"] == "follow_up_failed"
+    });
+    assert_eq!(t2["type"], "turn_end", "{t2}");
+    assert_eq!(t2["aborted"], true, "{t2}");
+    assert!(
+        !t2["last_text"].as_str().is_some_and(|t| t.contains("slow")),
+        "{t2}"
+    );
+}
+
 /// `exit` while a background task runs: Claude Code asks first; without `stop_tasks` the question is
 /// dismissed and `exit` fails, with it the tasks are stopped and claude exits (on the scripted model).
 #[test]
