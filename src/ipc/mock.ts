@@ -639,7 +639,8 @@ export function createMockApi(): Api {
 
   return {
     getAppInfo: () => later((): AppInfo => appInfo),
-    // Like the backend: a blank path resets to the default; the directory must exist (here: any absolute path).
+    // Like the backend: a blank path resets to the default; the directory must exist (a mock simplification:
+    // any absolute path counts as existing, a relative one does not).
     // Then the new root's Live Sessions and its full scan's changes follow the reply.
     setDataRoot: (path) =>
       later((): AppInfo => {
