@@ -1,6 +1,7 @@
 //! Background worker: consumes jobs (full scan, FS batches, text backlog, rebuild, root swap)
 //! over a channel and emits events.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +28,8 @@ const STATUS_INTERVAL: Duration = Duration::from_millis(200); // <= 5 events/s
 pub enum Job {
     /// Stat walk + metadata parse; followed by `TextBacklog`.
     FullScan,
-    /// Debounced filesystem batch (paths under `<root>/projects` or `<root>/sessions`).
+    /// Debounced filesystem batch (paths under `<root>/projects` or `<root>/sessions`). Queued
+    /// batches merge into the first one.
     Fs(Vec<PathBuf>),
     /// Requests the full-text backlog. Requests coalesce; the backlog runs whenever no other job
     /// is queued and yields to any other job between transactions (A14b).
@@ -42,7 +44,6 @@ pub enum Job {
         data_root: Option<String>,
         reply: Sender<CoreResult<AppInfo>>,
     },
-    PollLive,
     /// Periodic stat rescan; also refreshes the watcher (new symlinked projects).
     Rescan,
     /// Fetches the price list in the background when the cached one is a day old.
@@ -82,9 +83,10 @@ pub fn channel() -> (JobSender, Receiver<Job>, Arc<AtomicBool>) {
     )
 }
 
-/// Spawns the worker and the timer feeding it live polls and periodic rescans.
+/// Spawns the worker and the timer: it polls Live Sessions itself (process files only, no index:
+/// it neither waits behind indexing nor interrupts it) and queues periodic rescans.
 pub fn spawn(app: AppHandle, rx: Receiver<Job>, jobs: JobSender, backlog_cancel: Arc<AtomicBool>) {
-    let timer_jobs = jobs.clone();
+    let (timer_app, timer_jobs) = (app.clone(), jobs.clone());
     std::thread::Builder::new()
         .name("cv-timer".into())
         .spawn(move || {
@@ -92,14 +94,13 @@ pub fn spawn(app: AppHandle, rx: Receiver<Job>, jobs: JobSender, backlog_cancel:
             loop {
                 std::thread::sleep(LIVE_POLL);
                 polls += 1;
-                let job = if polls.is_multiple_of(RESCAN_EVERY_POLLS) {
-                    Job::Rescan
+                if polls.is_multiple_of(RESCAN_EVERY_POLLS) {
+                    if !timer_jobs.send(Job::Rescan) || !timer_jobs.send(Job::RefreshPrices) {
+                        break;
+                    }
                 } else {
-                    Job::PollLive
-                };
-                let refresh = polls.is_multiple_of(RESCAN_EVERY_POLLS);
-                if !timer_jobs.send(job) || (refresh && !timer_jobs.send(Job::RefreshPrices)) {
-                    break;
+                    let engine = timer_app.state::<AppState>().engine();
+                    poll_live(&timer_app, &engine);
                 }
             }
         })
@@ -128,12 +129,15 @@ enum Step {
     Backlog,
 }
 
-/// The job queue plus the coalesced text-backlog request. Queued jobs always go first; the
-/// backlog runs only when the queue is empty and stays requested until it completes.
+/// The job queue plus the coalesced text-backlog request. Queued jobs always go first, in order,
+/// except that filesystem batches merge into the first one queued; the backlog runs only when the
+/// queue is empty and stays requested until it completes.
 struct Queue {
     rx: Receiver<Job>,
     backlog_cancel: Arc<AtomicBool>,
     backlog: bool,
+    /// Received but not run yet.
+    pending: VecDeque<Job>,
 }
 
 impl Queue {
@@ -142,28 +146,69 @@ impl Queue {
             rx,
             backlog_cancel,
             backlog: false,
+            pending: VecDeque::new(),
         }
     }
 
-    /// Blocks for the next step; `None` once every sender is gone.
+    /// Blocks for the next step; `None` once every sender is gone and nothing is left.
     fn next(&mut self) -> Option<Step> {
         loop {
             if self.backlog {
                 // Cleared before looking at the queue: any job sent from here on raises it again,
                 // so a running backlog yields to it.
                 self.backlog_cancel.store(false, Ordering::Relaxed);
+            }
+            let mut gone = false;
+            loop {
                 match self.rx.try_recv() {
-                    Ok(Job::TextBacklog) => continue,
-                    Ok(job) => return Some(Step::Job(job)),
-                    Err(TryRecvError::Empty) => return Some(Step::Backlog),
-                    Err(TryRecvError::Disconnected) => return None,
+                    Ok(job) => self.push(job),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        gone = true;
+                        break;
+                    }
                 }
             }
+            if let Some(job) = self.take() {
+                return Some(Step::Job(job));
+            }
+            if gone {
+                return None;
+            }
+            if self.backlog {
+                return Some(Step::Backlog);
+            }
             match self.rx.recv() {
-                Ok(Job::TextBacklog) => self.backlog = true,
-                Ok(job) => return Some(Step::Job(job)),
+                Ok(job) => self.push(job),
                 Err(_) => return None,
             }
+        }
+    }
+
+    fn push(&mut self, job: Job) {
+        match job {
+            Job::TextBacklog => self.backlog = true,
+            job => self.pending.push_back(job),
+        }
+    }
+
+    /// The next job; a filesystem batch takes in every other queued batch (each one re-runs the
+    /// same stat walk).
+    fn take(&mut self) -> Option<Job> {
+        match self.pending.pop_front()? {
+            Job::Fs(mut paths) => {
+                self.pending.retain(|j| match j {
+                    Job::Fs(more) => {
+                        paths.extend(more.iter().cloned());
+                        false
+                    }
+                    _ => true,
+                });
+                paths.sort();
+                paths.dedup();
+                Some(Job::Fs(paths))
+            }
+            job => Some(job),
         }
     }
 }
@@ -212,7 +257,6 @@ impl Worker {
                     let result = engine.rebuild(&self.progress());
                     self.scan_done(&engine, "rebuild", result);
                 }
-                Job::PollLive => self.poll_live(&engine),
                 Job::RefreshPrices => self.refresh_prices(&engine),
                 Job::ApplyPrices(json) => match engine.update_prices(&json) {
                     Ok(true) => {
@@ -368,8 +412,8 @@ impl Worker {
                 Ok(cs) => {
                     let any = !cs.changed.is_empty() || !cs.removed.is_empty();
                     self.emit_changes(cs);
-                    self.emit_status(engine.index_status());
                     if any {
+                        self.emit_status(engine.index_status());
                         self.jobs.send(Job::TextBacklog);
                     }
                 }
@@ -377,17 +421,7 @@ impl Worker {
             }
         }
         if !live.is_empty() {
-            self.poll_live(engine);
-        }
-    }
-
-    fn poll_live(&self, engine: &Engine) {
-        match engine.poll_live() {
-            Ok(Some(live)) => {
-                let _ = LiveChangedEvent(live).emit(&self.app);
-            }
-            Ok(None) => {}
-            Err(e) => log_err("poll_live", &e),
+            poll_live(&self.app, engine);
         }
     }
 
@@ -408,6 +442,17 @@ impl Worker {
     }
 }
 
+/// Emits the Live Sessions when they changed since the last poll.
+fn poll_live(app: &AppHandle, engine: &Engine) {
+    match engine.poll_live() {
+        Ok(Some(live)) => {
+            let _ = LiveChangedEvent(live).emit(app);
+        }
+        Ok(None) => {}
+        Err(e) => log_err("poll_live", &e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,9 +468,9 @@ mod tests {
         // Two backlog requests used to requeue each other forever (worker livelock).
         jobs.send(Job::TextBacklog);
         jobs.send(Job::TextBacklog);
-        jobs.send(Job::PollLive);
+        jobs.send(Job::Rescan);
         jobs.send(Job::TextBacklog);
-        assert!(matches!(q.next(), Some(Step::Job(Job::PollLive))));
+        assert!(matches!(q.next(), Some(Step::Job(Job::Rescan))));
         assert!(matches!(q.next(), Some(Step::Backlog)));
         assert!(q.rx.is_empty());
     }
@@ -436,17 +481,36 @@ mod tests {
         jobs.send(Job::TextBacklog);
         assert!(matches!(q.next(), Some(Step::Backlog)));
         assert!(!q.backlog_cancel.load(Ordering::Relaxed));
-        // A poll arriving while the backlog runs asks it to yield.
-        jobs.send(Job::PollLive);
+        // A job arriving while the backlog runs asks it to yield.
+        jobs.send(Job::FullScan);
         assert!(q.backlog_cancel.load(Ordering::Relaxed));
-        // The backlog yielded (still wanted): the poll runs first, then the backlog resumes.
-        assert!(matches!(q.next(), Some(Step::Job(Job::PollLive))));
+        // The backlog yielded (still wanted): the job runs first, then the backlog resumes.
+        assert!(matches!(q.next(), Some(Step::Job(Job::FullScan))));
         assert!(matches!(q.next(), Some(Step::Backlog)));
         assert!(!q.backlog_cancel.load(Ordering::Relaxed));
         // Completed: the queue blocks again until the next job.
         q.backlog = false;
         jobs.send(Job::Rescan);
         assert!(matches!(q.next(), Some(Step::Job(Job::Rescan))));
+        drop(jobs);
+        assert!(q.next().is_none());
+    }
+
+    #[test]
+    fn queued_fs_batches_merge_into_the_first_one() {
+        let (jobs, mut q) = queue();
+        let p = |s: &str| PathBuf::from(s);
+        jobs.send(Job::Fs(vec![p("/r/a"), p("/r/b")]));
+        jobs.send(Job::Rebuild);
+        jobs.send(Job::Fs(vec![p("/r/b"), p("/r/c")]));
+        jobs.send(Job::Fs(vec![p("/r/d")]));
+        match q.next() {
+            Some(Step::Job(Job::Fs(paths))) => {
+                assert_eq!(paths, [p("/r/a"), p("/r/b"), p("/r/c"), p("/r/d")]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(q.next(), Some(Step::Job(Job::Rebuild))));
         drop(jobs);
         assert!(q.next().is_none());
     }

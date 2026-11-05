@@ -5,6 +5,7 @@ import { useUi } from "@/state/ui";
 import { queryKeys } from "./hooks";
 
 const FOLLOW_THROTTLE_MS = 1000;
+const LIST_THROTTLE_MS = 1000;
 const STATS_THROTTLE_MS = 10_000;
 
 /** Leading + trailing throttle: runs `fn` at once, then at most once per `ms`. */
@@ -65,14 +66,19 @@ export function useBackendEvents() {
     const follower = createFollower(qc);
     // Stats aggregate every Session; live appends would recompute them about once per second otherwise.
     const stats = createThrottle(() => void qc.invalidateQueries({ queryKey: ["stats"] }), STATS_THROTTLE_MS);
+    // While Claude writes, changes arrive a few times a second; each list refetch reads the process
+    // files and queries the index.
+    const lists = createThrottle(() => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions() });
+      void qc.invalidateQueries({ queryKey: queryKeys.projects });
+    }, LIST_THROTTLE_MS);
     const unlisten: Array<() => void> = [];
     let disposed = false;
     const keep = (p: Promise<() => void>) => void p.then((fn) => (disposed ? fn() : unlisten.push(fn)));
 
     keep(
       api.onSessionsChanged((p) => {
-        void qc.invalidateQueries({ queryKey: queryKeys.sessions() });
-        void qc.invalidateQueries({ queryKey: queryKeys.projects });
+        lists.run();
         stats.run();
         for (const id of p.changed) {
           void qc.invalidateQueries({ queryKey: queryKeys.session(id) });
@@ -88,8 +94,7 @@ export function useBackendEvents() {
     );
     keep(
       api.onLiveChanged(() => {
-        void qc.invalidateQueries({ queryKey: queryKeys.sessions() });
-        void qc.invalidateQueries({ queryKey: queryKeys.projects });
+        lists.run();
         void qc.invalidateQueries({ queryKey: ["session"] });
       }),
     );
@@ -106,6 +111,7 @@ export function useBackendEvents() {
       disposed = true;
       follower.dispose();
       stats.dispose();
+      lists.dispose();
       unlisten.forEach((fn) => fn());
     };
   }, [qc]);
