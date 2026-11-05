@@ -20,8 +20,8 @@ import { langFromPath } from "@/lib/shiki";
 import { cn } from "@/lib/cn";
 import { scrollToNode } from "../nodes/scroll";
 import { toolKey } from "../keys";
-import { prettyJson } from "../util";
-import { parseJson, useFullInput, useOutput, type ToolCtx } from "./data";
+import { parseJson, prettyJson } from "../util";
+import { useFullInput, useOutput, type ToolCtx } from "./data";
 import {
   CodeView,
   ImageRefs,

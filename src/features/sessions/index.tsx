@@ -10,17 +10,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LiveDot, type LiveDotState } from "@/components/LiveDot";
 import { NewSessionButton, NewSessionError, useConnect, useUnread } from "@/features/connect";
-import type { Drill, ProjectSummary, SessionQuery, SessionSort, SessionSummary } from "@/ipc/bindings";
+import type { Drill, ProjectSummary, SessionSort, SessionSummary } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
-import { formatCost, formatRelative, formatSpan, formatTokens } from "@/lib/format";
-import { useProjects, useSessionList, useSessions } from "@/queries";
+import { formatCost, formatCount, formatRelative, formatSpan, formatTokens } from "@/lib/format";
+import { useAllSessions, useProjects, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
 import { pendingSessions, type PendingSession } from "./pending";
 
 const ROW_HEIGHT = 60;
 /** Stable while the list loads, so the rows are not rebuilt on every render. */
 const NO_SESSIONS: SessionSummary[] = [];
-const nf = new Intl.NumberFormat("en-US");
 
 const SORTS: { value: SessionSort; menu: string; order: string }[] = [
   { value: "lastActive", menu: "时间", order: "时间" },
@@ -29,15 +28,6 @@ const SORTS: { value: SessionSort; menu: string; order: string }[] = [
   { value: "tokens", menu: "Token", order: "Token" },
   { value: "cost", menu: "Cost", order: "Cost" },
 ];
-
-/** Every Session, unfiltered: which ones are indexed while a Project filter hides some. */
-const ALL_SESSIONS: SessionQuery = {
-  projectIds: [],
-  sort: "lastActive",
-  descending: true,
-  timeRange: null,
-  drill: null,
-};
 
 /**
  * Sessions in `ccrpc ls` that are not indexed yet (opened in clay, no prompt sent): placeholder rows at the top.
@@ -49,7 +39,8 @@ function usePending(list: SessionSummary[] | undefined, projects: ProjectSummary
   const drill = useUi((s) => s.statsDrill);
   const filtered = projectIds.length > 0;
   const wanted = !drill && ls.some((e) => e.session_id);
-  const { data: all } = useSessions(ALL_SESSIONS, filtered && wanted);
+  // Every Session: which ones are indexed while a Project filter hides some.
+  const { data: all } = useAllSessions(filtered && wanted);
   const source = filtered ? all : list;
   return useMemo(() => {
     if (!wanted) return [];
@@ -140,7 +131,7 @@ export function SessionList() {
           </span>
         )}
         <span data-testid="list-count" className="shrink-0 tabular-nums">
-          {nf.format(items.length)}
+          {formatCount(items.length)}
         </span>
         <span className="flex-1" />
         <NewSessionButton />

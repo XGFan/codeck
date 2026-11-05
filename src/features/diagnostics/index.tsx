@@ -5,8 +5,7 @@ import { api } from "@/ipc";
 import type { Diagnostics, NameCount } from "@/ipc/bindings";
 import { queryKeys, useDiagnostics, useIndexStatus } from "@/queries";
 import { errorText } from "@/lib/errors";
-
-const nf = new Intl.NumberFormat("en-US");
+import { formatCount } from "@/lib/format";
 
 const cmpVersion = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
@@ -25,8 +24,8 @@ export function diagnosticsReport(d: Diagnostics): string {
   return [
     "# 格式兼容性报告",
     "",
-    `- 扫描文件 ${nf.format(d.filesScanned)} 个，Session ${nf.format(d.sessions)} 个（空 ${nf.format(d.emptySessions)} 个）`,
-    `- 解析失败 ${nf.format(d.failedLines)} 行，重复 uuid ${nf.format(d.duplicateUuids)} 个，孤立 Subagent ${nf.format(d.orphanSubagents)} 个`,
+    `- 扫描文件 ${formatCount(d.filesScanned)} 个，Session ${formatCount(d.sessions)} 个（空 ${formatCount(d.emptySessions)} 个）`,
+    `- 解析失败 ${formatCount(d.failedLines)} 行，重复 uuid ${formatCount(d.duplicateUuids)} 个，孤立 Subagent ${formatCount(d.orphanSubagents)} 个`,
     "",
     ...nameCountRows("未知条目类型", d.unknownEntryTypes),
     ...nameCountRows("未知内容块类型", d.unknownBlockTypes),
@@ -90,7 +89,7 @@ function NameCountSection({ title, rows, testId }: { title: string; rows: NameCo
             style={{ gridTemplateColumns: "2fr 1fr 1fr" }}
           >
             <code className="truncate font-mono">{r.name}</code>
-            <span className="text-right tabular-nums">{nf.format(r.count)}</span>
+            <span className="text-right tabular-nums">{formatCount(r.count)}</span>
             <span className="truncate text-right text-secondary" title={r.versions.join(", ")}>
               {r.versions.join(", ")}
             </span>
@@ -146,8 +145,8 @@ export function DiagnosticsContent() {
         <div className="min-w-60 flex-1">
           <h2 className="m-0 text-[15px] font-semibold">格式兼容性</h2>
           <div className="text-xs text-secondary">
-            {nf.format(d.filesScanned)} 个文件 · {nf.format(d.sessions)} 个 Session（空 {nf.format(d.emptySessions)}{" "}
-            个）
+            {formatCount(d.filesScanned)} 个文件 · {formatCount(d.sessions)} 个 Session（空{" "}
+            {formatCount(d.emptySessions)} 个）
             {range ? ` · 涉及 Claude Code ${range}` : ""}
           </div>
         </div>
@@ -165,12 +164,12 @@ export function DiagnosticsContent() {
       )}
 
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        <Card testId="diag-card-parsed" label="已扫描文件" tone="neutral" value={nf.format(d.filesScanned)} />
+        <Card testId="diag-card-parsed" label="已扫描文件" tone="neutral" value={formatCount(d.filesScanned)} />
         <Card
           testId="diag-card-failed"
           label="解析失败"
           tone={d.failedLines ? "error" : "neutral"}
-          value={`${nf.format(d.failedLines)} 行`}
+          value={`${formatCount(d.failedLines)} 行`}
         />
         <Card
           testId="diag-card-types"
@@ -203,9 +202,9 @@ export function DiagnosticsContent() {
                 style={{ gridTemplateColumns: "2fr repeat(4, 1fr)" }}
               >
                 <code className="font-mono">{v.version}</code>
-                <span className="text-right">{nf.format(v.sessions)}</span>
-                <span className={`text-right ${v.failedLines ? "text-error" : ""}`}>{nf.format(v.failedLines)}</span>
-                <span className="text-right">{nf.format(v.unknownItems)}</span>
+                <span className="text-right">{formatCount(v.sessions)}</span>
+                <span className={`text-right ${v.failedLines ? "text-error" : ""}`}>{formatCount(v.failedLines)}</span>
+                <span className="text-right">{formatCount(v.unknownItems)}</span>
                 <span className="text-right text-secondary">{new Date(v.lastSeenMs).toLocaleDateString("zh-CN")}</span>
               </div>
             ))}
@@ -226,7 +225,7 @@ export function DiagnosticsContent() {
                 <code className="min-w-60 flex-[3] truncate font-mono text-[11px]" title={f.path}>
                   {f.path}
                 </code>
-                <span className="w-16 text-right tabular-nums">{nf.format(f.failedLines)} 行</span>
+                <span className="w-16 text-right tabular-nums">{formatCount(f.failedLines)} 行</span>
                 <span className="min-w-40 flex-[2] text-error">{f.firstError}</span>
                 <button type="button" className="text-accent hover:underline" onClick={() => void copy(f.path, f.path)}>
                   {copied === f.path ? "已复制" : "复制路径"}
@@ -239,10 +238,10 @@ export function DiagnosticsContent() {
 
       <div data-testid="diag-integrity" className="flex gap-6 text-xs text-secondary">
         <span>
-          重复 uuid <b className="tabular-nums text-text">{nf.format(d.duplicateUuids)}</b>
+          重复 uuid <b className="tabular-nums text-text">{formatCount(d.duplicateUuids)}</b>
         </span>
         <span>
-          孤立 Subagent <b className="tabular-nums text-text">{nf.format(d.orphanSubagents)}</b>
+          孤立 Subagent <b className="tabular-nums text-text">{formatCount(d.orphanSubagents)}</b>
         </span>
       </div>
     </div>

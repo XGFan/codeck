@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { DiagnosticsContent } from "@/features/diagnostics";
 import { CcrpcSettings } from "@/features/connect";
+import { formatCount } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import { api } from "@/ipc";
 import type { DataRootSource } from "@/ipc/bindings";
@@ -14,7 +15,6 @@ import { queryKeys, useAppInfo, useIndexStatus } from "@/queries";
 import { useUi } from "@/state/ui";
 import { errorText } from "@/lib/errors";
 
-const nf = new Intl.NumberFormat("en-US");
 const SOURCE_LABEL: Record<DataRootSource, string> = {
   settings: "设置",
   env: "环境变量 CLAUDE_CONFIG_DIR",
@@ -133,10 +133,10 @@ function DataTab() {
     : status.phase === "error"
       ? `索引失败${status.error ? ` · ${status.error}` : ""}`
       : status.phase === "scanning"
-        ? `正在扫描 ${nf.format(status.filesDone)} / ${nf.format(status.filesTotal)} 个文件`
+        ? `正在扫描 ${formatCount(status.filesDone)} / ${formatCount(status.filesTotal)} 个文件`
         : status.phase === "indexingText"
           ? "正在建立搜索索引"
-          : `已索引 ${nf.format(status.sessionsTotal)} 个 Session${status.textReady ? "" : " · 搜索索引未完成"}`;
+          : `已索引 ${formatCount(status.sessionsTotal)} 个 Session${status.textReady ? "" : " · 搜索索引未完成"}`;
 
   return (
     <div className="divide-y divide-border">

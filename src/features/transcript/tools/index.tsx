@@ -1,5 +1,6 @@
 import type { ToolCall, TranscriptScope } from "@/ipc/bindings";
 import { BashView, CompactView, EditView, GenericView, ReadView, TaskView, WriteView } from "./renderers";
+import { parseJson } from "../util";
 import { useToolCtx } from "./data";
 
 export { ImageRefs, ImageThumb, PendingText } from "./parts";
@@ -9,14 +10,10 @@ const SUMMARY_KEYS = ["command", "file_path", "path", "pattern", "url", "query",
 
 /** One short line describing a call's input: the first well-known string field, else the first string. */
 export function summarizeInput(inputJson: string): string {
-  try {
-    const v = JSON.parse(inputJson) as Record<string, unknown>;
-    if (v && typeof v === "object") {
-      for (const k of SUMMARY_KEYS) if (typeof v[k] === "string" && v[k]) return firstLine(v[k]);
-      for (const x of Object.values(v)) if (typeof x === "string" && x) return firstLine(x);
-    }
-  } catch {
-    /* fall through */
+  const v = parseJson(inputJson);
+  if (v && typeof v === "object") {
+    for (const k of SUMMARY_KEYS) if (typeof v[k] === "string" && v[k]) return firstLine(v[k]);
+    for (const x of Object.values(v)) if (typeof x === "string" && x) return firstLine(x);
   }
   return "";
 }

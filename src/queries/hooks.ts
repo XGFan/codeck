@@ -44,6 +44,17 @@ export const useSessions = (query: SessionQuery, enabled = true) =>
     enabled,
   });
 
+const ALL_SESSIONS: SessionQuery = {
+  projectIds: [],
+  sort: "lastActive",
+  descending: true,
+  timeRange: null,
+  drill: null,
+};
+
+/** Every Session, unfiltered, most recent first: not the list on screen, whose Project / time filter may hide some. */
+export const useAllSessions = (enabled = true) => useSessions(ALL_SESSIONS, enabled);
+
 /** Session list for the current project / sort selection in the UI store. */
 export function useSessionList() {
   const projectIds = useUi((s) => s.projectIds);

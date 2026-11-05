@@ -7,6 +7,16 @@ export const clock = (ms: number | null | undefined): string => (ms == null ? ""
 export const commandLine = (name: string, args: string): string =>
   name === "!" ? `!${args}` : `${name} ${args}`.trim();
 
+/** Parses JSON text (a tool call's input, a result's extra); `null` when it is missing or does not parse. */
+export function parseJson<T = Record<string, unknown>>(text: string | null | undefined): T | null {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 /** Pretty-prints JSON text; returns the input unchanged when it does not parse. */
 export function prettyJson(text: string): string {
   try {

@@ -1,8 +1,7 @@
 import { StatsToggle } from "@/features/layout";
 import { SettingsButton } from "@/features/settings";
+import { formatCount } from "@/lib/format";
 import { useIndexStatus } from "@/queries";
-
-const nf = new Intl.NumberFormat("en-US");
 
 /**
  * The foot of the Session list: index status, then stats and settings. While the list is hidden the two buttons
@@ -37,7 +36,7 @@ export function StatusBar() {
         <>
           <span>{s.phase === "scanning" ? "正在扫描" : "正在建立全文索引"}</span>
           <span className="tabular-nums">
-            {nf.format(s.filesDone)} / {nf.format(s.filesTotal)} 个文件
+            {formatCount(s.filesDone)} / {formatCount(s.filesTotal)} 个文件
           </span>
           <span
             role="progressbar"
@@ -50,7 +49,7 @@ export function StatusBar() {
           </span>
         </>
       ) : (
-        <span>已索引 {nf.format(s.sessionsTotal)} 个 Session</span>
+        <span>已索引 {formatCount(s.sessionsTotal)} 个 Session</span>
       )}
       {actions}
     </div>

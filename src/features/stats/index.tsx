@@ -9,8 +9,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Drill, Stats } from "@/ipc/bindings";
+import { Dialog, PanelDialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/cn";
-import { formatCost, formatTokens } from "@/lib/format";
+import { formatCost, formatCount, formatTokens } from "@/lib/format";
 import { useStats } from "@/queries";
 import { useUi } from "@/state/ui";
 import { Chart, useDark } from "./Chart";
@@ -29,7 +30,6 @@ import {
 import { DEFAULT_RANGE, pageable, RANGE_MENU, resolveRange, sameRange, type RangeSel } from "./range";
 
 const DAY = 86_400_000;
-const num = (n: number) => n.toLocaleString("en-US");
 
 function Segmented<T extends string>({
   label,
@@ -185,7 +185,7 @@ function TokenCard({ stats }: { stats: Stats }) {
 }
 
 /** A daily average: one decimal below 10, so a quiet range does not read as 0. */
-const perDay = (v: number) => (v < 10 ? String(Math.round(v * 10) / 10) : num(Math.round(v)));
+const perDay = (v: number) => (v < 10 ? String(Math.round(v * 10) / 10) : formatCount(Math.round(v)));
 
 function Overview({ stats, rangeDays }: { stats: Stats; rangeDays: number | null }) {
   const { overview: o, daily } = stats;
@@ -195,14 +195,14 @@ function Overview({ stats, rangeDays }: { stats: Stats; rangeDays: number | null
     {
       id: "sessions",
       label: "Session",
-      value: num(o.sessions),
+      value: formatCount(o.sessions),
       sub: o.activeDays ? `日均 ${perDay(o.sessions / o.activeDays)} 个` : "—",
     },
     {
       id: "messages",
       label: "消息",
-      value: num(o.messages),
-      sub: o.activeDays ? `日均 ${num(Math.round(o.messages / o.activeDays))} 条` : "—",
+      value: formatCount(o.messages),
+      sub: o.activeDays ? `日均 ${formatCount(Math.round(o.messages / o.activeDays))} 条` : "—",
     },
     {
       id: "cost",
@@ -210,7 +210,7 @@ function Overview({ stats, rangeDays }: { stats: Stats; rangeDays: number | null
       value: formatCost(o.cost),
       sub:
         o.unpricedMessages > 0
-          ? `${num(o.unpricedMessages)} 条消息无价格，未计入`
+          ? `${formatCount(o.unpricedMessages)} 条消息无价格，未计入`
           : o.activeDays
             ? `日均 ${formatCost(o.cost / o.activeDays)}`
             : "—",
@@ -314,18 +314,16 @@ export function StatsDialog() {
   const open = useUi((s) => s.statsOpen);
   const setOpen = useUi((s) => s.setStatsOpen);
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay data-testid="stats-overlay" className="fixed inset-0 z-50 bg-[rgba(28,28,30,0.28)]" />
-        <DialogPrimitive.Content
-          aria-describedby={undefined}
-          onOpenAutoFocus={(e) => e.preventDefault()}
-          className="fixed top-1/2 left-1/2 z-50 h-[min(900px,calc(100vh-64px))] w-[min(1280px,calc(100vw-64px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[14px] border border-border text-text shadow-[0_24px_64px_rgba(0,0,0,0.22),0_2px_8px_rgba(0,0,0,0.08)] outline-none"
-        >
-          <StatsPanel />
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <PanelDialogContent
+        overlayTestId="stats-overlay"
+        aria-describedby={undefined}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="top-1/2 h-[min(900px,calc(100vh-64px))] w-[min(1280px,calc(100vw-64px))] -translate-y-1/2 outline-none"
+      >
+        <StatsPanel />
+      </PanelDialogContent>
+    </Dialog>
   );
 }
 

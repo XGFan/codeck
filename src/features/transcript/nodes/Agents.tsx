@@ -6,7 +6,7 @@ import { useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 import type { AgentCardData } from "../grouping";
 import { DONE, FAILED, type RunState, runState } from "../runState";
-import { clock, elapsed, shortModel } from "../util";
+import { clock, elapsed, parseJson, shortModel } from "../util";
 import { Anchor } from "./Anchor";
 import { scrollToNode, useTranscriptCtx } from "./scroll";
 
@@ -47,12 +47,8 @@ const runDuration = (r: SubagentRun) => (r.startedMs != null && r.endedMs != nul
 function promptOf(run: SubagentRun, call?: ToolCall): string | null {
   if (run.promptPreview) return run.promptPreview;
   if (!call) return null;
-  try {
-    const v = JSON.parse(call.inputJson) as { prompt?: unknown };
-    return typeof v.prompt === "string" ? v.prompt : null;
-  } catch {
-    return null;
-  }
+  const prompt = parseJson<{ prompt?: unknown }>(call.inputJson)?.prompt;
+  return typeof prompt === "string" ? prompt : null;
 }
 
 /** Subagent Run card: type, description, model/messages/duration, task and result previews, open link. */

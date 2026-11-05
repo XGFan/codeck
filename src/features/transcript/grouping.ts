@@ -1,5 +1,6 @@
 import type { AssistantBlock, BranchPoint, InheritedRange, Node, SubagentRun, WorkflowRun } from "@/ipc/bindings";
 import { compactKey, foldKey, groupKey, INHERITED_KEY, thinkingKey, toolKey } from "./keys";
+import { parseJson } from "./util";
 
 /**
  * Presentation-only shaping of a Transcript (§3 "Transformation split"): Rust emits normalized nodes, this
@@ -494,17 +495,17 @@ export function describeCalls(calls: ToolCallBlock[]): { text: string; targets: 
     if (v && !targets.includes(v)) targets.push(v);
   };
   for (const c of calls) {
-    const input = parseInput(c.inputJson);
-    const file = str(input.file_path) ?? str(input.notebook_path);
+    const input = parseJson(c.inputJson) ?? {};
+    const file = nonEmpty(input.file_path) ?? nonEmpty(input.notebook_path);
     if (c.name === "Read") {
       read++;
       add(baseName(file));
     } else if (c.name === "Bash") {
       commands++;
-      add(str(input.command)?.split("\n", 1)[0]?.slice(0, 40));
+      add(nonEmpty(input.command)?.split("\n", 1)[0]?.slice(0, 40));
     } else if (SEARCH_TOOLS.has(c.name)) {
       searches++;
-      add(str(input.pattern) ?? str(input.query) ?? str(input.url));
+      add(nonEmpty(input.pattern) ?? nonEmpty(input.query) ?? nonEmpty(input.url));
     } else if (EDIT_TOOLS.has(c.name)) {
       edited.add(file ?? c.toolUseId);
       add(baseName(file));
@@ -525,16 +526,7 @@ export function describeCalls(calls: ToolCallBlock[]): { text: string; targets: 
   return { text, targets };
 }
 
-function parseInput(inputJson: string): Record<string, unknown> {
-  try {
-    const v: unknown = JSON.parse(inputJson);
-    return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 const baseName = (p: string | null) => (p ? (p.split("/").pop() ?? p) : null);
 
 /** Linked Subagent Run of an Agent/Task call (calls without a resolvable run render as plain tool calls). */

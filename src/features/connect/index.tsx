@@ -3,8 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
-import type { SessionQuery } from "@/ipc/bindings";
-import { useSession, useSessionList, useSessions } from "@/queries";
+import { useAllSessions, useSession, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
@@ -23,19 +22,10 @@ export { connFor, lsEntryFor, useConnect } from "./store";
  * The CoDeck's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
  * arrives, from the Session list it already loaded (unfiltered at startup) — no query of its own.
  */
-/** Every Session, unfiltered: the Live set until the first `LiveChanged` snapshot arrives. */
-const ALL_SESSIONS: SessionQuery = {
-  projectIds: [],
-  sort: "lastActive",
-  descending: true,
-  timeRange: null,
-  drill: null,
-};
-
 function useLive(): { id: string; waiting: boolean }[] {
   const live = useConnect((s) => s.live);
   // Not the list on screen: its project / time filter would hide Live Sessions elsewhere.
-  const { data: list } = useSessions(ALL_SESSIONS, live == null);
+  const { data: list } = useAllSessions(live == null);
   return useMemo(
     () =>
       live

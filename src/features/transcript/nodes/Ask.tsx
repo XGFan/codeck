@@ -3,8 +3,7 @@ import type { Node } from "@/ipc/bindings";
 import { QuestionForm, useQuestionRequest } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import type { RoleInfo, ToolCallBlock } from "../grouping";
-import { parseJson } from "../tools/data";
-import { clock } from "../util";
+import { clock, parseJson } from "../util";
 import { Anchor } from "./Anchor";
 import { AssistantSegment } from "./Assistant";
 

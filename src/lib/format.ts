@@ -17,12 +17,17 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+const counts = new Intl.NumberFormat("en-US");
+
+/** 计数，千位加逗号：1234567 -> "1,234,567"。 */
+export const formatCount = (n: number): string => counts.format(n);
+
 /** 美元金额：0 -> "$0"，0.004 -> "<$0.01"，12.345 -> "$12.35"，1234.5 -> "$1,235"。 */
 export function formatCost(usd: number): string {
   if (usd <= 0) return "$0";
   if (usd < 0.01) return "<$0.01";
   if (usd < 1000) return `$${usd.toFixed(2)}`;
-  return `$${Math.round(usd).toLocaleString("en-US")}`;
+  return `$${formatCount(Math.round(usd))}`;
 }
 
 function trim(v: number, digits: number): string {

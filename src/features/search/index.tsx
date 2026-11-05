@@ -4,6 +4,7 @@ import { Folder, GitBranch, Search, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { LiveDot } from "@/components/LiveDot";
+import { Dialog, PanelDialogContent } from "@/components/ui/dialog";
 import { api } from "@/ipc";
 import type {
   AppError,
@@ -13,23 +14,20 @@ import type {
   SearchMode,
   SearchRequest,
   SearchResponse,
-  SessionQuery,
   SessionSummary,
 } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
-import { formatRelative } from "@/lib/format";
+import { formatCount, formatRelative } from "@/lib/format";
 import { isComposingKey, keepOpenWhileComposing, useHotkey } from "@/lib/hotkeys";
-import { queryKeys, useIndexStatus, useProjects, useSessions } from "@/queries";
+import { queryKeys, useAllSessions, useIndexStatus, useProjects } from "@/queries";
 import { useUi } from "@/state/ui";
 import { highlight, matchProjects, matchSessions, parseQuery, sessionProjectIds } from "./match";
 import { errorText } from "@/lib/errors";
 
-const nf = new Intl.NumberFormat("en-US");
 const MAX_PROJECTS = 3;
 const MAX_SESSIONS = 8;
 const MAX_RECENT = 20;
 const HITS_PER_SESSION = 5;
-const ALL_RECENT: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };
 const MODE_HINT: Partial<Record<SearchMode, string>> = { like: "短词匹配", mixed: "短词匹配" };
 const NO_GROUPS: SearchGroup[] = [];
 
@@ -272,7 +270,7 @@ export function SearchOverlay() {
   }, [text]);
 
   // Loaded only while open: closed, it would refetch every session on each change of a Live Session.
-  const sessions = useSessions(ALL_RECENT, open).data;
+  const sessions = useAllSessions(open).data;
   const projects = useProjects().data;
   const status = useIndexStatus().data;
   const names = useMemo(() => new Map((projects ?? []).map((p) => [p.id, p.displayName])), [projects]);
@@ -396,7 +394,7 @@ export function SearchOverlay() {
 
   const textProgress =
     status && !status.textReady && status.filesTotal > 0
-      ? `${nf.format(status.filesDone)} / ${nf.format(status.filesTotal)} 个文件`
+      ? `${formatCount(status.filesDone)} / ${formatCount(status.filesTotal)} 个文件`
       : null;
   const indexIncomplete = (status != null && !status.textReady) || data?.indexComplete === false;
   const totalHits = data?.totalHits ?? 0;
@@ -404,242 +402,231 @@ export function SearchOverlay() {
   const kind = selected.slice(0, 2);
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[rgba(28,28,30,0.28)]" />
-        <DialogPrimitive.Content
-          data-testid="search"
-          aria-describedby={undefined}
-          onEscapeKeyDown={keepOpenWhileComposing}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault();
-            // The last query is kept; selecting it lets typing replace it.
-            (e.currentTarget as HTMLElement).querySelector<HTMLInputElement>("[cmdk-input]")?.select();
-          }}
-          className="fixed top-[72px] left-1/2 z-50 flex max-h-[min(780px,calc(100vh-96px))] w-[min(780px,calc(100vw-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-[14px] border border-border bg-ground text-text shadow-[0_24px_64px_rgba(0,0,0,0.22),0_2px_8px_rgba(0,0,0,0.08)]"
+    <Dialog open={open} onOpenChange={setOpen}>
+      <PanelDialogContent
+        data-testid="search"
+        aria-describedby={undefined}
+        onEscapeKeyDown={keepOpenWhileComposing}
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          // The last query is kept; selecting it lets typing replace it.
+          (e.currentTarget as HTMLElement).querySelector<HTMLInputElement>("[cmdk-input]")?.select();
+        }}
+        className="top-[72px] flex max-h-[min(780px,calc(100vh-96px))] w-[min(780px,calc(100vw-32px))] flex-col bg-ground"
+      >
+        <DialogPrimitive.Title className="sr-only">搜索</DialogPrimitive.Title>
+        <Command
+          shouldFilter={false}
+          loop
+          label="搜索 Session、Project 或对话内容"
+          value={selected}
+          onValueChange={setSelected}
+          onKeyDown={onKeyDown}
+          className="flex min-h-0 flex-1 flex-col"
         >
-          <DialogPrimitive.Title className="sr-only">搜索</DialogPrimitive.Title>
-          <Command
-            shouldFilter={false}
-            loop
-            label="搜索 Session、Project 或对话内容"
-            value={selected}
-            onValueChange={setSelected}
-            onKeyDown={onKeyDown}
-            className="flex min-h-0 flex-1 flex-col"
-          >
-            <div className="flex items-center gap-2.5 border-b border-border px-4 py-3.5">
-              <Search size={18} strokeWidth={1.6} className="shrink-0 text-secondary" aria-hidden />
-              {scopeName && (
-                <span
-                  data-testid="search-scope"
-                  className="flex h-[26px] shrink-0 items-center gap-1 rounded-md bg-selection pr-1 pl-2 text-[13px] font-semibold text-accent"
+          <div className="flex items-center gap-2.5 border-b border-border px-4 py-3.5">
+            <Search size={18} strokeWidth={1.6} className="shrink-0 text-secondary" aria-hidden />
+            {scopeName && (
+              <span
+                data-testid="search-scope"
+                className="flex h-[26px] shrink-0 items-center gap-1 rounded-md bg-selection pr-1 pl-2 text-[13px] font-semibold text-accent"
+              >
+                <Folder size={13} strokeWidth={1.8} aria-hidden />
+                {scopeName}
+                <button
+                  type="button"
+                  aria-label="移除 Project 范围"
+                  onMouseDown={keepFocus}
+                  onClick={() => {
+                    setScope(null);
+                    inputRef.current?.focus();
+                  }}
+                  className="rounded-full p-0.5 hover:bg-black/10"
                 >
-                  <Folder size={13} strokeWidth={1.8} aria-hidden />
-                  {scopeName}
-                  <button
-                    type="button"
-                    aria-label="移除 Project 范围"
-                    onMouseDown={keepFocus}
-                    onClick={() => {
-                      setScope(null);
-                      inputRef.current?.focus();
-                    }}
-                    className="rounded-full p-0.5 hover:bg-black/10"
-                  >
-                    <X size={12} strokeWidth={2} aria-hidden />
-                  </button>
+                  <X size={12} strokeWidth={2} aria-hidden />
+                </button>
+              </span>
+            )}
+            <Command.Input
+              ref={inputRef}
+              value={input}
+              onValueChange={(v) => {
+                setInput(v);
+                setJumpError(null);
+              }}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
+              placeholder={scopeName ? `在 ${scopeName} 中搜索` : "搜索 Session、Project 或对话内容"}
+              className="min-w-0 flex-1 bg-transparent text-[17px] outline-none placeholder:text-secondary"
+            />
+            <span className="shrink-0 text-[12px] text-secondary">esc 关闭</span>
+          </div>
+          {indexIncomplete && !blank && (
+            <div
+              data-testid="search-incomplete"
+              className="flex items-center gap-3 border-b border-border bg-list px-4 py-1.5 text-[11px] text-secondary"
+            >
+              <span>{textProgress ? `全文索引未完成 · ${textProgress}` : "全文索引未完成"}</span>
+              {status && status.filesTotal > 0 && (
+                <span className="h-1 w-28 overflow-hidden rounded-full bg-border">
+                  <span
+                    className="block h-full rounded-full bg-accent"
+                    style={{ width: `${Math.min(100, (status.filesDone / status.filesTotal) * 100)}%` }}
+                  />
                 </span>
               )}
-              <Command.Input
-                ref={inputRef}
-                value={input}
-                onValueChange={(v) => {
-                  setInput(v);
-                  setJumpError(null);
-                }}
-                onCompositionStart={() => setComposing(true)}
-                onCompositionEnd={() => setComposing(false)}
-                placeholder={scopeName ? `在 ${scopeName} 中搜索` : "搜索 Session、Project 或对话内容"}
-                className="min-w-0 flex-1 bg-transparent text-[17px] outline-none placeholder:text-secondary"
-              />
-              <span className="shrink-0 text-[12px] text-secondary">esc 关闭</span>
+              <span className="ml-auto">Session 与 Project 的匹配不受影响</span>
             </div>
-            {indexIncomplete && !blank && (
-              <div
-                data-testid="search-incomplete"
-                className="flex items-center gap-3 border-b border-border bg-list px-4 py-1.5 text-[11px] text-secondary"
+          )}
+          {errMsg && (
+            <div
+              role="alert"
+              data-testid="search-error"
+              className="border-b border-border px-4 py-1.5 text-[12px] text-error"
+            >
+              {errMsg}
+            </div>
+          )}
+
+          <Command.List className="min-h-0 flex-1 overflow-y-auto pb-2">
+            {projectHits.length > 0 && (
+              <Command.Group heading={<div className={SECTION}>Project</div>}>
+                {projectHits.map((p) => (
+                  <ProjectItem
+                    key={p.id}
+                    p={p}
+                    terms={parsed.include}
+                    onFilter={() => filterProject(p.id)}
+                    onScope={() => scopeTo(p.id)}
+                  />
+                ))}
+              </Command.Group>
+            )}
+
+            {sessions && (
+              <Command.Group
+                heading={
+                  <div className={SECTION}>
+                    {blank ? (scopeName ? `${scopeName} 最近的 Session` : "最近的 Session") : "Session"}
+                    {!blank && (
+                      <span className="font-normal">· {scopeName ? `在 ${scopeName} 中` : "标题、Project、分支"}</span>
+                    )}
+                  </div>
+                }
               >
-                <span>{textProgress ? `全文索引未完成 · ${textProgress}` : "全文索引未完成"}</span>
-                {status && status.filesTotal > 0 && (
-                  <span className="h-1 w-28 overflow-hidden rounded-full bg-border">
-                    <span
-                      className="block h-full rounded-full bg-accent"
-                      style={{ width: `${Math.min(100, (status.filesDone / status.filesTotal) * 100)}%` }}
-                    />
-                  </span>
+                {sessionHits.map((s) => (
+                  <SessionItem key={s.id} s={s} names={names} terms={parsed.include} onSelect={() => openSession(s)} />
+                ))}
+                {sessionHits.length === 0 && (
+                  <div data-testid="search-session-empty" className="px-4 pt-1 pb-1.5 text-[12px] text-secondary">
+                    {blank ? "没有 Session。" : "没有标题、Project 或分支匹配的 Session。"}
+                  </div>
                 )}
-                <span className="ml-auto">Session 与 Project 的匹配不受影响</span>
-              </div>
+              </Command.Group>
             )}
-            {errMsg && (
-              <div
-                role="alert"
-                data-testid="search-error"
-                className="border-b border-border px-4 py-1.5 text-[12px] text-error"
+
+            {!blank && (
+              <Command.Group
+                heading={
+                  <div className={cn(SECTION, "pt-3.5")}>
+                    对话内容
+                    {contentSettled && groups.length > 0 && (
+                      <span data-testid="search-summary" className="font-normal">
+                        · {formatCount(data.totalSessions)} 个 Session，共 {formatCount(totalHits)} 处
+                      </span>
+                    )}
+                    {data?.mode && MODE_HINT[data.mode] && (
+                      <span className="font-normal">· {MODE_HINT[data.mode]}</span>
+                    )}
+                    {searching && (
+                      <>
+                        <span
+                          className="size-[11px] animate-spin rounded-full border-[1.5px] border-border border-t-accent"
+                          aria-hidden
+                        />
+                        <span className="font-normal">搜索中…</span>
+                      </>
+                    )}
+                  </div>
+                }
               >
-                {errMsg}
-              </div>
+                {parsed.include.length === 0 && (
+                  <div className="px-4 pt-1 pb-2 text-[12px] text-secondary">至少需要一个包含词。</div>
+                )}
+                {contentSettled && groups.length === 0 && (
+                  <div role="status" data-testid="search-empty" className="flex flex-col gap-1.5 px-4 pt-1 pb-2">
+                    <div className="font-semibold">没有找到 “{ftsQuery}”</div>
+                    {indexIncomplete && (
+                      <div className="text-[12px] text-text/80">全文索引未完成，建好后可能有结果。</div>
+                    )}
+                  </div>
+                )}
+                {groups.map((g) => (
+                  <div
+                    key={g.session.id}
+                    data-testid="search-group"
+                    className="flex flex-col gap-0.5 border-t border-border/70 py-2"
+                  >
+                    <div className="flex items-center gap-2 px-4 pb-0.5">
+                      {g.session.live && <LiveDot state="busy" testId="search-live" />}
+                      <span className="min-w-0 truncate font-semibold">{g.session.title}</span>
+                      <span className="shrink-0 text-[12px] text-secondary">
+                        {sessionProjectIds(g.session)
+                          .map((id) => names.get(id) ?? id)
+                          .join(" · ")}{" "}
+                        · {formatRelative(g.session.lastActiveMs)}
+                      </span>
+                      <span className="flex-1" />
+                      <span className="shrink-0 rounded-full bg-code px-2 text-[11px]">{g.hitCount} 处</span>
+                    </div>
+                    {g.hits.slice(0, HITS_PER_SESSION).map((h, i) => {
+                      const key = hitKey(g.session.id, h, i);
+                      return (
+                        <HitRow key={key} value={key} hit={h} disabled={stale} onOpen={() => void openHit(g, h)} />
+                      );
+                    })}
+                  </div>
+                ))}
+              </Command.Group>
             )}
+          </Command.List>
 
-            <Command.List className="min-h-0 flex-1 overflow-y-auto pb-2">
-              {projectHits.length > 0 && (
-                <Command.Group heading={<div className={SECTION}>Project</div>}>
-                  {projectHits.map((p) => (
-                    <ProjectItem
-                      key={p.id}
-                      p={p}
-                      terms={parsed.include}
-                      onFilter={() => filterProject(p.id)}
-                      onScope={() => scopeTo(p.id)}
-                    />
-                  ))}
-                </Command.Group>
-              )}
-
-              {sessions && (
-                <Command.Group
-                  heading={
-                    <div className={SECTION}>
-                      {blank ? (scopeName ? `${scopeName} 最近的 Session` : "最近的 Session") : "Session"}
-                      {!blank && (
-                        <span className="font-normal">
-                          · {scopeName ? `在 ${scopeName} 中` : "标题、Project、分支"}
-                        </span>
-                      )}
-                    </div>
-                  }
-                >
-                  {sessionHits.map((s) => (
-                    <SessionItem
-                      key={s.id}
-                      s={s}
-                      names={names}
-                      terms={parsed.include}
-                      onSelect={() => openSession(s)}
-                    />
-                  ))}
-                  {sessionHits.length === 0 && (
-                    <div data-testid="search-session-empty" className="px-4 pt-1 pb-1.5 text-[12px] text-secondary">
-                      {blank ? "没有 Session。" : "没有标题、Project 或分支匹配的 Session。"}
-                    </div>
-                  )}
-                </Command.Group>
-              )}
-
-              {!blank && (
-                <Command.Group
-                  heading={
-                    <div className={cn(SECTION, "pt-3.5")}>
-                      对话内容
-                      {contentSettled && groups.length > 0 && (
-                        <span data-testid="search-summary" className="font-normal">
-                          · {nf.format(data.totalSessions)} 个 Session，共 {nf.format(totalHits)} 处
-                        </span>
-                      )}
-                      {data?.mode && MODE_HINT[data.mode] && (
-                        <span className="font-normal">· {MODE_HINT[data.mode]}</span>
-                      )}
-                      {searching && (
-                        <>
-                          <span
-                            className="size-[11px] animate-spin rounded-full border-[1.5px] border-border border-t-accent"
-                            aria-hidden
-                          />
-                          <span className="font-normal">搜索中…</span>
-                        </>
-                      )}
-                    </div>
-                  }
-                >
-                  {parsed.include.length === 0 && (
-                    <div className="px-4 pt-1 pb-2 text-[12px] text-secondary">至少需要一个包含词。</div>
-                  )}
-                  {contentSettled && groups.length === 0 && (
-                    <div role="status" data-testid="search-empty" className="flex flex-col gap-1.5 px-4 pt-1 pb-2">
-                      <div className="font-semibold">没有找到 “{ftsQuery}”</div>
-                      {indexIncomplete && (
-                        <div className="text-[12px] text-text/80">全文索引未完成，建好后可能有结果。</div>
-                      )}
-                    </div>
-                  )}
-                  {groups.map((g) => (
-                    <div
-                      key={g.session.id}
-                      data-testid="search-group"
-                      className="flex flex-col gap-0.5 border-t border-border/70 py-2"
-                    >
-                      <div className="flex items-center gap-2 px-4 pb-0.5">
-                        {g.session.live && <LiveDot state="busy" testId="search-live" />}
-                        <span className="min-w-0 truncate font-semibold">{g.session.title}</span>
-                        <span className="shrink-0 text-[12px] text-secondary">
-                          {sessionProjectIds(g.session)
-                            .map((id) => names.get(id) ?? id)
-                            .join(" · ")}{" "}
-                          · {formatRelative(g.session.lastActiveMs)}
-                        </span>
-                        <span className="flex-1" />
-                        <span className="shrink-0 rounded-full bg-code px-2 text-[11px]">{g.hitCount} 处</span>
-                      </div>
-                      {g.hits.slice(0, HITS_PER_SESSION).map((h, i) => {
-                        const key = hitKey(g.session.id, h, i);
-                        return (
-                          <HitRow key={key} value={key} hit={h} disabled={stale} onOpen={() => void openHit(g, h)} />
-                        );
-                      })}
-                    </div>
-                  ))}
-                </Command.Group>
-              )}
-            </Command.List>
-
-            <div className="flex flex-wrap items-center gap-4 border-t border-border bg-list px-4 py-2 text-[11px] text-secondary">
-              <span>
-                <Kbd>↑</Kbd>
-                <Kbd>↓</Kbd> 选择
-              </span>
-              <span>
-                <Kbd>⇥</Kbd> 下一段
-              </span>
-              {kind === "p:" ? (
-                <>
-                  <span>
-                    <Kbd>↵</Kbd> 筛选列表
-                  </span>
-                  <span>
-                    <Kbd>⌘↵</Kbd> 限定搜索范围
-                  </span>
-                </>
-              ) : (
+          <div className="flex flex-wrap items-center gap-4 border-t border-border bg-list px-4 py-2 text-[11px] text-secondary">
+            <span>
+              <Kbd>↑</Kbd>
+              <Kbd>↓</Kbd> 选择
+            </span>
+            <span>
+              <Kbd>⇥</Kbd> 下一段
+            </span>
+            {kind === "p:" ? (
+              <>
                 <span>
-                  <Kbd>↵</Kbd> {kind === "h:" ? "打开并定位" : "打开"}
+                  <Kbd>↵</Kbd> 筛选列表
                 </span>
-              )}
-              {scope ? (
                 <span>
-                  输入为空时 <Kbd>⌫</Kbd> 移除 Project 范围
+                  <Kbd>⌘↵</Kbd> 限定搜索范围
                 </span>
-              ) : (
-                <>
-                  <span>"短语" 精确匹配</span>
-                  <span>-词 排除</span>
-                </>
-              )}
-              <span className="ml-auto">⌘K 打开或关闭</span>
-            </div>
-          </Command>
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+              </>
+            ) : (
+              <span>
+                <Kbd>↵</Kbd> {kind === "h:" ? "打开并定位" : "打开"}
+              </span>
+            )}
+            {scope ? (
+              <span>
+                输入为空时 <Kbd>⌫</Kbd> 移除 Project 范围
+              </span>
+            ) : (
+              <>
+                <span>"短语" 精确匹配</span>
+                <span>-词 排除</span>
+              </>
+            )}
+            <span className="ml-auto">⌘K 打开或关闭</span>
+          </div>
+        </Command>
+      </PanelDialogContent>
+    </Dialog>
   );
 }

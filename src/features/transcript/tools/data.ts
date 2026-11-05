@@ -3,6 +3,7 @@ import type { ToolCall, TranscriptScope } from "@/ipc/bindings";
 import { useToolDetail } from "@/queries/hooks";
 import { MAIN_SCOPE, useUi } from "@/state/ui";
 import { toolKey } from "../keys";
+import { parseJson } from "../util";
 
 /** Where a call lives: the open session's main conversation unless given (Subagent panels pass theirs). */
 export interface ToolCtx {
@@ -29,15 +30,6 @@ export function requestFullOutput(nodeId: string, toolUseId: string): void {
   const key = toolKey(nodeId, toolUseId);
   useRequested.setState((s) => ({ requested: { ...s.requested, [key]: true } }));
   useUi.getState().setExpanded(key, true);
-}
-
-export function parseJson<T = Record<string, unknown>>(text: string | null | undefined): T | null {
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
 }
 
 /** Parsed tool input; when the stored input is truncated and `enabled`, loads the full one first (A11). */
