@@ -31,11 +31,17 @@ export function togglePick(picked: string[], label: string, multi: boolean): str
 }
 
 /**
- * The `answers` of `answer_question`, one per question: the written answer when 其他 is chosen and not blank,
- * otherwise the options picked.
+ * The `answers` of `answer_question`, one per question: on a single-select question the written answer when 其他 is
+ * chosen and not blank, otherwise the option picked; on a multi-select one the options picked and the written answer,
+ * either or both.
  */
 export function questionAnswers(qs: AskQuestion[], picked: string[][], other: string[], useOther: boolean[]) {
-  return qs.map((_, i) => (otherChosen(other, useOther, i) ? { other: other[i]!.trim() } : { options: picked[i] }));
+  return qs.map((q, i) => {
+    const options = picked[i] ?? [];
+    if (!otherChosen(other, useOther, i)) return { options };
+    const written = other[i]!.trim();
+    return q.multiSelect && options.length ? { options, other: written } : { other: written };
+  });
 }
 
 /** Question `i` is answered by its written text: 其他 is chosen and something is written. */

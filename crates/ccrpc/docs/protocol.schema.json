@@ -371,6 +371,32 @@
             "other"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "多选题：选中的选项与 Other 的文本一起（以 `, ` 连接，文本在后）。",
+          "properties": {
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "description": "选项 label。"
+              },
+              "description": "选中的选项。"
+            },
+            "other": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Other 的文本。"
+            }
+          },
+          "required": [
+            "options",
+            "other"
+          ],
+          "additionalProperties": false
         }
       ]
     },

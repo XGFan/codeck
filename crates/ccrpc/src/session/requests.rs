@@ -85,25 +85,35 @@ fn question_answers(
                     .collect()
             })
             .unwrap_or_default();
-        let text = match a {
-            Answer::Options(chosen) => {
-                if let Some(bad) = chosen.iter().find(|c| !labels.contains(&c.as_str())) {
-                    return Err(format!("第 {} 题没有选项 {bad}", i + 1));
-                }
-                if !multi && chosen.len() != 1 {
-                    return Err(format!("第 {} 题是单选", i + 1));
-                }
-                if chosen.is_empty() {
-                    return Err(format!("第 {} 题至少要选一项", i + 1));
-                }
-                chosen.join(", ")
+        let picked = |chosen: &[String]| {
+            if let Some(bad) = chosen.iter().find(|c| !labels.contains(&c.as_str())) {
+                return Err(format!("第 {} 题没有选项 {bad}", i + 1));
             }
-            Answer::Other(t) => {
-                let t = pty::sanitize(t).replace(['\n', '\t'], " ");
-                if t.trim().is_empty() {
-                    return Err(format!("第 {} 题的 other 为空", i + 1));
-                }
-                t
+            if !multi && chosen.len() != 1 {
+                return Err(format!("第 {} 题是单选", i + 1));
+            }
+            if chosen.is_empty() {
+                return Err(format!("第 {} 题至少要选一项", i + 1));
+            }
+            Ok(chosen.join(", "))
+        };
+        let written = |t: &str| {
+            let t = pty::sanitize(t).replace(['\n', '\t'], " ");
+            if t.trim().is_empty() {
+                return Err(format!("第 {} 题的 other 为空", i + 1));
+            }
+            Ok(t)
+        };
+        let text = match a {
+            Answer::Options(chosen) => picked(chosen)?,
+            Answer::Other(t) => written(t)?,
+            // As the dialog joins them: the options picked, then the text typed.
+            Answer::Both(chosen, t) if multi => format!("{}, {}", picked(chosen)?, written(t)?),
+            Answer::Both(..) => {
+                return Err(format!(
+                    "第 {} 题是单选，不能同时给 options 与 other",
+                    i + 1
+                ));
             }
         };
         out.insert(title.to_string(), json!(text));
@@ -675,7 +685,7 @@ impl Engine {
                 .get("multiSelect")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            if multi && matches!(a, Answer::Other(_)) {
+            if multi && matches!(a, Answer::Other(_) | Answer::Both(..)) {
                 return err(
                     "unsupported",
                     format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1),
@@ -759,6 +769,8 @@ impl Engine {
                 self.keys(clean.as_bytes())?;
                 self.keys(key::ENTER)?;
             }
+            // Rejected above: Both only on a multi-select question, which takes no Other on screen.
+            Answer::Both(..) => return err("unsupported", "按屏幕作答时不支持 other"),
             Answer::Options(chosen) if !multi => {
                 let Some(o) = q.options.iter().find(|o| o.label == chosen[0]) else {
                     return Err(self.unrecognized("answer_question", Some(&s)));
@@ -946,6 +958,27 @@ mod tests {
         assert!(
             question_answers(&qs[..1], &[]).is_err(),
             "one answer per question"
+        );
+        // A multi-select question: options and the written text together, as the dialog joins them.
+        let a = question_answers(
+            &qs,
+            &[
+                Answer::Both(vec!["ruff".into(), "eslint".into()], "biome\nalso".into()),
+                Answer::Options(vec!["Tabs".into()]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(a["Which linters?"], "ruff, eslint, biome also");
+        assert!(
+            question_answers(
+                &qs,
+                &[
+                    Answer::Options(vec!["ruff".into()]),
+                    Answer::Both(vec!["Tabs".into()], "x".into())
+                ]
+            )
+            .is_err(),
+            "both on a single choice"
         );
     }
 }

@@ -223,6 +223,60 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
   expect(await lastSent(page, "answer_question")).toMatchObject({ answers: [{ options: ["Blue"] }] });
 });
 
+test("多选题可以同时勾选项与「其他」，一起发出", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  // A background Subagent's question: answered on its own card in the input area.
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "question",
+      request_id: "toolu_e2e_multi",
+      agent_id: "a1b2c3d4e5f6",
+      questions: [
+        {
+          question: "防住哪些情况？",
+          header: "目标",
+          multiSelect: true,
+          options: [
+            { label: "系统睡眠", description: "后台任务中断" },
+            { label: "锁屏", description: "屏幕保持亮着" },
+            { label: "Teams 显示离开", description: "状态保持有空" },
+          ],
+        },
+      ],
+    }),
+  );
+  const q = page.getByTestId("question-card");
+  const option = (label: string) => q.getByTestId("question-option").filter({ hasText: label });
+  const otherRow = q.getByTestId("question-other-row");
+  await option("系统睡眠").click();
+  await option("锁屏").click();
+  await q.getByTestId("question-other").fill("前三类有什么不同？");
+  // Writing keeps the options picked, picking one more keeps the text.
+  await expect(option("系统睡眠")).toHaveAttribute("aria-pressed", "true");
+  await expect(option("锁屏")).toHaveAttribute("aria-pressed", "true");
+  await expect(otherRow).toHaveAttribute("data-on", "true");
+  await option("Teams 显示离开").click();
+  await option("Teams 显示离开").click();
+  await expect(otherRow).toHaveAttribute("data-on", "true");
+  // Clicking the caption writes in the row, it does not untick it.
+  await otherRow.getByText("其他：").click();
+  await expect(otherRow).toHaveAttribute("data-on", "true");
+  await expect(q.getByTestId("question-other")).toBeFocused();
+  // 其他's own check box sets the text aside and back.
+  await q.getByTestId("question-other-toggle").click();
+  await expect(otherRow).not.toHaveAttribute("data-on");
+  await q.getByTestId("question-other-toggle").click();
+  await expect(otherRow).toHaveAttribute("data-on", "true");
+  await q.getByTestId("submit-answer").click();
+  await expect
+    .poll(() => lastSent(page, "answer_question"))
+    .toMatchObject({
+      request_id: "toolu_e2e_multi",
+      answers: [{ options: ["系统睡眠", "锁屏"], other: "前三类有什么不同？" }],
+    });
+});
+
 test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数字键作答；Dock 角标；AI 识别的选择；Esc 中止；ccrpc 退出后重连", async ({
   page,
 }) => {

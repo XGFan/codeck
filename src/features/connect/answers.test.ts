@@ -54,6 +54,19 @@ describe("questionAnswers", () => {
     ]);
   });
 
+  it("a multi-select question sends the options picked and the written answer together", () => {
+    const qs = [
+      { ...q("a"), multiSelect: true },
+      { ...q("b"), multiSelect: true },
+      { ...q("c"), multiSelect: true },
+    ];
+    expect(questionAnswers(qs, [["X", "Y"], [], ["Z"]], [" 写的 ", "只有字", "划掉的"], [true, true, false])).toEqual([
+      { options: ["X", "Y"], other: "写的" },
+      { other: "只有字" },
+      { options: ["Z"] },
+    ]);
+  });
+
   it("text written but set aside (an option picked since) does not count", () => {
     expect(otherChosen(["写的"], [false], 0)).toBe(false);
     expect(otherChosen(["写的"], [true], 0)).toBe(true);

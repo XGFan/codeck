@@ -1,5 +1,5 @@
 import { Check } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
@@ -11,11 +11,13 @@ import { useAnswer } from "./useAnswer";
 /** The questions of an AskUserQuestion to pick and submit, styled as the transcript's 「向你提问」 card. */
 export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const { busy, error, send } = useAnswer(c);
+  const uid = useId();
   const qs = Array.isArray(r.questions) ? r.questions : [];
   const [picked, setPicked] = useState<string[][]>(() => qs.map(() => []));
   const [other, setOther] = useState<string[]>(() => qs.map(() => ""));
-  // The answer is either the options picked or the written one, never both: typing in 其他 drops
-  // the picked options, picking an option sets the written text aside (kept, greyed).
+  // One answer (single-select): the option picked or the written one, never both: typing in 其他 drops the option,
+  // picking an option sets the written text aside (kept, greyed). Several (multi-select): 其他 is one more check box,
+  // the written text goes with the options picked.
   const [useOther, setUseOther] = useState<boolean[]>(() => qs.map(() => false));
   const otherOn = (i: number) => otherChosen(other, useOther, i);
   const ready = qs.every((_, i) => picked[i]?.length || otherOn(i));
@@ -27,12 +29,12 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
     });
   const at = <T,>(xs: T[], i: number, v: T) => xs.map((x, j) => (j === i ? v : x));
   const toggle = (i: number, q: AskQuestion, label: string) => {
-    setUseOther((u) => at(u, i, false));
+    if (!q.multiSelect) setUseOther((u) => at(u, i, false));
     setPicked((p) => p.map((x, j) => (j === i ? togglePick(x, label, !!q.multiSelect) : x)));
   };
-  const chooseOther = (i: number) => {
+  const chooseOther = (i: number, q: AskQuestion) => {
     setUseOther((u) => at(u, i, true));
-    setPicked((p) => at(p, i, []));
+    if (!q.multiSelect) setPicked((p) => at(p, i, []));
   };
   return (
     <div className="flex flex-col gap-3" data-testid="question-form">
@@ -72,6 +74,8 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
             );
           })}
           <label
+            // Clicking the row writes in it (not the multi-select check box, the label's first control).
+            htmlFor={`${uid}-other-${i}`}
             data-testid="question-other-row"
             data-on={otherOn(i) || undefined}
             className={cn(
@@ -79,16 +83,35 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
               otherOn(i) ? "border-accent/50 bg-selection" : "border-border",
             )}
           >
-            <Mark on={otherOn(i)} multi={!!q.multiSelect} />
+            {q.multiSelect ? (
+              // A check box of its own: off sets the text aside; on picks up what is written (focus to write it).
+              <button
+                type="button"
+                aria-pressed={otherOn(i)}
+                aria-label="其他"
+                data-testid="question-other-toggle"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (otherOn(i)) setUseOther((u) => at(u, i, false));
+                  else e.currentTarget.parentElement?.querySelector("input")?.focus();
+                }}
+                className="flex outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              >
+                <Mark on={otherOn(i)} multi />
+              </button>
+            ) : (
+              <Mark on={otherOn(i)} multi={false} />
+            )}
             <span className="shrink-0 text-secondary">其他：</span>
             <input
+              id={`${uid}-other-${i}`}
               value={other[i] ?? ""}
               onChange={(e) => {
                 setOther((p) => at(p, i, e.target.value));
-                chooseOther(i);
+                chooseOther(i, q);
               }}
               // Back to the written answer by clicking into it.
-              onFocus={() => other[i]?.trim() && chooseOther(i)}
+              onFocus={() => other[i]?.trim() && chooseOther(i, q)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
               }}

@@ -140,6 +140,8 @@ export interface CcrpcProbe {
   listed: string[];
   /** Puts a recording with `on_request` into `ccrpc ls` (pushed to the watch at once). */
   list: (name: string) => void;
+  /** Sends `msg` on every open connection, as if ccrpc had written it (what no recording has). */
+  emit: (msg: Record<string, unknown>) => void;
 }
 const probe: CcrpcProbe = {
   sent: [],
@@ -155,6 +157,9 @@ const probe: CcrpcProbe = {
   list: (name) => {
     probe.listed.push(name);
     later(pushLs);
+  },
+  emit: (msg) => {
+    for (const id of conns.keys()) emit(id, msg as unknown as InMsg);
   },
 };
 

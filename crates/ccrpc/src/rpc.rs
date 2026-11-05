@@ -21,6 +21,8 @@ pub enum Decision {
 pub enum Answer {
     Options(Vec<String>),
     Other(String),
+    /// A multi-select question's options picked and its Other text, together.
+    Both(Vec<String>, String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -277,40 +279,46 @@ fn parse_answer(item: &Value, cmd: &str, index: usize) -> Result<Answer, String>
     let obj = item
         .as_object()
         .ok_or_else(|| format!("{cmd} 的 answers[{index}] 必须是对象"))?;
-    if obj.len() != 1 {
-        return Err(format!(
-            "{cmd} 的 answers[{index}] 必须恰好有一个 options 或 other 字段"
-        ));
+    let shape = || format!("{cmd} 的 answers[{index}] 只能有 options、other 两个字段，至少一个");
+    if obj.is_empty() || obj.keys().any(|k| k != "options" && k != "other") {
+        return Err(shape());
     }
-    if let Some(value) = obj.get("options") {
-        let items = value
-            .as_array()
-            .ok_or_else(|| format!("{cmd} 的 answers[{index}].options 必须是数组"))?;
-        if items.is_empty() {
-            return Err(format!("{cmd} 的 answers[{index}].options 不能为空"));
-        }
-        let mut labels = Vec::with_capacity(items.len());
-        for label in items {
-            match label.as_str() {
-                Some(s) if !s.is_empty() => labels.push(s.to_string()),
-                _ => {
-                    return Err(format!(
-                        "{cmd} 的 answers[{index}].options 里必须都是非空字符串"
-                    ));
+    let options = match obj.get("options") {
+        None => None,
+        Some(value) => {
+            let items = value
+                .as_array()
+                .ok_or_else(|| format!("{cmd} 的 answers[{index}].options 必须是数组"))?;
+            if items.is_empty() {
+                return Err(format!("{cmd} 的 answers[{index}].options 不能为空"));
+            }
+            let mut labels = Vec::with_capacity(items.len());
+            for label in items {
+                match label.as_str() {
+                    Some(s) if !s.is_empty() => labels.push(s.to_string()),
+                    _ => {
+                        return Err(format!(
+                            "{cmd} 的 answers[{index}].options 里必须都是非空字符串"
+                        ));
+                    }
                 }
             }
+            Some(labels)
         }
-        return Ok(Answer::Options(labels));
-    }
-    if let Some(value) = obj.get("other") {
-        return match value.as_str() {
-            Some(s) if !s.is_empty() => Ok(Answer::Other(s.to_string())),
-            _ => Err(format!("{cmd} 的 answers[{index}].other 必须是非空字符串")),
-        };
-    }
-    Err(format!(
-        "{cmd} 的 answers[{index}] 必须恰好有一个 options 或 other 字段"
-    ))
+    };
+    let other = match obj.get("other") {
+        None => None,
+        Some(value) => match value.as_str() {
+            Some(s) if !s.is_empty() => Some(s.to_string()),
+            _ => return Err(format!("{cmd} 的 answers[{index}].other 必须是非空字符串")),
+        },
+    };
+    Ok(match (options, other) {
+        (Some(o), Some(t)) => Answer::Both(o, t),
+        (Some(o), None) => Answer::Options(o),
+        (None, Some(t)) => Answer::Other(t),
+        (None, None) => return Err(shape()),
+    })
 }
 
 fn parse_key(item: &Value, index: usize) -> Result<Key, String> {
@@ -748,7 +756,7 @@ mod tests {
         );
         assert_eq!(
             parse(
-                r#"{"type":"answer_question","request_id":"q1","answers":[{"options":["a","b"]},{"other":"x"}]}"#
+                r#"{"type":"answer_question","request_id":"q1","answers":[{"options":["a","b"]},{"other":"x"},{"options":["c"],"other":"y"}]}"#
             ),
             Request {
                 id: None,
@@ -757,6 +765,7 @@ mod tests {
                     answers: vec![
                         Answer::Options(vec!["a".into(), "b".into()]),
                         Answer::Other("x".into()),
+                        Answer::Both(vec!["c".into()], "y".into()),
                     ],
                 },
             }
@@ -917,8 +926,16 @@ mod tests {
         let e = err(r#"{"type":"answer_question","request_id":"q","answers":[{"options":[]}]}"#);
         assert_eq!(e.code, "bad_request");
 
+        let e = err(r#"{"type":"answer_question","request_id":"q","answers":[{}]}"#);
+        assert_eq!(e.code, "bad_request");
+
         let e = err(
-            r#"{"type":"answer_question","request_id":"q","answers":[{"options":["a"],"other":"b"}]}"#,
+            r#"{"type":"answer_question","request_id":"q","answers":[{"options":["a"],"other":""}]}"#,
+        );
+        assert_eq!(e.code, "bad_request");
+
+        let e = err(
+            r#"{"type":"answer_question","request_id":"q","answers":[{"options":["a"],"label":"b"}]}"#,
         );
         assert_eq!(e.code, "bad_request");
 
