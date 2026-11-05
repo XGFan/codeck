@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Output, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -15,6 +16,11 @@ use super::logs::{self, Wire};
 use crate::settings::LaunchRule;
 
 pub type R<T> = Result<T, String>;
+
+/// How long a one-shot subcommand (`doctor`, `ls`, `hide`, `show`) may run before it is killed.
+const SUBCOMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+/// How much of a connection's stderr its exit event carries.
+const STDERR_TAIL_CHARS: usize = 4000;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct ExitEvent {
@@ -55,6 +61,7 @@ pub struct App {
     gui: Arc<Mutex<File>>,
     seq: Mutex<u64>,
     pub doctor: Mutex<Option<Vec<DoctorLine>>>,
+    sub_timeout: Duration,
 }
 
 impl App {
@@ -80,6 +87,7 @@ impl App {
             gui: Arc::new(Mutex::new(gui)),
             seq: Mutex::new(0),
             doctor: Mutex::new(None),
+            sub_timeout: SUBCOMMAND_TIMEOUT,
         };
         app.gui_line(&format!("start ccrpc={}", app.ccrpc.display()));
         Ok(app)
@@ -101,6 +109,20 @@ impl App {
         logs::line(&mut self.gui.lock(), text);
     }
 
+    /// Runs the one-shot subcommand `args`, killed after `sub_timeout`.
+    fn run(&self, args: &[&str]) -> R<Output> {
+        let mut cmd = self.command();
+        cmd.args(args);
+        output_within(cmd, self.sub_timeout).map_err(|e| match e.kind() {
+            std::io::ErrorKind::TimedOut => format!(
+                "ccrpc {} 没有在 {} 秒内结束",
+                args[0],
+                self.sub_timeout.as_secs_f64()
+            ),
+            _ => format!("运行不了 {}：{e}", self.ccrpc.display()),
+        })
+    }
+
     fn next(&self) -> u64 {
         let mut s = self.seq.lock();
         *s += 1;
@@ -117,7 +139,7 @@ impl App {
         if let Some(d) = self.doctor.lock().clone() {
             return d;
         }
-        let d = match self.command().arg("doctor").stdin(Stdio::null()).output() {
+        let d = match self.run(&["doctor"]) {
             Ok(out) => String::from_utf8_lossy(&out.stdout)
                 .lines()
                 .filter(|l| !l.trim().is_empty())
@@ -128,7 +150,7 @@ impl App {
                 .collect(),
             Err(e) => vec![DoctorLine {
                 level: "fail".into(),
-                text: format!("fail\tccrpc\t运行不了 {}：{e}", self.ccrpc.display()),
+                text: format!("fail\tccrpc\t{e}"),
             }],
         };
         for l in d.iter().filter(|l| l.level != "ok") {
@@ -139,12 +161,7 @@ impl App {
     }
 
     pub fn list_sessions(&self) -> R<serde_json::Value> {
-        let out = self
-            .command()
-            .args(["ls", "--json"])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("运行不了 {}：{e}", self.ccrpc.display()))?;
+        let out = self.run(&["ls", "--json"])?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
@@ -157,12 +174,7 @@ impl App {
             return Err("Holder ID 不对".into());
         }
         let verb = if hidden { "hide" } else { "show" };
-        let out = self
-            .command()
-            .args([verb, holder_id])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("运行不了 {}：{e}", self.ccrpc.display()))?;
+        let out = self.run(&[verb, holder_id])?;
         self.gui_line(&format!("{verb} {holder_id} → {}", out.status));
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr)
@@ -255,7 +267,7 @@ impl App {
             .spawn()
             .map_err(|e| format!("运行不了 {}：{e}", self.ccrpc.display()))?;
         let stdout = child.stdout.take().ok_or("没有 stdout")?;
-        let mut stderr = child.stderr.take().ok_or("没有 stderr")?;
+        let stderr = child.stderr.take().ok_or("没有 stderr")?;
         self.gui_line(&format!(
             "{id} {sub} {} → {}",
             args.join(" "),
@@ -276,13 +288,22 @@ impl App {
         let err_thread = {
             let (err_tail, gui) = (err_tail.clone(), gui.clone());
             std::thread::spawn(move || {
-                let mut s = String::new();
-                let _ = stderr.read_to_string(&mut s);
-                for l in s.lines() {
-                    logs::line(&mut gui.lock(), &format!("stderr {l}"));
+                // Logged as it comes (a crash of the app keeps what was written); only the tail is
+                // kept for the exit event.
+                let mut reader = BufReader::new(stderr);
+                let (mut buf, mut tail) = (Vec::new(), String::new());
+                while matches!(reader.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
+                    let line = String::from_utf8_lossy(&buf);
+                    let line = line.trim_end_matches(['\n', '\r']);
+                    logs::line(&mut gui.lock(), &format!("stderr {line}"));
+                    tail.push_str(line);
+                    tail.push('\n');
+                    if tail.len() > 4 * STDERR_TAIL_CHARS {
+                        tail = last_chars(&tail, STDERR_TAIL_CHARS).to_string();
+                    }
+                    buf.clear();
                 }
-                let n = s.chars().count();
-                *err_tail.lock() = Some(s.chars().skip(n.saturating_sub(4000)).collect());
+                *err_tail.lock() = Some(last_chars(&tail, STDERR_TAIL_CHARS).to_string());
             })
         };
         let (conns, main_gui, conn) = (self.conns.clone(), self.gui.clone(), id.clone());
@@ -430,6 +451,55 @@ fn rename_new_dir(line: &str, dir: &Arc<Mutex<PathBuf>>, wire: &Arc<Mutex<Wire>>
     true
 }
 
+/// The last `n` characters of `s`.
+fn last_chars(s: &str, n: usize) -> &str {
+    if n == 0 {
+        return "";
+    }
+    s.char_indices()
+        .rev()
+        .nth(n - 1)
+        .map_or(s, |(i, _)| &s[i..])
+}
+
+/// `cmd`'s output, without stdin; killed (`TimedOut`) when it has not finished within `timeout`.
+fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let (mut out, mut err) = (child.stdout.take(), child.stderr.take());
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Detached: after a kill, a grandchild may still hold the pipes open.
+    std::thread::spawn(move || {
+        let errs = std::thread::spawn(move || {
+            let mut e = Vec::new();
+            if let Some(err) = err.as_mut() {
+                let _ = err.read_to_end(&mut e);
+            }
+            e
+        });
+        let mut o = Vec::new();
+        if let Some(out) = out.as_mut() {
+            let _ = out.read_to_end(&mut o);
+        }
+        let _ = tx.send((o, errs.join().unwrap_or_default()));
+    });
+    match rx.recv_timeout(timeout) {
+        Ok((stdout, stderr)) => Ok(Output {
+            status: child.wait()?,
+            stdout,
+            stderr,
+        }),
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(std::io::ErrorKind::TimedOut.into())
+        }
+    }
+}
+
 fn valid_holder_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
@@ -558,5 +628,38 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    fn fake_ccrpc(dir: &Path, script: &str) -> App {
+        let fake = dir.join("ccrpc");
+        std::fs::write(&fake, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        App::new(HashMap::new(), fake, dir.join("logs"), dir.join("img")).unwrap()
+    }
+
+    /// A hung `ccrpc ls` is killed and reported instead of stalling the Live poll for good.
+    #[test]
+    fn a_hung_subcommand_is_killed_after_the_timeout() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = fake_ccrpc(d.path(), "sleep 30");
+        app.sub_timeout = Duration::from_millis(300);
+        let t = Instant::now();
+        let err = app.list_sessions().unwrap_err();
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+        assert!(err.contains("没有在"), "{err}");
+        assert_eq!(app.doctor()[0].level, "fail");
+
+        let app = fake_ccrpc(d.path(), r#"echo '{"sessions":[]}'"#);
+        assert_eq!(
+            app.list_sessions().unwrap(),
+            serde_json::json!({"sessions": []})
+        );
+    }
+
+    #[test]
+    fn last_chars_counts_characters() {
+        assert_eq!(last_chars("ab令牌桶", 3), "令牌桶");
+        assert_eq!(last_chars("ab", 5), "ab");
+        assert_eq!(last_chars("ab", 0), "");
     }
 }
