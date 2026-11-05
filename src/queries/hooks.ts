@@ -20,7 +20,9 @@ export const queryKeys = {
   /** `[ "transcript", sessionId, req ]`: events invalidate by session id prefix. */
   transcript: (req: TranscriptRequest) => ["transcript", req.sessionId, req] as const,
   toolDetail: (req: ToolDetailRequest) => ["toolDetail", req.sessionId, req] as const,
-  image: (req: ImageRequest) => ["image", req.sessionId, req.image.nodeId, req.image.ordinal, req.scope] as const,
+  /** A tool result's image is found by its tool call: parallel calls' results share the assistant node. */
+  image: (req: ImageRequest) =>
+    ["image", req.sessionId, req.image.nodeId, req.image.toolUseId, req.image.ordinal, req.scope] as const,
   search: (req: SearchRequest) => ["search", req] as const,
   find: (req: FindRequest) => ["find", req.sessionId, req] as const,
   stats: (req: StatsRequest) => ["stats", req] as const,
