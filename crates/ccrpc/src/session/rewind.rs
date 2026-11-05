@@ -19,8 +19,6 @@ pub(super) struct RewindReq {
     uuid: String,
     /// The prompt's full text (it returns to the input box when the conversation is restored).
     text: String,
-    /// A `!` command (it returns to the input box in shell mode).
-    shell: bool,
     /// The confirm page as announced: the screen shows this rewind while it shows this page.
     page: Option<RewindConfirm>,
     /// What `rewind` answered (and `get_state` shows as the request).
@@ -38,8 +36,6 @@ struct Prompt {
     queued: bool,
     /// When it was sent (unix ms).
     at_ms: Option<f64>,
-    /// A `!` command: restored, it waits in the TUI's input box in shell mode.
-    shell: bool,
     /// A slash or `!` command (whether one was typed while busy is not known).
     command: bool,
 }
@@ -137,18 +133,14 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
                 return None;
             };
             let command = matches!(origin, PromptOrigin::Command { .. });
-            let (text, shell) = match origin {
-                PromptOrigin::Human => (
-                    typed.get(&n.id).and_then(|t| t.0.clone()).unwrap_or(text),
-                    false,
-                ),
+            let text = match origin {
+                PromptOrigin::Human => typed.get(&n.id).and_then(|t| t.0.clone()).unwrap_or(text),
                 PromptOrigin::Command { name, args } if name == "!" => {
-                    (format!("! {}", args.trim()), true)
+                    format!("! {}", args.trim())
                 }
-                PromptOrigin::Command { name, args } => (
-                    format!("{name} {}", args.trim()).trim_end().to_string(),
-                    false,
-                ),
+                PromptOrigin::Command { name, args } => {
+                    format!("{name} {}", args.trim()).trim_end().to_string()
+                }
                 _ => return None,
             };
             Some(Prompt {
@@ -156,7 +148,6 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
                 at_ms: n.timestamp_ms,
                 uuid: n.id,
                 text,
-                shell,
                 command,
             })
         })
@@ -207,7 +198,6 @@ impl Engine {
             id: None,
             uuid: uuid.to_string(),
             text: prompts[target].text.clone(),
-            shell: prompts[target].shell,
             page: None,
             event: Value::Null,
             gone_since: None,
@@ -451,9 +441,7 @@ impl Engine {
         if !fits {
             return err("unrecognized_screen", "回退后输入框里不是这条提示词");
         }
-        // A `!` command waits in the TUI in shell mode: it cannot be sent as a prompt.
-        let text = (!r.shell).then(|| r.text.clone());
-        Ok(json!({"state": self.state.name(), "text": text}))
+        Ok(json!({"state": self.state.name(), "text": r.text}))
     }
 
     /// While ccrpc drives the picker nothing is announced; an announced rewind ends once the
@@ -498,7 +486,6 @@ mod tests {
             text: text.to_string(),
             queued: false,
             at_ms,
-            shell: false,
             command: false,
         }
     }

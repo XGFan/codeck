@@ -711,19 +711,17 @@ fn mock_model_rewind() {
     wait_state(&mut rpc, "idle", 10);
     settle_idle(&mut rpc);
 
-    // Commands rewind too: a slash command returns to the input box as typed; a `!` command
-    // returns in shell mode, not offered back as text (Connect cannot send one).
+    // Commands rewind too, and return to the input box as typed. A `!` command sent with
+    // `prompt` runs in the TUI's shell mode, as a turn of its own.
     rpc.forget();
     rpc.call("c1", json!({"type": "slash", "command": "greet world"}));
     rpc.event("turn_end", Duration::from_secs(30));
     settle_idle(&mut rpc);
-    rpc.call("c2", json!({"type": "send_keys", "keys": [{"text": "!"}]}));
-    std::thread::sleep(Duration::from_millis(400));
-    rpc.call(
-        "c3",
-        json!({"type": "send_keys", "keys": [{"text": "echo bang"}, "enter"]}),
-    );
-    std::thread::sleep(Duration::from_secs(2));
+    rpc.forget();
+    let r = rpc.call("c2", json!({"type": "prompt", "text": "! echo bang"}));
+    assert!(r["uuid"].is_string(), "{r}");
+    assert!(r["prompt_id"].is_null(), "{r}");
+    rpc.event("turn_end", Duration::from_secs(30));
     settle_idle(&mut rpc);
     let entry_uuid = |marker: &str| -> String {
         let dir = std::fs::read_dir(env.cc_dir.join("projects")).unwrap();
@@ -755,16 +753,13 @@ fn mock_model_rewind() {
         "a6",
         json!({"type": "answer_rewind", "request_id": c["request_id"], "option": "conversation"}),
     );
-    assert!(a["text"].is_null(), "{a}");
+    assert_eq!(a["text"], "! echo bang", "{a}");
+    // Back in the TUI's input box in shell mode; a prompt leaves it first.
     wait_screen(&mut rpc, "s3", |ls| {
         ls.iter()
             .rfind(|l| l.starts_with('!'))
             .is_some_and(|l| l.contains("echo bang"))
     });
-    // A `!` prompt is refused; a prompt leaves shell mode first.
-    rpc.send(json!({"type": "prompt", "text": "! ls", "id": "p9"}));
-    let r = rpc.until("p9", Duration::from_secs(10), |v| v["id"] == "p9");
-    assert_eq!(r["error"]["code"], "bad_request", "{r}");
     run_turn_allowing(&mut rpc, "p10", "after bang");
     settle_idle(&mut rpc);
     let c = rpc.call("r7", json!({"type": "rewind", "uuid": greet}));

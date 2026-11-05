@@ -399,6 +399,7 @@ impl Engine {
         // A message that cannot be sent is refused before the decision goes out.
         if let Some(msg) = message {
             Self::clean_text(msg)?;
+            Self::no_bang(msg)?;
         }
         let Some(idx) = self.requests.iter().position(|r| r.id == request_id) else {
             return err(
@@ -462,6 +463,7 @@ impl Engine {
         // A message that cannot be sent is refused before any key.
         if let Some(msg) = message {
             Self::clean_text(msg)?;
+            Self::no_bang(msg)?;
         }
         // The dialog on screen must be the one for this request.
         let found = self.wait_screen(Duration::from_secs(3), |e, s| {

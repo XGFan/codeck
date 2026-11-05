@@ -229,11 +229,16 @@ impl Engine {
         if clean.trim().is_empty() {
             return err("bad_request", "去掉控制字符后正文为空");
         }
-        // Pasted, a leading `!` puts the box in shell mode: it would run as a command.
-        if clean.trim_start().starts_with('!') {
-            return err("bad_request", "Connect 不能发 ! 命令，请在终端里输入");
-        }
         Ok(clean)
+    }
+
+    /// Text the TUI would take for a `!` command (pasted, a leading `!` switches the input box to
+    /// shell mode): refused where only a prompt may go (a steer, a message to the model).
+    pub(super) fn no_bang(text: &str) -> std::result::Result<(), CmdErr> {
+        if text.starts_with('!') {
+            return err("bad_request", "这里不能发 ! 命令");
+        }
+        Ok(())
     }
 
     pub(super) fn send_prompt(&mut self, text: &str) -> CmdResult {
@@ -269,6 +274,14 @@ impl Engine {
             "not_idle",
         )?;
         let clean = Self::clean_text(text)?;
+        // A `!` command (`!` first, as in the TUI): run in its shell mode, the output going to
+        // the model.
+        if let Some(cmd) = clean.strip_prefix('!') {
+            if !images.is_empty() {
+                return err("bad_request", "! 命令不能带图片");
+            }
+            return self.send_bang(cmd.trim());
+        }
         let paths = Self::image_paths(images)?;
         let images = &paths;
         self.clear_input()?;
@@ -336,6 +349,56 @@ impl Engine {
         Ok(json!({"uuid": found(self), "prompt_id": prompt_id, "delivered_as": "prompt"}))
     }
 
+    /// Runs `! cmd` as the TUI does: pasted, the leading `!` switches the input box to shell mode;
+    /// checked there, then Enter. Done once the transcript has its `<bash-input>` record (no
+    /// UserPromptSubmit comes, so no prompt id).
+    fn send_bang(&mut self, cmd: &str) -> CmdResult {
+        if cmd.is_empty() || cmd.contains('\n') {
+            return err("bad_request", "! 命令必须是非空的一行");
+        }
+        self.clear_input()?;
+        let before = self.marks.seq;
+        self.paste(&format!("!{cmd}"))?;
+        // In shell mode, holding just this command (a long one may wrap: whitespace aside).
+        let bare = |t: &str| t.split_whitespace().collect::<String>();
+        let want = bare(cmd);
+        let shown = self.wait_screen(Duration::from_secs(2), |_, s| {
+            recognize::shell_input(s).filter(|c| bare(c) == want)
+        });
+        // Claude Code may have started a turn meanwhile (a task notification): Enter would queue.
+        let still_idle = self.state == State::Idle && !self.turns.active();
+        if shown.is_none() || !still_idle {
+            let _ = self.clear_input();
+            return match shown {
+                None => Err(self.unrecognized("! 命令的输入框", None)),
+                Some(_) => err("not_idle", "Claude Code 刚开始了一轮，! 命令没有发出"),
+            };
+        }
+        let out = self.turns.bang_sent();
+        self.apply_turns(out);
+        self.keys(key::ENTER)?;
+        // Its `<bash-input>` is written as it starts; failing that, the command has left the box.
+        let line = format!("! {cmd}");
+        let seen = |e: &Engine| e.marks.prompt_after(before, &line).map(str::to_string);
+        let left = |e: &Engine| {
+            e.screen()
+                .ok()
+                .and_then(|s| recognize::input_text(&s))
+                .is_some_and(|t| t.is_empty())
+        };
+        self.wait_after_keys(Duration::from_secs(10), |e| seen(e).is_some());
+        if let Some(uuid) = seen(self) {
+            return Ok(json!({"uuid": uuid, "prompt_id": null, "delivered_as": "prompt"}));
+        }
+        if left(self) {
+            crate::clog!("! command left the box, not in the transcript yet");
+            return Ok(json!({"uuid": null, "prompt_id": null, "delivered_as": "prompt"}));
+        }
+        // Not run: it must not wait in the box for someone's Enter.
+        let _ = self.clear_input();
+        err("timeout", "回车后 ! 命令还在输入框里")
+    }
+
     /// Images are pasted by path, as a terminal drop would; each shows as `[Image #n]`.
     pub(super) fn paste_images(&mut self, paths: &[String]) -> std::result::Result<(), CmdErr> {
         for p in paths {
@@ -357,6 +420,7 @@ impl Engine {
     pub(super) fn steer(&mut self, text: &str, images: &[String]) -> CmdResult {
         self.require(matches!(self.state, State::Busy), "not_busy")?;
         let clean = Self::clean_text(text)?;
+        Self::no_bang(&clean)?;
         let paths = Self::image_paths(images)?;
         self.clear_input()?;
         self.paste_images(&paths)?;

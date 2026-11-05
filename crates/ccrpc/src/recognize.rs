@@ -485,6 +485,25 @@ pub fn input_box(lines: &[String]) -> Option<String> {
     Some(if shell { format!("!{s}") } else { s })
 }
 
+/// The input box is in shell mode (`!` instead of `❯`): its command, else `None` (no box, or a
+/// normal one, even one holding text that starts with `!`).
+pub fn shell_input(s: &crate::screen::Screen) -> Option<String> {
+    // The first column as drawn (a dim `❯` is still the normal box).
+    let lines = &s.lines;
+    let rules: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| is_input_rule(l))
+        .map(|(i, _)| i)
+        .collect();
+    let (&bottom, rest) = rules.split_last()?;
+    let &top = rest.last()?;
+    if bottom <= top + 1 || lines[top + 1].starts_with('❯') {
+        return None;
+    }
+    input_text(s)?.strip_prefix('!').map(str::to_string)
+}
+
 /// [`input_box`] without what Claude Code draws dim in it: an empty box shows a placeholder such
 /// as `Try "edit <filepath> to..."` that ctrl+u cannot clear. The box is found on the full text.
 pub fn input_text(s: &crate::screen::Screen) -> Option<String> {
@@ -1469,6 +1488,18 @@ mod tests {
         assert_eq!(input_box(&screen("  something else")), None);
         // A restored `!` command fits its prompt text.
         assert_eq!(rewind_key("!echo bang"), rewind_key("! echo bang"));
+        // Shell mode is told by the box's first column, not by the text.
+        let scr = |row: &str| crate::screen::Screen {
+            lines: screen(row),
+            undimmed: Vec::new(),
+            cursor: (0, 0),
+        };
+        assert_eq!(
+            shell_input(&scr("! echo bang")).as_deref(),
+            Some("echo bang")
+        );
+        assert_eq!(shell_input(&scr("!")).as_deref(), Some(""));
+        assert_eq!(shell_input(&scr("❯ !echo bang")), None);
     }
 
     #[test]

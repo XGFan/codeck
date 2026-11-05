@@ -84,9 +84,10 @@ impl Marks {
         }
     }
 
-    /// A slash command's record is rebuilt as `/name args`: spaces typed in it need not match.
+    /// A slash or `!` command's record is rebuilt as `/name args` / `! cmd`: spaces typed in it
+    /// need not match.
     pub(super) fn prompt_after(&self, after: u64, text: &str) -> Option<&str> {
-        let slash = text.trim_start().starts_with('/');
+        let slash = text.trim_start().starts_with(['/', '!']);
         self.prompts
             .iter()
             .rev()
@@ -139,6 +140,9 @@ pub(super) enum TurnOut {
     End(Value),
 }
 
+/// How soon a `!` command ccrpc ran shows in the transcript (it is written as the command starts).
+const BANG_RECORD: Duration = Duration::from_secs(10);
+
 /// A Stop or StopFailure from the plugin, as kept while it waits for its turn.
 struct Stop {
     prompt_id: Option<String>,
@@ -167,6 +171,9 @@ pub(super) struct TurnTracker {
     /// The next turn's Stop, come while this one's still waits for the transcript (claude fires
     /// both Stops before writing either turn): handled once this turn has ended.
     deferred_stop: Option<Stop>,
+    /// When ccrpc ran a `!` command (its turn already open): its transcript record, coming within
+    /// [`BANG_RECORD`], opens nothing.
+    bang_sent: Option<Instant>,
     prices: ::transcript::pricing::PriceTable,
 }
 
@@ -179,6 +186,7 @@ impl TurnTracker {
             pending_steers: Vec::new(),
             stop_pending: None,
             deferred_stop: None,
+            bang_sent: None,
             prices: ::transcript::pricing::PriceTable::embedded(),
         }
     }
@@ -302,7 +310,7 @@ impl TurnTracker {
         let ours = self.active
             && self.stop_pending.is_none()
             && (self.stats.prompt_id.is_none() || self.stats.prompt_id == pid);
-        // A `!` command or a turn ccrpc did not see start.
+        // A turn ccrpc did not see start.
         if !ours {
             return out;
         }
@@ -375,6 +383,20 @@ impl TurnTracker {
                 t.cache_creation += usage.cache_write_5m + usage.cache_write_1h;
                 let c = self.prices.cost(model.as_deref(), usage, *logged_cost);
                 t.cost = t.cost.zip(c).map(|(a, b)| a + b);
+            }
+            // A `!` command has no UserPromptSubmit, yet runs as a turn (its output goes to the
+            // model) ended by a Stop: one typed in the TUI opens here (its Stop may have come
+            // first: then dropped without `turn_end`); ccrpc's own opened before Enter.
+            TxEvent::UserPrompt { text, .. } if text.starts_with("! ") => {
+                let ours = self
+                    .bang_sent
+                    .take()
+                    .is_some_and(|t| now.duration_since(t) < BANG_RECORD);
+                if ours || self.active {
+                    return Vec::new();
+                }
+                self.open_provisional();
+                return vec![TurnOut::Opened];
             }
             TxEvent::ApiError { kind, message } => {
                 if self.active && self.stats.error.is_none() {
@@ -455,6 +477,17 @@ impl TurnTracker {
         out
     }
 
+    /// ccrpc is about to run a `!` command (no UserPromptSubmit comes): its turn opens before
+    /// Enter, as its Stop may come before the transcript shows the command.
+    pub(super) fn bang_sent(&mut self) -> Vec<TurnOut> {
+        self.bang_sent = Some(Instant::now());
+        if self.active {
+            return Vec::new();
+        }
+        self.open_provisional();
+        vec![TurnOut::Opened]
+    }
+
     /// A turn expected to run with no UserPromptSubmit: dropped without `turn_end` if nothing
     /// comes of it.
     fn open_provisional(&mut self) {
@@ -506,9 +539,9 @@ impl Engine {
             }
             TxEvent::UserPrompt { uuid, text } => {
                 // A person's prompt after a rewind (a resend of the same one forks no Branch):
-                // the transcript's conversation is the TUI's again. Commands and task
+                // the transcript's conversation is the TUI's again (a `!` command too). Slash commands and task
                 // notifications are not.
-                if !text.starts_with(['/', '!']) && transcript::task_notification(&text).is_none() {
+                if !text.starts_with('/') && transcript::task_notification(&text).is_none() {
                     self.rewound = None;
                 }
                 self.marks.prompt(uuid, text)
@@ -831,6 +864,28 @@ mod tests {
         let out = marker(&mut t, now, 10);
         assert_eq!(ends(&out).len(), 1);
         assert!(!out.contains(&TurnOut::Opened));
+        assert!(!t.active);
+    }
+
+    #[test]
+    fn a_bang_command_runs_as_a_turn_ended_by_its_stop() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        let bang = TxEvent::UserPrompt {
+            uuid: "u1".into(),
+            text: "! echo hi".into(),
+        };
+        assert_eq!(t.on_tx(&bang, now), vec![TurnOut::Opened]);
+        assert!(t.active);
+        stop(&mut t, now, "b1", "ok");
+        let out = t.poll(now + STOP_CATCH_UP, None);
+        assert_eq!(ends(&out).len(), 1);
+        assert!(!t.active);
+        // A slash command opens nothing.
+        let slash = TxEvent::UserPrompt {
+            uuid: "u2".into(),
+            text: "/model x".into(),
+        };
+        assert!(t.on_tx(&slash, now).is_empty());
         assert!(!t.active);
     }
 
