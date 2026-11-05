@@ -23,6 +23,36 @@ fn dialog_needle(name: &str, input: &Value) -> Option<String> {
     (!n.is_empty()).then_some(n)
 }
 
+/// The pending call the permission dialog `d` (with `body`) is about, among `cands`. A tool's own
+/// dialog (a cursor menu): the one call of the layout's tool; with the tool unknown (a learned
+/// layout), the only pending call, and it must be an MCP tool. Claude Code's own dialog: the call
+/// whose command / file shows in the body, else the only call when it has nothing to show.
+fn pick_pending<'a>(
+    d: &PermissionDialog,
+    body: &str,
+    cands: &[&'a transcript::PendingTool],
+) -> Option<&'a transcript::PendingTool> {
+    if d.select == Select::Cursor {
+        let of_tool: Vec<_> = match &d.tool {
+            Some(tool) => cands.iter().filter(|p| &p.name == tool).collect(),
+            None => cands.iter().collect(),
+        };
+        return match of_tool.as_slice() {
+            [p] if p.name.starts_with("mcp__") => Some(**p),
+            _ => None,
+        };
+    }
+    let matched: Vec<_> = cands
+        .iter()
+        .filter(|p| dialog_needle(&p.name, &p.input).is_some_and(|n| body.contains(&n)))
+        .collect();
+    match (matched.as_slice(), cands) {
+        ([p], _) => Some(**p),
+        ([], [p]) if dialog_needle(&p.name, &p.input).is_none() => Some(*p),
+        _ => None,
+    }
+}
+
 /// AskUserQuestion's `answers` (question text → answer) for the caller's `answers`, one per
 /// question: option labels (several joined by `, ` for a multi-select), or free text.
 fn question_answers(
@@ -105,6 +135,9 @@ pub(super) struct HookRequest {
     /// The waiting hook: the answer goes back through it. `None`: answered on the screen (a
     /// background Subagent's request, ExitPlanMode, or the hook is gone).
     pub(super) reply: Option<UnixStream>,
+    /// Adopted for a dialog the running tool draws itself (a cursor menu: computer use's grant);
+    /// only such a dialog is tied to it, and it to no other dialog.
+    pub(super) in_tool: bool,
 }
 
 impl HookRequest {
@@ -157,6 +190,7 @@ impl Engine {
             at: Instant::now(),
             away_since: None,
             reply,
+            in_tool: false,
         });
     }
 
@@ -193,12 +227,18 @@ impl Engine {
             return Some((d, recognize::permission_body(lines)?, "builtin".into()));
         }
         let (l, opts) = self.library.find_kind(lines, LayoutKind::Permission)?;
+        let cursor = opts.iter().find(|o| o.cursor).map(|o| o.number);
         let options = opts
             .into_iter()
             .map(|o| (o.number, o.label, o.meaning))
             .collect();
         Some((
-            PermissionDialog { options },
+            PermissionDialog {
+                options,
+                select: l.select,
+                cursor,
+                tool: l.tool.clone(),
+            },
             l.body(lines)?,
             l.source.clone(),
         ))
@@ -212,6 +252,9 @@ impl Engine {
         lines: &[String],
     ) -> Option<(Value, String)> {
         let (d, body, source) = self.dialog_of(lines)?;
+        if (d.select == Select::Cursor) != r.in_tool {
+            return None;
+        }
         match dialog_needle(&r.tool_name, &r.input) {
             Some(n) if !body.contains(&n) => return None,
             Some(_) => {}
@@ -232,11 +275,12 @@ impl Engine {
     /// (a background Subagent's): the one whose command / file shows in the dialog body; failing
     /// that, the only candidate when no candidate has anything to show.
     pub(super) fn screen_request(&self, s: &Screen) -> Option<String> {
-        let (_, body, _) = self.dialog_of(&s.lines)?;
+        let (d, body, _) = self.dialog_of(&s.lines)?;
+        let in_tool = d.select == Select::Cursor;
         let cands: Vec<&HookRequest> = self
             .requests
             .iter()
-            .filter(|r| r.is_approval() && r.reply.is_none())
+            .filter(|r| r.is_approval() && r.reply.is_none() && r.in_tool == in_tool)
             .collect();
         let matched: Vec<&&HookRequest> = cands
             .iter()
@@ -257,15 +301,23 @@ impl Engine {
 
     /// A permission dialog the plugin never reported (it was up before ccrpc connected): taken
     /// from the transcript's pending tool whose command / file shows in it, answered with keys.
+    /// Also a dialog the running tool draws itself (a cursor menu, computer use's grant): the
+    /// plugin reports that tool's PreToolUse but no PermissionRequest comes. It is tied to the
+    /// one pending call of the layout's tool; a learned one, whose tool is unknown, only when a
+    /// single tool is pending at all and it is an MCP tool.
     pub(super) fn adopt_pending(&mut self, s: &Screen) {
-        if self.requests.iter().any(|r| r.is_approval())
-            || self.waiting_age() < Duration::from_millis(250)
-        {
+        if self.waiting_age() < Duration::from_millis(250) {
             return;
         }
-        let Some((_, body, _)) = self.dialog_of(&s.lines) else {
+        let Some((d, body, _)) = self.dialog_of(&s.lines) else {
             return;
         };
+        // Claude Code's own tool dialogs are numbered menus; one without numbers is the tool's own.
+        let in_tool = d.select == Select::Cursor;
+        let adopted = |r: &HookRequest| if in_tool { r.in_tool } else { r.is_approval() };
+        if self.requests.iter().any(adopted) {
+            return;
+        }
         let Some(t) = &self.tailer else { return };
         let cands: Vec<_> = t
             .pending()
@@ -274,16 +326,10 @@ impl Engine {
             .filter(|p| !CHOICE_TOOLS.contains(&p.name.as_str()))
             .filter(|p| !self.resolved.contains(&p.id))
             // A tool the plugin reported at PreToolUse gets its own PermissionRequest.
-            .filter(|p| !self.pre_tools.iter().any(|t| t.id == p.id))
+            .filter(|p| in_tool || !self.pre_tools.iter().any(|t| t.id == p.id))
             .collect();
-        let matched: Vec<_> = cands
-            .iter()
-            .filter(|p| dialog_needle(&p.name, &p.input).is_some_and(|n| body.contains(&n)))
-            .collect();
-        let pick = match (matched.as_slice(), cands.as_slice()) {
-            ([p], _) => *p,
-            ([], [p]) if dialog_needle(&p.name, &p.input).is_none() => p,
-            _ => return,
+        let Some(pick) = pick_pending(&d, &body, &cands) else {
+            return;
         };
         self.requests.push(HookRequest {
             id: pick.id.clone(),
@@ -293,6 +339,7 @@ impl Engine {
             at: Instant::now(),
             away_since: None,
             reply: None,
+            in_tool,
         });
     }
 
@@ -420,6 +467,10 @@ impl Engine {
         message: Option<&str>,
     ) -> CmdResult {
         let rid = request_id.to_string();
+        // A message that cannot be sent is refused before any key.
+        if let Some(msg) = message {
+            Self::clean_text(msg)?;
+        }
         // The dialog on screen must be the one for this request.
         let found = self.wait_screen(Duration::from_secs(3), |e, s| {
             let (d, _, _) = e.dialog_of(&s.lines)?;
@@ -439,6 +490,15 @@ impl Engine {
             }
             return Err(self.unrecognized("answer_permission", Some(&s)));
         };
+        let select = d.select;
+        // Where `❯` is while the screen still shows this request's dialog.
+        let cursor_of = |e: &Engine, s: &Screen| -> Option<u32> {
+            let (d, _, _) = e.dialog_of(&s.lines)?;
+            if e.screen_request(s)? != rid {
+                return None;
+            }
+            d.cursor
+        };
         self.settle_dialog();
         // Last check right before the key: still the same request, on a Snapshot taken now.
         let now = self.fresh_screen()?;
@@ -450,18 +510,36 @@ impl Engine {
                 format!("作答前请求已经变了，不再是 {request_id}"),
             );
         }
-        self.keys(n.to_string().as_bytes())?;
-        // A key the dialog dropped leaves it there: press once more if it still is this request's.
+        self.press_option(select, n, &cursor_of)?;
+        // A digit the dialog dropped leaves it there: press once more if it still is this
+        // request's. Not Enter: a dialog slow to close looks the same, and a second Enter would
+        // go to whatever comes next.
         let left = |e: &Engine| !e.request_is(&WaitKind::Permission, &rid);
-        if !self.wait_until(Duration::from_secs(2), left) {
+        if select == Select::Number && !self.wait_until(Duration::from_secs(2), left) {
             let now = self.fresh_screen()?;
             if self.request_is(&WaitKind::Permission, request_id)
                 && self.screen_request(&now).is_some_and(|id| id == rid)
             {
-                self.keys(n.to_string().as_bytes())?;
+                self.press_option(select, n, &cursor_of)?;
             }
         }
         let mut res = self.wait_leave_request(request_id)?;
+        if select == Select::Cursor {
+            // The Process File may flicker out of waiting while the dialog is still up (the Enter
+            // dropped): only a dialog gone from the screen counts as answered.
+            let gone = self.wait_screen(Duration::from_secs(1), |e, s| {
+                e.screen_request(s).is_none_or(|id| id != rid).then_some(())
+            });
+            if gone.is_none() {
+                return err("timeout", "回车后对话框仍在，没有作答");
+            }
+            // Its dialog is answered: the call is no candidate for a later dialog.
+            self.resolve(request_id);
+            if let Some(msg) = message {
+                res["message_delivered_as"] = self.deliver_after_tool_deny(msg)?;
+            }
+            return Ok(res);
+        }
         // The dialog's No interrupts the turn: the message goes as the next prompt.
         if let Some(msg) = message {
             if !self.wait_until(Duration::from_secs(10), |e| {
@@ -473,6 +551,66 @@ impl Engine {
             res["message_uuid"] = sent["uuid"].clone();
         }
         Ok(res)
+    }
+
+    /// Refusing a tool's own dialog ends only the tool, the turn goes on: the message goes in as
+    /// an interjection while it does, else (the turn ended, or another dialog came up) it waits
+    /// in the follow-up queue for the next idle. How it was delivered, as `steer` says it, or
+    /// `follow_up`.
+    fn deliver_after_tool_deny(&mut self, msg: &str) -> std::result::Result<Value, CmdErr> {
+        self.wait_until(Duration::from_secs(3), |e| {
+            !matches!(e.state, State::Waiting { .. })
+        });
+        if self.state == State::Busy {
+            match self.steer(msg, &[]) {
+                Ok(sent) => return Ok(sent["delivered_as"].clone()),
+                // Refused before the message was written (a follow-up clears the box again).
+                Err(("not_busy" | "unrecognized_screen" | "input_not_empty", _)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        self.follow_ups.push_back((msg.to_string(), Vec::new()));
+        Ok(json!("follow_up"))
+    }
+
+    /// Picks option `number` of the dialog on screen: its number key in a numbered menu; in a
+    /// cursor menu ↑ / ↓ until `❯` is on it, read back from the screen, then Enter (on a Snapshot
+    /// taken right before, `❯` must still be there). `cursor_of` says where `❯` is while the screen
+    /// still shows the dialog being answered, `None` otherwise.
+    pub(super) fn press_option(
+        &mut self,
+        select: Select,
+        number: u32,
+        cursor_of: &dyn Fn(&Engine, &Screen) -> Option<u32>,
+    ) -> std::result::Result<(), CmdErr> {
+        if select == Select::Number {
+            return self.keys(number.to_string().as_bytes());
+        }
+        let now = self.fresh_screen()?;
+        let Some(at) = cursor_of(self, &now) else {
+            return err("unknown_request", "屏幕上已经不是要作答的对话框");
+        };
+        if at != number {
+            let (k, n) = if number > at {
+                (key::DOWN, number - at)
+            } else {
+                (key::UP, at - number)
+            };
+            for _ in 0..n {
+                self.keys(k)?;
+            }
+            let moved = self.wait_screen(Duration::from_secs(2), |e, s| {
+                (cursor_of(e, s)? == number).then_some(())
+            });
+            if moved.is_none() {
+                return Err(self.unrecognized("select_option", None));
+            }
+        }
+        let now = self.fresh_screen()?;
+        if cursor_of(self, &now) != Some(number) {
+            return err("unknown_request", "按回车前光标已不在要选的选项上");
+        }
+        self.keys(key::ENTER)
     }
 
     /// Answers an AskUserQuestion through its waiting hook (the answers go to the tool as its
@@ -694,6 +832,63 @@ mod tests {
             Some("c.rs")
         );
         assert_eq!(dialog_needle("mcp__x__y", &json!({"a": 1})), None);
+    }
+
+    #[test]
+    fn a_tools_own_dialog_is_tied_only_to_a_call_of_its_tool() {
+        let call = |id: &str, name: &str, input: Value| transcript::PendingTool {
+            id: id.into(),
+            name: name.into(),
+            input,
+            agent_id: None,
+            seq: 0,
+        };
+        let grant = call(
+            "g",
+            "mcp__computer-use__request_access",
+            json!({"apps": ["Notes"]}),
+        );
+        let other_mcp = call("m", "mcp__github__search_issues", json!({"q": "x"}));
+        let bash = call("b", "Bash", json!({"command": "sleep 20"}));
+        let dialog = |select, tool: Option<&str>| PermissionDialog {
+            options: Vec::new(),
+            select,
+            cursor: None,
+            tool: tool.map(str::to_string),
+        };
+        let ids = |p: Option<&transcript::PendingTool>| p.map(|p| p.id.clone());
+        let built_in = dialog(Select::Cursor, Some("mcp__computer-use__request_access"));
+        // Other pending calls (a background Subagent's MCP call, a shell) are not the grant's.
+        assert_eq!(
+            ids(pick_pending(&built_in, "", &[&other_mcp, &grant, &bash])),
+            Some("g".into())
+        );
+        assert_eq!(ids(pick_pending(&built_in, "", &[&other_mcp, &bash])), None);
+        // Two calls of the tool: cannot tell which.
+        let grant2 = call(
+            "g2",
+            "mcp__computer-use__request_access",
+            json!({"apps": ["Mail"]}),
+        );
+        assert_eq!(ids(pick_pending(&built_in, "", &[&grant, &grant2])), None);
+        // A learned cursor dialog: only a lone pending call, and an MCP one.
+        let learned = dialog(Select::Cursor, None);
+        assert_eq!(
+            ids(pick_pending(&learned, "", &[&other_mcp])),
+            Some("m".into())
+        );
+        assert_eq!(ids(pick_pending(&learned, "", &[&other_mcp, &grant])), None);
+        assert_eq!(ids(pick_pending(&learned, "", &[&bash])), None);
+        // Claude Code's numbered dialog: by what its body shows.
+        let numbered = dialog(Select::Number, None);
+        assert_eq!(
+            ids(pick_pending(&numbered, "sleep20", &[&bash, &other_mcp])),
+            Some("b".into())
+        );
+        assert_eq!(
+            ids(pick_pending(&numbered, "", &[&other_mcp])),
+            Some("m".into())
+        );
     }
 
     #[test]

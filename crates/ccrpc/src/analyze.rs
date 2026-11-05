@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::layout::{Layout, LayoutKind, LayoutOption, Meaning};
+use crate::layout::{Layout, LayoutKind, LayoutOption, Meaning, Select};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/anthropic";
 pub const DEFAULT_MODEL: &str = "deepseek-flash";
@@ -147,7 +147,8 @@ impl Analyzer {
 
 const SYSTEM: &str = "You read the text of a terminal running Claude Code (an interactive CLI) \
 that is stopped on a dialog waiting for the user, and describe the dialog so a program can \
-answer it by pressing the option's number key. Answer with one JSON object and nothing else.";
+answer it: by pressing the option's number key, or, when the options have no numbers, by moving \
+the ❯ cursor onto the option and pressing Enter. Answer with one JSON object and nothing else.";
 
 fn prompt(req: &Request) -> String {
     let screen: String = req
@@ -176,15 +177,17 @@ Screen (row|text):
 Describe the dialog at the bottom of the screen as JSON:
 {{
   "kind": "permission" | "choice" | "none",
-  "title": "<the dialog's question line, copied exactly, without leading/trailing spaces>",
+  "title": "<the dialog's question line, copied exactly, without leading/trailing spaces; if the screen wraps it over several rows, join them with a space>",
+  "select": "number" | "cursor",
   "options": [
     {{"number": 1, "label": "<the start of the option's text, copied exactly; leave out parts that change from one call to the next such as commands, paths or file names>", "meaning": "allow" | "allow_always" | "deny" | "other", "description": "<what choosing it does, in a few words>"}}
   ]
 }}
 - "permission": the dialog asks whether to let a pending tool call run. Then "allow" lets it run once, "allow_always" lets it run and stops asking for similar calls, "deny" refuses. It must have at least one "allow" and one "deny" option.
 - "choice": any other numbered menu waiting for the user (approving a plan, confirming an exit, a startup notice). Use "allow" for options that go ahead, "deny" for options that refuse or cancel, "other" for the rest.
-- "none": there is no numbered menu waiting for an answer.
-- List every numbered option of that menu, in order, with its number as shown."#,
+- "none": there is no menu waiting for an answer.
+- "select": "number" when every option is shown with its number ("❯ 1. Yes"); "cursor" when the options have no numbers and the one marked ❯ is picked with the arrow keys and Enter. Then "number" is the option's position, from 1.
+- List every option of that menu, in order, with its number as shown (its position for "cursor")."#,
         waiting = req.waiting_for,
         pending = Value::Array(pending),
     )
@@ -206,22 +209,32 @@ pub fn parse_answer(text: &str) -> Result<Layout> {
         other => bail!("分析器给出的 kind 不对：{other:?}"),
     };
     let title = v["title"].as_str().unwrap_or_default().trim().to_string();
+    let select = match v["select"].as_str() {
+        Some("cursor") => Select::Cursor,
+        _ => Select::Number,
+    };
     let options = v["options"]
         .as_array()
         .ok_or_else(|| anyhow!("分析器没有给出 options"))?
         .iter()
-        .map(|o| {
+        .enumerate()
+        .map(|(i, o)| {
             let meaning = match o["meaning"].as_str() {
                 Some("allow") => Meaning::Allow,
                 Some("allow_always") => Meaning::AllowAlways,
                 Some("deny") => Meaning::Deny,
                 _ => Meaning::Other,
             };
-            Ok(LayoutOption {
-                number: o["number"]
+            let number = match select {
+                // A cursor menu shows no numbers: an option is its position.
+                Select::Cursor => i as u32 + 1,
+                Select::Number => o["number"]
                     .as_u64()
                     .ok_or_else(|| anyhow!("分析器给出的选项没有 number"))?
                     as u32,
+            };
+            Ok(LayoutOption {
+                number,
                 label: o["label"].as_str().unwrap_or_default().trim().to_string(),
                 meaning,
                 description: o["description"].as_str().map(str::to_string),
@@ -232,6 +245,8 @@ pub fn parse_answer(text: &str) -> Result<Layout> {
         id: String::new(),
         kind,
         title,
+        select,
+        tool: None,
         options,
         source: String::new(),
         claude_version: None,
@@ -272,6 +287,19 @@ mod tests {
         assert_eq!(l.title, "Would you like to proceed?");
         assert_eq!(l.options[1].meaning, Meaning::Deny);
         assert!(l.learned_at.as_deref().unwrap().ends_with('Z'));
+    }
+
+    #[test]
+    fn a_cursor_menu_answer_numbers_options_by_position() {
+        let text = r#"{"kind":"permission","title":"Computer Use wants to control these apps","select":"cursor","options":[{"label":"Deny, and tell Claude what to do","meaning":"deny"},{"number":7,"label":"Allow for this session","meaning":"allow"}]}"#;
+        let l = parse_answer(text).unwrap();
+        assert_eq!(l.select, Select::Cursor);
+        assert_eq!(
+            l.options.iter().map(|o| o.number).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        // Without `select` it is a numbered menu, and numbers are required.
+        assert!(parse_answer(&text.replace(r#""select":"cursor","#, "")).is_err());
     }
 
     #[test]

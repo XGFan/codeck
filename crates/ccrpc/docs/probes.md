@@ -55,6 +55,33 @@
 - 选 No：本轮中断，屏幕显示 `Interrupted · What should Claude do instead?`，状态回 `idle`。
 - Workflow 工具的审批框（160×48 实测，`tests/fixtures/screens/permission_workflow.txt`）：标题 `Run a dynamic workflow?`，下面是脚本名与各阶段说明（阶段本身带 `1.` 这样的编号），最后才是菜单 `❯ 1. Yes, run it` / `2. View raw script` / `3. No`，进程文件同样是 `waitingFor: "permission prompt"`。
 
+## computer use 的授权框（2.1.318）
+
+`mcp__computer-use__request_access` 运行中弹出（51×48 实测，屏幕存在内置布局 `layouts/e1960c70f912a9ff.json`）：
+
+```
+ Computer Use wants to control these apps
+
+   <request_access 的 reason>
+
+     ◉ ToH
+     ◉ System Settings
+       ⚠ can change system settings
+     … +4 more apps not shown, and not included
+   in this grant.
+
+   ❯ Deny, and tell Claude what to do differently
+     (esc)
+     Allow for this session (4 apps)
+
+  Enter to confirm · Esc to cancel
+```
+
+- 菜单没有编号：↑ / ↓ 移动 `❯`，两头循环，应用列表不能选中；回车确认，`Esc` 即 Deny。默认光标在 Deny。
+- 进程文件 `waitingFor: "permission prompt"`。插件只报 PreToolUse，没有 PermissionRequest；bypass 与 manual 模式都直接弹这个框，前面没有工具审批。
+- Deny：工具返回空授权（`allowedApps` 为空），PostToolUse 照常，本轮继续（不像工具审批的 No 那样中断）。Allow：本 Session 内获准，同一应用再申请不再弹框；获准的 Session 持有 `~/.claude/computer-use.lock`，直到它退出。
+- 窄屏只列得下部分应用，其余写明 `not shown, and not included in this grant`，按钮上的数字是这次真正授权的应用数。
+
 ## AskUserQuestion（2.1.316）
 
 多题时顶部有标签行，最后一个是 Submit：

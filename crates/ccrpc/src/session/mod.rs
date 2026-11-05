@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use crate::analyze::{self, Analyzer};
 use crate::history::{self, HistoryWorker};
 use crate::hook::{self, HookMsg, HookServer};
-use crate::layout::{self, Layout, LayoutKind, Library, Meaning};
+use crate::layout::{self, Layout, LayoutKind, Library, Meaning, Select};
 use crate::locate::{self, Roots};
 use crate::procfile::{self, ProcessFile};
 use crate::pty::{self, HolderConn, Owner, key};

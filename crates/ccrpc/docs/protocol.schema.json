@@ -1161,6 +1161,11 @@
           "message_uuid": {
             "type": "string",
             "description": "按屏幕按键拒绝（后台 Subagent 等）且有 message 时，message 作为 prompt 发出的用户消息 uuid；经插件作答时没有。"
+          },
+          "message_delivered_as": {
+            "type": "string",
+            "enum": ["prompt", "queued", "follow_up"],
+            "description": "拒绝工具自己弹的对话框（computer use 的授权框）且有 message 时 message 的去向：本轮继续时作为插话（同 steer 的 delivered_as），本轮已结束或又停在别的对话框时为 follow_up（排进 follow_up 队列）。"
           }
         },
         "required": [

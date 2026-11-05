@@ -517,6 +517,7 @@ impl Engine {
         if l.id != layout {
             return err("unknown_request", "屏幕上已经不是这个选择");
         }
+        let select = l.select;
         let exact: Vec<_> = opts.iter().filter(|o| o.label == option).collect();
         let prefix: Vec<_> = opts
             .iter()
@@ -532,7 +533,15 @@ impl Engine {
                 );
             }
         };
-        self.keys(pick.to_string().as_bytes())?;
+        // Where `❯` is while the screen still shows this choice.
+        let cursor_of = |e: &Engine, s: &Screen| -> Option<u32> {
+            let (l, opts) = e.library.find_kind(&s.lines, LayoutKind::Choice)?;
+            if l.id != layout {
+                return None;
+            }
+            opts.iter().find(|o| o.cursor).map(|o| o.number)
+        };
+        self.press_option(select, pick, &cursor_of)?;
         let rid = request_id.to_string();
         let ok = self.wait_until(Duration::from_secs(10), |e| {
             !matches!(e.state, State::Waiting { .. })

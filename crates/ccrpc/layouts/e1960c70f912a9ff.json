@@ -1,0 +1,51 @@
+{
+  "id": "e1960c70f912a9ff",
+  "kind": "permission",
+  "title": "Computer Use wants to control these apps",
+  "select": "cursor",
+  "tool": "mcp__computer-use__request_access",
+  "options": [
+    {
+      "number": 1,
+      "label": "Deny, and tell Claude",
+      "meaning": "deny",
+      "description": "拒绝授权，工具返回空授权，本轮继续"
+    },
+    {
+      "number": 2,
+      "label": "Allow for this session",
+      "meaning": "allow",
+      "description": "本 Session 内允许控制列出的应用（括号里是这次授权包含的应用数）"
+    }
+  ],
+  "claude_version": "2.1.318",
+  "screen": [
+    "",
+    "───────────────────────────────────────────────────",
+    "  Computer Use wants to control these apps",
+    "",
+    "",
+    "   截一张当前屏幕的截图，说明屏幕上有哪些窗口",
+    "   ；只截图，不点击、不输入。",
+    "",
+    "     ◉ ToH",
+    "     ◉ System Settings",
+    "       ⚠ can change system settings",
+    "     ◉ Finder",
+    "       ⚠ can read/write any file",
+    "     ◉ IntelliJ IDEA",
+    "       ⚠ equivalent to shell access",
+    "     … +4 more apps not shown, and not included",
+    "   in this grant.",
+    "",
+    "   1 other app will be hidden while Claude",
+    "   works.",
+    "",
+    "   ❯ Deny, and tell Claude what to do differently",
+    "     (esc)",
+    "     Allow for this session (4 apps)",
+    "",
+    "",
+    "  Enter to confirm · Esc to cancel"
+  ]
+}

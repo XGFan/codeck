@@ -2,7 +2,7 @@
 //! docs/probes.md). Each one returns `None` when the screen does not match what it knows; callers
 //! then report `unrecognized` instead of pressing keys.
 
-use crate::layout::Meaning;
+use crate::layout::{Meaning, Select};
 
 /// One numbered menu row (`❯ 2. [✔] label`), with wrapped continuation lines joined.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +76,13 @@ fn checkbox(label: &str) -> (Option<bool>, String) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDialog {
-    /// `(number, full label, meaning)`.
+    /// `(number, full label, meaning)`; in a cursor menu the number is the position.
     pub options: Vec<(u32, String, Meaning)>,
+    pub select: Select,
+    /// The option `❯` is on (read for a cursor menu, answered by moving it).
+    pub cursor: Option<u32>,
+    /// The tool that draws the dialog itself (see `Layout::tool`).
+    pub tool: Option<String>,
 }
 
 impl PermissionDialog {
@@ -139,7 +144,7 @@ pub fn strict_menu(lines: &[String], i: usize) -> Option<Vec<(u32, String)>> {
 }
 
 /// [`strict_menu`] with whether the `❯` cursor is on each option.
-fn strict_menu_rows(lines: &[String], mut i: usize) -> Option<Vec<(u32, String, bool)>> {
+pub fn strict_menu_rows(lines: &[String], mut i: usize) -> Option<Vec<(u32, String, bool)>> {
     let mut opts: Vec<(u32, String, bool, usize)> = Vec::new(); // number, label, cursor, indent
     while i < lines.len() {
         let line = &lines[i];
@@ -196,7 +201,12 @@ pub fn permission(lines: &[String]) -> Option<PermissionDialog> {
         .collect();
     let has = |c| options.iter().any(|o| o.2 == c);
     let deny_last = options.last().is_some_and(|o| o.2 == Meaning::Deny);
-    (has(Meaning::Allow) && deny_last).then_some(PermissionDialog { options })
+    (has(Meaning::Allow) && deny_last).then_some(PermissionDialog {
+        options,
+        select: Select::Number,
+        cursor: None,
+        tool: None,
+    })
 }
 
 /// Byte column where an option's number starts (after any `❯` marker).
