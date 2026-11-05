@@ -14,7 +14,7 @@ import { resumeOffer } from "./resume";
 import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } from "./store";
 
 export { ConnectButton, PaneButton, STATE_WORD, useConnectDebugInfo } from "./Header";
-export { QuestionForm } from "./Requests";
+export { QuestionForm } from "./QuestionForm";
 export { CcrpcSettings } from "./Settings";
 export { connFor, lsEntryFor, useConnect } from "./store";
 

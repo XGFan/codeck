@@ -1,19 +1,19 @@
-import { Check, MessageCircleQuestionMark, ScanSearch, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { MessageCircleQuestionMark, ScanSearch, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { LiveDot } from "@/components/LiveDot";
 import { Button } from "@/components/ui/button";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import { toolKey } from "@/features/transcript/keys";
 import { PendingText, ToolCallView } from "@/features/transcript/tools";
 import type { ToolCall } from "@/ipc/bindings";
-import { cn } from "@/lib/cn";
-import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useCurrentTranscript } from "@/queries";
-import { selectOverlayOpen, useUi } from "@/state/ui";
+import { useUi } from "@/state/ui";
 import type { ConnState, Request } from "./conn";
-import type { AskQuestion, ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
+import type { ChoiceEvent, LayoutSource, PermissionRequestEvent, QuestionEvent } from "./protocol";
 import { NoticeCard } from "./Notice";
+import { QuestionForm } from "./QuestionForm";
 import { useConnect } from "./store";
+import { useAnswer, useNumberKeys } from "./useAnswer";
 
 /** Cards for what the Session waits on, main line first. */
 export function Requests({ c }: { c: ConnState }) {
@@ -137,56 +137,6 @@ function Shell({
       {children}
     </section>
   );
-}
-
-function useAnswer(c: ConnState) {
-  const command = useConnect((s) => s.command);
-  const dropRequest = useConnect((s) => s.dropRequest);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const send = async (msg: Record<string, unknown>) => {
-    setBusy(true);
-    setError(null);
-    const r = await command(c.conn, msg);
-    setBusy(false);
-    // Answered: off screen now, so the next card gets the keys (ccrpc ends it on the tool's result).
-    if (r.success) dropRequest(c.conn, String(msg.request_id));
-    else
-      setError(
-        r.error?.code === "not_offered"
-          ? "这次审批没有“总是允许”选项"
-          : `作答失败：${r.error?.message ?? r.error?.code ?? ""}`,
-      );
-  };
-  return { busy, error, send };
-}
-
-/**
- * Number keys pick the n-th button of the first card, only while focus is inside the input area (a card
- * button, e.g. after Enter while waiting) and not in an editable field: reading the transcript with a card
- * pending must not answer it.
- */
-function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
-  const ref = useRef(actions);
-  ref.current = actions;
-  useEffect(() => {
-    if (!enabled) return;
-    const on = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (!el?.closest?.("[data-connect-panel]")) return;
-      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable)
-        return;
-      if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (selectOverlayOpen(useUi.getState()) || popupOpen()) return;
-      const n = Number(e.key);
-      if (n >= 1 && n <= ref.current.length) {
-        e.preventDefault();
-        ref.current[n - 1]!();
-      }
-    };
-    window.addEventListener("keydown", on);
-    return () => window.removeEventListener("keydown", on);
-  }, [enabled]);
 }
 
 /** The tool's input, drawn by the transcript's tool renderer (open, with no result yet). */
@@ -357,133 +307,6 @@ function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
         <QuestionForm r={r} c={c} />
       </div>
     </section>
-  );
-}
-
-/** The questions of an AskUserQuestion to pick and submit, styled as the transcript's 「向你提问」 card. */
-export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
-  const { busy, error, send } = useAnswer(c);
-  const qs = Array.isArray(r.questions) ? r.questions : [];
-  const [picked, setPicked] = useState<string[][]>(() => qs.map(() => []));
-  const [other, setOther] = useState<string[]>(() => qs.map(() => ""));
-  // The answer is either the options picked or the written one, never both: typing in 其他 drops
-  // the picked options, picking an option sets the written text aside (kept, greyed).
-  const [useOther, setUseOther] = useState<boolean[]>(() => qs.map(() => false));
-  const otherOn = (i: number) => !!useOther[i] && !!other[i]?.trim();
-  const ready = qs.every((_, i) => picked[i]?.length || otherOn(i));
-  const submit = () =>
-    void send({
-      type: "answer_question",
-      request_id: r.request_id,
-      answers: qs.map((_, i) => (otherOn(i) ? { other: other[i]!.trim() } : { options: picked[i] })),
-    });
-  const at = <T,>(xs: T[], i: number, v: T) => xs.map((x, j) => (j === i ? v : x));
-  const toggle = (i: number, q: AskQuestion, label: string) => {
-    setUseOther((u) => at(u, i, false));
-    setPicked((p) =>
-      p.map((x, j) => {
-        if (j !== i) return x;
-        const on = x.includes(label);
-        return q.multiSelect ? (on ? x.filter((l) => l !== label) : [...x, label]) : on ? [] : [label];
-      }),
-    );
-  };
-  const chooseOther = (i: number) => {
-    setUseOther((u) => at(u, i, true));
-    setPicked((p) => at(p, i, []));
-  };
-  return (
-    <div className="flex flex-col gap-3" data-testid="question-form">
-      {qs.map((q, i) => (
-        <fieldset key={i} className="m-0 flex flex-col gap-1.5 border-0 p-0">
-          {/* One paragraph: a long question wraps back to the left edge, under the tag. */}
-          <legend className="mb-1.5 p-0 text-[12px] leading-[1.6]">
-            {q.header && (
-              <span className="mr-2 inline-block rounded bg-selection px-1.5 text-[11px] leading-[1.6] whitespace-nowrap text-accent">
-                {q.header}
-              </span>
-            )}
-            <span className="font-medium">{q.question}</span>
-            {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
-          </legend>
-          {q.options.map((o) => {
-            const on = !!picked[i]?.includes(o.label);
-            return (
-              <button
-                type="button"
-                key={o.label}
-                aria-pressed={on}
-                data-testid="question-option"
-                data-card-answer
-                onClick={() => toggle(i, q, o.label)}
-                className={cn(
-                  "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent",
-                  on ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
-                )}
-              >
-                <Mark on={on} multi={!!q.multiSelect} className="mt-0.5" />
-                <span>
-                  <span className="font-medium">{o.label}</span>
-                  {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
-                </span>
-              </button>
-            );
-          })}
-          <label
-            data-testid="question-other-row"
-            data-on={otherOn(i) || undefined}
-            className={cn(
-              "flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px] focus-within:border-accent",
-              otherOn(i) ? "border-accent/50 bg-selection" : "border-border",
-            )}
-          >
-            <Mark on={otherOn(i)} multi={!!q.multiSelect} />
-            <span className="shrink-0 text-secondary">其他：</span>
-            <input
-              value={other[i] ?? ""}
-              onChange={(e) => {
-                setOther((p) => at(p, i, e.target.value));
-                chooseOther(i);
-              }}
-              // Back to the written answer by clicking into it.
-              onFocus={() => other[i]?.trim() && chooseOther(i)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
-              }}
-              placeholder="自己写答案"
-              className={cn(
-                "h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary",
-                !otherOn(i) && other[i]?.trim() && "text-secondary line-through decoration-secondary/60",
-              )}
-              data-testid="question-other"
-            />
-          </label>
-        </fieldset>
-      ))}
-      <div className="flex items-center gap-2">
-        <Button size="sm" disabled={busy || !ready} onClick={submit} data-testid="submit-answer">
-          提交
-        </Button>
-        {error && <span className="text-[12px] text-error">{error}</span>}
-      </div>
-    </div>
-  );
-}
-
-/** The choice's mark: a radio dot for one answer, a check box when several can be picked. */
-function Mark({ on, multi, className }: { on: boolean; multi: boolean; className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex size-3.5 shrink-0 items-center justify-center border",
-        className,
-        multi ? "rounded-[3px]" : "rounded-full",
-        on ? "border-accent bg-accent text-white" : "border-secondary/50 bg-ground",
-      )}
-    >
-      {on && (multi ? <Check size={10} strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />)}
-    </span>
   );
 }
 

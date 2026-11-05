@@ -1,14 +1,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
-import { Folder, GitBranch, Search, X } from "lucide-react";
+import { Folder, Search, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { LiveDot } from "@/components/LiveDot";
 import { Dialog, PanelDialogContent } from "@/components/ui/dialog";
 import { api } from "@/ipc";
 import type {
   AppError,
-  ProjectSummary,
   SearchGroup,
   SearchHit,
   SearchMode,
@@ -21,214 +20,18 @@ import { formatCount, formatRelative } from "@/lib/format";
 import { isComposingKey, keepOpenWhileComposing, useHotkey } from "@/lib/hotkeys";
 import { queryKeys, useAllSessions, useIndexStatus, useProjects } from "@/queries";
 import { useUi } from "@/state/ui";
-import { highlight, matchProjects, matchSessions, parseQuery, sessionProjectIds } from "./match";
+import { HitRow, keepFocus, ProjectItem, SearchFooter, SessionItem } from "./Items";
+import { matchProjects, matchSessions, parseQuery, sessionProjectIds } from "./match";
+import { HITS_PER_SESSION, hitKey, nextSection, selectableSections } from "./select";
 import { errorText } from "@/lib/errors";
 
 const MAX_PROJECTS = 3;
 const MAX_SESSIONS = 8;
 const MAX_RECENT = 20;
-const HITS_PER_SESSION = 5;
 const MODE_HINT: Partial<Record<SearchMode, string>> = { like: "短词匹配", mixed: "短词匹配" };
 const NO_GROUPS: SearchGroup[] = [];
 
 const SECTION = "flex items-center gap-2 px-4 pt-2.5 pb-1 text-[11px] font-semibold text-secondary";
-const ITEM = "group flex cursor-default items-center gap-2.5 px-4 py-[7px] data-[selected=true]:bg-selection";
-
-/** `i` (the hit's place in its group) keeps two hits in different blocks of one entry apart. */
-const hitKey = (sessionId: string, h: SearchHit, i: number) =>
-  `h:${sessionId}|${h.nodeId}|${h.agentId ?? ""}|${h.toolUseId ?? ""}|${h.role}|${i}`;
-
-/** Keeps focus in the input when a button inside the dialog is clicked. */
-const keepFocus = (e: MouseEvent) => e.preventDefault();
-
-function Marked({ text, terms }: { text: string; terms: string[] }) {
-  return (
-    <>
-      {highlight(text, terms).map((p, i) =>
-        p.hit ? (
-          <mark key={i} className="rounded-[2px] bg-mark px-px text-mark-text">
-            {p.text}
-          </mark>
-        ) : (
-          <span key={i}>{p.text}</span>
-        ),
-      )}
-    </>
-  );
-}
-
-/** Shown on the selected row only. */
-function Hint({ children }: { children: ReactNode }) {
-  return <span className="hidden shrink-0 text-[11px] text-accent group-data-[selected=true]:inline">{children}</span>;
-}
-
-function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded border border-b-2 border-border bg-ground px-1 font-sans text-[11px] text-text">
-      {children}
-    </kbd>
-  );
-}
-
-function ProjectItem({
-  p,
-  terms,
-  onFilter,
-  onScope,
-}: {
-  p: ProjectSummary;
-  terms: string[];
-  onFilter: () => void;
-  onScope: () => void;
-}) {
-  return (
-    <Command.Item value={`p:${p.id}`} onSelect={onFilter} data-testid="search-project" className={cn(ITEM, "py-2")}>
-      <Folder
-        size={15}
-        strokeWidth={1.5}
-        className="shrink-0 text-secondary group-data-[selected=true]:text-accent"
-        aria-hidden
-      />
-      <span className="shrink-0 font-semibold">
-        <Marked text={p.displayName} terms={terms} />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[12px] text-secondary">
-        <Marked text={p.path} terms={terms} /> · {p.missing ? "已不存在 · " : ""}
-        {p.sessionCount} 个 Session
-      </span>
-      <span className="hidden shrink-0 gap-1.5 group-data-[selected=true]:flex">
-        <button type="button" className="flex h-6 items-center gap-1 rounded-md bg-accent px-2 text-[12px] text-white">
-          <Kbd>↵</Kbd> 筛选 Session 列表
-        </button>
-        <button
-          type="button"
-          onMouseDown={keepFocus}
-          onClick={(e) => {
-            e.stopPropagation();
-            onScope();
-          }}
-          className="flex h-6 items-center gap-1 rounded-md border border-accent-border bg-ground px-2 text-[12px] text-accent"
-        >
-          <Kbd>⌘↵</Kbd> 只搜这个 Project
-        </button>
-      </span>
-    </Command.Item>
-  );
-}
-
-function SessionItem({
-  s,
-  names,
-  terms,
-  onSelect,
-}: {
-  s: SessionSummary;
-  names: Map<string, string>;
-  terms: string[];
-  onSelect: () => void;
-}) {
-  const tags = sessionProjectIds(s).map((id) => names.get(id) ?? id);
-  const liveStatus = s.live?.status;
-  return (
-    <Command.Item value={`s:${s.id}`} onSelect={onSelect} data-testid="search-session" className={ITEM}>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-1.5">
-          {s.live && (
-            <span
-              className={cn(
-                "size-2 shrink-0 rounded-full",
-                liveStatus === "busy" && "bg-live",
-                liveStatus === "waiting" &&
-                  "bg-live-waiting shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-live-waiting)_20%,transparent)]",
-                liveStatus !== "busy" && liveStatus !== "waiting" && "box-border border-[1.5px] border-live",
-              )}
-            />
-          )}
-          <span className="min-w-0 truncate font-semibold">
-            <Marked text={s.title} terms={terms} />
-          </span>
-        </div>
-        <div className="flex items-center gap-2.5 text-[11px] text-secondary">
-          <span className="min-w-0 truncate text-text/80">
-            <Marked text={tags.join(" · ")} terms={terms} />
-          </span>
-          {s.gitBranch && (
-            <span className="flex min-w-0 shrink-0 items-center gap-[3px]">
-              <GitBranch size={11} strokeWidth={1.5} className="shrink-0" aria-hidden />
-              <span className="max-w-[200px] truncate">
-                <Marked text={s.gitBranch} terms={terms} />
-              </span>
-            </span>
-          )}
-        </div>
-      </div>
-      <Hint>↵ 打开</Hint>
-      <span className="shrink-0 text-[11px] text-secondary">{formatRelative(s.lastActiveMs)}</span>
-    </Command.Item>
-  );
-}
-
-/** `disabled`: a result of an earlier query, shown until the current one returns but not selectable. */
-function HitRow({
-  value,
-  hit,
-  disabled,
-  onOpen,
-}: {
-  value: string;
-  hit: SearchHit;
-  disabled: boolean;
-  onOpen: () => void;
-}) {
-  const agentType = hit.agentId ? hit.agentType : null;
-  const role = hit.agentId
-    ? (agentType ?? "Subagent")
-    : hit.role === "user"
-      ? "你"
-      : hit.role === "assistant"
-        ? "Claude"
-        : "工具输入";
-  const mono = hit.role === "toolInput";
-  return (
-    <Command.Item
-      value={value}
-      onSelect={onOpen}
-      disabled={disabled}
-      data-testid="search-hit"
-      className="group flex cursor-default items-baseline gap-2.5 py-[3px] pr-4 pl-8 data-[disabled=true]:opacity-50 data-[selected=true]:bg-selection"
-    >
-      <span className="w-[60px] shrink-0 truncate text-[12px] text-secondary">{role}</span>
-      <span className={cn("min-w-0 flex-1 truncate text-[12px] text-text/80", mono && "font-mono")}>
-        {hit.snippet.map((p, i) =>
-          p.hit ? (
-            <mark key={i} className="rounded-[2px] bg-mark px-px text-mark-text">
-              {p.text}
-            </mark>
-          ) : (
-            <span key={i}>{p.text}</span>
-          ),
-        )}
-      </span>
-      {hit.agentId && (
-        <span
-          data-testid="tag-subagent"
-          className="shrink-0 rounded border border-tag-border bg-tag px-1.5 text-[11px] text-tag-text"
-        >
-          Subagent{agentType ? ` · ${agentType}` : ""}
-        </span>
-      )}
-      {!hit.onMainLine && (
-        <span
-          data-testid="tag-branch"
-          className="shrink-0 rounded border border-tag-border bg-tag px-1.5 text-[11px] text-tag-text"
-        >
-          已回退的分支
-        </span>
-      )}
-      <Hint>↵ 打开并定位</Hint>
-    </Command.Item>
-  );
-}
 
 /**
  * ⌘K: one dialog for Projects (pick to filter the Session list, ⌘↵ to search only it), Sessions
@@ -316,11 +119,12 @@ export function SearchOverlay() {
   // Every selectable value in display order, by section.
   const sections = useMemo(
     () =>
-      [
-        projectHits.map((p) => `p:${p.id}`),
-        sessionHits.map((s) => `s:${s.id}`),
-        stale ? [] : groups.flatMap((g) => g.hits.slice(0, HITS_PER_SESSION).map((h, i) => hitKey(g.session.id, h, i))),
-      ].filter((keys) => keys.length > 0),
+      selectableSections(
+        projectHits.map((p) => p.id),
+        sessionHits.map((s) => s.id),
+        groups,
+        stale,
+      ),
     [projectHits, sessionHits, groups, stale],
   );
   const allKeys = useMemo(() => sections.flat(), [sections]);
@@ -380,9 +184,7 @@ export function SearchOverlay() {
     if (isComposingKey(e.nativeEvent)) return;
     if (e.key === "Tab" && sections.length > 0) {
       e.preventDefault();
-      const at = sections.findIndex((keys) => keys.includes(selected));
-      const next = (at + (e.shiftKey ? -1 : 1) + sections.length) % sections.length;
-      setSelected(sections[next]![0]!);
+      setSelected(nextSection(sections, selected, e.shiftKey)!);
     } else if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
       if (selected.startsWith("p:")) scopeTo(selected.slice(2));
@@ -591,40 +393,7 @@ export function SearchOverlay() {
             )}
           </Command.List>
 
-          <div className="flex flex-wrap items-center gap-4 border-t border-border bg-list px-4 py-2 text-[11px] text-secondary">
-            <span>
-              <Kbd>↑</Kbd>
-              <Kbd>↓</Kbd> 选择
-            </span>
-            <span>
-              <Kbd>⇥</Kbd> 下一段
-            </span>
-            {kind === "p:" ? (
-              <>
-                <span>
-                  <Kbd>↵</Kbd> 筛选列表
-                </span>
-                <span>
-                  <Kbd>⌘↵</Kbd> 限定搜索范围
-                </span>
-              </>
-            ) : (
-              <span>
-                <Kbd>↵</Kbd> {kind === "h:" ? "打开并定位" : "打开"}
-              </span>
-            )}
-            {scope ? (
-              <span>
-                输入为空时 <Kbd>⌫</Kbd> 移除 Project 范围
-              </span>
-            ) : (
-              <>
-                <span>"短语" 精确匹配</span>
-                <span>-词 排除</span>
-              </>
-            )}
-            <span className="ml-auto">⌘K 打开或关闭</span>
-          </div>
+          <SearchFooter kind={kind} scoped={!!scope} />
         </Command>
       </PanelDialogContent>
     </Dialog>
