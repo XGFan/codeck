@@ -190,14 +190,15 @@ pub async fn ccrpc_set_analyzer(
     model: Option<String>,
 ) -> CmdResult<AnalyzerInfo> {
     with_ccrpc(&state, move |app| {
-        let mut s = crate::settings::load();
         let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        if let Some(k) = api_key {
-            s.analyzer.api_key = blank(Some(k));
-        }
-        s.analyzer.base_url = blank(base_url);
-        s.analyzer.model = blank(model);
-        crate::settings::save(&s).map_err(|e| format!("保存设置失败：{e}"))?;
+        crate::settings::update(|s| {
+            if let Some(k) = api_key {
+                s.analyzer.api_key = blank(Some(k));
+            }
+            s.analyzer.base_url = blank(base_url);
+            s.analyzer.model = blank(model);
+        })
+        .map_err(|e| format!("保存设置失败：{e}"))?;
         app.gui_line("analyzer settings saved");
         Ok(analyzer_info(app))
     })
@@ -213,9 +214,8 @@ pub async fn ccrpc_set_launch_rules(
 ) -> CmdResult<Vec<crate::settings::LaunchRule>> {
     with_ccrpc(&state, move |app| {
         let rules = launch::normalize(rules, &app.env)?;
-        let mut s = crate::settings::load();
-        s.launch_rules = rules.clone();
-        crate::settings::save(&s).map_err(|e| format!("保存设置失败：{e}"))?;
+        crate::settings::update(|s| s.launch_rules = rules.clone())
+            .map_err(|e| format!("保存设置失败：{e}"))?;
         app.gui_line(&format!("launch rules saved ({})", rules.len()));
         Ok(rules)
     })
@@ -227,9 +227,8 @@ pub async fn ccrpc_set_launch_rules(
 #[specta::specta]
 pub async fn ccrpc_set_hide_new_panes(state: State<'_, CcrpcState>, hide: bool) -> CmdResult<bool> {
     with_ccrpc(&state, move |app| {
-        let mut s = crate::settings::load();
-        s.hide_new_panes = hide;
-        crate::settings::save(&s).map_err(|e| format!("保存设置失败：{e}"))?;
+        crate::settings::update(|s| s.hide_new_panes = hide)
+            .map_err(|e| format!("保存设置失败：{e}"))?;
         app.gui_line(&format!("hide new panes: {hide}"));
         Ok(hide)
     })

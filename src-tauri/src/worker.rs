@@ -15,7 +15,7 @@ use tauri_specta::Event;
 
 use crate::events::{IndexStatusEvent, LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent};
 use crate::prices;
-use crate::settings::{self, Settings};
+use crate::settings;
 use crate::state::{AppState, open_engine};
 use crate::watcher::{self, Watcher};
 
@@ -35,11 +35,11 @@ pub enum Job {
     Rebuild,
     /// Restart the watcher and rescan (at startup).
     SetRoot,
-    /// Saves the settings, opens an Engine on their data root and swaps it in, then restarts the
-    /// watcher and rescans. Done here, between jobs, so the old Engine is not writing to the index
-    /// the new one opens (both use the same file).
+    /// Saves the data root override (`None` = default), opens an Engine on it and swaps it in,
+    /// then restarts the watcher and rescans. Done here, between jobs, so the old Engine is not
+    /// writing to the index the new one opens (both use the same file).
     SwapRoot {
-        settings: Settings,
+        data_root: Option<String>,
         reply: Sender<CoreResult<AppInfo>>,
     },
     PollLive,
@@ -203,7 +203,7 @@ impl Worker {
                     self.restart_watcher(&engine);
                     self.full_scan(&engine);
                 }
-                Job::SwapRoot { settings, reply } => self.swap_root(engine, &settings, &reply),
+                Job::SwapRoot { data_root, reply } => self.swap_root(engine, data_root, &reply),
                 Job::FullScan => self.full_scan(&engine),
                 Job::Fs(paths) => self.fs_batch(&engine, &paths),
                 // `Queue::next` absorbs backlog requests; kept for exhaustiveness.
@@ -251,13 +251,22 @@ impl Worker {
         }
     }
 
-    fn swap_root(&mut self, old: Arc<Engine>, s: &Settings, reply: &Sender<CoreResult<AppInfo>>) {
+    fn swap_root(
+        &mut self,
+        old: Arc<Engine>,
+        data_root: Option<String>,
+        reply: &Sender<CoreResult<AppInfo>>,
+    ) {
         // Release this thread's handle first: if it was the last one, the old index connections
         // close before the new Engine may replace the index file.
         drop(old);
-        let opened = settings::save(s)
-            .map_err(CoreError::from)
-            .and_then(|()| open_engine(s));
+        // Saved only once the new root opens: a failure keeps the settings on the running root.
+        let mut wanted = settings::load();
+        wanted.data_root = data_root.clone();
+        let opened = open_engine(&wanted).and_then(|engine| {
+            settings::update(|s| s.data_root = data_root).map_err(CoreError::from)?;
+            Ok(engine)
+        });
         match opened {
             Ok(engine) => {
                 let engine = Arc::new(engine);

@@ -60,8 +60,21 @@ pub fn load_from(path: &Path) -> Settings {
         .unwrap_or_default()
 }
 
-pub fn save(settings: &Settings) -> std::io::Result<()> {
-    save_to(&settings_path(), settings)
+/// Serializes read-modify-write cycles: the settings file holds unrelated fields (data root,
+/// analyzer, launch rules) saved by different commands, which may run at the same time.
+static WRITE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Applies `f` to the saved settings and saves the result, which it returns.
+pub fn update(f: impl FnOnce(&mut Settings)) -> std::io::Result<Settings> {
+    update_at(&settings_path(), f)
+}
+
+fn update_at(path: &Path, f: impl FnOnce(&mut Settings)) -> std::io::Result<Settings> {
+    let _g = WRITE.lock();
+    let mut s = load_from(path);
+    f(&mut s);
+    save_to(path, &s)?;
+    Ok(s)
 }
 
 /// Writes atomically (temp file + rename) so a crash never leaves a half-written file. Only the user
@@ -117,6 +130,33 @@ mod tests {
         // A settings file from before the analyzer fields still loads.
         std::fs::write(&path, br#"{"dataRoot":"/x"}"#).unwrap();
         assert_eq!(load_from(&path).data_root.as_deref(), Some("/x"));
+    }
+
+    #[test]
+    fn concurrent_updates_of_different_fields_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for i in 0..50 {
+                    update_at(&path, |s| {
+                        s.launch_rules.push(LaunchRule {
+                            dir: format!("/d{i}"),
+                            args: "-x".into(),
+                        })
+                    })
+                    .unwrap();
+                }
+            });
+            scope.spawn(|| {
+                for i in 0..50 {
+                    update_at(&path, |s| s.analyzer.model = Some(format!("m{i}"))).unwrap();
+                }
+            });
+        });
+        let s = load_from(&path);
+        assert_eq!(s.launch_rules.len(), 50);
+        assert_eq!(s.analyzer.model.as_deref(), Some("m49"));
     }
 
     #[test]

@@ -10,7 +10,6 @@ use codeck_core::model::{
 use codeck_core::{CoreError, CoreResult, Engine};
 use tauri::State;
 
-use crate::settings::{self, Settings};
 use crate::state::AppState;
 use crate::worker::Job;
 
@@ -53,14 +52,12 @@ pub async fn set_data_root(state: State<'_, AppState>, path: Option<String>) -> 
     {
         return Err(CoreError::InvalidQuery(format!("目录不存在：{p}")).into());
     }
-    // Only the data root changes: the rest of the settings (the analyzer) stays.
-    let settings = Settings {
-        data_root: path,
-        ..settings::load()
-    };
     // The worker swaps the Engine between jobs, so nothing is writing to the index meanwhile.
     let (reply, rx) = crossbeam_channel::bounded(1);
-    if !state.jobs.send(Job::SwapRoot { settings, reply }) {
+    if !state.jobs.send(Job::SwapRoot {
+        data_root: path,
+        reply,
+    }) {
         return Err(internal("worker stopped"));
     }
     tauri::async_runtime::spawn_blocking(move || rx.recv())
