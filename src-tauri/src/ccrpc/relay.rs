@@ -614,13 +614,24 @@ fn last_chars(s: &str, n: usize) -> &str {
         .map_or(s, |(i, _)| &s[i..])
 }
 
-/// `cmd`'s output, without stdin; killed (`TimedOut`) when it has not finished within `timeout`.
+/// `cmd`'s output, without stdin; killed (`TimedOut`) with everything it started when it has not
+/// finished within `timeout`. It runs in its own process group, so a hung `toh` it launched goes
+/// too (and with it the pipes the reader threads wait on).
 fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+    use std::os::unix::process::CommandExt;
+    let deadline = std::time::Instant::now() + timeout;
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()?;
+    let group = child.id() as libc::pid_t;
+    let kill_group = |child: &mut std::process::Child| {
+        // SAFETY: plain syscall on the group this function created.
+        unsafe { libc::killpg(group, libc::SIGKILL) };
+        let _ = child.wait();
+    };
     let (mut out, mut err) = (child.stdout.take(), child.stderr.take());
     let (tx, rx) = std::sync::mpsc::channel();
     // Detached: after a kill, a grandchild may still hold the pipes open.
@@ -638,17 +649,24 @@ fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output>
         }
         let _ = tx.send((o, errs.join().unwrap_or_default()));
     });
-    match rx.recv_timeout(timeout) {
-        Ok((stdout, stderr)) => Ok(Output {
-            status: child.wait()?,
-            stdout,
-            stderr,
-        }),
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err(std::io::ErrorKind::TimedOut.into())
+    let Ok((stdout, stderr)) = rx.recv_timeout(timeout) else {
+        kill_group(&mut child);
+        return Err(std::io::ErrorKind::TimedOut.into());
+    };
+    // Its output is complete; it may still linger (closed its pipes without exiting).
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
         }
+        if std::time::Instant::now() >= deadline {
+            kill_group(&mut child);
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -807,6 +825,32 @@ mod tests {
             app.list_sessions().unwrap(),
             serde_json::json!({"sessions": []})
         );
+    }
+
+    /// What a hung subcommand started goes with it: nothing keeps the pipes (and a reader
+    /// thread) alive after the timeout.
+    #[test]
+    fn a_timed_out_subcommand_takes_its_children_with_it() {
+        let d = tempfile::tempdir().unwrap();
+        let pidfile = d.path().join("grandchild.pid");
+        let mut app = fake_ccrpc(
+            d.path(),
+            &format!("sleep 30 &\necho $! > {}\nwait", pidfile.display()),
+        );
+        // Long enough for the script to start its child under load.
+        app.sub_timeout = Duration::from_millis(1500);
+        assert!(app.list_sessions().is_err());
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        // SAFETY: signal 0 only checks existence.
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(Instant::now() < deadline, "grandchild {pid} still running");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// A failing subcommand's stderr: its first line is the message, all of it goes to gui.log;
