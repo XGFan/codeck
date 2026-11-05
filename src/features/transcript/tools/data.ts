@@ -1,11 +1,11 @@
 import { create } from "zustand";
 import type { ToolCall, TranscriptScope } from "@/ipc/bindings";
 import { useToolDetail } from "@/queries/hooks";
-import { useUi } from "@/state/ui";
+import { MAIN_SCOPE, useUi } from "@/state/ui";
 
 export const toolKey = (nodeId: string, toolUseId: string) => `tool:${nodeId}|${toolUseId}`;
 
-/** Where a call lives; defaults come from the UI store (`ToolCallView` accepts overrides for panels). */
+/** Where a call lives: the open session's main conversation unless given (Subagent panels pass theirs). */
 export interface ToolCtx {
   sessionId: string;
   scope: TranscriptScope;
@@ -14,9 +14,8 @@ export interface ToolCtx {
 
 export function useToolCtx(nodeId: string, sessionId?: string, scope?: TranscriptScope): ToolCtx | null {
   const sid = useUi((s) => s.sessionId);
-  const sc = useUi((s) => s.scope);
   const id = sessionId ?? sid;
-  return id ? { sessionId: id, scope: scope ?? sc, nodeId } : null;
+  return id ? { sessionId: id, scope: scope ?? MAIN_SCOPE, nodeId } : null;
 }
 
 /** Tool calls whose full output has been requested (by the user or by find). */

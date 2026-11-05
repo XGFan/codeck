@@ -3,18 +3,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FindMatch, FindRequest, TranscriptScope } from "@/ipc/bindings";
 import { isComposingKey, useHotkey } from "@/lib/hotkeys";
 import { useFind } from "@/queries";
-import { useUi } from "@/state/ui";
+import { MAIN_SCOPE, useUi } from "@/state/ui";
 import { scrollToNode } from "../transcript/Transcript";
 import { requestFullOutput } from "../transcript/tools";
 
-const MAIN: TranscriptScope = { kind: "main" };
 const NO_MATCHES: FindMatch[] = [];
 const HIGHLIGHT = "cv-find";
 
 /** Scope of the pane the user last interacted with: the Subagent panel's innermost run, else the main transcript. */
 function scopeFromTarget(target: Element | null): TranscriptScope {
   const id = target?.closest("[data-scope]")?.getAttribute("data-scope");
-  return id && id !== "main" ? { kind: "subagent", agentId: id } : MAIN;
+  return id && id !== "main" ? { kind: "subagent", agentId: id } : MAIN_SCOPE;
 }
 
 /** ⌘F page-find bar (top of the conversation): `find_in_session`, stepping, auto-expansion via `scrollToNode`. */
@@ -32,9 +31,9 @@ export function FindBar() {
   useEffect(() => {
     if (!composing) setSettledQuery(query);
   }, [query, composing]);
-  const [scope, setScope] = useState<TranscriptScope>(MAIN);
+  const [scope, setScope] = useState<TranscriptScope>(MAIN_SCOPE);
   const inputRef = useRef<HTMLInputElement>(null);
-  const lastScope = useRef<TranscriptScope>(MAIN);
+  const lastScope = useRef<TranscriptScope>(MAIN_SCOPE);
 
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
@@ -51,7 +50,7 @@ export function FindBar() {
     () => {
       if (!canFind) return;
       const st = useUi.getState();
-      if (!st.findOpen) setScope(st.panelStack.length ? lastScope.current : MAIN);
+      if (!st.findOpen) setScope(st.panelStack.length ? lastScope.current : MAIN_SCOPE);
       st.setFindOpen(true);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
@@ -62,7 +61,7 @@ export function FindBar() {
   );
 
   const show = open && canFind;
-  const activeScope = panelOpen ? scope : MAIN;
+  const activeScope = panelOpen ? scope : MAIN_SCOPE;
 
   const go = useCallback(
     (list: FindMatch[], i: number) => {

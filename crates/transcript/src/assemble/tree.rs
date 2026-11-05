@@ -3,7 +3,6 @@
 use std::collections::{HashMap, HashSet};
 
 use super::SessionSkeleton;
-use crate::model::NodeId;
 
 /// Fills `children`, `subtree_max`, `subtree_assistants`, `anchor` and `heads_by_anchor` from the
 /// (cycle-free) effective parents. Linear in the number of nodes.
@@ -131,27 +130,6 @@ pub fn chosen_result(s: &SessionSkeleton, id: &str, shown: &[bool]) -> Option<us
         .copied()
         .find(|&r| shown[r])
         .or(all.first().copied())
-}
-
-/// Every entry uuid → display node id (A3): fragments map to their first fragment, absorbed
-/// tool_results to the assistant node holding the tool_use, everything else to itself.
-pub fn display_ids(s: &SessionSkeleton) -> HashMap<String, NodeId> {
-    let mut out = HashMap::with_capacity(s.nodes.len());
-    for (i, n) in s.nodes.iter().enumerate() {
-        let target = if n.is_assistant() {
-            s.display_index(i)
-        } else if n.is_tool_result {
-            n.tool_results
-                .iter()
-                .find_map(|id| s.tool_use_at.get(id))
-                .map(|&a| s.display_index(a))
-                .unwrap_or(i)
-        } else {
-            i
-        };
-        out.insert(n.uuid.clone(), s.nodes[target].uuid.clone());
-    }
-    out
 }
 
 /// A2: uuids of every entry in the Main Line display set: every fragment of every merged display

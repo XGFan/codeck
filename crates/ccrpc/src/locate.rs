@@ -113,7 +113,7 @@ pub fn list_holders(roots: &Roots) -> Vec<(String, HolderMeta)> {
             continue;
         }
         if let Ok(m) = read_holder(roots, &id)
-            && crate::procs::pid_exists(m.holder_pid)
+            && ::transcript::live::pid_exists(m.holder_pid)
         {
             out.push((id, m));
         }

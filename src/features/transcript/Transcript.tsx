@@ -6,7 +6,7 @@ import { OverlayScrollbar } from "@/components/OverlayScrollbar";
 import { ConnectTail, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
-import { CONV_WIDTH, useUi } from "@/state/ui";
+import { CONV_WIDTH, MAIN_SCOPE, useUi } from "@/state/ui";
 import { foldTurns } from "./fold";
 import { anchorKey, buildRows, type GroupingInput, INHERITED_KEY, locate, rowIndexOf } from "./grouping";
 import { isContinuation, RowView } from "./nodes";
@@ -47,7 +47,6 @@ declare global {
 }
 if (import.meta.env.DEV || import.meta.env.VITE_IPC === "mock") window.__cvStore = useUi;
 
-const MAIN: TranscriptScope = { kind: "main" };
 const PIN_THRESHOLD = 48;
 /** A scroll request whose node is missing waits this long / this many revisions for it to arrive. */
 const SCROLL_RETRY_MS = 5000;
@@ -111,7 +110,7 @@ export function TranscriptView() {
       key={sessionId}
       transcript={data}
       ready={!isPlaceholderData}
-      scope={MAIN}
+      scope={MAIN_SCOPE}
       follow
       testId="transcript"
     />
@@ -130,7 +129,6 @@ function usePendingJump() {
     const path = [...jump.agentPath];
     if (jump.scope.kind === "subagent" && path[path.length - 1] !== jump.scope.agentId) path.push(jump.scope.agentId);
     useUi.setState((s) => ({
-      scope: MAIN,
       branchChoices: jump.branchChoices,
       showHidden: s.showHidden || jump.needsHidden,
       panelStack: path,

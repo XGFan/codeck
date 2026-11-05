@@ -9,7 +9,7 @@ import type {
   ToolDetailRequest,
   TranscriptRequest,
 } from "@/ipc/bindings";
-import { useUi } from "@/state/ui";
+import { MAIN_SCOPE, useUi } from "@/state/ui";
 
 export const queryKeys = {
   appInfo: ["appInfo"] as const,
@@ -72,10 +72,9 @@ export const useTranscript = (req: TranscriptRequest | null) =>
 /** Transcript of the open session using the scope / branch / hidden state from the UI store. */
 export function useCurrentTranscript() {
   const sessionId = useUi((s) => s.sessionId);
-  const scope = useUi((s) => s.scope);
   const branchChoices = useUi((s) => s.branchChoices);
   const includeHidden = useUi((s) => s.showHidden);
-  return useTranscript(sessionId ? { sessionId, scope, branchChoices, includeHidden } : null);
+  return useTranscript(sessionId ? { sessionId, scope: MAIN_SCOPE, branchChoices, includeHidden } : null);
 }
 
 export const useToolDetail = (req: ToolDetailRequest | null, enabled = true) =>

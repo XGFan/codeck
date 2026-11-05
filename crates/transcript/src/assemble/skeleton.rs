@@ -76,7 +76,6 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
                 "last-prompt" => {
                     if let Some(l) = &e.leaf_uuid {
                         f.last_leaves.push(l.clone());
-                        s.last_prompt_leaves.push(l.clone());
                     }
                 }
                 "custom-title" => {

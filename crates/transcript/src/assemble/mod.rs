@@ -47,8 +47,6 @@ pub struct SessionSkeleton {
     pub by_uuid: HashMap<String, usize>,
     /// Duplicate uuids dropped by the merge (within one file; copies in other files are not counted).
     pub duplicate_uuids: u32,
-    /// `leafUuid` of every `last-prompt` entry, in merged file order.
-    pub last_prompt_leaves: Vec<String>,
     /// Last `custom-title` / `ai-title` values (of the largest file that has one).
     pub custom_title: Option<String>,
     pub ai_title: Option<String>,
@@ -310,8 +308,6 @@ pub struct AssembledSession {
     pub subagents: Vec<SubagentRun>,
     pub workflows: Vec<WorkflowRun>,
     pub orphan_subagent_ids: Vec<AgentId>,
-    /// Any entry uuid (fragment, absorbed tool_result, satellite) → display node id.
-    pub display_id: HashMap<String, NodeId>,
     /// Main-file tool_use id → linked Subagent Run (not nested runs; those link in their parent's file).
     pub subagent_by_tool: HashMap<String, AgentId>,
     /// Main-file tool_use id → Workflow Run id.
@@ -340,7 +336,6 @@ pub fn assemble(
     let skeleton = skeleton::build(&main_files);
     let links = subagent::link(&skeleton, &main_files, &sidecar);
     let (workflows, workflow_by_tool) = workflow::runs(&skeleton, &main_files, &sidecar);
-    let display_id = tree::display_ids(&skeleton);
     AssembledSession {
         session_id: session_id.to_owned(),
         session_dir: session_dir.to_path_buf(),
@@ -351,7 +346,6 @@ pub fn assemble(
         subagents: links.runs,
         workflows,
         orphan_subagent_ids: links.orphans,
-        display_id,
         subagent_by_tool: links.by_tool,
         workflow_by_tool,
         notification_by_tool: links.notification_by_tool,

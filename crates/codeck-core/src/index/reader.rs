@@ -284,7 +284,6 @@ pub struct SessionDetailRow {
     pub models: Vec<String>,
     pub versions: Vec<String>,
     pub tokens_main: TokenTotals,
-    pub root_uuid: Option<String>,
 }
 
 pub fn session_detail(conn: &Connection, id: &str) -> CoreResult<Option<SessionDetailRow>> {
@@ -295,7 +294,7 @@ pub fn session_detail(conn: &Connection, id: &str) -> CoreResult<Option<SessionD
     let row = conn.query_row(
         "SELECT s.cwd, coalesce(p.path, s.project_id), coalesce(p.missing, 1), s.duration_ms,
             s.models_json, s.versions_json, s.main_in_tok, s.main_out_tok, s.main_cr_tok,
-            s.main_cc_tok, s.root_uuid
+            s.main_cc_tok
          FROM sessions s LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?1",
         [id],
         |r| {
@@ -313,7 +312,6 @@ pub fn session_detail(conn: &Connection, id: &str) -> CoreResult<Option<SessionD
                     cache_read: r.get::<_, i64>(8)? as f64,
                     cache_creation: r.get::<_, i64>(9)? as f64,
                 },
-                root_uuid: r.get(10)?,
             })
         },
     )?;

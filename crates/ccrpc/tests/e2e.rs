@@ -1927,7 +1927,7 @@ fn mock_model_session() {
     let holder_pid = rpc.holder_pid.unwrap();
     rpc.call("x1", json!({"type": "exit", "close_pane": true}));
     let deadline = Instant::now() + Duration::from_secs(10);
-    while ccrpc::procs::pid_exists(holder_pid) {
+    while transcript::live::pid_exists(holder_pid) {
         assert!(Instant::now() < deadline, "Pane 没有随 exit 结束");
         std::thread::sleep(Duration::from_millis(200));
     }

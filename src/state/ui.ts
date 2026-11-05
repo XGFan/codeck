@@ -37,9 +37,11 @@ export interface Highlight {
   toolUseId?: string;
 }
 
+/** The main conversation (the transcript list); a Subagent Run is shown in its panel with its own scope. */
+export const MAIN_SCOPE: TranscriptScope = { kind: "main" };
+
 /** Per-session state; reset whenever `sessionId` changes. */
 const sessionDefaults = {
-  scope: { kind: "main" } as TranscriptScope,
   branchChoices: [] as BranchChoice[],
   showHidden: false,
   /** Subagent Run ids, outermost first. */
@@ -56,7 +58,6 @@ interface UiState {
   /** Session list filter; empty = all projects (matches `SessionQuery.projectIds`). */
   projectIds: string[];
   sessionId: string | null;
-  scope: TranscriptScope;
   branchChoices: BranchChoice[];
   showHidden: boolean;
   panelStack: string[];

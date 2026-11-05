@@ -193,7 +193,7 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
             "user" => {
                 collect_tool_results(e, &mut rows);
                 if let (Some(ts), Some(uuid)) = (ts, e.uuid.as_ref())
-                    && is_human_prompt(e)
+                    && crate::assemble::prompt::is_human_prompt(e)
                     && !msg_index.contains_key(uuid)
                 {
                     msg_index.insert(uuid.clone(), rows.messages.len());
@@ -337,11 +337,6 @@ pub fn reprice_all(conn: &Connection) -> CoreResult<()> {
         [],
     )?;
     rebill(conn, None)
-}
-
-/// Human or command prompt (the assembly classifier, so `messages` agrees with `message_count`).
-pub fn is_human_prompt(e: &RawEntry) -> bool {
-    crate::assemble::prompt::is_human_prompt(e)
 }
 
 const PERSISTED_TAG: &str = "<persisted-output>";

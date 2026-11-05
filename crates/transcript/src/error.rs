@@ -1,4 +1,4 @@
-//! Errors of the parsing / assembly layer. codeck-core maps them onto its `TranscriptError` variant by variant.
+//! Errors of the parsing / assembly layer. codeck-core maps them onto its `CoreError` variant by variant.
 
 pub type TranscriptResult<T> = Result<T, TranscriptError>;
 
@@ -9,8 +9,4 @@ pub enum TranscriptError {
     NotFound(String),
     #[error("读取文件失败：{0}")]
     Io(#[from] std::io::Error),
-    #[error("数据解析失败：{0}")]
-    Json(#[from] serde_json::Error),
-    #[error("{0}")]
-    Internal(String),
 }

@@ -838,7 +838,7 @@ impl Engine {
         self.check_takeover();
         self.locate_claude();
         if let Some(pid) = self.claude_pid {
-            if !crate::procs::pid_exists(pid) {
+            if !::transcript::live::pid_exists(pid) {
                 self.set_exited();
                 return;
             }
@@ -3308,7 +3308,7 @@ impl Engine {
             // Background tasks still running make Claude Code ask first.
             let asked = self.wait_screen(Duration::from_secs(10), |_, s| {
                 let text = s.lines.join("\n");
-                if !crate::procs::pid_exists(pid) {
+                if !::transcript::live::pid_exists(pid) {
                     return Some(false);
                 }
                 text.contains("Exit and stop tasks").then_some(true)
@@ -3323,7 +3323,9 @@ impl Engine {
                 }
                 self.keys(b"\r")?;
             }
-            if !self.wait_until(Duration::from_secs(15), |_| !crate::procs::pid_exists(pid)) {
+            if !self.wait_until(Duration::from_secs(15), |_| {
+                !::transcript::live::pid_exists(pid)
+            }) {
                 return err("timeout", "15 秒内 claude 没有退出");
             }
             self.set_exited();

@@ -7,7 +7,6 @@ pub mod locate;
 pub mod log;
 pub mod plugin;
 pub mod procfile;
-pub mod procs;
 pub mod pty;
 pub mod recognize;
 pub mod rpc;

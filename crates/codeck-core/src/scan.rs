@@ -60,20 +60,10 @@ pub struct SidecarFile {
     pub mtime_ns: i64,
 }
 
-/// A project dir entry that is a symlink (the watcher also watches targets outside `projects/`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SymlinkedDir {
-    pub link: PathBuf,
-    pub target: PathBuf,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct ScanResult {
     pub files: Vec<ScannedFile>,
     pub sidecars: Vec<SidecarFile>,
-    /// Canonical project dirs, deduplicated.
-    pub project_dirs: Vec<PathBuf>,
-    pub symlinked_project_dirs: Vec<SymlinkedDir>,
 }
 
 /// Files of one session dir (`<project dir>/<sid>/`).
@@ -99,16 +89,6 @@ pub fn scan_root(root: &Path) -> ScanResult {
     let mut seen_dirs: HashSet<(u64, u64)> = HashSet::new();
     let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
     for entry in entries {
-        if let Ok(lmd) = fs::symlink_metadata(&entry)
-            && lmd.file_type().is_symlink()
-            && let Ok(target) = fs::canonicalize(&entry)
-            && target.is_dir()
-        {
-            out.symlinked_project_dirs.push(SymlinkedDir {
-                link: entry.clone(),
-                target,
-            });
-        }
         let Ok(real) = fs::canonicalize(&entry) else {
             continue;
         };
@@ -119,7 +99,6 @@ pub fn scan_root(root: &Path) -> ScanResult {
             continue;
         }
         scan_project_dir(&real, &mut seen_files, &mut out);
-        out.project_dirs.push(real);
     }
     out
 }
@@ -332,8 +311,6 @@ mod tests {
         std::os::unix::fs::symlink("-p", root.join("projects/-q")).unwrap();
 
         let r = scan_root(root);
-        assert_eq!(r.project_dirs.len(), 1);
-        assert_eq!(r.symlinked_project_dirs.len(), 1);
         let roles: Vec<_> = r
             .files
             .iter()

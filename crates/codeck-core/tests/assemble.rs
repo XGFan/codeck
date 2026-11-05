@@ -225,8 +225,9 @@ fn fragments_merge_into_one_node_and_tokens_count_once() {
             .iter()
             .any(|b| matches!(b, AssistantBlock::Thinking { .. }))
     );
+    let fragment = s.skeleton.by_uuid[&first.id] + 2;
     assert_eq!(
-        s.display_id[&s.skeleton.nodes[s.skeleton.by_uuid[&first.id] + 2].uuid],
+        s.skeleton.nodes[s.skeleton.display_index(fragment)].uuid,
         first.id
     );
 }

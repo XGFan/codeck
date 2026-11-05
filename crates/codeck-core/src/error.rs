@@ -43,8 +43,6 @@ impl From<transcript::TranscriptError> for CoreError {
         match e {
             T::NotFound(s) => CoreError::NotFound(s),
             T::Io(e) => CoreError::Io(e),
-            T::Json(e) => CoreError::Json(e),
-            T::Internal(s) => CoreError::Internal(s),
         }
     }
 }
