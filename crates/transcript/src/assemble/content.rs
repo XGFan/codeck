@@ -72,14 +72,19 @@ fn capped(text: String) -> (String, bool) {
 
 /// Reads at most [`DETAIL_BYTES`] of a persisted output file (read-only); returns
 /// `(text, truncated, size)`. A symlink is refused (`O_NOFOLLOW`, as ccrpc does), so a link
-/// planted in `tool-results/` cannot point the read elsewhere.
+/// planted in `tool-results/` cannot point the read elsewhere; anything but a regular file (a
+/// FIFO would block the read forever) counts as missing.
 pub(crate) fn read_capped(path: &Path) -> std::io::Result<(String, bool, u64)> {
     use std::os::unix::fs::OpenOptionsExt;
     let f = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
-    let size = f.metadata()?.len();
+    let md = f.metadata()?;
+    if !md.is_file() {
+        return Err(std::io::ErrorKind::NotFound.into());
+    }
+    let size = md.len();
     let mut buf = Vec::with_capacity(size.min(DETAIL_BYTES as u64) as usize);
     f.take(DETAIL_BYTES as u64).read_to_end(&mut buf)?;
     let text = match String::from_utf8(buf) {

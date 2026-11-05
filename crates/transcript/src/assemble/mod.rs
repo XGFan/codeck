@@ -165,7 +165,7 @@ impl SessionSkeleton {
     }
 
     /// The tool_use block `id` and the node holding it (the first such node, as in `tool_use_at`).
-    pub fn tool_use_block<'a>(
+    pub(crate) fn tool_use_block<'a>(
         &self,
         files: &'a [LoadedFile],
         id: &str,
@@ -182,7 +182,7 @@ impl SessionSkeleton {
     /// The tool_result block for tool_use `id`, with its node and entry: with `shown` (the
     /// display set), one on it if any, else the first in merged file order (see
     /// [`tree::chosen_result`]); without, always the first.
-    pub fn tool_result_block<'a>(
+    pub(crate) fn tool_result_block<'a>(
         &self,
         files: &'a [LoadedFile],
         id: &str,

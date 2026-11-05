@@ -1038,6 +1038,36 @@ fn persisted_output_symlinks_are_not_followed() {
 }
 
 #[test]
+fn a_persisted_output_that_is_not_a_regular_file_counts_as_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let session_dir = tmp.path().join("sid");
+    fs::create_dir_all(session_dir.join("tool-results")).unwrap();
+    let fifo = session_dir.join("tool-results/pipe.txt");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"x"}}]}}"#,
+        r#"{"type":"user","uuid":"r1","parentUuid":"a1","toolUseResult":{"persistedOutputPath":"/x/tool-results/pipe.txt","persistedOutputSize":19},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"<persisted-output>\nFull output saved to: /x/tool-results/pipe.txt\n\nPreview:\nabc\n</persisted-output>"}]}}"#,
+    ]);
+    let s = assemble("sid", &session_dir, vec![f], SessionSidecar::default());
+    // Opening a FIFO for reading used to block until a writer appeared.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(detail(&s, "t1", ToolPart::Output).source);
+    });
+    let source = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("reading the FIFO blocked");
+    assert_eq!(source, DetailSource::Missing);
+}
+
+#[test]
 fn images_are_references_fetched_on_demand() {
     let s = open("persisted_and_images", ids::PERSISTED_DIR, ids::PERSISTED);
     let t = main_t(&s, false);
