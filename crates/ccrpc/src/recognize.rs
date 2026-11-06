@@ -455,9 +455,21 @@ pub fn is_input_rule(l: &str) -> bool {
     !title.trim().is_empty() && !title.contains('─') && tail <= 3 && lead >= 4
 }
 
+/// The agents page (`←` on an empty input box, 2.1.318, `tests/fixtures/screens/agents_list.txt`):
+/// its box at the bottom looks like the input box but starts a new background Session; the key
+/// hints under it offer `ctrl+x to delete`.
+pub fn agents_page(lines: &[String]) -> bool {
+    let Some(bottom) = lines.iter().rposition(|l| is_input_rule(l)) else {
+        return false;
+    };
+    lines[bottom + 1..]
+        .iter()
+        .any(|l| l.contains("ctrl+x to delete"))
+}
+
 /// The prompt input box: the text after `❯` between the two horizontal rules at the bottom; in
 /// shell mode (`!` instead of `❯`) the text starts with `!` (`"!"` when empty). `Some("")` when
-/// empty, `None` when no input box is visible (a dialog has the screen).
+/// empty, `None` when no input box is visible (a dialog has the screen, or the agents page).
 pub fn input_box(lines: &[String]) -> Option<String> {
     let rules: Vec<usize> = lines
         .iter()
@@ -467,7 +479,7 @@ pub fn input_box(lines: &[String]) -> Option<String> {
         .collect();
     let (&bottom, rest) = rules.split_last()?;
     let &top = rest.last()?;
-    if bottom <= top + 1 {
+    if bottom <= top + 1 || agents_page(lines) {
         return None;
     }
     // `❯`, or `!` in shell mode (its text then starts with `!`).
@@ -1155,6 +1167,23 @@ mod tests {
             Some("Reply with exactly the word PONG and nothing else.")
         );
         assert_eq!(input_box(&screen("ask_single.txt")), None);
+    }
+
+    #[test]
+    fn agents_page_has_no_input_box() {
+        // Its box starts a new background Session: never typed into.
+        let list = screen("agents_list.txt");
+        assert!(agents_page(&list));
+        assert_eq!(input_box(&list), None);
+        // The background Session it opens shows the usual input box and mode line.
+        let bg = screen("background_session.txt");
+        assert!(!agents_page(&bg));
+        assert_eq!(input_box(&bg).as_deref(), Some(""));
+        assert_eq!(
+            permission_mode(&bg),
+            Some(crate::rpc::PermissionMode::Manual)
+        );
+        assert!(!agents_page(&screen("idle_prompt.txt")));
     }
 
     #[test]

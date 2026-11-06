@@ -212,7 +212,13 @@ pub struct Engine {
     size: (u16, u16),
     /// When ccrpc last switched the PTY to [`WORK_SIZE`].
     grown_at: std::cell::Cell<Option<Instant>>,
+    /// The Pane's claude: its exit ends the Session.
     claude_pid: Option<u32>,
+    /// The background claude followed once the Pane's claude moved its conversation to the
+    /// background (agents page): hooks, Process File and transcript are its from then on.
+    followed: Option<u32>,
+    /// The Pane's claude's `parkedJobId`, as last read.
+    parked_job: Option<String>,
     claude_seen_at: Option<Instant>,
     last_locate: Option<Instant>,
     pf: Option<ProcessFile>,
@@ -321,6 +327,8 @@ impl Engine {
             size,
             grown_at: std::cell::Cell::new(None),
             claude_pid: None,
+            followed: None,
+            parked_job: None,
             claude_seen_at: None,
             last_locate: None,
             pf: None,
@@ -404,7 +412,9 @@ impl Engine {
         if self.tailer.is_some() {
             return;
         }
-        let Some(pid) = self.claude_pid else { return };
+        let Some(pid) = self.followed.or(self.claude_pid) else {
+            return;
+        };
         let Some(c) = hook::read_checkin(&self.state_dir, pid) else {
             // Startup screens come before the Process File (and SessionStart may come after
             // them): only a Process File without a check-in means no plugin.
@@ -449,6 +459,68 @@ impl Engine {
         }
         let history = path.exists();
         self.switch_to(c.session_id, &path, history);
+    }
+
+    /// The Pane's claude moved its conversation to the background (agents page, docs/probes.md):
+    /// it stays as the front end and shows the background claude running the job. Hooks, Process
+    /// File and transcript are that claude's from then on (`session_changed` to its Session); keys
+    /// still go to the Pane. A background claude that is gone (stopped) stays followed until its
+    /// job runs again (opened again: another pid, the same Session).
+    fn follow_moved(&mut self) {
+        let Some(pane_pid) = self.claude_pid else {
+            return;
+        };
+        let (pid, pf, sid, path) = match locate::moved(
+            &self.roots,
+            &self.state_dir,
+            &self.holder_id,
+            self.parked_job.as_deref(),
+        ) {
+            locate::Moved::In { pf, checkin } => {
+                let Some(pid) = pf.pid else { return };
+                if self.followed == Some(pid) {
+                    return;
+                }
+                (
+                    Some(pid),
+                    Some(pf),
+                    checkin.session_id,
+                    PathBuf::from(checkin.transcript_path),
+                )
+            }
+            // Not seen so far: the conversation came back to the Pane's claude.
+            locate::Moved::No if self.followed.is_some() => {
+                let Some(c) = hook::read_checkin(&self.state_dir, pane_pid) else {
+                    return;
+                };
+                let pf = procfile::read(&self.roots, pane_pid);
+                (None, pf, c.session_id, PathBuf::from(c.transcript_path))
+            }
+            _ => return,
+        };
+        if !locate::is_transcript_path(&self.roots, &path) {
+            return;
+        }
+        crate::clog!(
+            "follow {} → claude {} session {sid}",
+            self.followed.unwrap_or(pane_pid),
+            pid.unwrap_or(pane_pid)
+        );
+        match HookServer::bind(&self.state_dir, pid.unwrap_or(pane_pid), self.wake.clone()) {
+            Ok(h) => self.hooks = Some(h),
+            Err(e) => {
+                self.fatal = Some(format!("{e:#}"));
+                return;
+            }
+        }
+        self.followed = pid;
+        if pf.is_some() {
+            self.pf = pf;
+        }
+        // A turn running when the conversation moved goes on there.
+        self.turns.moved();
+        let history = path.exists();
+        self.switch_to(sid, &path, history);
     }
 
     /// Switches to the Session `sid` whose transcript is `path`. A transcript that already existed
@@ -514,7 +586,16 @@ impl Engine {
                 self.set_exited();
                 return;
             }
-            if let Some(pf) = procfile::read(&self.roots, pid) {
+            if let Some((pf, job)) = procfile::read_with_job(&self.roots, pid) {
+                self.parked_job = job.parked_job_id;
+                if self.followed.is_none() {
+                    self.pf = Some(pf);
+                }
+            }
+            self.follow_moved();
+            if let Some(b) = self.followed
+                && let Some(pf) = procfile::read(&self.roots, b)
+            {
                 self.pf = Some(pf);
             }
         }

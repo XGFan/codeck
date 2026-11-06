@@ -44,6 +44,8 @@ ccrpc attach <Holder ID | sessionId>
 
 没有加载插件的 Session（装插件前就在跑的 claude）不能 attach：重启 claude（如 `claude --resume <sessionId>`）后再连。一个 Session 同时只能连一个 ccrpc。
 
+在 Pane 里按 `←` 把对话转入后台（Claude Code 的 agents 页面）后，对话由后台的 claude 以新的 sessionId 接着跑，Pane 里的 claude 只转发它的界面：ccrpc 跟过去（发 `session_changed`，进行中的一轮在那边结束），`ls` 也报后台的 Session；Pane 停在 agents 列表时要写入的命令报 `unrecognized`，回到对话（Esc）后照常。
+
 受控 Session 与人共用 Pane（[ADR-0001](docs/adr/0001-share-the-pane-and-resize-only-when-unreadable.md)）：它同时显示在调用方的界面与 ToH Client 里，两边都能输入，PTY 尺寸归人的 Client，ccrpc 的屏幕跟着它走。屏幕在这个尺寸下读不懂（窄屏下对话框折行、审批框的选项读不全、矮屏里输入框被挤出屏幕）时，ccrpc 把 PTY 调成 120×40 再读，不调回去，人的 Client 下次抢尺寸就换回它的。ToH 升级前就开着的 Pane 不能连，要关掉重开。
 
 列出本机 clay 里运行中的 Claude Code（Holder ID、sessionId、status、cwd、插件是否已报到，制表符分隔；`--json` 输出数组，另带 Pane 是否隐藏、claude pid、版本与会话标题；`--json --watch` 先打一行，之后变了再打一行，stdin 关闭即退出，由文件与进程事件唤醒）：

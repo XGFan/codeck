@@ -115,15 +115,22 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     let Some(claude) = locate::find_claude_under(&table, pane.shell_pid) else {
         bail!("Holder {} 里没有运行中的 Claude Code", pane.id);
     };
-    let checkin = hook::read_checkin(&hook::state_dir(), claude.pid);
-    let pf = procfile::read(roots, claude.pid);
+    let state = hook::state_dir();
+    let checkin = hook::read_checkin(&state, claude.pid);
+    let pf = procfile::read_with_job(roots, claude.pid);
     if let Some(problem) = hook::checkin_problem(
         checkin.as_ref(),
-        pf.as_ref().and_then(|p| p.session_id.as_deref()),
+        pf.as_ref().and_then(|(p, _)| p.session_id.as_deref()),
     ) {
         bail!(problem);
     }
-    if hook::socket_in_use(&hook::state_dir(), claude.pid) {
+    // A ccrpc connected to a conversation moved to the background listens on that claude's socket.
+    let job = pf.and_then(|(_, j)| j.parked_job_id);
+    let in_use = |pid| hook::socket_in_use(&state, pid);
+    if in_use(claude.pid)
+        || matches!(locate::moved(roots, &state, &pane.id, job.as_deref()),
+            locate::Moved::In { pf, .. } if pf.pid.is_some_and(in_use))
+    {
         bail!("已有 ccrpc 连着这个 Session");
     }
     run_engine(Engine::open(roots.clone(), &pane, Out::stdout())?)

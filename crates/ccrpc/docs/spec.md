@@ -37,6 +37,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - `--size`：`new` 的 PTY 初始尺寸（缺省 120×40；ToH 缺省的 80×24 里反馈草稿卡片会把输入框挤出屏幕），有人显示这个 Pane 时改成那一端的尺寸。
 - `--hidden`：Pane 开在 clay 的隐藏窗口里（`toh new --window hidden`，ToH ADR-0050），Mac Client 不显示它，iOS 与 web 照常列出；没人显示时尺寸就停在 `--size`。`ls --json` 的 `hidden` 即 Pane 在不在隐藏窗口里，不在 clay 里的 Pane（kitty 等）为 `null`。
 - `ls --json` 的 `title`：transcript 里最后一条 `custom-title`，没有则最后一条 `ai-title`（transcript 取报到里的，没有报到时按 cwd 推算 `<projects>/<cwd 编码>/<sessionId>.jsonl`）。
+- 转入后台的 Pane（见 3 节）：`ls` 的 `session_id`、`status`、`cwd`、`version`、`title` 与 `plugin` 取后台 claude 的进程文件与报到；`claude_pid` 仍是 Pane 里的 claude。后台 claude 还没起来或已被停掉时照旧取 Pane 里的 claude 的。
 - `ls --json --watch`：先打一行全表，之后表变了再打一行，stdin 关闭即退出。由 `toh ls --json --watch`（Pane 来去、隐藏 / 显示）与进程文件目录、报到目录的文件事件唤醒；`ps` 只在 Pane 或进程文件增减、列出的 claude 进程不在了时重跑，标题从上次读到的位置往后读。另每 30 秒看一次，兜住没删进程文件就退出的 claude。
 - 插件：`new` 在插件未启用（用户 settings 的 `enabledPlugins` 里没有 `ccrpc@ccrpc`）且 claude 参数里没有 `--plugin-dir` 时报错；claude 的进程文件出现 5 秒仍没有报到也报错退出。`attach` 要求该 claude 已报到（见 3 节），否则报错并提示重启 claude。
 - `ccrpc plugin install`：在 `$XDG_DATA_HOME/ccrpc/plugin`（缺省 `~/.local/share/ccrpc/plugin`）生成本地 marketplace `ccrpc` 与插件 `ccrpc`（hooks 调用当前 ccrpc 可执行文件的绝对路径），再经 `claude plugin marketplace add|update`、`claude plugin install|update` 装成用户级插件。换了 ccrpc 的位置要重新 install。
@@ -51,6 +52,7 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 - **报到**：插件的 SessionStart hook（`startup`、`resume`、`clear`、`compact`、`fork`）把 claude pid、`session_id`、`transcript_path`、hook 协议版本写进报到（ccrpc 自己的目录，0600）。`attach` 要求报到存在、hook 协议一致、`session_id` 与进程文件一致；只经 `/reload-plugins` 加载的插件不会报到。
 - **hook 通道**：ccrpc 找到 claude 后监听 `<ccrpc 状态目录>/s/<claude pid>.sock`（先监听再读报到）；hook 按父进程（claude）pid 连接，连不上就无输出退出。
 - **sessionId 会变**：`/clear`、`/resume` 等触发 SessionStart，ccrpc 按它给的 `session_id` 与 `transcript_path` 切到新 transcript 并发 `session_changed`。`new` 的 `ready` 往往在插件报到之前（启动界面期间没有报到），`session_id` 为 null，得知后发 `session_changed`（`previous` 为 null）。
+- **转入后台**（agents 页面，2.1.318，见 [probes.md](./probes.md)）：Pane 里的 claude（P）的进程文件出现 `parkedJobId` 时，对话已交给后台 claude：找 `kind: "bg"`、`jobId` 与之相同且仍在运行的进程文件得到后台 claude（B），它的插件报到须来自同一个 Holder、`session_id` 与进程文件一致（daemon 的备用进程也以同一 Holder 报到，只认 `jobId`）。之后 hook socket 改为 `s/<B>.sock`，状态读 B 的进程文件，transcript 换成报到里的（NEW），发 `session_changed`（`previous` 为原来的）；写入仍经 Holder 的 PTY（P 转发 B 的界面）。转入时正在进行的一轮由 B 接着写完（没有 UserPromptSubmit），B 的下一个 Stop 结束它，`prompt_id` 仍是原来的；B 闲着而没有 Stop 则按中止结束。B 被停掉后仍跟着这个 job，再打开时（新的 pid，同一 Session）改连新 pid 的 socket，不发 `session_changed`；`parkedJobId` 消失则跟回 P（实测没有出现过）。P 退出仍是 Session 结束（`session_exit`），即使 B 还在 daemon 里运行。`attach` 时另检查 B 的 hook socket 是否已有 ccrpc。
 - 连接时（`ready` 之前）以及切换 Session 时，已存在的 transcript 当作历史读到文件末尾：不发 `block`，但记下挂起的工具调用和已出现的提示词（用于确认命令）。之后才出现的 transcript（新 Session 的第一条提示词、`/clear` 之后）按实时读。
 
 ## 4. 状态
@@ -163,13 +165,14 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 - 读不懂时调成 120×40（[ADR-0001](./adr/0001-share-the-pane-and-resize-only-when-unreadable.md)）：PTY 跟随人的 Client，窄屏、矮屏下对话框会折行、被截掉，审批框的选项读不全，反馈卡片能把输入框挤出屏幕。以下情形 PTY 不是 120×40 时调成 120×40（Claude Code 按常见终端尺寸排版），等 800ms 让它重画再看：等待中的对话框内置识别与布局库都认不出（交给分析器、降级为 `dialog` 之前）；主线审批等满 1 秒仍读不出选项；写入前 2 秒内等不到输入框（之后再等 2 秒，没按过键）；`dismiss_feedback_draft` 看不到卡片下方的输入框；以及其余命令读不懂屏幕、报 `unrecognized_screen` 时（已按过键的不重试，调用方再发一次即在新尺寸下读）。调过就不调回去，人的 Client 下次抢尺寸时换回它的尺寸；已经是 120×40 仍读不懂就照旧报。
 - 审批框：`Do you want …?` 之后的编号菜单；Workflow 的审批框问 `Run a dynamic workflow?`，菜单在脚本说明之后（说明里可能有编号的阶段，取其后最后一个从 1 开始的编号块），选项为 `Yes, run it` / `View raw script` / `No`。按文字判断含义：`Yes`（Workflow 为 `Yes, run it`）→ allow；`Yes, …` 且含 `always allow` / `don't ask again` / `allow all`、不含 `auto mode` → allow_always；`No` 开头 → deny。必须同时有 allow 与 deny，否则不认。编号随场景变化，绝不按固定编号。
 - AskUserQuestion：底部 `Enter to select … Esc to cancel` 提示行、上方 `☐` / `☒` 标签行（`←` 开头表示多题）、题目、编号选项（`[ ]` / `[✔]` 为多选）、`Type something`、`Chat about this`、多选题的 `Submit` 行；Review 标签为 `Review your answers` 与 `Submit answers`。
-- 输入框：最下面两条整行 `─` 之间、以 `❯`（shell 模式为 `!`，读出的内容以 `!` 开头）开头的内容。
+- 输入框：最下面两条整行 `─` 之间、以 `❯`（shell 模式为 `!`，读出的内容以 `!` 开头）开头的内容。agents 页面（`tests/fixtures/screens/agents_list.txt`）底部同形的框是新开后台 Session 用的，不算输入框：下方提示行含 `ctrl+x to delete` 时认作 agents 页面，要写入的命令照常报 `unrecognized`、不按键。
 - Rewind（2.1.318，`tests/fixtures/screens/rewind_*.txt`）：选择器是紧接在对话框横线（`▔▔▔`）下的最下面的 `Rewind` 标题行（屏幕上有输入框时不算）、其下 `Restore the code and/or conversation to the point before…`，到 `Enter to continue · Esc to cancel` 为止；其间以空行分组，每组第一行是一项（`❯` 为光标），下一行是这一轮改了什么（`No code changes` / `w.txt +1 -1` / `⚠ No code restore`）；只画出一段，`↑ N more` / `↓ N more` 为上下还有几项。确认页是 `Rewind` 标题行下 `Confirm you want to restore to the point before you sent this message:`，其后 `│ ` 开头的行引用这条提示词（末行 `(5s ago)` 不算），然后 `The code will be …` 一段、编号菜单（项多时滚动，被挤到边上的项以 `↓` / `↑` 代替光标列；折行接在上一项后）、`⚠ …` 警告；菜单须恰有一个 `❯`、编号连续。
 
 ## 8. 测试
 
 - 单测：`tests/fixtures/` 的屏幕文本与 transcript（M0 录制、脱敏）回放：transcript 尾随、屏幕识别、协议解析。
 - 端到端（`tests/e2e/`：`harness.rs` 是隔离环境与收发，`mock_model.rs` 与 `real.rs` 是用例；`#[ignore]`；`mock_` 开头的用例用测试内置的本地 mock 模型（`MOCK-TOOL` 调 Bash、`MOCK-ASK` 调 AskUserQuestion 等），其余用真实模型；设 `CCRPC_E2E_WIRE_DIR` 时把每个 ccrpc 的收发原样录成 `<用例>-<n>.jsonl`（`{t, dir: send|recv, msg}`，与 CoDeck 的 ccrpc 日志里的 wire.jsonl 同格式）供 CoDeck Connect 功能的 E2E 回放）：ccrpc 插件为本次构建生成、经 `claude --plugin-dir` 加载（不安装），独立 `CCRPC_STATE_DIR`（`/tmp` 下）；独立 `TOH_STATE_DIR`（`/tmp` 下的短路径，unix socket 路径有约 104 字节上限；clay 启用、`[lan] bind = "127.0.0.1"`、`mdns = false`，模型相关变量经 `[backends.clay] env` 传给 Pane），去掉 `TOH_CONFIG` 与宿主终端变量，Holder 与 socket 一律经 `toh ls --json` 取；独立 `CLAUDE_CONFIG_DIR`（预置跳过 onboarding 与目录信任、`permissions.defaultMode = "default"`）；模型缺省 DeepSeek `deepseek-flash`（`https://api.deepseek.com/anthropic`），key 读 `CCRPC_E2E_API_KEY`。清理只向记下的 Pane shell pid 发 SIGHUP（Pane 随之结束）。
+- 转入后台的端到端用例（`mock_model_follows_*`）：后台 claude 跑在 Pane 里的 claude 拉起的 daemon 下，daemon 按配置目录隔离（`/tmp/cc-daemon-<uid>/<配置目录的 sha256 前 8 位>`），碰不到主人的；用例结束、Pane 关掉后，按 `--spawned-by` 里记下的 Pane 里的 claude 的 pid 找出这个 daemon 及其子进程，先 SIGTERM、10 秒后 SIGKILL，再删掉它的 socket 目录。
 
 - 权限模式：输入框下的模式行，`manual mode on` / `accept edits on` / `plan mode on` / `auto mode on`，shift+tab 依次循环。
 - 后台任务面板（`/tasks`）：标题 `Background`，下面的行带 `❯` 光标，提示行 `↑/↓ to select · Enter to view · x to stop · Esc to close`；只有一项时直接是详情（`… details`，提示行同样有 `x to stop`）。
@@ -177,3 +180,6 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 ## 9. 已知限制
 
 - 屏幕布局按 2.1.316 / 2.1.317 识别；Claude Code 改了文字或布局时识别器会拒绝（`unrecognized`），需要更新 recognize.rs 与 fixture。
+- 转入后台后，Pane 改为显示另一个后台 Session（在 agents 列表里打开别的）时进程文件不变，ccrpc 认不出，仍跟着转入的那个：这时发的提示词进了 Pane 显示的 Session，等 30 秒报 `timeout`。
+- 转入后台后的 `exit`：`/exit` 只让 Pane 回到 agents 列表（后台 claude 照常运行），报 `unrecognized`；在列表里 `ctrl+c` 两次才结束 Pane 里的 claude，后台 claude 仍留在 daemon 里。
+- 后台 claude 被停掉（列表里 `ctrl+x`）到再打开之间没有它的进程文件，状态停在最后的值；这期间 Pane 显示 agents 列表，要写入的命令报 `unrecognized`。

@@ -150,7 +150,16 @@ fn ls_rows(roots: &Roots, panes: &[Pane], st: &mut LsState) -> Result<Vec<Value>
         let Some(claude) = st.claude.get(&pane.shell_pid) else {
             continue;
         };
-        let pf = crate::procfile::read(roots, claude.pid);
+        let (mut pf, mut checkin) = (None, crate::hook::read_checkin(&state, claude.pid));
+        if let Some((p, job)) = crate::procfile::read_with_job(roots, claude.pid) {
+            pf = Some(p);
+            // Its conversation moved to the background: the Session is the one running there.
+            if let locate::Moved::In { pf: b, checkin: c } =
+                locate::moved(roots, &state, &pane.id, job.parked_job_id.as_deref())
+            {
+                (pf, checkin) = (Some(b), Some(c));
+            }
+        }
         let (sid, status) = match &pf {
             Some(p) => (
                 p.session_id.clone().unwrap_or_default(),
@@ -158,7 +167,6 @@ fn ls_rows(roots: &Roots, panes: &[Pane], st: &mut LsState) -> Result<Vec<Value>
             ),
             None => (String::new(), "starting".into()),
         };
-        let checkin = crate::hook::read_checkin(&state, claude.pid);
         let plugin = checkin.as_ref().is_some_and(|c| {
             crate::hook::checkin_problem(Some(c), pf.as_ref().and_then(|p| p.session_id.as_deref()))
                 .is_none()

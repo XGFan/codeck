@@ -57,3 +57,7 @@ _Avoid_: extension、扩展、hook 包
 **屏幕（Screen）**:
 ccrpc 用自己的 VT 从 Holder 的 Snapshot 与 Output 维护的当前终端画面文本。只用来识别界面与选项位置，不作为内容来源。
 _Avoid_: 截图、output
+
+**转入后台（Move to Background）**:
+人在 Claude Code 的 agents 页面（空输入框按 `←`）把对话交给后台的 claude 接着跑：后台的 claude 以新的 sessionId 继续（复制了原来的全部历史），Pane 里的 claude 只剩前端、转发它的界面。受控 Session 跟到后台的那个 Session。
+_Avoid_: 停车、park、detach

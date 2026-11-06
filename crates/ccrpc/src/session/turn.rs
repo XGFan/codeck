@@ -26,6 +26,9 @@ pub(super) struct TurnStats {
     /// Opened for a steer expected to run after the previous Stop: dropped without `turn_end` if
     /// nothing comes of it.
     pub(super) provisional: bool,
+    /// Goes on in a background claude (the conversation moved there): ended by its next Stop,
+    /// whatever the prompt id.
+    pub(super) moved: bool,
 }
 
 impl TurnStats {
@@ -202,6 +205,15 @@ impl TurnTracker {
         self.stats = TurnStats::start(None, "prompt");
     }
 
+    /// The conversation moved to a background claude (agents page): a turn running then goes on
+    /// there, with no UserPromptSubmit and under that claude's prompt id, so its Stop (whatever its
+    /// prompt id) ends it; idle there without one, it ends as aborted.
+    pub(super) fn moved(&mut self) {
+        if self.active && self.stop_pending.is_none() {
+            self.stats.moved = true;
+        }
+    }
+
     /// No turn running at connect.
     pub(super) fn idle_at_connect(&mut self) {
         self.active = false;
@@ -310,7 +322,7 @@ impl TurnTracker {
         }
         let ours = self.active
             && self.stop_pending.is_none()
-            && (self.stats.prompt_id.is_none() || self.stats.prompt_id == pid);
+            && (self.stats.prompt_id.is_none() || self.stats.prompt_id == pid || self.stats.moved);
         // A turn ccrpc did not see start.
         if !ours {
             return out;
@@ -815,6 +827,41 @@ mod tests {
         assert_eq!(e[0]["usage"]["output_tokens"], 6);
         assert_eq!(e[0]["api_cost"], 1.0);
         assert_eq!(e[0]["background_tasks"][0]["id"], "b1");
+        assert!(!t.active);
+    }
+
+    /// Moved to the background while busy (agents page): the background claude finishes the reply
+    /// with no UserPromptSubmit; its Stop, under another prompt id, ends the turn, which keeps the
+    /// prompt id the caller knows.
+    #[test]
+    fn a_turn_moved_to_the_background_ends_at_the_background_claude_s_stop() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        submit(&mut t, now, "p1", "MOCK-SLOW please");
+        // Another turn's Stop is not this one's until the conversation moved.
+        assert!(stop(&mut t, now, "bg-1", "other").is_empty());
+        t.moved();
+        assert!(matches!(
+            stop(&mut t, now, "bg-1", "slow slow")[..],
+            [TurnOut::Stopped(_)]
+        ));
+        let out = marker(&mut t, now, 8000);
+        let e = ends(&out);
+        assert_eq!(e[0]["prompt_id"], "p1");
+        assert_eq!(e[0]["last_text"], "slow slow");
+        assert_eq!(e[0]["aborted"], false);
+        assert!(!t.active);
+    }
+
+    #[test]
+    fn a_turn_moved_to_an_idle_background_claude_ends_as_aborted() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        submit(&mut t, now, "p1", "hi");
+        t.moved();
+        let out = t.poll(now + ABORT_GRACE, Some(now));
+        assert_eq!(ends(&out)[0]["aborted"], true);
+        assert_eq!(ends(&out)[0]["prompt_id"], "p1");
+        // Idle at the move: nothing to carry.
+        t.moved();
         assert!(!t.active);
     }
 

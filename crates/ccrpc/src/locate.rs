@@ -128,6 +128,46 @@ pub fn holder_of_pid<'a>(
     None
 }
 
+/// Where the conversation of a Pane's claude runs once it moved to the background (the agents
+/// page): the Pane's claude stays as the front end and shows the background claude's screen.
+#[derive(Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
+pub enum Moved {
+    /// Not moved: the Pane's claude runs it.
+    No,
+    /// Moved, but no background claude of its job runs with a check-in from this Holder yet (it
+    /// is starting, or was stopped and may be opened again).
+    Away,
+    /// Runs in this background claude, whose ccrpc Plugin checked in from this Holder.
+    In {
+        pf: crate::procfile::ProcessFile,
+        checkin: crate::hook::CheckIn,
+    },
+}
+
+/// Follows `parked_job` (the `parkedJobId` of the Pane's claude, in Holder `holder`) to the
+/// background claude running it. Spare background claude processes check in from the same Holder
+/// too: only the job id tells which one is this conversation.
+pub fn moved(roots: &Roots, state: &Path, holder: &str, parked_job: Option<&str>) -> Moved {
+    let Some(job) = parked_job else {
+        return Moved::No;
+    };
+    let Some(pf) = crate::procfile::job_process(roots, job) else {
+        return Moved::Away;
+    };
+    let Some(checkin) = pf.pid.and_then(|pid| crate::hook::read_checkin(state, pid)) else {
+        return Moved::Away;
+    };
+    let sid = pf.session_id.as_deref();
+    if checkin.holder_id != holder
+        || sid != Some(checkin.session_id.as_str())
+        || crate::hook::checkin_problem(Some(&checkin), sid).is_some()
+    {
+        return Moved::Away;
+    }
+    Moved::In { pf, checkin }
+}
+
 /// A transcript path reported by the plugin is one of Claude Code's: a `.jsonl` file under the
 /// projects directory (nothing else is ever read as a transcript).
 pub fn is_transcript_path(roots: &Roots, path: &Path) -> bool {
@@ -183,6 +223,92 @@ mod tests {
             Some("abc")
         );
         assert!(holder_of_pid(&table, &panes, 10).is_none());
+    }
+
+    /// A Claude config dir and a ccrpc state dir with the Process Files and check-ins seen after
+    /// `←` on the agents page (docs/probes.md): the Pane's claude, the background claude running
+    /// its job, and a spare. All on this test's own pid (alive; no `procStart` to compare).
+    fn moved_dirs(bg_holder: &str) -> (tempfile::TempDir, tempfile::TempDir, Roots) {
+        let cc = tempfile::tempdir().unwrap();
+        let st = tempfile::tempdir().unwrap();
+        let me = std::process::id();
+        let write = |dir: &Path, name: &str, v: serde_json::Value| {
+            std::fs::create_dir_all(dir.join("sessions")).unwrap();
+            std::fs::write(dir.join("sessions").join(name), v.to_string()).unwrap();
+        };
+        // The background claude (pid = ours) and a spare on a dead pid.
+        write(
+            cc.path(),
+            &format!("{me}.json"),
+            serde_json::json!({"pid": me, "sessionId": "new-sid", "kind": "bg", "jobId": "new-sid", "status": "busy"}),
+        );
+        write(
+            cc.path(),
+            "999999.json",
+            serde_json::json!({"pid": 999_999, "sessionId": "spare-sid", "kind": "bg", "jobId": "spare-si", "spare": true}),
+        );
+        write(
+            st.path(),
+            &format!("{me}.json"),
+            serde_json::to_value(crate::hook::CheckIn {
+                hook_protocol: crate::hook::HOOK_PROTOCOL,
+                plugin_version: "0.1.0".into(),
+                claude_pid: me,
+                holder_id: bg_holder.into(),
+                session_id: "new-sid".into(),
+                transcript_path: "/c/projects/-w/new-sid.jsonl".into(),
+                source: "fork".into(),
+                cwd: "/w".into(),
+                at: 0,
+            })
+            .unwrap(),
+        );
+        let roots = Roots {
+            toh_state: None,
+            claude_config: cc.path().to_path_buf(),
+        };
+        (cc, st, roots)
+    }
+
+    #[test]
+    fn moved_conversation_runs_in_the_job_s_background_claude() {
+        let (_cc, st, roots) = moved_dirs("h1");
+        assert_eq!(moved(&roots, st.path(), "h1", None), Moved::No);
+        let Moved::In { pf, checkin } = moved(&roots, st.path(), "h1", Some("new-sid")) else {
+            panic!("not followed");
+        };
+        assert_eq!(pf.pid, Some(std::process::id()));
+        assert_eq!(checkin.session_id, "new-sid");
+        assert_eq!(checkin.transcript_path, "/c/projects/-w/new-sid.jsonl");
+    }
+
+    #[test]
+    fn moved_conversation_not_followed_elsewhere() {
+        let (_cc, st, roots) = moved_dirs("h1");
+        // No background claude runs the job (starting, or stopped), or only a dead one does.
+        assert_eq!(moved(&roots, st.path(), "h1", Some("gone")), Moved::Away);
+        assert_eq!(
+            moved(&roots, st.path(), "h1", Some("spare-si")),
+            Moved::Away
+        );
+        // Checked in from another Holder.
+        assert_eq!(moved(&roots, st.path(), "h2", Some("new-sid")), Moved::Away);
+        // No check-in yet.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            moved(&roots, empty.path(), "h1", Some("new-sid")),
+            Moved::Away
+        );
+    }
+
+    #[test]
+    fn job_fields_of_a_process_file() {
+        let (_cc, _st, roots) = moved_dirs("h1");
+        let (pf, job) = crate::procfile::read_with_job(&roots, std::process::id()).unwrap();
+        assert_eq!(pf.session_id.as_deref(), Some("new-sid"));
+        assert_eq!(job.kind.as_deref(), Some("bg"));
+        assert_eq!(job.job_id.as_deref(), Some("new-sid"));
+        assert_eq!(job.parked_job_id, None);
     }
 
     #[test]

@@ -1392,3 +1392,195 @@ fn mock_model_shared_pane() {
         );
     }
 }
+
+/// The background claude processes the Pane's claude `pane_claude` started (the transient daemon,
+/// keyed to this test's own config dir, with its PTY hosts and claude processes): stopped when the
+/// test is done, once the Pane's claude is gone (it starts the daemon again while it runs).
+struct Daemons {
+    pane_claude: Option<u32>,
+}
+
+impl Drop for Daemons {
+    fn drop(&mut self) {
+        let Some(pane_claude) = self.pane_claude else {
+            return;
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while transcript::live::pid_exists(pane_claude) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let out = std::process::Command::new("/bin/ps")
+            .args(["-A", "-o", "pid=,ppid=,command="])
+            .output()
+            .unwrap();
+        let table: Vec<(u32, u32, String)> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| {
+                let mut it = l.split_whitespace();
+                let pid = it.next()?.parse().ok()?;
+                let ppid = it.next()?.parse().ok()?;
+                Some((pid, ppid, it.collect::<Vec<_>>().join(" ")))
+            })
+            .collect();
+        let spawned = format!("\"pid\":{pane_claude}}}");
+        let mut ours: Vec<u32> = table
+            .iter()
+            .filter(|(_, _, c)| c.contains("daemon run") && c.contains(&spawned))
+            .map(|(p, _, _)| *p)
+            .collect();
+        loop {
+            let more: Vec<u32> = table
+                .iter()
+                .filter(|(p, pp, _)| ours.contains(pp) && !ours.contains(p))
+                .map(|(p, _, _)| *p)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            ours.extend(more);
+        }
+        let signal = |sig| {
+            for p in &ours {
+                // SAFETY: only processes descended from this test's own Pane's claude.
+                unsafe { libc::kill(*p as i32, sig) };
+            }
+        };
+        signal(libc::SIGTERM);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while ours.iter().any(|p| transcript::live::pid_exists(*p)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        signal(libc::SIGKILL);
+        // The daemon's sockets: `/tmp/cc-daemon-<uid>/<hash of this test's config dir>`, named
+        // on its processes' command lines.
+        // SAFETY: getuid has no preconditions.
+        let base = format!("/tmp/cc-daemon-{}/", unsafe { libc::getuid() });
+        let dir = table
+            .iter()
+            .filter(|(p, _, _)| ours.contains(p))
+            .find_map(|(_, _, c)| {
+                let hash: String = c[c.find(&base)? + base.len()..]
+                    .chars()
+                    .take_while(char::is_ascii_hexdigit)
+                    .collect();
+                (hash.len() == 8).then(|| format!("{base}{hash}"))
+            });
+        if let Some(d) = dir {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+}
+
+/// `←` on an empty input box moves the conversation to the background (agents page): the Pane's
+/// claude stays as the front end of a background claude that runs it as another Session. ccrpc
+/// follows it (`session_changed`); the agents page has no input box; opened again, a prompt runs
+/// there to its end. `ls` reports the background Session for the Holder; a second ccrpc is still
+/// refused.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_follows_the_background_session() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    // Dropped after `rpc`, which ends the Pane.
+    let mut daemons = Daemons { pane_claude: None };
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+    rpc.call("p1", json!({"type": "prompt", "text": "hello one"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    let old = rpc.call("g1", json!({"type": "get_state"}))["session_id"].clone();
+    assert!(old.is_string(), "{old}");
+    let ls = || -> Value {
+        let out = ccrpc_cmd(&env)
+            .args(["ls", "--json"])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["holder_id"] == holder)
+            .cloned()
+            .unwrap()
+    };
+    daemons.pane_claude = ls()["claude_pid"].as_u64().map(|p| p as u32);
+
+    rpc.forget();
+    rpc.call("k1", json!({"type": "send_keys", "keys": ["left"]}));
+    let ch = rpc.event("session_changed", Duration::from_secs(20));
+    assert_eq!(ch["previous"], old, "{ch}");
+    let new = ch["session_id"].clone();
+    assert!(new.is_string() && new != old, "{ch}");
+    wait_screen(&mut rpc, "w1", |l| {
+        l.iter().any(|l| l.contains("moved to the background"))
+    });
+    // The agents page's box starts another background Session: nothing is typed into it.
+    rpc.send(json!({"id": "p2", "type": "prompt", "text": "not typed"}));
+    let r = rpc.until("p2", Duration::from_secs(30), |v| {
+        v["type"] == "response" && v["id"] == "p2"
+    });
+    assert_eq!(r["error"]["code"], "unrecognized_screen", "{r}");
+
+    rpc.call("k2", json!({"type": "send_keys", "keys": ["esc"]}));
+    wait_screen(&mut rpc, "w2", |l| {
+        l.iter().any(|l| l.contains("← for agents"))
+    });
+    rpc.forget();
+    let d = rpc.call("p3", json!({"type": "prompt", "text": "hello two"}));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
+    assert_eq!(t["aborted"], false, "{t}");
+    assert_eq!(t["last_text"], "ok", "{t}");
+    let st = rpc.call("g2", json!({"type": "get_state"}));
+    assert_eq!(st["session_id"], new, "{st}");
+    assert_eq!(st["state"], "idle", "{st}");
+
+    let row = ls();
+    assert_eq!(row["session_id"], new, "{row}");
+    assert_eq!(row["plugin"], true, "{row}");
+    let out = ccrpc_cmd(&env)
+        .args(["attach", &holder])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("已有 ccrpc 连着"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Moved to the background while a reply streams: the background claude finishes the reply
+/// (without a UserPromptSubmit of its own); the turn ends there, under the caller's prompt id.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_follows_a_running_turn_into_the_background() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut daemons = Daemons { pane_claude: None };
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let pane_claude = ccrpc_cmd(&env)
+        .args(["ls", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&pane_claude.stdout).unwrap();
+    daemons.pane_claude = rows[0]["claude_pid"].as_u64().map(|p| p as u32);
+
+    rpc.forget();
+    let d = rpc.call("p1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    rpc.call("k1", json!({"type": "send_keys", "keys": ["left"]}));
+    let ch = rpc.event("session_changed", Duration::from_secs(20));
+    assert!(ch["previous"].is_string(), "{ch}");
+    let t = rpc.event("turn_end", Duration::from_secs(60));
+    assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
+    assert_eq!(t["aborted"], false, "{t}");
+    assert!(
+        t["last_text"].as_str().unwrap_or("").contains("slow"),
+        "{t}"
+    );
+}
