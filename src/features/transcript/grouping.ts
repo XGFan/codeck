@@ -564,6 +564,8 @@ function placeholderRun(agentId: string): SubagentRun {
     endedMs: null,
     promptPreview: null,
     finalText: null,
+    teammate: false,
+    color: null,
   };
 }
 

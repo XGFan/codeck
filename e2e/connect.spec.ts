@@ -549,15 +549,20 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(page.locator('[data-anchor$="tu_monitor"]').first()).toBeInViewport();
   await page.getByTestId("tasks").click();
   await page.getByTestId("tasks-done").click();
-  await expect(tasks).toHaveCount(3);
+  await expect(tasks).toHaveCount(4);
   await expect(groups.nth(1)).toHaveAttribute("data-kind", "agent");
   await expect(groups.nth(1)).toContainText("为限流中间件补集成测试");
   // A Subagent opens its Subagent Run in the side panel.
-  await groups.nth(1).getByTestId("task-open").click();
+  await groups.nth(1).getByTestId("task-open").first().click();
   await expect(page.getByTestId("tasks-list")).toHaveCount(0);
   await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText([
     "test-engineer · 为限流中间件补集成测试",
   ]);
+  await page.getByTestId("panel-close").click();
+  // A Teammate is listed under a task id of its own: it opens its Subagent Run by its description.
+  await page.getByTestId("tasks").click();
+  await groups.nth(1).locator("li").filter({ hasText: "补限流文档" }).getByTestId("task-open").click();
+  await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText(["writer · 补限流文档"]);
   await page.getByTestId("panel-close").click();
   // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);

@@ -75,8 +75,13 @@ export function Tasks({ c }: { c: ConnState }) {
 
   const name = (t: Task) => t.description || t.command || t.id;
   const open = (t: Task) => {
-    if (t.kind === "agent")
-      return runs.has(t.id) ? { title: "在右侧查看完整过程", go: () => setPanelStack(stackOf(t.id)) } : null;
+    if (t.kind === "agent") {
+      // A Teammate is listed under a task id of its own: found by its description.
+      const run =
+        runs.get(t.id) ??
+        shown?.subagents.find((r) => r.teammate && t.description != null && r.description === t.description);
+      return run ? { title: "在右侧查看完整过程", go: () => setPanelStack(stackOf(run.agentId)) } : null;
+    }
     const nodeId = t.tool_use_id ? calls.get(t.tool_use_id) : undefined;
     if (!nodeId) return null;
     return {

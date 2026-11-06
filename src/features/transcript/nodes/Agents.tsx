@@ -16,6 +16,8 @@ const STATE_LABEL: Record<RunState, string> = {
   done: "已完成",
   failed: "失败",
   noNotice: "未收到完成通知",
+  idle: "空闲",
+  exited: "已退出",
 };
 
 /** Whether the Subagent Run has ended: running / done / failed, or a background run whose notification never came. */
@@ -60,7 +62,8 @@ export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: Too
   const nested = scope.kind === "subagent";
   const failed = state === "failed";
   const prompt = promptOf(run, call);
-  const result = run.finalText ?? (call?.result && !run.isAsync ? call.result.text : null);
+  // A Teammate's tool_result only says it was spawned.
+  const result = run.finalText ?? (call?.result && !run.isAsync && !run.teammate ? call.result.text : null);
   const dur = runDuration(run);
   const meta = nested
     ? [`嵌套 · ${run.messageCount} 条`, formatDuration(dur, "detail")]
@@ -82,6 +85,17 @@ export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: Too
         <span className="font-semibold">{run.agentType ?? run.name ?? "Subagent"}</span>
         {run.isAsync && (
           <span className="rounded border border-border px-1 text-[11px] leading-[16px] text-secondary">后台</span>
+        )}
+        {run.teammate && (
+          <span
+            data-testid="teammate-badge"
+            className="flex items-center gap-1 rounded border border-border px-1 text-[11px] leading-[16px] text-secondary"
+          >
+            {run.color && (
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: run.color }} />
+            )}
+            Teammate{run.name && ` · ${run.name}`}
+          </span>
         )}
         <span className="min-w-[120px] flex-1 truncate">{run.description ?? run.name ?? run.agentId}</span>
         <span className="text-[12px] text-secondary">{meta.filter(Boolean).join(" · ")}</span>

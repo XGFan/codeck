@@ -396,6 +396,39 @@ test("Teammate 消息显示为可折叠卡片而非用户提问", async ({ page 
   await expect(body).not.toContainText("This came from another Claude session");
 });
 
+test("Teammate：一轮的结果是一张卡片，空闲、失败、分配任务与退出各一行；它的卡片带标签、状态与最近的结果", async ({
+  page,
+}) => {
+  await openSession(page, RICH_TITLE);
+  const transcript = page.getByTestId("transcript");
+  const done = page.getByTestId("teammate-done");
+  await reveal(transcript, done);
+  await expect(done).toContainText("docs-writer");
+  await expect(done).toContainText("完成");
+  await expect(done).not.toContainText("idle_notification");
+  await expect(done.getByTestId("teammate-result").locator("li")).toHaveCount(5);
+  // A long result starts clamped.
+  await done.getByRole("button", { name: "展开全文" }).click();
+  await expect(done.getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
+
+  const event = (kind: string) => page.locator(`[data-testid="teammate-event"][data-kind="${kind}"]`);
+  await reveal(transcript, event("exited"));
+  await expect(event("idle")).toContainText("docs-writer 空闲");
+  await expect(event("task")).toContainText("team-lead 分配任务 · #6 补充 Retry-After 的示例");
+  await expect(event("failed")).toContainText("docs-writer 失败 · API Error: Connection dropped (ECONNRESET)");
+  // Its shutdown_approved and the system's teammate_terminated: one line.
+  await expect(event("exited")).toHaveCount(1);
+  await expect(event("exited")).toContainText("docs-writer 已退出");
+
+  const card = page.locator('[data-testid="subagent-card"][data-agent-id="ag-docs"]');
+  await reveal(transcript, card);
+  await expect(card.getByTestId("teammate-badge")).toHaveText("Teammate · docs-writer");
+  await expect(card.getByTestId("run-status")).toHaveAttribute("data-state", "exited");
+  await expect(card.getByTestId("run-status")).toHaveText("已退出");
+  await expect(card).toContainText("限流文档写好了");
+  await expect(card).not.toContainText("Spawned successfully");
+});
+
 test("当前 Session 被移除后会话区回到空状态", async ({ page }) => {
   const sid = await openSession(page, RICH_TITLE);
   await expect(page.getByTestId("transcript").locator("[data-row]").first()).toBeVisible();

@@ -397,11 +397,60 @@ export const richMain: Node[] = [
       },
     },
   ),
+  // A teammate: an Agent call with `name`; its result only says it was spawned.
+  asstNode("n-team-spawn", t + 2_000, [
+    call(
+      "tu_team_docs",
+      "Agent",
+      {
+        description: "补限流文档",
+        subagent_type: "writer",
+        name: "docs-writer",
+        prompt: "在 docs/rate-limit.md 写清限流的配置项与默认值。",
+      },
+      {
+        text: "Spawned successfully.\nagent_id: docs-writer@lumen\nname: docs-writer\nThe agent is now running and will receive instructions via mailbox.",
+      },
+      { subagentId: "ag-docs" },
+    ),
+  ]),
   userNode(
     "n-teammate",
     t + 5_000,
     'Another Claude session sent a message:\n<teammate-message teammate_id="docs-writer" color="green" summary="限流文档已更新">\n已在 docs/rate-limit.md 补充配置说明：\n\n- `rate_limit.per_minute` 默认 120\n- 按 API key 隔离\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
     { origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: "限流文档已更新" } },
+  ),
+  userNode(
+    "n-team-done",
+    t + 8_000,
+    'Another Claude session sent a message:\n<teammate-message teammate_id="docs-writer" color="green">\n{"type": "idle_notification", "from": "docs-writer", "timestamp": "2026-11-06T02:00:47.703Z", "idleReason": "available", "result": "限流文档写好了，在 `docs/rate-limit.md`。\\n\\n**写了什么**\\n- `rate_limit.per_minute`：默认 120\\n- 按 API key 隔离，各自一个令牌桶\\n- 超限返回 429，带 `Retry-After`\\n\\n**没写的**\\n- 分布式计数：现在只在内存里\\n- 管理接口：还没有\\n\\n已自查链接与示例。"}\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
+    {
+      origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: null },
+    },
+  ),
+  userNode(
+    "n-team-batch",
+    t + 11_000,
+    'Another Claude session sent a message:\n<teammate-message teammate_id="docs-writer" color="green">\n{"type": "idle_notification", "from": "docs-writer", "timestamp": "2026-11-06T02:01:10.000Z", "idleReason": "available"}\n</teammate-message>\n\n<teammate-message teammate_id="team-lead">\n{"type": "task_assignment", "taskId": "6", "subject": "补充 Retry-After 的示例", "description": "在文档里加一段 429 响应的示例。", "assignedBy": "team-lead", "timestamp": "2026-11-06T02:01:12.000Z"}\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
+    {
+      origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: null },
+    },
+  ),
+  userNode(
+    "n-team-failed",
+    t + 14_000,
+    'Another Claude session sent a message:\n<teammate-message teammate_id="docs-writer" color="green">\n{"type": "idle_notification", "from": "docs-writer", "timestamp": "2026-11-06T02:02:00.000Z", "idleReason": "failed", "failureReason": "API Error: Connection dropped (ECONNRESET)"}\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
+    {
+      origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: null },
+    },
+  ),
+  userNode(
+    "n-team-exit",
+    t + 17_000,
+    'Another Claude session sent a message:\n<teammate-message teammate_id="docs-writer" color="green">\n{"type": "shutdown_approved", "requestId": "shutdown-1@docs-writer", "from": "docs-writer", "timestamp": "2026-11-06T02:03:00.000Z"}\n</teammate-message>\n\n<teammate-message teammate_id="system">\n{"type": "teammate_terminated", "message": "docs-writer has shut down."}\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
+    {
+      origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: null },
+    },
   ),
   asstNode("n14", ts(), [
     text("对照一下监控面板的截图，确认限流指标已出现。"),
@@ -552,6 +601,8 @@ export const richSubagents = [
     endedMs: START + 10 * MIN,
     promptPreview: "找出 lumen-api 里所有 tower Layer 的注册位置与顺序。",
     finalText: "共 3 处注册：trace、auth、cors；顺序见 src/middleware/mod.rs。",
+    teammate: false,
+    color: null,
   },
   {
     agentId: "ag-nested1",
@@ -572,6 +623,8 @@ export const richSubagents = [
     endedMs: START + 9.8 * MIN,
     promptPreview: "cors 层的允许来源是从哪里读取的？",
     finalText: "来自 config.toml 的 [cors] allowed_origins。",
+    teammate: false,
+    color: null,
   },
   {
     agentId: "ag-async1",
@@ -592,6 +645,8 @@ export const richSubagents = [
     endedMs: START + 19 * MIN,
     promptPreview: "为 RateLimitLayer 编写集成测试，覆盖超限、按 key 隔离与窗口恢复。",
     finalText: "测试代理完成：新增 14 个用例，全部通过",
+    teammate: false,
+    color: null,
   },
   {
     agentId: "ag-orphan",
@@ -612,6 +667,8 @@ export const richSubagents = [
     endedMs: START + 3 * MIN,
     promptPreview: "kestrel-cli 的 HTTP 重试策略是什么？",
     finalText: null,
+    teammate: false,
+    color: null,
   },
   {
     agentId: "wf-ag-1",
@@ -632,6 +689,8 @@ export const richSubagents = [
     endedMs: START + 22 * MIN,
     promptPreview: "评审限流中间件的并发安全",
     finalText: "未发现数据竞争。",
+    teammate: false,
+    color: null,
   },
   {
     agentId: "wf-ag-2",
@@ -652,6 +711,31 @@ export const richSubagents = [
     endedMs: START + 23 * MIN,
     promptPreview: "评审限流绕过风险（X-Forwarded-For 伪造）",
     finalText: "建议以 API key 而非 IP 作为限流键，当前实现已满足。",
+    teammate: false,
+    color: null,
+  },
+  {
+    agentId: "ag-docs",
+    agentType: "writer",
+    description: "补限流文档",
+    name: "docs-writer",
+    parentAgentId: null,
+    spawnDepth: 0,
+    toolUseId: "tu_team_docs",
+    workflowRunId: null,
+    isAsync: false,
+    status: "exited",
+    model: "claude-sonnet-5-5",
+    messageCount: 12,
+    toolCallCount: 6,
+    tokens: tok(3200, 2400, 41_000, 900),
+    startedMs: START + 30 * MIN,
+    endedMs: START + 36 * MIN,
+    promptPreview: "在 docs/rate-limit.md 写清限流的配置项与默认值。",
+    finalText:
+      "限流文档写好了，在 `docs/rate-limit.md`。\n\n**写了什么**\n- `rate_limit.per_minute`：默认 120\n- 按 API key 隔离，各自一个令牌桶\n- 超限返回 429，带 `Retry-After`\n\n**没写的**\n- 分布式计数：现在只在内存里\n- 管理接口：还没有\n\n已自查链接与示例。",
+    teammate: true,
+    color: "green",
   },
 ] satisfies SubagentRun[];
 
@@ -698,6 +782,10 @@ export const richWorkflows = [
 
 /** Nodes of each subagent's own transcript (scope = subagent). */
 export const richAgentNodes: Record<string, Node[]> = {
+  "ag-docs": [
+    userNode("agd-u1", START + 30 * MIN, "在 docs/rate-limit.md 写清限流的配置项与默认值。"),
+    asstNode("agd-a1", START + 36 * MIN, [text("限流文档写好了，在 docs/rate-limit.md。")]),
+  ],
   "ag-sync1": [
     userNode("ag1-u1", START + 9 * MIN, "找出 lumen-api 里所有 tower Layer 的注册位置与顺序。"),
     asstNode(
