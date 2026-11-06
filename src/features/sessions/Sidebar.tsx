@@ -163,8 +163,9 @@ export function SidebarColumn({ data, middle }: { data: SidebarData; middle?: (s
   const setRecentRows = useUi((s) => s.setRecentRows);
   const rows = fitRows(height, live.length, recent.length, recentOpen, recentRows);
 
+  // Rows are buttons, not text to copy: no selection highlight when dragging or double-clicking over them.
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div data-testid="sidebar" className="flex min-h-0 flex-1 flex-col select-none">
       {/* The toolbar (list toggle, search) floats in this strip, right after the traffic lights. */}
       <div data-tauri-drag-region="deep" className="h-10 shrink-0" />
       <div className="shrink-0 px-[6px] pb-[2px]">

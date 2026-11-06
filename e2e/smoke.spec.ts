@@ -6,9 +6,11 @@ test("两栏布局与统计、设置入口可见", async ({ page }) => {
   await expect(page.getByTestId("pane-conversation")).toBeVisible();
   await expect(page.getByTestId("nav-stats")).toBeVisible();
   await expect(page.getByTestId("settings-button")).toBeVisible();
-  // No bar under the conversation: index status, stats and settings are at the foot of the Session list…
+  // No bar under the conversation: stats and settings are at the foot of the Session list, without the index count
+  // (in Settings; here it changed while typing)…
   const sessions = page.getByTestId("pane-sessions");
-  await expect(sessions.getByTestId("statusbar")).toContainText("已索引");
+  await expect(sessions.getByTestId("statusbar")).toBeVisible();
+  await expect(sessions.getByTestId("statusbar")).not.toContainText("已索引");
   await expect(sessions.getByTestId("nav-stats")).toBeVisible();
   await expect(page.getByTestId("pane-conversation").getByTestId("settings-button")).toHaveCount(0);
   // …and join the toolbar while the list is hidden.
@@ -32,7 +34,7 @@ test("索引状态到达时按到一半的设置按钮仍然有效", async ({ pa
   await page.mouse.down();
   // The index status arrives between the press and the release.
   await page.clock.runFor(1000);
-  await expect(page.getByTestId("statusbar")).toContainText("已索引");
+  await expect(page.getByTestId("statusbar")).toHaveCount(1);
   await page.mouse.up();
   await expect(page.getByTestId("settings")).toBeVisible();
 });

@@ -130,7 +130,8 @@ export function NewSessionError() {
       data-testid="new-session-error"
       className="flex shrink-0 items-center gap-2 border-b border-border bg-error-bg px-3.5 py-1.5 text-[12px] text-error"
     >
-      <span className="min-w-0 flex-1">{error}</span>
+      {/* In the sidebar, where text is not selectable; an error is worth copying. */}
+      <span className="min-w-0 flex-1 select-text">{error}</span>
       <button type="button" aria-label="关闭" onClick={() => setNewError(null)}>
         <X size={12} aria-hidden />
       </button>
