@@ -20,7 +20,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - **启动 Project**：启动时 cwd 所在的 Project，每个 Session 恰有一个；中途 cd 不改变它；目录已不存在时，归入仍存在的上级目录所在的仓库（如已删除的 worktree），没有仓库时用原始 cwd，并标记"目录已不存在"；条目里都没有 cwd 时用 `~/.claude/projects/` 下的编码目录。
   - **改动的 Project**：Edit / Write / MultiEdit / NotebookEdit（主对话和 Subagent）写过的文件所在的 Project；被拒绝或失败的调用、数据目录（`~/.claude`）下的文件不算；不在任何仓库里、但位于启动 Project 下的文件算启动 Project，其他位置的文件不算；resume / Fork 复制进来的历史里的改动也算。按当前磁盘判断：仓库已删除的文件不再计入，用 Bash 做的修改（`sed -i`、生成代码等）不计入。
   - Session 属于它的启动 Project 和所有改动的 Project；在搜索里按 Project 查找、限定范围或筛选 Session 列表时，两者都算。
-  - Project 只在搜索里出现（找 Session 的辅助）；Session 列表的行上、统计页都不显示 Project。
+  - 侧栏按用户添加的 Project 分组（见「界面 › 侧栏」），分组只看启动 Project，每个 Session 只出现一次；统计页不显示 Project。
 - **Subagent Run**：通过 `subagents/agent-<id>.meta.json` 里的 `toolUseId` 关联到主对话中的 Agent 调用，可以嵌套（`spawnDepth`）。
 - **Workflow Run**：来自 `workflows/` 和 `journal.jsonl`。
 - **Fork**：和其他 Session 共享消息 uuid 的 Session，独立显示，标注 Origin Session，继承来的历史默认折叠。
@@ -64,14 +64,24 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - 两栏布局：Session 列表 | 会话区（选中 Session 的整栏：头部、对话记录，Connected Session 的底部另有悬浮的输入区）；红绿灯右侧是 Session 列表开关和搜索图标（悬停提示 ⌘K），全屏时没有红绿灯，图标移到最左边；对话头部不另设搜索入口。没有底部状态栏：Session 列表底部一行是索引状态（已索引 N 个 Session / 进度 / 失败）、统计按钮和设置按钮（⌘,）；列表收起时统计和设置跟在左上角的列表开关、搜索图标后面。
 - 时长分两档：概览（Session 头部的时长、Connect 的上一轮用时）只到分钟，如「1 小时 12 分」「5 分」「30 秒」；过程细节（每轮「已处理」、Subagent、工具调用的用时）精确到秒，如「1 分 04 秒」，不足 1 秒写「320 毫秒」。
 - 统计以大弹窗盖在窗口上显示，点弹窗外、Esc 或右上角关闭按钮关闭；从统计下钻或打开 Session 时自动关闭；打开搜索时也会关闭统计。
-- Session 列表顶部：红绿灯那一行只放上述两个图标；下一行是「全部 Session」与数量，右侧是排序（如「按时间 ↓」，菜单切换排序字段和正序/倒序）。从搜索里按 Project 筛选时，标题位置显示 Project 名，× 清除。
+- **侧栏**（Session 列表）：红绿灯那一行只放上述两个图标；下一行是「新建 Session」（⌘N），然后依次是：
+  - **运行中**：所有 Live Session 与还没进索引的 Session（跨 Project，包括「其他」里的），按最后一次用户输入排序；行上是 Live 点、标题与启动 Project 名。它们同时照常列在自己的组里。
+  - **Project**：只列用户添加的 Project（右侧「+」打开「添加 Project」），每个是一组。Session 归入包含它启动 Project 的最深一个已添加 Project：路径相同，或那个 Project 开了「收拢子 Project」、启动 Project 在它的路径下面；改动过的其他 Project 不算。组与组之间、组内的 Session 都按**最后一次用户输入**（主对话里最新一条用户输入的时间，没有时用创建时间）倒序，assistant 回复与工具运行不改变位置；没有 Session 的组排在最后。
+  - 组头：展开 / 收起、名称、Session 数；收起时右侧是最后一次用户输入的相对时间，组里有 Live Session 时带 Live 点（等待作答 > 工作中 > 空闲）。悬停显示「+」（在该 Project 的目录新建 Session，不弹窗）与「···」菜单：「收拢子 Project（N 个）」（路径下有其他已索引的 Project 或已开启时才有）、「从侧栏移除」。
+  - 展开的组先列在该 Project 自己启动的 Session，开了「收拢子 Project」时后面是子 Project 的子组：近 30 天有用户输入的逐个列出（名称、Session 数 · 最后时间），其余收进「其他 N 个子 Project」；子组默认收起。每个列表先显示 5 行，「显示更多（N）」每次多显示 20 行。
+  - **其他**：不在任何已添加 Project 里的 Session，默认收起，按时间平铺，行上标启动 Project 名。
+  - 行只有一行：Live 点、标题、相对时间；消息数、token、Cost 只在 Session 头部与统计里。还没进索引的 Session 标题是「新 Session」，标签是 cwd 的最后一段，没有时间。
+  - 组的展开状态在重启后保留，默认组展开，子组、「其他 N 个子 Project」与「其他」收起；「显示更多」不保留。从搜索、链接等打开的 Session 所在的组、子组自动展开，并显示到它为止。
+  - 已添加的 Project 存进 `settings.json` 的 `sidebarProjects`（路径与是否收拢，按添加顺序）。
+- **筛选列表**：从搜索里按 Project 筛选、或从统计下钻时，侧栏换成筛选出的 Session 平铺列表：标题位置显示 Project 名（× 清除），下钻时标题是「全部 Session」、下面一行是可清除的下钻标签，右侧是排序（如「按时间 ↓」，菜单切换排序字段和正序 / 倒序），行上显示标题、相对时间、消息数、token、Cost、Live 标记、git 分支（时间、消息数、token、Cost 都可以排序）；改动过该 Project 的 Session 也列出。清除筛选后回到分组。
+- **添加 Project**：列出索引里还没添加的 Project（按最后活动时间，未筛选时最多 50 个），可按名称或路径筛选，行上是名称、路径、Session 数与最后时间；路径下有其他 Project 的标「含 N 个子 Project」，勾选后出现「收拢子 Project」开关；「选择其他目录…」用系统对话框选任意目录。从来没添加过时（`sidebarProjects` 不存在）启动后、首次扫描完成时自动打开，预先勾选近 7 天活跃、仍存在、路径下没有其他 Project 的；这次点取消也算设置过，侧栏为空。
+- **新建 Session**（⌘N 或侧栏顶部）：列出已添加的 Project（与侧栏同序），输入时还匹配开了收拢的组下面的 Project（名称或路径）；↵ 在该目录 `ccrpc new --cwd`；「选择其他目录…」（⌘O）用系统对话框选。
 - 打开 Subagent 面板不改变 Session 列表的收起状态与左上角的工具栏，面板占用对话区的宽度。
 - Session 列表可收起（⌃⌘L），收起状态在重启后保留；Session 列表收起时在搜索里选择 Project 会自动展开它。
 - 各栏头部、对话头部和 Session 列表底部一行可以按住拖动窗口（按钮、输入框除外）。
 - 窗口整体不随触摸板回弹，只有各栏内容区自身滚动。
 - 滚动条只在滚动时或指针停在滚动条上时显示，不受系统"显示滚动条"设置影响。对话记录（含 Subagent 面板）的滚动条浮在内容右缘，不占宽度。
 - 轮次大纲浮在对话列左侧的留白里，不占宽度：每轮一道刻度，上下居中，放不下时先压缩刻度间距（最小 1px），再放不下就往下延伸（不盖住标题栏），当前轮为蓝色，悬停的刻度变长并在右侧显示该轮输入。
-- Session 列表每行显示：标题、相对时间、消息数、token 数、Cost（时间、消息数、token、Cost 都可以排序）、Live 标记、git 分支；从统计下钻时，列表顶部显示可清除的筛选标签。
 - Session 头部两行：标题行是标题、「关闭」（已连接时）、「Resume」（已结束、可 Resume 时）和「···」菜单（在 clay 里的 Session 先列 Connect / Disconnect 与隐藏 / 显示 Pane，然后是显示系统消息、复制 Resume 命令、复制 Session ID、在 Finder 中显示、Connected Session 的复制排查信息；还没进索引的 Session 只有 Connect 这几项）；元信息行是状态（一个词：进程在跑时圆点加「工作中 / 等待作答 / 空闲」，已连接时取 ccrpc 的状态，否则取 Live 状态；已结束写「已结束 · 3 分钟前」）、Project · 分支、Cost（含 Subagent；悬停显示按模型的明细，有无价格的消息时后带"+"）、时长、消息数，以及 ⓘ 悬停卡片（输出、输入、缓存读取 token，工具调用次数、Subagent 数、模型；各占一行，数字右对齐）。列表行 Live 点的悬停提示用同样的词。
 - 对话渲染（参考 Codex）：
   - 单栏居中，最宽默认 720px：拖动列的左右边缘调节（两侧对称，480–1600px，记住上次的宽度），双击边缘恢复 720px，边缘获得焦点时 ← / → 每次 20px；悬浮的输入区与列同宽。你的消息是右侧气泡，照输入原样显示，只把 `` ` `` 包着的行内代码与 ```` ``` ```` 围起的代码块显示为代码、反引号不显示（行内代码不跨行；围栏写在行首，不闭合时到消息末尾；代码块按语言高亮）；下方是时间、复制（悬停时出现）和 Branch 切换器；Claude 的回复没有「Claude · 时间」抬头，只在 Branch 起点显示切换器、API 错误时显示「API 错误 · 时间」。
@@ -172,7 +182,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - 恢复了对话（「恢复代码与对话」「只恢复对话」）：输入框为空（没有文字也没有图片）时填入 ccrpc 返回的原提示词并聚焦输入框；已有内容时保留，输入框下方一行「输入框里已有内容，原提示词没有填入」（从 CoDeck 发出提示词后去掉）。transcript 要等下一条提示词才体现回退，在那之前对话记录里这条提示词起到末尾淡化（不透明度 .38，仍可展开查看），上方一条蓝色分隔线「已回退到这里，代码已恢复 · 发出新提示词后，下面这段成为另一个 Branch」（只恢复对话时没有「，代码已恢复」）；只在看 Main Line 时显示。标记与 ccrpc 记住的回退点同步，属于这个连接：忙起来（后台任务的通知轮不分叉）、切换到别的 Session 再回来都还在；这条提示词已不在索引的 Main Line 上（发出的新提示词分叉了）、`session_changed`（`/clear` 等）、Session 结束、ccrpc 退出或 Disconnect 时清除，之后由已有的 Branch 显示接手。
   - 只恢复代码：对话不变，通知卡片「已恢复代码」（可关）。
   - 挂起的回退属于发出 `rewind` 的那个 ccrpc：重连后的新 ccrpc 不知道它，终端里的确认页照其他对话框处理（CoDeck 不调用 `get_state`）。
-- **Session 列表**：顶部「新建 Session」（不依赖 `ccrpc ls`）：选目录 → `ccrpc new --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件。`ccrpc ls` 里有、还没进索引的 Session（在 clay 里刚打开的，或刚新建的）以占位行列在列表最上方，不参与排序：标题「新 Session」、Live 点（按 `ccrpc ls` 的 status）、cwd 的最后一段；Project 筛选时按 cwd 所在的 Project（路径最深的那个）匹配，匹配不上不显示，从统计下钻时不显示。选中后标题栏显示「新 Session」、cwd 与只有 Connect 几项的「···」菜单，主区显示「新 Session，发送第一条提示词后显示对话」，输入区照常可用；进索引后占位行变成正常的行，主区自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
+- **Session 列表**：「新建 Session」（不依赖 `ccrpc ls`）：选 Project 或目录 → `ccrpc new --cwd`，`ready` 后选中它；失败时列表顶部显示一行错误。新 Session 发第一条提示词前没有 transcript 文件。`ccrpc ls` 里有、还没进索引的 Session（在 clay 里刚打开的，或刚新建的）以占位行显示：标题「新 Session」、Live 点（按 `ccrpc ls` 的 status）、cwd 的最后一段；侧栏里列在「运行中」和 cwd 所在 Project（路径最深的那个）的组的最上方；筛选列表里列在最上方、不参与排序，Project 筛选时按同样的 Project 匹配，匹配不上不显示，从统计下钻时不显示。选中后标题栏显示「新 Session」、cwd 与只有 Connect 几项的「···」菜单，主区显示「新 Session，发送第一条提示词后显示对话」，输入区照常可用；进索引后占位行变成正常的行，主区自动切换为正常显示。已连接的 Session 在 `turn_end` 后没看过时显示未读点，看过即清。
 - **`session_changed`**（在 TUI 里 `/clear` 等）：正在看旧 Session 时，选中切换到新 Session。
 - **别处在等**：切回窗口时，当前 Session 没有要作答的、而别的 Session 在等作答（与 Dock 角标同一口径），对话记录顶部显示一行「<标题> 在等你作答，点此切过去」，点击选中那个 Session；切换 Session 后消失，可关闭。
 - **Dock 角标**：等待作答的 Session 数 = Live 状态为 waiting 的 Session（全部 Session，不限于已连接）∪ 已连接且有请求卡片的 Session，去重。

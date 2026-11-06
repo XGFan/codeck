@@ -344,6 +344,7 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     titleSource: d.titleSource,
     createdMs: created,
     lastActiveMs: NOW - d.lastActiveAgo,
+    lastPromptMs: NOW - d.lastActiveAgo,
     messageCount,
     toolCallCount:
       d.id === IDS.rich

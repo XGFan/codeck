@@ -48,7 +48,8 @@ interface ConnectStore {
   setPaneHidden(holderId: string, sessionId: string, hidden: boolean): Promise<void>;
   /** Attaches to the Holder of the Session `sessionId` (errors are shown on that Session). */
   connect(holderId: string, sessionId: string): Promise<void>;
-  newSession(): Promise<void>;
+  /** 「新建 Session」 in `cwd` (`ccrpc new --cwd`), or in a directory picked now; selects it once ready. */
+  newSession(cwd?: string): Promise<void>;
   /**
    * Resume: starts the ended Session `sessionId` again in a new Pane, from `cwd` (where it started), and connects;
    * a failure (claude exits before naming the Session, or 30 s without it) is shown on that Session and the Pane
@@ -403,8 +404,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
       }
     },
 
-    async newSession() {
-      const dir = await api.pickDir();
+    async newSession(cwd) {
+      const dir = cwd ?? (await api.pickDir());
       if (!dir) return;
       set({ newError: null });
       void api.ccrpcGuiLog(null, `new ${dir}`);

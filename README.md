@@ -2,11 +2,12 @@
 
 macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
 
+- **侧栏按 Project 分组**：只列你添加的 Project，组和组里的 Session 按你最后一次输入排序，AI 回复不会让它们跳动；像 `~/Project/<公司>` 这样装着多个仓库的目录可以「收拢子 Project」，子仓库成为它下面的子组；运行中的 Session 在顶部单列；没添加的 Project 的 Session 收在底部「其他」里。
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
 - **读得舒服**：参考 Codex 的排版，每轮的过程折叠成「已处理 1 分 50 秒」一行、只露出回答，展开后每次工具调用是一行字（Subagent 面板里连续的合成「读取 1 个文件、编辑 2 个文件、运行 1 条命令」一行），Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话记录；对话列宽度拖动边缘即可调节。
 - **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。
-- **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork / 转入后台复制的历史不重复计算），Session 列表可按 Cost 排序，统计页汇总总额与 Session 排行。
-- **Connect**：ToH clay 里装了 ccrpc 插件的 Session，打开时自动 Connect（可在设置里关掉），或在标题栏的「···」菜单里点「Connect」，之后可以直接发提示词（可粘贴截图）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill，输入框里的命令高亮，`/add-dir` 补全目录、`@` 补全文件，支持 `../`）、忙时插话（和终端里一样进 Claude Code 的队列）、作答审批 / 提问 / 选择、切换权限模式、模型与思考等级、停止后台任务、回退到 Main Line 上某条提示词之前（悬停提示词点「回退」或输入 `/rewind`（`/checkpoint`），可选恢复代码与对话、只恢复对话或只恢复代码）；「关闭」结束 Session 并关掉它的 Pane；也可以选目录新建 Session，或把已结束的 Session 在新 Pane 里 Resume（`claude --resume`）后接着 Connect，并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
+- **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork / 转入后台复制的历史不重复计算），按 Project 筛选后的列表可按 Cost 排序，统计页汇总总额与 Session 排行。
+- **Connect**：ToH clay 里装了 ccrpc 插件的 Session，打开时自动 Connect（可在设置里关掉），或在标题栏的「···」菜单里点「Connect」，之后可以直接发提示词（可粘贴截图）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill，输入框里的命令高亮，`/add-dir` 补全目录、`@` 补全文件，支持 `../`）、忙时插话（和终端里一样进 Claude Code 的队列）、作答审批 / 提问 / 选择、切换权限模式、模型与思考等级、停止后台任务、回退到 Main Line 上某条提示词之前（悬停提示词点「回退」或输入 `/rewind`（`/checkpoint`），可选恢复代码与对话、只恢复对话或只恢复代码）；「关闭」结束 Session 并关掉它的 Pane；也可以在侧栏组头点「+」或按 ⌘N 选 Project 新建 Session，或把已结束的 Session 在新 Pane 里 Resume（`claude --resume`）后接着 Connect，并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：默认看本周期（自定义每周重置时间）的用量，可切到月份或最近 7 / 30 / 90 天，周期和月份可前后翻；输入、输出 token 与缓存命中率，每日 token（全部 / 输入 / 输出，后两者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
 
 ## 快捷键
@@ -17,6 +18,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | ⌘F | 在当前 Session 内查找（Enter / ⇧Enter 上下跳转） |
 | `j` / `k` | 跳到下一个 / 上一个你的输入 |
 | ⌘↑ / ⌘↓ | 跳到对话顶部 / 底部 |
+| ⌘N | 新建 Session（选已添加的 Project，⌘O 选其他目录） |
 | ↑ / ↓ | 在 Session 列表中切换（列表获得焦点时） |
 | ⌃⌘L | 收起 / 展开 Session 列表 |
 | ⌘, | 设置（界面主题、自动 Connect、数据目录、ccrpc、格式兼容性诊断、重建索引） |
@@ -35,7 +37,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 |---|---|
 | 索引（可丢弃，随时重建） | `~/Library/Caches/dev.joy.codeck/index.sqlite` |
 | 价格表缓存 | `~/Library/Caches/dev.joy.codeck/pricing.json` |
-| 设置（数据目录覆盖） | `~/Library/Application Support/dev.joy.codeck/settings.json` |
+| 设置（数据目录覆盖、侧栏添加的 Project 等） | `~/Library/Application Support/dev.joy.codeck/settings.json` |
 | ccrpc 日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.codeck/ccrpc/` |
 | 输入区粘贴的图片 | `~/Library/Caches/dev.joy.codeck/images/` |
 

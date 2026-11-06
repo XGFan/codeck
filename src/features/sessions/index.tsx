@@ -16,6 +16,7 @@ import { formatCost, formatCount, formatRelative, formatSpan, formatTokens } fro
 import { useAllSessions, useProjects, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
 import { pendingSessions, type PendingSession } from "./pending";
+import { GroupedList, SidebarDialogs, useSidebar } from "./Sidebar";
 
 const ROW_HEIGHT = 60;
 /** Stable while the list loads, so the rows are not rebuilt on every render. */
@@ -51,7 +52,22 @@ function usePending(list: SessionSummary[] | undefined, projects: ProjectSummary
 
 type Item = { kind: "pending"; p: PendingSession } | { kind: "session"; s: SessionSummary };
 
+/**
+ * The left column: the sidebar of added Projects; while a Project filter (from ⌘K) or a stats drill is on, the
+ * matching Sessions as one list instead.
+ */
 export function SessionList() {
+  const filtered = useUi((s) => s.projectIds.length > 0 || s.statsDrill != null);
+  const data = useSidebar();
+  return (
+    <>
+      {filtered ? <FilteredList /> : <GroupedList data={data} />}
+      <SidebarDialogs data={data} />
+    </>
+  );
+}
+
+function FilteredList() {
   const { data } = useSessionList();
   const { data: projects } = useProjects();
   const projectIds = useUi((s) => s.projectIds);

@@ -21,6 +21,20 @@ pub struct Settings {
     /// window (`ccrpc new --hidden`, ToH ADR-0050).
     #[serde(default)]
     pub hide_new_panes: bool,
+    /// The Projects in the sidebar, in the order added; `None` until the first 「添加 Project」 (the app then
+    /// opens that dialog by itself).
+    #[serde(default)]
+    pub sidebar_projects: Option<Vec<SidebarProject>>,
+}
+
+/// A Project added to the sidebar: a directory (usually an indexed Project's path). `nest` gathers the Sessions of
+/// the Projects under it into its group (「收拢子 Project」).
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarProject {
+    pub path: String,
+    #[serde(default)]
+    pub nest: bool,
 }
 
 /// 「设置 › ccrpc › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below.
@@ -42,6 +56,26 @@ pub struct AnalyzerSettings {
     pub base_url: Option<String>,
     /// `CCRPC_ANALYZER_MODEL`.
     pub model: Option<String>,
+}
+
+/// Trims each path (and a trailing `/`), drops empty ones and later repeats.
+pub fn normalize_sidebar(projects: Vec<SidebarProject>) -> Vec<SidebarProject> {
+    let mut out: Vec<SidebarProject> = Vec::new();
+    for p in projects {
+        let trimmed = p.path.trim();
+        let path = match trimmed.trim_end_matches('/') {
+            "" if trimmed.starts_with('/') => "/",
+            t => t,
+        };
+        if path.is_empty() || out.iter().any(|o| o.path == path) {
+            continue;
+        }
+        out.push(SidebarProject {
+            path: path.to_owned(),
+            nest: p.nest,
+        });
+    }
+    out
 }
 
 pub fn settings_path() -> PathBuf {
@@ -117,6 +151,10 @@ mod tests {
                 args: "--add-dir=/b".into(),
             }],
             hide_new_panes: true,
+            sidebar_projects: Some(vec![SidebarProject {
+                path: "/p".into(),
+                nest: true,
+            }]),
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);
@@ -157,6 +195,23 @@ mod tests {
         let s = load_from(&path);
         assert_eq!(s.launch_rules.len(), 50);
         assert_eq!(s.analyzer.model.as_deref(), Some("m49"));
+    }
+
+    #[test]
+    fn sidebar_paths_are_trimmed_and_deduplicated() {
+        let p = |path: &str, nest| SidebarProject {
+            path: path.into(),
+            nest,
+        };
+        assert_eq!(
+            normalize_sidebar(vec![
+                p(" /a/ ", true),
+                p("", false),
+                p("/a", false),
+                p("/b", false)
+            ]),
+            vec![p("/a", true), p("/b", false)]
+        );
     }
 
     #[test]

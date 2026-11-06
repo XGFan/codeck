@@ -15,6 +15,7 @@ export const queryKeys = {
   appInfo: ["appInfo"] as const,
   indexStatus: ["indexStatus"] as const,
   projects: ["projects"] as const,
+  sidebarProjects: ["sidebarProjects"] as const,
   sessions: (q?: SessionQuery) => (q ? (["sessions", q] as const) : (["sessions"] as const)),
   session: (id: string) => ["session", id] as const,
   /** `[ "transcript", sessionId, req ]`: events invalidate by session id prefix. */
@@ -39,6 +40,10 @@ export const useIndexStatus = () =>
   useQuery({ queryKey: queryKeys.indexStatus, queryFn: () => api.getIndexStatus(), staleTime: Infinity });
 
 export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryFn: () => api.listProjects() });
+
+/** The Projects in the sidebar (null before any were added); `saveSidebarProjects` replaces them. */
+export const useSidebarProjects = () =>
+  useQuery({ queryKey: queryKeys.sidebarProjects, queryFn: () => api.getSidebarProjects(), staleTime: Infinity });
 
 export const useSessions = (query: SessionQuery, enabled = true) =>
   useQuery({

@@ -6,6 +6,7 @@ use chrono::{Local, NaiveDate, TimeZone};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
+use super::schema::MSG_PROMPT;
 use super::writer::{role_from_db, title_source_from_db};
 use crate::error::CoreResult;
 use crate::model::{
@@ -134,7 +135,9 @@ fn summary_select(where_sql: &str) -> String {
             b.message_count, b.tool_call_count, b.subagent_count, b.in_tok, b.out_tok, b.cr_tok,
             b.cc_tok, b.git_branch, b.primary_model, b.origin, o.title,
             CASE WHEN b.origin = b.fork_origin_id THEN b.fork_point_uuid END, b.cost, b.unpriced,
-            (SELECT json_group_array(sp.project_id) FROM session_projects sp WHERE sp.session_id = b.id)
+            (SELECT json_group_array(sp.project_id) FROM session_projects sp WHERE sp.session_id = b.id),
+            (SELECT max(m.ts_ms) FROM messages m
+                WHERE m.session_id = b.id AND m.agent_id = '' AND m.role = {MSG_PROMPT})
          FROM b LEFT JOIN sessions o ON o.id = b.origin",
         origin = origin_expr("s")
     )
@@ -143,15 +146,20 @@ fn summary_select(where_sql: &str) -> String {
 fn summary_from_row(r: &Row) -> rusqlite::Result<SessionSummary> {
     let last_active = r.get::<_, i64>(5)? as f64;
     let origin: Option<String> = r.get(15)?;
+    let created_ms = r
+        .get::<_, Option<i64>>(4)?
+        .map_or(last_active, |v| v as f64);
     Ok(SessionSummary {
         id: r.get(0)?,
         project_id: r.get(1)?,
         title: r.get(2)?,
         title_source: title_source_from_db(r.get(3)?),
-        created_ms: r
-            .get::<_, Option<i64>>(4)?
-            .map_or(last_active, |v| v as f64),
+        created_ms,
         last_active_ms: last_active,
+        // A Session without a prompt of its own yet: its start.
+        last_prompt_ms: r
+            .get::<_, Option<i64>>(21)?
+            .map_or(created_ms, |v| v as f64),
         message_count: r.get(6)?,
         tool_call_count: r.get(7)?,
         subagent_count: r.get(8)?,

@@ -12,6 +12,7 @@ import type {
   IndexStatusEvent,
   JumpRequest,
   LaunchRule,
+  SidebarProject,
   JumpTarget,
   LiveChanged,
   ProjectSummary,
@@ -40,6 +41,10 @@ export interface Api {
   getIndexStatus(): Promise<IndexStatus>;
   rebuildIndex(): Promise<null>;
   listProjects(): Promise<ProjectSummary[]>;
+  /** The Projects in the sidebar, in the order added; null before any were added. */
+  getSidebarProjects(): Promise<SidebarProject[] | null>;
+  /** Saves the Projects in the sidebar; returns what was saved (paths trimmed, repeats dropped). */
+  setSidebarProjects(projects: SidebarProject[]): Promise<SidebarProject[]>;
   listSessions(query: SessionQuery): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<SessionDetail>;
   getTranscript(req: TranscriptRequest): Promise<Transcript>;

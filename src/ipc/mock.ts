@@ -22,6 +22,7 @@ import type {
   SessionQuery,
   SessionsChanged,
   SessionSummary,
+  SidebarProject,
   SnippetPart,
   Stats,
   StatsRequest,
@@ -148,6 +149,14 @@ const appended = new Map<string, Node[]>();
 const forks = new Map<string, { at: string; nodes: Node[] }>();
 const revisions = new Map<string, number>();
 const liveOverrides = new Map<string, LiveState | null>();
+/**
+ * The sidebar's Projects: every mock Project, so each Session has a row; none yet with `?firstRun` in the URL (the
+ * app then opens 「添加 Project」 by itself).
+ */
+let sidebarProjects: SidebarProject[] | null = new URLSearchParams(location.search).has("firstRun")
+  ? null
+  : projectBase.map((p) => ({ path: p.path, nest: false }));
+
 /** Superseded Session → the one carrying it on (set by `__cvMock.supersede`). */
 const supersededBy = new Map<string, string>();
 let currentIndexStatus: IndexStatus = { ...indexStatusSeed };
@@ -713,6 +722,18 @@ export function createMockApi(): Api {
         return null;
       }),
     listProjects: () => later(projects),
+    getSidebarProjects: () => later(() => sidebarProjects),
+    setSidebarProjects: (list) =>
+      later(() => {
+        // Like the backend: trimmed, a trailing `/` dropped, empty and repeated paths dropped.
+        const out: SidebarProject[] = [];
+        for (const p of list) {
+          const path = p.path.trim().replace(/(.)\/+$/, "$1");
+          if (path && !out.some((o) => o.path === path)) out.push({ path, nest: p.nest ?? false });
+        }
+        sidebarProjects = out;
+        return out;
+      }),
     listSessions: (q) => later(() => listSessions(q)),
     getSession: (id) => later(() => sessionDetail(id)),
     getTranscript: (req: TranscriptRequest) => later(() => buildTranscript(req)),

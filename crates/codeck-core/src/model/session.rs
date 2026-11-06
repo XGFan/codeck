@@ -78,6 +78,10 @@ pub struct SessionSummary {
     pub created_ms: f64,
     #[specta(type = Number)]
     pub last_active_ms: f64,
+    /// When the latest user input on the main conversation was sent (`created_ms` when there is none): unlike
+    /// `last_active_ms`, replies and tool runs leave it alone. The sidebar orders by it.
+    #[specta(type = Number)]
+    pub last_prompt_ms: f64,
     pub message_count: u32,
     pub tool_call_count: u32,
     pub subagent_count: u32,

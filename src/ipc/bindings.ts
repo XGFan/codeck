@@ -35,6 +35,10 @@ export const commands = {
 	listSlashCommands: (cwd: string | null) => __TAURI_INVOKE<SlashCommand[]>("list_slash_commands", { cwd }),
 	/**  Paths to complete `partial` with in a Session started in `cwd`: directories (`/add-dir`), or files too (`@`). */
 	completePaths: (cwd: string | null, partial: string, files: boolean) => __TAURI_INVOKE<string[]>("complete_paths", { cwd, partial, files }),
+	/**  The Projects in the sidebar; `None` before any were added. */
+	getSidebarProjects: () => __TAURI_INVOKE<SidebarProject[] | null>("get_sidebar_projects"),
+	/**  Saves the Projects in the sidebar (paths trimmed, empty and repeated ones dropped); returns what was saved. */
+	setSidebarProjects: (projects: SidebarProject[]) => __TAURI_INVOKE<SidebarProject[]>("set_sidebar_projects", { projects }),
 	ccrpcInfo: () => __TAURI_INVOKE<CcrpcInfo>("ccrpc_info"),
 	/**
 	 *  Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
@@ -582,6 +586,11 @@ export type SessionSummary = {
 	titleSource: TitleSource,
 	createdMs: number,
 	lastActiveMs: number,
+	/**
+	 *  When the latest user input on the main conversation was sent (`created_ms` when there is none): unlike
+	 *  `last_active_ms`, replies and tool runs leave it alone. The sidebar orders by it.
+	 */
+	lastPromptMs: number,
 	messageCount: number,
 	toolCallCount: number,
 	subagentCount: number,
@@ -608,6 +617,15 @@ export type SessionsChanged = {
 
 /**  After each debounced filesystem batch. */
 export type SessionsChangedEvent = SessionsChanged;
+
+/**
+ *  A Project added to the sidebar: a directory (usually an indexed Project's path). `nest` gathers the Sessions of
+ *  the Projects under it into its group (「收拢子 Project」).
+ */
+export type SidebarProject = {
+	path: string,
+	nest?: boolean,
+};
 
 /**  A slash command offered for completion while driving. */
 export type SlashCommand = {

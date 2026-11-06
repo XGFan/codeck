@@ -8,6 +8,7 @@ const COLLAPSED_KEY = "codeck.collapsedPanes";
 const WEEKLY_RESET_KEY = "codeck.weeklyReset";
 const CONV_WIDTH_KEY = "codeck.conversationWidth";
 const AUTO_CONNECT_KEY = "codeck.autoConnect";
+const SIDEBAR_EXPANDED_KEY = "codeck.sidebarExpanded";
 
 /** The conversation column's width (px): dragged at its edges, centered; double-click goes back to the default. */
 export const CONV_WIDTH = { default: 720, min: 480, max: 1600 };
@@ -55,9 +56,10 @@ const sessionDefaults = {
   expanded: {} as Record<string, boolean>,
 };
 
-/** ⌘K, the stats dialog or Settings is open: keys meant for the window behind them are not handled. */
-export const selectOverlayOpen = (s: Pick<UiState, "searchOpen" | "statsOpen" | "settingsOpen">) =>
-  s.searchOpen || s.statsOpen || s.settingsOpen;
+/** A dialog over the window is open (⌘K, stats, Settings, the sidebar's): keys meant for the window behind are not handled. */
+export const selectOverlayOpen = (
+  s: Pick<UiState, "searchOpen" | "statsOpen" | "settingsOpen" | "newSessionOpen" | "addProjectOpen">,
+) => s.searchOpen || s.statsOpen || s.settingsOpen || s.newSessionOpen || s.addProjectOpen;
 
 interface UiState {
   /** Session list filter; empty = all projects (matches `SessionQuery.projectIds`). */
@@ -91,6 +93,18 @@ interface UiState {
   /** Opening a Session that can be Connected connects it (on by default); remembered across launches. */
   autoConnect: boolean;
   setAutoConnect: (on: boolean) => void;
+  /** The sidebar's open / closed groups, by the keys in `features/sessions/groups.ts`; remembered across launches. */
+  sidebarExpanded: Record<string, boolean>;
+  setSidebarExpanded: (changes: Record<string, boolean>) => void;
+  /** Rows shown per sidebar list after 「显示更多」 (`FIRST_ROWS` when absent). */
+  sidebarLimits: Record<string, number>;
+  setSidebarLimits: (changes: Record<string, number>) => void;
+  /** 「新建 Session」 (⌘N): pick the directory. */
+  newSessionOpen: boolean;
+  setNewSessionOpen: (open: boolean) => void;
+  /** 「添加 Project」. */
+  addProjectOpen: boolean;
+  setAddProjectOpen: (open: boolean) => void;
 
   setProjectIds: (ids: string[]) => void;
   /** Switches session (resetting per-session state); a no-op when the id is unchanged. */
@@ -138,6 +152,19 @@ export const useUi = create<UiState>()((set) => ({
     set({ autoConnect: on });
   },
   convWidth: clampWidth(load(CONV_WIDTH_KEY, { px: CONV_WIDTH.default }).px),
+  sidebarExpanded: load(SIDEBAR_EXPANDED_KEY, {} as Record<string, boolean>),
+  setSidebarExpanded: (changes) =>
+    set((s) => {
+      const sidebarExpanded = { ...s.sidebarExpanded, ...changes };
+      save(SIDEBAR_EXPANDED_KEY, sidebarExpanded);
+      return { sidebarExpanded };
+    }),
+  sidebarLimits: {},
+  setSidebarLimits: (changes) => set((s) => ({ sidebarLimits: { ...s.sidebarLimits, ...changes } })),
+  newSessionOpen: false,
+  setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),
+  addProjectOpen: false,
+  setAddProjectOpen: (addProjectOpen) => set({ addProjectOpen }),
   setConvWidth: (px) => {
     const convWidth = clampWidth(px);
     save(CONV_WIDTH_KEY, { px: convWidth });

@@ -737,6 +737,7 @@ test("关闭：忙时确认后先中止本轮再结束", async ({ page }) => {
 test("新建 Session：选目录后选中它，进索引前显示占位且可以发送", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("new-session").click();
+  await page.getByTestId("new-session-other").click();
   await expect(page.getByTestId("transcript-new")).toHaveText("新 Session，发送第一条提示词后显示对话");
   await expect(page.getByTestId("header")).toContainText("新 Session");
   await expect(page.getByTestId("header")).toContainText("/tmp/mock-new");

@@ -119,16 +119,16 @@ export function ElsewhereBanner() {
   );
 }
 
-/** 「新建 Session」 at the top of the Session list: pick a folder, `ccrpc new`. */
+/** Opens 「新建 Session」 (the directory picker, ⌘N). */
 export function NewSessionButton() {
-  const newSession = useConnect((s) => s.newSession);
+  const open = useUi((s) => s.setNewSessionOpen);
   return (
     <button
       type="button"
       data-testid="new-session"
       aria-label="新建 Session"
       title="新建 Session"
-      onClick={() => void newSession()}
+      onClick={() => open(true)}
       className="flex size-[22px] shrink-0 items-center justify-center rounded-md text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent"
     >
       <Plus size={13} strokeWidth={1.8} aria-hidden />

@@ -239,8 +239,8 @@ test("Session 列表可收起，刷新后仍保持", async ({ page }) => {
   await openRich(page);
   const header = page.getByTestId("header");
   const toolbar = (await page.getByTestId("toolbar").boundingBox())!;
-  // The toolbar has its own strip above the list header; the title sits below it.
-  expect((await page.getByTestId("list-title").boundingBox())!.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
+  // The toolbar has its own strip above the list; 「新建 Session」 sits below it.
+  expect((await page.getByTestId("new-session").boundingBox())!.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
   const before = (await header.boundingBox())!;
 
   await page.keyboard.press("Control+Meta+L");
@@ -291,8 +291,9 @@ test("头部显示 Cost，悬停可看按模型明细；其余统计在 ⓘ 的�
   expect(title).toContain("claude-haiku-4-5");
 });
 
-test("Session 列表可按 Cost 排序", async ({ page }) => {
+test("按 Project 筛选后的列表可按 Cost 排序", async ({ page }) => {
   await page.goto("/");
+  await filterProject(page, "orbit-web");
   await page.getByRole("button", { name: "排序方式" }).click();
   await page.getByRole("menuitem", { name: "Cost" }).click();
   const values = async () =>

@@ -12,6 +12,8 @@ export function createRealApi(): Api {
     getIndexStatus: commands.getIndexStatus,
     rebuildIndex: commands.rebuildIndex,
     listProjects: commands.listProjects,
+    getSidebarProjects: commands.getSidebarProjects,
+    setSidebarProjects: commands.setSidebarProjects,
     listSessions: commands.listSessions,
     getSession: commands.getSession,
     getTranscript: commands.getTranscript,

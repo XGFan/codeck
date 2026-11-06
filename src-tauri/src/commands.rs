@@ -10,6 +10,7 @@ use codeck_core::model::{
 use codeck_core::{CoreError, CoreResult, Engine};
 use tauri::State;
 
+use crate::settings::SidebarProject;
 use crate::state::AppState;
 use crate::worker::Job;
 
@@ -211,4 +212,30 @@ pub async fn complete_paths(
         Ok(e.complete_paths(cwd.as_deref(), &partial, files))
     })
     .await
+}
+
+/// The Projects in the sidebar; `None` before any were added.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_sidebar_projects() -> CmdResult<Option<Vec<SidebarProject>>> {
+    tauri::async_runtime::spawn_blocking(|| crate::settings::load().sidebar_projects)
+        .await
+        .map_err(internal)
+}
+
+/// Saves the Projects in the sidebar (paths trimmed, empty and repeated ones dropped); returns what was saved.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_sidebar_projects(projects: Vec<SidebarProject>) -> CmdResult<Vec<SidebarProject>> {
+    let projects = crate::settings::normalize_sidebar(projects);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::settings::update(|s| s.sidebar_projects = Some(projects.clone()))
+            .map(|_| projects)
+            .map_err(|e| AppError {
+                code: ErrorCode::Internal,
+                message: format!("保存设置失败：{e}"),
+            })
+    })
+    .await
+    .map_err(internal)?
 }

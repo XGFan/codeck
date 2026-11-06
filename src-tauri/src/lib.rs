@@ -41,6 +41,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::get_diagnostics,
             commands::list_slash_commands,
             commands::complete_paths,
+            commands::get_sidebar_projects,
+            commands::set_sidebar_projects,
             ccrpc::ccrpc_info,
             ccrpc::ccrpc_set_analyzer,
             ccrpc::ccrpc_test_analyzer,

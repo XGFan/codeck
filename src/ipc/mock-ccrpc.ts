@@ -134,6 +134,8 @@ export interface CcrpcProbe {
   paneHides: { holderId: string; hidden: boolean }[];
   /** 「新开的 Pane」 as last saved (`ccrpcSetHideNewPanes`). */
   hideNewPanes: boolean;
+  /** Set by a test: what the directory picker returns (default `/tmp/mock-new`; null = cancelled). */
+  pickDir?: string | null;
   /** Set by a test: the next Resume's `ready` names the Session already (the plugin checked in first). */
   resumeNamedInReady?: boolean;
   /** Recordings with `on_request` a test put into `ccrpc ls`, by name. */
@@ -461,7 +463,7 @@ export function createMockCcrpc(): CcrpcApi {
     },
     ccrpcLogDir: async (id) => (conns.get(id)?.closed ? null : `/mock/Logs/dev.joy.codeck/ccrpc/${id}`),
     ccrpcSaveImage: async (_b64, ext) => `/mock/Caches/dev.joy.codeck/images/${++probe.images}.${ext}`,
-    pickDir: async () => "/tmp/mock-new",
+    pickDir: async () => (probe.pickDir === undefined ? "/tmp/mock-new" : probe.pickDir),
     setBadge: async (n) => {
       probe.badge = n;
     },

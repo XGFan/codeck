@@ -157,6 +157,28 @@ fn append_is_incremental() {
 }
 
 #[test]
+fn last_prompt_is_the_latest_user_input_not_the_latest_reply() {
+    use codeck_core::model::SessionQuery;
+    let env = scanned("basic");
+    let path = env.main_file(ids::BASIC_DIR, ids::BASIC);
+    append(
+        &path,
+        &(prompt_line(
+            "t-u1",
+            "0bd99c42-5d43-5421-bf13-548ddfe11016",
+            "later prompt",
+        ) + &assistant_line("t-a1", "t-u1", "msg_t1")),
+    );
+    env.apply(&path);
+    let list = env.engine.list_sessions(&SessionQuery::default()).unwrap();
+    let s = list.iter().find(|s| s.id == ids::BASIC).unwrap();
+    // prompt_line is stamped 10:00:00, the reply a second later.
+    let prompt_ms = 1_791_367_200_000.0;
+    assert_eq!(s.last_prompt_ms, prompt_ms);
+    assert_eq!(s.last_active_ms, prompt_ms + 1000.0);
+}
+
+#[test]
 fn truncate_triggers_full_reparse() {
     let env = scanned("basic");
     let db = env.db();
