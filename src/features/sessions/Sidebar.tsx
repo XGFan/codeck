@@ -413,7 +413,6 @@ function RowsHandle({ rows, room, onResize }: { rows: number; room: number; onRe
 }
 
 const HEIGHT: Record<Item["kind"], number> = {
-  section: 32,
   group: ROW_PX,
   row: ROW_PX,
   more: ROW_PX,
@@ -527,15 +526,15 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
         if (Math.abs(ev.clientY - startY) < 4) return;
         // The header's place in the folded list, against where it is in view now.
         const inView = header.top - el.getBoundingClientRect().top;
-        const folded = HEIGHT.section + index * ROW_PX - inView;
+        const folded = index * ROW_PX - inView;
         pad = Math.max(0, -folded);
         dragView.current = { before: el.scrollTop, folded: Math.max(0, folded), anchored: false };
-        y = HEIGHT.section + index * ROW_PX + pressInHeader + (ev.clientY - startY);
+        y = index * ROW_PX + pressInHeader + (ev.clientY - startY);
       } else {
         y = ev.clientY - el.getBoundingClientRect().top + el.scrollTop - pad;
       }
       // Over a header's upper half: before it; its lower half: after it.
-      const to = Math.max(0, Math.min(listRef.current.length, Math.round((y - HEIGHT.section) / ROW_PX)));
+      const to = Math.max(0, Math.min(listRef.current.length, Math.round(y / ROW_PX)));
       current = { from: index, to, y, pad };
       dragged.current = true;
       setDrag(current);
@@ -581,27 +580,6 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
 
   const render = (it: Item) => {
     switch (it.kind) {
-      case "section":
-        return (
-          // Inside the list's 6px padding: 10px more, so it starts at 16px like 「Live」 and 「Recent」.
-          <div className={cn(SECTION, "h-full pr-[2px] pl-[10px]")}>
-            <span className="flex-1">Project</span>
-            {drag ? (
-              <span className="font-normal">拖到要放的位置</span>
-            ) : (
-              <button
-                type="button"
-                data-testid="add-project-button"
-                aria-label="添加 Project"
-                title="添加 Project"
-                onClick={() => setAddProjectOpen(true)}
-                className={ICON}
-              >
-                <Plus size={14} strokeWidth={1.8} aria-hidden />
-              </button>
-            )}
-          </div>
-        );
       case "group":
         return (
           <GroupHeader
@@ -675,58 +653,80 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
 
   const lifted = drag && sidebar?.groups[drag.from];
   return (
-    <div
-      ref={scrollRef}
-      tabIndex={0}
-      role="listbox"
-      aria-label="Session 列表"
-      onKeyDown={onKeyDown}
-      className={cn(
-        "min-h-0 flex-1 overflow-y-auto px-[6px] pb-[10px] outline-none",
-        drag && "cursor-grabbing select-none",
-      )}
-    >
-      <div
-        className="relative w-full"
-        // While dragging, room above (`pad`) and below, so the folded list can sit with the pressed header in place.
-        style={{ height: virtualizer.getTotalSize() + (drag ? drag.pad + (scrollRef.current?.clientHeight ?? 0) : 0) }}
-      >
-        {virtualizer.getVirtualItems().map((v) => {
-          const it = items[v.index]!;
-          return (
-            <div
-              key={v.key}
-              className="absolute top-0 left-0 w-full"
-              style={{ height: HEIGHT[it.kind], transform: `translateY(${v.start + (drag?.pad ?? 0)}px)` }}
-            >
-              {render(it)}
-            </div>
-          );
-        })}
-        {drag && (
-          <div
-            data-testid="drop-line"
-            aria-hidden
-            className="pointer-events-none absolute right-1 left-1 h-0.5 rounded-full bg-accent"
-            style={{ top: drag.pad + HEIGHT.section + drag.to * ROW_PX - 1 }}
-          />
-        )}
-        {lifted && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute right-1 left-2 flex h-[30px] -rotate-1 items-center gap-1.5 rounded-[7px] border border-border bg-ground px-2 font-semibold shadow-[0_8px_24px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]"
-            style={{ top: drag.pad + drag.y - 15 }}
+    <>
+      {/* Pinned above the list, as 「Live」 and 「Recent」 are; its 「+」 lines up with the rows' right edge. */}
+      <div data-testid="project-heading" className={cn(SECTION, "h-[32px] pr-[8px]")}>
+        <span className="flex-1">Project</span>
+        {drag ? (
+          <span className="font-normal">拖到要放的位置</span>
+        ) : (
+          <button
+            type="button"
+            data-testid="add-project-button"
+            aria-label="添加 Project"
+            title="添加 Project"
+            onClick={() => setAddProjectOpen(true)}
+            className={ICON}
           >
-            <GripVertical size={12} strokeWidth={2} className="text-secondary" />
-            {lifted.name}
-            <span className="text-[11px] font-normal text-secondary">{formatCount(lifted.total)}</span>
-          </div>
+            <Plus size={14} strokeWidth={1.8} aria-hidden />
+          </button>
         )}
       </div>
-      {sidebar && sidebar.groups.length === 0 && (
-        <div className="px-2.5 py-1 text-[12px] text-secondary">点「+」添加 Project，它的 Session 会列在这里。</div>
-      )}
-    </div>
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="listbox"
+        aria-label="Session 列表"
+        onKeyDown={onKeyDown}
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto px-[6px] pb-[10px] outline-none",
+          drag && "cursor-grabbing select-none",
+        )}
+      >
+        <div
+          className="relative w-full"
+          // While dragging, room above (`pad`) and below, so the folded list can sit with the pressed header in place.
+          style={{
+            height: virtualizer.getTotalSize() + (drag ? drag.pad + (scrollRef.current?.clientHeight ?? 0) : 0),
+          }}
+        >
+          {virtualizer.getVirtualItems().map((v) => {
+            const it = items[v.index]!;
+            return (
+              <div
+                key={v.key}
+                className="absolute top-0 left-0 w-full"
+                style={{ height: HEIGHT[it.kind], transform: `translateY(${v.start + (drag?.pad ?? 0)}px)` }}
+              >
+                {render(it)}
+              </div>
+            );
+          })}
+          {drag && (
+            <div
+              data-testid="drop-line"
+              aria-hidden
+              className="pointer-events-none absolute right-1 left-1 h-0.5 rounded-full bg-accent"
+              style={{ top: Math.max(0, drag.pad + drag.to * ROW_PX - 1) }}
+            />
+          )}
+          {lifted && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute right-1 left-2 flex h-[30px] -rotate-1 items-center gap-1.5 rounded-[7px] border border-border bg-ground px-2 font-semibold shadow-[0_8px_24px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]"
+              style={{ top: drag.pad + drag.y - 15 }}
+            >
+              <GripVertical size={12} strokeWidth={2} className="text-secondary" />
+              {lifted.name}
+              <span className="text-[11px] font-normal text-secondary">{formatCount(lifted.total)}</span>
+            </div>
+          )}
+        </div>
+        {sidebar && sidebar.groups.length === 0 && (
+          <div className="px-2.5 py-1 text-[12px] text-secondary">点「+」添加 Project，它的 Session 会列在这里。</div>
+        )}
+      </div>
+    </>
   );
 }
 

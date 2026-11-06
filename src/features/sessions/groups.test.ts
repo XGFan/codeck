@@ -130,15 +130,7 @@ describe("flatten", () => {
 
   it("shows 5 rows then 「显示更多」; sub-groups start closed, inactive sub-Projects folded", () => {
     const items = flatten(sb, {}, {});
-    expect(items.map((i) => i.kind)).toEqual([
-      "section",
-      "group",
-      ...Array(5).fill("row"),
-      "more",
-      "group",
-      "sub",
-      "subsRest",
-    ]);
+    expect(items.map((i) => i.kind)).toEqual(["group", ...Array(5).fill("row"), "more", "group", "sub", "subsRest"]);
     expect(items.find((i) => i.kind === "more")).toMatchObject({ rest: 2 });
     expect(items.find((i) => i.kind === "subsRest")).toMatchObject({ count: 1 });
   });
@@ -151,7 +143,7 @@ describe("flatten", () => {
   });
 
   it("lists the group headers alone while one is dragged", () => {
-    expect(flatten(sb, {}, {}, true).map((i) => i.kind)).toEqual(["section", "group", "group"]);
+    expect(flatten(sb, {}, {}, true).map((i) => i.kind)).toEqual(["group", "group"]);
   });
 });
 

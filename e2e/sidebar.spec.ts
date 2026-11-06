@@ -286,6 +286,20 @@ test("Recent 高度：拖动上边缘按整行调节，最少 1 行，重启后�
   expect(await rows()).toBe(1);
 });
 
+test("Project 标题和 Live、Recent 一样固定，不随列表滚走", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 640 });
+  await page.goto("/");
+  const list = page.getByRole("listbox", { name: "Session 列表" });
+  const heading = page.getByTestId("project-heading");
+  await expect(page.getByTestId("session-row").first()).toBeVisible();
+  const before = (await heading.boundingBox())!.y;
+  await list.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect(heading).toBeInViewport();
+  expect((await heading.boundingBox())!.y).toBe(before);
+  await expect(heading.getByTestId("add-project-button")).toBeVisible();
+});
+
 test("Recent 可收起，重启后保持", async ({ page }) => {
   await page.goto("/");
   const toggle = page.getByTestId("recent-toggle");

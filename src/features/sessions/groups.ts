@@ -243,7 +243,6 @@ export const isOpen = (expanded: Record<string, boolean>, key: string) =>
   expanded[key] ?? (key.startsWith("g:") || key === RECENT_KEY);
 
 export type Item =
-  | { kind: "section"; key: string }
   | { kind: "group"; key: string; g: Group; open: boolean; index: number }
   | { kind: "row"; key: string; s: SideSession; depth: 1 | 2 }
   | { kind: "more"; key: string; list: string; rest: number; depth: 1 | 2 }
@@ -267,7 +266,6 @@ export function flatten(
     if (rows.length > n) out.push({ kind: "more", key: `${key}\nmore`, list: key, rest: rows.length - n, depth });
   };
 
-  out.push({ kind: "section", key: "sec:projects" });
   sb.groups.forEach((g, index) => {
     const gk = groupKey(g.path);
     const open = !headersOnly && isOpen(expanded, gk);
