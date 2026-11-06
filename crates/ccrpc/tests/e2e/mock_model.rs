@@ -1096,6 +1096,32 @@ fn mock_model_tools() {
     assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
 }
 
+/// A plugin's skill typed by its bare name (`/probe x`) is recorded with the plugin's name
+/// (`/<plugin>:probe x`); `prompt` still finds it (on the scripted model, no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_plugin_command_by_bare_name() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let skill = env.plugin_dir.join("skills").join("probe");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: probe\ndescription: A probe skill for tests.\n---\nReply ok.\n",
+    )
+    .unwrap();
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    let r = rpc.call(
+        "p1",
+        json!({"type": "prompt", "text": "/probe 第一行\n第二行"}),
+    );
+    assert!(r["uuid"].as_str().is_some(), "{r}");
+    assert!(r["prompt_id"].as_str().is_some(), "{r}");
+    rpc.event("turn_end", Duration::from_secs(30));
+}
+
 /// A hidden Pane (`new --hidden`, ToH ADR-0050), as CoDeck starts it: nobody shows it, so its PTY keeps the size
 /// it starts with, ccrpc's 120×40, and an approval dialog is recognized there; `ls --json` reports `hidden`, which
 /// `hide` / `show` toggle (on the scripted model, no credits).

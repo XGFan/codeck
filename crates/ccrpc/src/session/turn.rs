@@ -100,16 +100,14 @@ impl Marks {
     }
 
     /// A slash or `!` command's record is rebuilt as `/name args` / `! cmd`: spaces typed in it
-    /// need not match.
+    /// need not match, nor a plugin's name the command was typed without (see [`same_command`]).
     pub(super) fn prompt_after(&self, after: u64, text: &str) -> Option<&str> {
         let slash = text.trim_start().starts_with(['/', '!']);
         self.prompts
             .iter()
             .rev()
             .find(|(s, _, t, _)| {
-                *s > after
-                    && (t.trim() == text.trim()
-                        || (slash && recognize::collapse_ws(t) == recognize::collapse_ws(text)))
+                *s > after && (t.trim() == text.trim() || (slash && same_command(t, text)))
             })
             .map(|(_, u, _, _)| u.as_str())
     }
@@ -244,6 +242,29 @@ impl Marks {
             self.prompt_enqueued_after(after, &typed.text, typed.images > 0)
         }
     }
+}
+
+/// A command's record (`recorded`, as `/name args` or `! cmd`) and what was typed: the same once
+/// whitespace runs are folded, or a plugin's command typed by its bare name, which Claude Code
+/// records with the plugin's (`/autopilot x` as `/oh-my-claudecode:autopilot x`).
+fn same_command(recorded: &str, typed: &str) -> bool {
+    let (r, t) = (
+        recognize::collapse_ws(recorded),
+        recognize::collapse_ws(typed),
+    );
+    if r == t {
+        return true;
+    }
+    let (Some(r), Some(t)) = (r.strip_prefix('/'), t.strip_prefix('/')) else {
+        return false;
+    };
+    let (r_name, r_args) = r.split_once(' ').unwrap_or((r, ""));
+    let (t_name, t_args) = t.split_once(' ').unwrap_or((t, ""));
+    r_args == t_args
+        && !t_name.contains(':')
+        && r_name
+            .rsplit_once(':')
+            .is_some_and(|(plugin, name)| !plugin.is_empty() && name == t_name)
 }
 
 /// Text recorded for a prompt sent as `parts` (`typed`: the parts' text joined): the same once its
@@ -1289,6 +1310,33 @@ mod tests {
         assert_eq!(m.prompt_after(1, "/release v1"), None);
         m.prompt("u2".into(), "hello world".into(), 0);
         assert_eq!(m.prompt_after(0, "hello  world"), None);
+    }
+
+    #[test]
+    fn a_plugin_command_typed_by_its_bare_name_confirms() {
+        let mut m = Marks::default();
+        // As recorded from `<command-name>/oh-my-claudecode:autopilot</command-name>`.
+        m.prompt(
+            "u1".into(),
+            "/oh-my-claudecode:autopilot 支持按 UP\n继续编辑".into(),
+            0,
+        );
+        assert_eq!(
+            m.prompt_after(0, "/autopilot 支持按 UP\n继续编辑"),
+            Some("u1")
+        );
+        // The full name still matches; other names or arguments do not.
+        assert_eq!(
+            m.prompt_after(0, "/oh-my-claudecode:autopilot 支持按 UP 继续编辑"),
+            Some("u1")
+        );
+        assert_eq!(m.prompt_after(0, "/pilot 支持按 UP 继续编辑"), None);
+        assert_eq!(
+            m.prompt_after(0, "/other:autopilot 支持按 UP 继续编辑"),
+            None
+        );
+        assert_eq!(m.prompt_after(0, "/autopilot 别的"), None);
+        assert_eq!(m.prompt_after(0, "autopilot 支持按 UP 继续编辑"), None);
     }
 
     #[test]
