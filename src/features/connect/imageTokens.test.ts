@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dropImages,
   moveToken,
   normalize,
   plain,
@@ -40,10 +41,23 @@ describe("图片标记", () => {
     expect(normalize(`${token(1)}${token(1)}${token(3)}`, [A, B])).toEqual({ text: token(1), images: [A] });
   });
 
-  it("drops what is left of a broken token, keeping the words around it", () => {
+  it("drops what is left of a broken token, keeping the words around it (digits and spaces included)", () => {
     const t = token(1);
     expect(normalize(`前${t.slice(0, 4)}后`, [A]).text).toBe("前后");
     expect(normalize(`前${t.slice(3)}后`, [A]).text).toBe("前后");
+    expect(normalize(`前${t.slice(0, 4)} 2024 报告`, [A]).text).toBe("前 2024 报告");
+    expect(normalize(`第 3 ${t.slice(5)}页`, [A]).text).toBe("第 3 页");
+  });
+
+  it("takes out the sent images by image: one pasted meanwhile keeps its place", () => {
+    const s = `${token(1)} 再看 ${token(2)}`;
+    expect(dropImages(s, [A, B], new Set([A.path]))).toEqual({ text: ` 再看 ${token(1)}`, images: [B] });
+  });
+
+  it("a token has no place to break a line", () => {
+    // No ordinary space, and word joiners between its letters.
+    expect(token(12)).not.toMatch(/ /);
+    expect(token(12)).toMatch(/图\u2060片/);
   });
 
   it("keeps the caret and the selection off a token's inside", () => {

@@ -1,18 +1,23 @@
 // Pasted images sit in the prompt where they were pasted, as tokens: in the textarea a short run of text — an
-// invisible start mark, an ideographic space (room for the icon the mirror draws), 「图片 n」, a thin space, an
-// invisible end mark — that the copy of the text under the (then clear) textarea draws as one block. The tokens are
-// numbered in text order, and the images list follows them: token n is images[n - 1].
+// invisible start mark, an ideographic space (room for the icon the mirror draws), 「图片 n」, a narrow space, an
+// invisible end mark — that the copy of the text under the (then clear) textarea draws as one block. Its spaces do not
+// break and word joiners hold its letters together, so a line never wraps inside it. The tokens are numbered in text
+// order, and the images list follows them: token n is images[n - 1].
 
 import type { DraftImage } from "./drafts";
 
 /** INVISIBLE TIMES / INVISIBLE SEPARATOR: zero-width, not typed by hand, so they mark a token's ends. */
-export const OPEN = "⁢";
-export const CLOSE = "⁣";
-const LABEL = "　图片 ";
+export const OPEN = "\u2062";
+export const CLOSE = "\u2063";
+/** Ideographic space, WORD JOINER, 图, WORD JOINER, 片, NO-BREAK SPACE. */
+const LABEL = "\u3000\u2060图\u2060片\u00a0";
 
-export const token = (n: number) => `${OPEN}${LABEL}${n} ${CLOSE}`;
+export const token = (n: number) => `${OPEN}${LABEL}${n}\u202f${CLOSE}`;
 
-const TOKEN_RE = /⁢　图片 (\d+) ⁣/g;
+const TOKEN_RE = /\u2062\u3000\u2060图\u2060片\u00a0(\d+)\u202f\u2063/g;
+/** What is left of a token that lost its end (any start of it) or its start (any end of it). */
+const HEAD_RE = /\u2062(?:\u3000(?:\u2060(?:图(?:\u2060(?:片(?:\u00a0(?:\d+\u202f?)?)?)?)?)?)?)?/g;
+const TAIL_RE = /(?:(?:(?:(?:(?:(?:(?:\u3000?\u2060)?图)?\u2060)?片)?\u00a0)?\d+)?\u202f)?\u2063/g;
 
 export interface Tok {
   start: number;
@@ -48,9 +53,21 @@ export function normalize(text: string, images: DraftImage[]): { text: string; i
   return { text: s, images: out };
 }
 
-/** Text between tokens, without the pieces of a broken one: its marks and what of 「　图片 n」 clings to them. */
-const stray = (s: string) =>
-  s.includes(OPEN) || s.includes(CLOSE) ? s.replace(/⁢[　图片 \d ]*|[　图片 \d ]*⁣/g, "") : s;
+/** Text between tokens, without the pieces of a broken one (only what was the token's: not the words around it). */
+const stray = (s: string) => (s.includes(OPEN) || s.includes(CLOSE) ? s.replace(HEAD_RE, "").replace(TAIL_RE, "") : s);
+
+/** The tokens of the images in `gone` taken out (they were sent), the images following: by image, not by number. */
+export function dropImages(text: string, images: DraftImage[], gone: ReadonlySet<string>) {
+  let s = "";
+  let at = 0;
+  for (const t of tokensIn(text)) {
+    s += text.slice(at, t.start);
+    at = t.end;
+    const img = images[t.n - 1];
+    if (!img || !gone.has(img.path)) s += text.slice(t.start, t.end);
+  }
+  return normalize(s + text.slice(at), images);
+}
 
 /** The token `pos` falls strictly inside, if any. */
 export function tokenAt(text: string, pos: number): Tok | null {

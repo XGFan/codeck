@@ -10,7 +10,7 @@ import type { ConnState } from "./conn";
 import type { FeedbackDraft } from "./protocol";
 import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
 import { ConnectFooter } from "./Header";
-import { EMPTY_DRAFT, type Draft } from "./drafts";
+import { EMPTY_DRAFT, isDraft, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { markFresh } from "./pending";
@@ -22,6 +22,7 @@ import { Markdown } from "@/lib/markdown";
 import { queueText } from "./queue";
 import { ChipLayer, MirrorText } from "./ImageChips";
 import {
+  dropImages,
   hasTokens,
   moveToken,
   normalize,
@@ -299,10 +300,8 @@ export function Composer({ c }: { c: ConnState }) {
     if (prompt) {
       // A placeholder at the transcript's end at once, and the box is free again (both back if it fails).
       setPending(c.conn, { uuid: null, at });
-      update((d) => ({
-        text: d.text.trim() === body ? "" : d.text,
-        images: d.images.filter((i) => !gone.has(i.path)),
-      }));
+      // What was typed meanwhile stays: without the sent images (their tokens by image, not by number).
+      update((d) => (d.text.trim() === body ? { text: "", images: [] } : dropImages(d.text, d.images, gone)));
     }
     const r = await command(c.conn, msg);
     setSending(false);
@@ -331,8 +330,9 @@ export function Composer({ c }: { c: ConnState }) {
     }
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
-    // Keep what was typed while it was being sent; only the images that went with it go.
-    update((d) => ({ text: d.text.trim() === body ? "" : d.text, images: d.images.filter((i) => !gone.has(i.path)) }));
+    // Keep what was typed while it was being sent; only the images that went with it go (an image pasted meanwhile
+    // keeps its place).
+    update((d) => (d.text.trim() === body ? { text: "", images: [] } : dropImages(d.text, d.images, gone)));
   };
 
   /** The selection, a part of a token counting as all of it. */
@@ -344,10 +344,14 @@ export function Composer({ c }: { c: ConnState }) {
     const copied = e.clipboardData.getData(TOKENS_MIME);
     if (copied) {
       try {
-        const v = JSON.parse(copied) as Draft;
-        if (typeof v.text === "string" && Array.isArray(v.images)) {
+        const v: unknown = JSON.parse(copied);
+        if (isDraft(v)) {
           e.preventDefault();
-          edit(start, end, shiftTokens(v.text, images.length), (x) => [...x, ...v.images]);
+          update((d) => {
+            const r = splice(d.text, start, end, shiftTokens(v.text, d.images.length));
+            caretAfter.current = r.caret;
+            return { text: r.text, images: [...d.images, ...v.images] };
+          });
           return;
         }
       } catch {
@@ -371,11 +375,15 @@ export function Composer({ c }: { c: ConnState }) {
       }
     }
     if (saved.length === 0) return;
-    // A token where the caret was for each, numbered after the images already there.
+    // A token where the caret was for each, numbered after the images already there. Typed into meanwhile (a big
+    // image takes a moment to save): where the caret is now, never inside another token.
+    const pasted = text;
     update((d) => {
       const tokens = saved.map((_, i) => token(d.images.length + i + 1)).join("");
-      const at = Math.min(start, d.text.length);
-      const r = splice(d.text, at, Math.min(end, d.text.length), tokens);
+      const cur = input.current?.selectionStart ?? d.text.length;
+      const [s0, e0] = d.text === pasted ? [start, end] : [cur, cur];
+      const at = snap(d.text, Math.min(s0, d.text.length), 0);
+      const r = splice(d.text, at, Math.max(at, snap(d.text, Math.min(e0, d.text.length), 0)), tokens);
       caretAfter.current = r.caret;
       return { text: r.text, images: [...d.images, ...saved] };
     });
@@ -556,9 +564,12 @@ export function Composer({ c }: { c: ConnState }) {
               ref={mirror}
               aria-hidden
               data-testid={highlight > 0 ? "command-highlight" : "composer-mirror"}
-              className="pointer-events-none absolute inset-0 overflow-hidden pr-1.5 text-[14px] leading-[1.5] break-words whitespace-pre-wrap"
+              className={cn(
+                "pointer-events-none absolute inset-0 overflow-hidden pr-1.5 text-[14px] leading-[1.5] break-words whitespace-pre-wrap",
+                composing && "text-transparent",
+              )}
             >
-              <MirrorText text={text} highlight={highlight} selected={selectedToken} />
+              <MirrorText text={text} highlight={highlight} selected={selectedToken} ghost={composing} />
               {/* A last empty line still takes its height, as in the textarea. */}
               {"\u200b"}
             </div>
@@ -568,6 +579,9 @@ export function Composer({ c }: { c: ConnState }) {
             value={text}
             onSelect={(e) => {
               const el = e.currentTarget;
+              // The user moved the caret: a caret position waiting for a change that did not come (a token dropped
+              // where it was) is void.
+              if (caretAfter.current != null && el.value === text) caretAfter.current = null;
               let [start, end] = [el.selectionStart, el.selectionEnd];
               // A caret never stays inside an image token: on to its end the way it moved.
               if (start === end) {
@@ -670,7 +684,8 @@ export function Composer({ c }: { c: ConnState }) {
             }}
             className={cn(
               "relative block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary",
-              mirrored && "text-transparent caret-text",
+              // While an input method composes, the textarea's own text (it draws the marked-text underline).
+              mirrored && !composing && "text-transparent caret-text",
             )}
             data-testid="connect-input"
           />

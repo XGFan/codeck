@@ -13,12 +13,15 @@ export function MirrorText({
   text,
   highlight,
   selected,
+  ghost = false,
 }: {
   text: string;
   /** Characters at the start shown as a command. */
   highlight: number;
   /** The token the selection covers exactly (drawn selected). */
   selected: number | null;
+  /** The blocks alone, the letters clear (an input method composes: the textarea shows its own text then). */
+  ghost?: boolean;
 }) {
   const out: React.ReactNode[] = [];
   let at = 0;
@@ -26,7 +29,7 @@ export function MirrorText({
     const cut = Math.max(0, Math.min(s.length, highlight - from));
     if (cut > 0)
       out.push(
-        <span key={`h${from}`} className="text-accent">
+        <span key={`h${from}`} className={ghost ? undefined : "text-accent"}>
           {s.slice(0, cut)}
         </span>,
       );
@@ -41,14 +44,15 @@ export function MirrorText({
         className={cn(
           "relative rounded-[5px] bg-code text-text shadow-[0_0_0_1px_var(--color-border)]",
           selected === t.n && "bg-selection text-accent shadow-[0_0_0_1.5px_var(--color-accent)]",
+          ghost && "text-transparent",
         )}
       >
         {OPEN}
-        {"　"}
+        {"\u3000"}
         <ImageIcon
-          size={13}
+          size={12}
           strokeWidth={1.8}
-          className="pointer-events-none absolute top-1/2 left-[2px] -translate-y-1/2 text-secondary"
+          className="pointer-events-none absolute top-1/2 left-[1px] -translate-y-1/2 text-secondary"
           aria-hidden
         />
         {text.slice(t.start + 2, t.end - 1)}
@@ -129,12 +133,16 @@ export function ChipLayer({
     if (!m || !b) return;
     const measure = () => {
       const base = b.getBoundingClientRect();
+      // Only what shows: a token scrolled out of the textarea has no box (it would sit over the transcript or the
+      // send button).
+      const view = t?.getBoundingClientRect();
       const toks = tokensIn(text);
       setChips(
         [...m.querySelectorAll<HTMLElement>("[data-chip]")].flatMap((el, i) => {
           const r = el.getClientRects()[0];
           const tok = toks[i];
           if (!r || !tok) return [];
+          if (view && (r.bottom <= view.top + 2 || r.top >= view.bottom - 2)) return [];
           return [{ tok, left: r.left - base.left, top: r.top - base.top, width: r.width, height: r.height }];
         }),
       );
@@ -197,6 +205,7 @@ export function ChipLayer({
     const end = (commit: boolean) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
       window.removeEventListener("keydown", onKey, true);
       const d = dragRef.current;
       setDrag(null);
@@ -211,6 +220,12 @@ export function ChipLayer({
     };
     const onMovePiece = (tok: Tok, to: number) => onMoveRef.current(tok, to);
     const onUp = () => end(true);
+    // Released outside the window, or the gesture taken over: nothing moves.
+    const onCancel = () => {
+      moved = true;
+      dragRef.current = null;
+      end(false);
+    };
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       ev.preventDefault();
@@ -219,6 +234,7 @@ export function ChipLayer({
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
     window.addEventListener("keydown", onKey, true);
   };
   const onMoveRef = useRef(onMove);

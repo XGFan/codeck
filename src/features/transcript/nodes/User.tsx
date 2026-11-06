@@ -67,9 +67,11 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         )}
       </div>
       {/* The images the text does not place (`[Image #n]`), below it; a command's, all of them. */}
-      {body.images.length > (o.kind === "command" ? 0 : markerCount(body.text)) && (
-        <PromptImages node={node} body={body} skip={o.kind === "command" ? 0 : markerCount(body.text)} />
-      )}
+      <PromptImages
+        node={node}
+        body={body}
+        placed={o.kind === "command" ? new Set() : placedImages(body.text, body.images.length)}
+      />
       {/* Under the bubble, as in Codex: time, rewind and copy on hover, the branch switcher at a branch head. */}
       <div
         data-testid="prompt-meta"
@@ -86,24 +88,51 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
 
 const MARKER = /\[Image #(\d+)\]/g;
 
-/** `[Image #n]` placeholders in a prompt's words (not in its code), one per image in order. */
-const markerCount = (text: string) =>
-  promptParts(text).reduce((n, p) => n + (p.kind === "text" ? (p.text.match(MARKER)?.length ?? 0) : 0), 0);
+/**
+ * Which image each `[Image #n]` is: Claude Code attaches the images in the order of their numbers, so as many distinct
+ * numbers as images map by rank (a placeholder pasted before an earlier one still finds its image); otherwise the
+ * k-th placeholder is the k-th image. A number without an image (typed by hand) stays text.
+ */
+function imageOf(text: string, count: number): (n: number, k: number) => number | null {
+  const ns = promptParts(text).flatMap((p) =>
+    p.kind === "text" ? [...p.text.matchAll(MARKER)].map((m) => Number(m[1])) : [],
+  );
+  const ranks = [...new Set(ns)].sort((a, b) => a - b);
+  if (ranks.length === count) return (n) => ranks.indexOf(n);
+  return (_n, k) => (k < count ? k : null);
+}
+
+/** The images some `[Image #n]` in the prompt's words shows (by index). */
+function placedImages(text: string, count: number): Set<number> {
+  const which = imageOf(text, count);
+  const out = new Set<number>();
+  let k = 0;
+  for (const p of promptParts(text))
+    if (p.kind === "text")
+      for (const m of p.text.matchAll(MARKER)) {
+        const i = which(Number(m[1]), k++);
+        if (i != null) out.add(i);
+      }
+  return out;
+}
 
 /**
  * A typed prompt as typed, with its `inline code` and ```fenced blocks``` set as code (nothing else is markdown),
- * and each `[Image #n]` as its image (the k-th placeholder is the k-th image).
+ * and each `[Image #n]` as its image.
  */
 function PromptText({ text, node, body }: { text: string; node: Node; body: UserBody }) {
   const { sessionId, scope } = useTranscriptCtx();
   const ctx = { sessionId, scope, nodeId: node.id };
+  const which = imageOf(text, body.images.length);
   let k = 0;
   const words = (s: string, key: number) => {
     const out: ReactNode[] = [];
     let at = 0;
     for (const m of s.matchAll(MARKER)) {
+      const i = which(Number(m[1]), k++);
+      if (i == null) continue;
       if (m.index > at) out.push(s.slice(at, m.index));
-      out.push(<ImageMarker key={`${key}:${m.index}`} image={body.images[k++]} label={`图片 #${m[1]}`} ctx={ctx} />);
+      out.push(<ImageMarker key={`${key}:${m.index}`} image={body.images[i]} label={`图片 #${m[1]}`} ctx={ctx} />);
       at = m.index + m[0].length;
     }
     out.push(s.slice(at));
@@ -446,7 +475,8 @@ function TeammateEvent({ node, part }: { node: Node; part: Exclude<TeammateItem,
   );
 }
 
-function PromptImages({ node, body, skip }: { node: Node; body: UserBody; skip: number }) {
+function PromptImages({ node, body, placed }: { node: Node; body: UserBody; placed: Set<number> }) {
   const { sessionId, scope } = useTranscriptCtx();
-  return <ImageRefs images={body.images.slice(skip)} ctx={{ sessionId, scope, nodeId: node.id }} />;
+  const rest = body.images.filter((_, i) => !placed.has(i));
+  return <ImageRefs images={rest} ctx={{ sessionId, scope, nodeId: node.id }} />;
 }

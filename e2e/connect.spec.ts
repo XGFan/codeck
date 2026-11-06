@@ -1057,7 +1057,9 @@ test("目录信任框是选择卡片", async ({ page }) => {
 
 /** The input box's words, the image tokens left out. */
 const words = (page: Page) =>
-  page.getByTestId("connect-input").evaluate((e: HTMLTextAreaElement) => e.value.replace(/⁢[^⁣]*⁣/g, "|"));
+  page
+    .getByTestId("connect-input")
+    .evaluate((e: HTMLTextAreaElement) => e.value.replace(/\u2062[^\u2063]*\u2063/g, "|"));
 
 test("粘贴的图片插在光标处，悬停预览，随提示词按位置发出", async ({ page }) => {
   await connectTo(page, TURNS);
@@ -1110,7 +1112,9 @@ test("图片标记是一整块：光标跳过、⌫ 整块删掉，拖到别处�
   await input.press("ArrowLeft");
   await input.press("ArrowLeft");
   const caret = () =>
-    input.evaluate((e: HTMLTextAreaElement) => e.value.slice(0, e.selectionStart).replace(/⁢[^⁣]*⁣/g, "|"));
+    input.evaluate((e: HTMLTextAreaElement) =>
+      e.value.slice(0, e.selectionStart).replace(/\u2062[^\u2063]*\u2063/g, "|"),
+    );
   expect(await caret()).toBe("甲|");
   await input.press("Backspace");
   expect(await words(page)).toBe("甲乙|");

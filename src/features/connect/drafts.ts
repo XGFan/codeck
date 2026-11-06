@@ -1,6 +1,6 @@
 // Unsent input in a Session's input box, kept in localStorage across restarts.
 
-import { withTokens } from "./imageTokens";
+import { normalize, withoutTokens, withTokens } from "./imageTokens";
 
 /** A pasted image waiting to be sent: its saved path and a preview `data:` URL. */
 export interface DraftImage {
@@ -22,7 +22,7 @@ const OLD_DRAFTS_KEY = "codeck.drive.drafts";
 // A Session's id; a connection's key dies with it, so only these are kept across restarts.
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const isDraft = (d: unknown): d is Draft =>
+export const isDraft = (d: unknown): d is Draft =>
   !!d &&
   typeof (d as Draft).text === "string" &&
   Array.isArray((d as Draft).images) &&
@@ -35,8 +35,12 @@ export function loadDrafts(): Record<string, Draft> {
     return Object.fromEntries(
       Object.entries(v)
         .filter(([k, d]) => SESSION_ID.test(k) && isDraft(d))
-        // A draft from before image tokens: its images go first, where they were sent then.
-        .map(([k, d]) => [k, { ...(d as Draft), text: withTokens((d as Draft).text, (d as Draft).images) }]),
+        // A draft from before image tokens: its images go first, where they were sent then. A token whose image was
+        // not kept (over the storage quota) goes.
+        .map(([k, d]) => {
+          const { text, images } = d as Draft;
+          return [k, normalize(withTokens(text, images), images)];
+        }),
     );
   } catch {
     return {};
@@ -62,7 +66,10 @@ function flushDrafts() {
     try {
       localStorage.setItem(
         DRAFTS_KEY,
-        JSON.stringify(Object.fromEntries(Object.entries(keep).map(([k, d]) => [k, { text: d.text, images: [] }]))),
+        // The images' tokens go with them.
+        JSON.stringify(
+          Object.fromEntries(Object.entries(keep).map(([k, d]) => [k, { text: withoutTokens(d.text), images: [] }])),
+        ),
       );
     } catch {
       // Storage unavailable: the drafts last until the app quits.
