@@ -19,7 +19,8 @@ import { RewindPickNotice } from "./RewindViews";
 import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
-import { queueText } from "./queue";
+import { caretOnFirstRow } from "./caretRow";
+import { editable, queueText, rememberSteer, takenBack } from "./queue";
 import { ChipLayer, MirrorText } from "./ImageChips";
 import {
   dropImages,
@@ -127,7 +128,8 @@ function FeedbackDraftNotice({
  * The input box: idle → `prompt` (a built-in slash command → `slash`; `/rewind` (`/checkpoint`) → 「选回退点」, nothing
  * sent); busy → `steer`, as Enter in the terminal (Claude Code's own queue, shown in the TUI and above the box,
  * delivered when the current tool call ends); ⌘Enter while busy also sends the queue at once (`send_now`, ctrl+enter in
- * the terminal: the turn is interrupted); waiting → not sent, focus goes to the card. Esc is handled by the input area. What is
+ * the terminal: the turn is interrupted); ↑ on the first line while busy takes what waits in the queue back into the box
+ * (`edit_queue`, ↑ in the terminal); waiting → not sent, focus goes to the card. Esc is handled by the input area. What is
  * typed lives in the connect store, so switching Sessions keeps it. Typing `/name` lists matching
  * commands: ↑↓ pick, Tab (or Enter on a different one) completes, Esc hides the list.
  */
@@ -258,6 +260,26 @@ export function Composer({ c }: { c: ConnState }) {
     if (!r.success) setError(`立即发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
   };
 
+  /** ↑ takes what the person queued back (as in the terminal): there is some, and nothing else is on its way. */
+  const canEditQueue = live && state === "busy" && !sending && c.queue.some(editable);
+  const editQueue = async () => {
+    setSending(true);
+    setError(null);
+    const r = await command(c.conn, { type: "edit_queue" });
+    setSending(false);
+    const items = r.data?.items;
+    if (!r.success || !Array.isArray(items))
+      return setError(`取回排队的消息失败：${r.error?.message ?? r.error?.code ?? ""}`);
+    const back = takenBack(c.conn, items as string[]);
+    if (!back.text) return;
+    // Before what is in the box, as in the terminal; the caret after what came back.
+    update((d) => {
+      caretAfter.current = back.text.length;
+      const after = shiftTokens(d.text, back.images.length);
+      return { text: d.text.trim() ? `${back.text}\n${after}` : back.text, images: [...back.images, ...d.images] };
+    });
+  };
+
   const submit = async (now = false) => {
     const body = text.trim();
     if (live && state === "waiting") return focusFirstCard();
@@ -328,6 +350,8 @@ export function Composer({ c }: { c: ConnState }) {
       if (c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
       return;
     }
+    // Its images, should ↑ take it back (the queue has only `[Image #n]` for them).
+    if (msg.type === "steer" && r.data?.delivered_as === "queued") rememberSteer(c.conn, { text: body, images: sent });
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
     // Keep what was typed while it was being sent; only the images that went with it go (an image pasted meanwhile
@@ -418,7 +442,9 @@ export function Composer({ c }: { c: ConnState }) {
   const placeholder = !live
     ? "连接中…"
     : state === "busy"
-      ? "插话，当前工具调用结束后送达（⌘Enter 中断本轮、立即发送，Esc 中止）"
+      ? c.queue.some(editable)
+        ? "按 ↑ 取回排队的消息（⌘Enter 中断本轮、立即发送，Esc 中止）"
+        : "插话，当前工具调用结束后送达（⌘Enter 中断本轮、立即发送，Esc 中止）"
       : state === "waiting"
         ? "先回答上面的请求（Esc 中止）"
         : state === "idle"
@@ -670,6 +696,14 @@ export function Composer({ c }: { c: ConnState }) {
                   e.preventDefault();
                   e.stopPropagation();
                   setHiddenFor(text);
+                  return;
+                }
+              }
+              // ↑ on the first row while messages wait in the queue: back into the box to edit (↑ in the terminal).
+              if (e.key === "ArrowUp" && !e.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey && canEditQueue) {
+                if (caretOnFirstRow(e.currentTarget)) {
+                  e.preventDefault();
+                  void editQueue();
                   return;
                 }
               }

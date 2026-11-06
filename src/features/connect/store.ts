@@ -12,6 +12,7 @@ import { forkTitle } from "./fork";
 import type { ForkEvent, InMsg, LsEntry, ResponseMsg, RewindOption, RewindRequest, Task } from "./protocol";
 import { errorText } from "@/lib/errors";
 import { ALL_SESSIONS } from "@/queries/hooks";
+import { forgetSteers } from "./queue";
 
 interface ConnectStore {
   /** `ccrpcInfo`, asked for when first needed (its first call reads the login shell's environment). */
@@ -292,6 +293,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
     // Its exit may still come and is then dropped: nothing would answer what waits on it.
     client.forget(conn);
     closing.delete(conn);
+    forgetSteers(conn);
     set((s) => {
       const conns = { ...s.conns };
       delete conns[conn];

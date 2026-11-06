@@ -14,6 +14,7 @@
 // `__cvCcrpc.list(name)`.
 
 import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
+import { editable } from "@/features/connect/queue";
 import type { Api, Unlisten } from "./api";
 import type { AnalyzerInfo, AppError, LaunchRule } from "./bindings";
 
@@ -97,6 +98,8 @@ interface Conn {
   closed: boolean;
   /** Tasks `stop_task` stopped on this connection: `get_tasks` reports them stopped. */
   stopped: Set<string>;
+  /** The TUI's queue as the last `queue` event said: what `edit_queue` takes back. */
+  queue?: string[];
   /** What follows `ready` waits this long (claude still starting). */
   startMs?: number;
 }
@@ -218,6 +221,7 @@ function emit(id: string, msg: InMsg) {
   const c = conns.get(id);
   if (!c || c.closed) return;
   if (msg.type === "state") c.state = msg;
+  if (msg.type === "queue") c.queue = msg.items;
   if (msg.type === "session_info" || msg.type === "ready") {
     const { mode, model, effort, context_tokens } = msg as unknown as Record<string, unknown>;
     c.info = { mode, model, effort: effort ?? null, context_tokens };
@@ -273,6 +277,15 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
     case "stop_task":
       c.stopped.add(String(msg.task_id));
       return respond(id, msg, {});
+    // ↑ on the empty input box: what the person typed comes back (messages from another agent stay queued).
+    case "edit_queue": {
+      if ((c.state as { state?: string } | null)?.state !== "busy") return respond(id, msg, null, "not_busy");
+      const all = c.queue ?? [];
+      const items = all.filter(editable);
+      if (items.length === 0) return respond(id, msg, null, "bad_request");
+      later(() => emit(id, { type: "queue", items: all.filter((q) => !editable(q)) }));
+      return respond(id, msg, { items });
+    }
     // ctrl+enter: the TUI's queue goes out at once.
     case "send_now":
       later(() => emit(id, { type: "queue", items: [] }));

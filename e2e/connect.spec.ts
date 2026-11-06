@@ -774,7 +774,33 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(page.getByTestId("connect-input")).toHaveValue("");
   // The TUI's own queue, as the terminal shows it; sent at once on request (ctrl+enter there). A message from another
   // agent reads as its sender and first line, not its tag.
-  await expect(page.getByTestId("queue-item")).toHaveText(["做完再跑一下测试", "；codeck-99：合并前先拉一下 main。"]);
+  await expect(page.getByTestId("queue-item")).toHaveText([
+    "做完再跑一下测试[Image #1]",
+    "；codeck-99：合并前先拉一下 main。",
+  ]);
+  // ↑ on the box's first row takes what was queued back to edit, its image too (↑ in the terminal), before what is
+  // typed; the message from another agent stays queued. On a lower row of a long line ↑ only moves the caret.
+  const input = page.getByTestId("connect-input");
+  await expect(input).toHaveAttribute("placeholder", /^按 ↑ 取回排队的消息/);
+  await input.fill("很长的一行".repeat(60));
+  await input.press("End");
+  await input.press("ArrowUp");
+  await page.waitForTimeout(200);
+  expect(await lastSent(page, "edit_queue")).toBeUndefined();
+  await input.fill("再补一句");
+  await input.press("ArrowUp");
+  await expect.poll(() => lastSent(page, "edit_queue")).toBeDefined();
+  await expect(input).toHaveValue(/^做完再跑一下测试[^\n]+\n再补一句$/);
+  // The caret right after what came back.
+  expect(await input.evaluate((el: HTMLTextAreaElement) => el.selectionStart === el.value.indexOf("\n"))).toBe(true);
+  await expect(page.getByTestId("image-chip")).toHaveCount(1);
+  await expect(page.getByTestId("queue-item")).toHaveText(["codeck-99：合并前先拉一下 main。"]);
+  // Nothing of it left to take back: ↑ only moves the caret.
+  await input.press("ArrowUp");
+  await page.waitForTimeout(200);
+  expect((await probe(page)).sent.filter((s) => s.msg.type === "edit_queue").length).toBe(1);
+  await input.fill("");
+  await expect(page.getByTestId("image-chip")).toHaveCount(0);
   await page.getByTestId("send-now").click();
   await expect.poll(async () => (await probe(page)).sent.filter((s) => s.msg.type === "send_now").length).toBe(1);
   await expect(page.getByTestId("queue")).toHaveCount(0);
