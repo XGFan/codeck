@@ -35,7 +35,12 @@ function RoleLine({ role }: { role: RoleInfo }) {
   return (
     <div data-testid="role-line" className="flex items-center gap-1.5 text-[11px] text-secondary">
       {role.branch && <BranchSwitcher point={role.branch} />}
-      {apiError && <span className="font-semibold text-error">API 错误 · {clock(role.node.timestampMs)}</span>}
+      {apiError && (
+        <span data-testid="api-error" className="font-semibold text-error">
+          API 错误{role.retries?.length ? ` · 重试 ${role.retries.length} 次后放弃` : ""} ·{" "}
+          {clock(role.node.timestampMs)}
+        </span>
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { MAIN_SCOPE, useUi } from "@/state/ui";
 import { useFollowBottom, usePublishTurns, useRows, useScrollRequestConsumer } from "./listHooks";
 import { isContinuation, RowView } from "./nodes";
 import { scrollToNode, TranscriptContext, type TranscriptCtx } from "./nodes/scroll";
+import { peerNames } from "./teammate";
 import { WidthHandles } from "./WidthHandles";
 import { errorText } from "@/lib/errors";
 
@@ -151,6 +152,7 @@ export function TranscriptList({
   // The prompts shown: a prompt just sent stays a placeholder at the end until it is among them.
   const promptIds = useMemo(() => new Set(rows.flatMap((r) => (r.kind === "prompt" ? [r.node.id] : []))), [rows]);
 
+  const names = useMemo(() => peerNames(transcript.nodes), [transcript.nodes]);
   const ctx = useMemo<TranscriptCtx>(() => {
     const runs = new Map<string, SubagentRun>();
     for (const r of extraRuns ?? []) runs.set(r.agentId, r);
@@ -162,6 +164,7 @@ export function TranscriptList({
       toolNode: grouping.toolNode,
       activeAgentId: panelStack[panelStack.length - 1] ?? null,
       rewindable,
+      peerNames: names,
       openAgent: (agentId) => {
         const stack = useUi.getState().panelStack;
         if (scope.kind === "main") setPanelStack([agentId]);
@@ -171,7 +174,17 @@ export function TranscriptList({
         }
       },
     };
-  }, [sessionId, scope, extraRuns, transcript.subagents, grouping.toolNode, panelStack, setPanelStack, rewindable]);
+  }, [
+    sessionId,
+    scope,
+    extraRuns,
+    transcript.subagents,
+    grouping.toolNode,
+    panelStack,
+    setPanelStack,
+    rewindable,
+    names,
+  ]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({

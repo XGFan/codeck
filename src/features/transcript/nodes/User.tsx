@@ -1,4 +1,5 @@
 import { ArrowUp, ChevronDown, ChevronRight, Clock } from "lucide-react";
+import type { ReactNode } from "react";
 import { CopyButton } from "@/components/ui/copy-button";
 import { arrived, isFresh, RewindButton } from "@/features/connect";
 import type { BranchPoint, Node } from "@/ipc/bindings";
@@ -11,7 +12,7 @@ import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
 import { promptParts } from "../promptCode";
 import { ImageRefs } from "../tools";
-import { type TeammateMessage, type TeammatePart, peerMessages, previewOf, teammateParts } from "../teammate";
+import { type TeammateItem, peerMessages, previewOf, teammateItems, teammateParts } from "../teammate";
 import { clock, commandLine, prettyJson } from "../util";
 import { TaskPromptCard } from "./Agents";
 import { Anchor } from "./Anchor";
@@ -192,138 +193,30 @@ const isJson = (body: string) => /^[[{]/.test(body) && prettyJson(body) !== body
 const Dot = ({ color }: { color: string | null }) =>
   color ? <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} /> : null;
 
-/**
- * Message relayed from another Claude session of an agent team (not the user's prompt), part by part: reports as a
- * collapsed card; the end of a teammate's round with its result as a card of its own; idle, failed, shut down and task
- * assigned as one centered line.
- */
-function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
-  const parts = teammateParts(body.text);
-  return (
-    <div className="flex flex-col gap-2">
-      {parts.map((p, i) => {
-        const key = `teammate:${node.id}:${i}`;
-        if (p.kind === "report") return <TeammateReport key={key} node={node} messages={p.messages} stateKey={key} />;
-        if (p.kind === "done") return <TeammateDone key={key} node={node} part={p} stateKey={key} />;
-        return <TeammateEvent key={key} node={node} part={p} />;
-      })}
-    </div>
-  );
-}
+/** A body longer than this many lines or characters starts clamped. */
+const CLAMP_LINES = 8;
+const CLAMP_CHARS = 600;
 
-function TeammateReport({
-  node,
-  messages,
-  stateKey,
-  label = "Teammate",
-  testId = "teammate-message",
-}: {
-  node: Node;
-  messages: TeammateMessage[];
-  stateKey: string;
-  /** What the sender is: `Teammate`, or for a message from another agent its source. */
-  label?: string;
-  testId?: string;
-}) {
+/** A message body: Markdown at the size of other prose (a JSON message pretty-printed), clamped when long. */
+function MessageBody({ text, stateKey, testId }: { text: string; stateKey: string; testId?: string }) {
   const open = useUi((s) => s.expanded[stateKey] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
-  const first = messages[0];
+  const long = text.split("\n").length > CLAMP_LINES || text.length > CLAMP_CHARS;
   return (
-    <div data-testid={testId} className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => toggle(stateKey)}
-        className="flex w-full items-center gap-2 text-left text-[12px] text-secondary hover:text-text"
-      >
-        {open ? (
-          <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
-        ) : (
-          <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
-        )}
-        <Dot color={first.color} />
-        <span className="shrink-0 font-medium text-text/80">
-          {label} · {first.id ?? "未知"}
-        </span>
-        {messages.length > 1 && <span className="shrink-0 text-secondary">{messages.length} 条</span>}
-        <span data-testid="teammate-preview" className="min-w-0 flex-1 truncate text-secondary">
-          {previewOf(first)}
-        </span>
-        <span className="shrink-0 text-secondary">{clock(node.timestampMs)}</span>
-      </button>
-      {open && (
-        <div
-          data-testid="teammate-body"
-          className="ml-1.5 flex flex-col gap-2 border-l-2 border-border pl-4 text-[12px]"
-        >
-          {messages.map((m, i) => (
-            <div key={i} className="flex flex-col gap-1">
-              {messages.length > 1 && <span className="text-[11px] text-secondary">{m.id ?? "未知"}</span>}
-              {isJson(m.body) ? (
-                <pre className="m-0 max-h-60 overflow-auto rounded bg-code px-2.5 py-1.5 font-mono text-[12px] leading-[1.55] break-words whitespace-pre-wrap">
-                  {prettyJson(m.body)}
-                </pre>
-              ) : (
-                <Markdown text={m.body} />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const PEER_LABEL = { session: "会话", agent: "Agent", plugin: "插件" } as const;
-
-/** A message another agent sent with SendMessage (another Session, a Subagent or Teammate), or a plugin's. */
-function PeerCard({ node, body }: { node: Node; body: UserBody }) {
-  const o = body.origin as Extract<UserBody["origin"], { kind: "peer" }>;
-  return (
-    <TeammateReport
-      node={node}
-      messages={peerMessages(body.text, o.from)}
-      stateKey={`peer:${node.id}`}
-      label={PEER_LABEL[o.source]}
-      testId="peer-message"
-    />
-  );
-}
-
-/** A result longer than this many lines or characters starts clamped. */
-const DONE_LINES = 8;
-const DONE_CHARS = 600;
-
-/** The end of a teammate's round, with its result: Claude Code's "Teammate @x finished". */
-function TeammateDone({
-  node,
-  part,
-  stateKey,
-}: {
-  node: Node;
-  part: Extract<TeammatePart, { kind: "done" }>;
-  stateKey: string;
-}) {
-  const open = useUi((s) => s.expanded[stateKey] ?? false);
-  const toggle = useUi((s) => s.toggleExpanded);
-  const long = part.result.split("\n").length > DONE_LINES || part.result.length > DONE_CHARS;
-  return (
-    <div data-testid="teammate-done" className="flex flex-col gap-1.5 rounded-[10px] border border-border px-3 py-2.5">
-      <div className="flex items-center gap-2 text-[12px] text-secondary">
-        <Dot color={part.color} />
-        <span className="font-semibold text-text">{part.who}</span>
-        <span className={cn("font-medium", part.failed ? "text-error" : "text-live")}>
-          {part.failed ? "失败" : "完成"}
-        </span>
-        <span className="ml-auto">{clock(node.timestampMs)}</span>
-      </div>
+    <>
       <div
-        data-testid="teammate-result"
+        data-testid={testId}
         className={cn(
           long && !open && "max-h-[12em] overflow-hidden [mask-image:linear-gradient(to_bottom,black_65%,transparent)]",
         )}
       >
-        <Markdown text={part.result} />
+        {isJson(text) ? (
+          <pre className="m-0 overflow-auto rounded bg-code px-2.5 py-1.5 font-mono text-[12px] leading-[1.55] break-words whitespace-pre-wrap">
+            {prettyJson(text)}
+          </pre>
+        ) : (
+          <Markdown text={text} className="text-[14px] leading-[1.7]" />
+        )}
       </div>
       {long && (
         <button
@@ -335,14 +228,174 @@ function TeammateDone({
           {open ? "收起" : "展开全文"}
         </button>
       )}
+    </>
+  );
+}
+
+/**
+ * A message from another agent as a card: its color, who, what kind (报告 / 完成 / 失败 / 会话 …) and when, then
+ * the body. Teammate reports and results, and messages from other Sessions, agents and plugins share it.
+ */
+function MessageCard({
+  testId,
+  color,
+  who,
+  tag,
+  tone,
+  timeMs,
+  title,
+  children,
+}: {
+  testId: string;
+  color: string | null;
+  who: string;
+  tag: string;
+  tone?: "live" | "error";
+  timeMs: number | null;
+  title?: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <div data-testid={testId} className="flex flex-col gap-1.5 rounded-[10px] border border-border px-3 py-2.5">
+      <div className="flex items-center gap-2 text-[12px] text-secondary">
+        <Dot color={color} />
+        <span className="font-semibold text-text">{who}</span>
+        <span
+          data-testid="message-tag"
+          className={cn(
+            "rounded border px-1 text-[11px] leading-[16px]",
+            tone === "live"
+              ? "border-live/35 text-live"
+              : tone === "error"
+                ? "border-error/35 text-error"
+                : "border-border",
+          )}
+        >
+          {tag}
+        </span>
+        <span className="ml-auto shrink-0">{clock(timeMs)}</span>
+      </div>
+      {title && (
+        <div data-testid="message-title" className="text-[14px] font-semibold">
+          {title}
+        </div>
+      )}
+      {children}
     </div>
+  );
+}
+
+/**
+ * Message relayed from another Claude session of an agent team (not the user's prompt), item by item: each report a
+ * card; the end of a teammate's round with its result a card, holding the report it sent just before; idle, failed,
+ * shut down and task assigned as one centered line.
+ */
+function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
+  const items = teammateItems(teammateParts(body.text));
+  return (
+    <div className="flex flex-col gap-2">
+      {items.map((it, i) => {
+        const key = `teammate:${node.id}:${i}`;
+        if (it.kind === "report")
+          return (
+            <MessageCard
+              key={key}
+              testId="teammate-message"
+              color={it.message.color}
+              who={it.message.id ?? "未知"}
+              tag="报告"
+              timeMs={node.timestampMs}
+              title={it.message.summary}
+            >
+              <MessageBody text={it.message.body} stateKey={key} testId="teammate-body" />
+            </MessageCard>
+          );
+        if (it.kind === "done") return <TeammateDone key={key} node={node} item={it} stateKey={key} />;
+        return <TeammateEvent key={key} node={node} part={it} />;
+      })}
+    </div>
+  );
+}
+
+const PEER_LABEL = { session: "会话", agent: "Agent", plugin: "插件" } as const;
+
+/** A message another agent sent with SendMessage (another Session, a Subagent or Teammate), or a plugin's. */
+function PeerCard({ node, body }: { node: Node; body: UserBody }) {
+  const o = body.origin as Extract<UserBody["origin"], { kind: "peer" }>;
+  return (
+    <div className="flex flex-col gap-2">
+      {peerMessages(body.text, o.from).map((m, i) => (
+        <MessageCard
+          key={i}
+          testId="peer-message"
+          color={m.color}
+          who={m.id ?? "未知"}
+          tag={PEER_LABEL[o.source]}
+          timeMs={node.timestampMs}
+          title={m.summary}
+        >
+          <MessageBody text={m.body} stateKey={`peer:${node.id}:${i}`} testId="teammate-body" />
+        </MessageCard>
+      ))}
+    </div>
+  );
+}
+
+/** The end of a teammate's round, with its result (Claude Code's "Teammate @x finished") and the report before it. */
+function TeammateDone({
+  node,
+  item,
+  stateKey,
+}: {
+  node: Node;
+  item: Extract<TeammateItem, { kind: "done" }>;
+  stateKey: string;
+}) {
+  const reportKey = `${stateKey}:report`;
+  const open = useUi((s) => s.expanded[reportKey] ?? false);
+  const toggle = useUi((s) => s.toggleExpanded);
+  const r = item.report;
+  return (
+    <MessageCard
+      testId="teammate-done"
+      color={item.color}
+      who={item.who}
+      tag={item.failed ? "失败" : "完成"}
+      tone={item.failed ? "error" : "live"}
+      timeMs={node.timestampMs}
+    >
+      <MessageBody text={item.result} stateKey={stateKey} testId="teammate-result" />
+      {r && (
+        <div data-testid="teammate-done-report" className="mt-0.5 flex flex-col gap-1.5 border-t border-border pt-1.5">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => toggle(reportKey)}
+            className="flex min-w-0 items-center gap-1.5 text-left text-[12px] text-secondary hover:text-text"
+          >
+            {open ? (
+              <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+            ) : (
+              <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+            )}
+            <span className="shrink-0">报告</span>
+            <span className="min-w-0 truncate">{previewOf(r)}</span>
+          </button>
+          {open && (
+            <div className="pl-[18px]">
+              <MessageBody text={r.body} stateKey={`${reportKey}:body`} />
+            </div>
+          )}
+        </div>
+      )}
+    </MessageCard>
   );
 }
 
 const EVENT_LABEL = { idle: "空闲", failed: "失败", exited: "已退出", task: "分配任务" } as const;
 
 /** Idle, failed without a result, shut down, task assigned: one centered line. */
-function TeammateEvent({ node, part }: { node: Node; part: Exclude<TeammatePart, { kind: "report" | "done" }> }) {
+function TeammateEvent({ node, part }: { node: Node; part: Exclude<TeammateItem, { kind: "report" | "done" }> }) {
   const detail =
     part.kind === "failed"
       ? part.reason

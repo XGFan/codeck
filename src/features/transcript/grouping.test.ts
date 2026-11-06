@@ -271,3 +271,47 @@ describe("回答与工具组的摘要", () => {
     expect(describeCalls(calls.filter((c) => c.name === "mcp__gh__list")).text).toBe("1 次工具调用");
   });
 });
+
+describe("API retries", () => {
+  const retry = (id: string, attempt: number) =>
+    otherNode(id, attempt, {
+      kind: "system",
+      subtype: "api_error",
+      level: "error",
+      text: JSON.stringify({
+        error: { formatted: "529 Overloaded", status: 529 },
+        maxRetries: 10,
+        retryAttempt: attempt,
+        retryInMs: 530 * attempt,
+      }),
+    });
+
+  it("retries an API error message ends go on its role line, not a row of their own", () => {
+    const { rows, index } = buildRows(
+      input([
+        userNode("u1", 0, "go"),
+        retry("r1", 1),
+        retry("r2", 2),
+        asstNode("e1", 3, [text("API Error: 529 Overloaded.")], { isApiError: true }),
+      ]),
+    );
+    expect(kinds(rows)).toEqual(["prompt", "text"]);
+    const t = rows[1] as Extract<Row, { kind: "text" }>;
+    expect(t.role?.retries?.map((n) => n.id)).toEqual(["r1", "r2"]);
+    expect(index.get("r2")).toBe(1);
+  });
+
+  it("consecutive retries are one row: recovered when Claude went on, else not", () => {
+    const recovered = buildRows(
+      input([userNode("u1", 0, "go"), retry("r1", 1), retry("r2", 2), asstNode("a1", 3, [text("done")])]),
+    );
+    expect(kinds(recovered.rows)).toEqual(["prompt", "apiRetry", "text"]);
+    const r = recovered.rows[1] as Extract<Row, { kind: "apiRetry" }>;
+    expect(r.nodes.map((n) => n.id)).toEqual(["r1", "r2"]);
+    expect(r.recovered).toBe(true);
+    expect(recovered.index.get("r2")).toBe(1);
+
+    const pending = buildRows(input([userNode("u1", 0, "go"), retry("r1", 1)]));
+    expect(pending.rows[1]).toMatchObject({ kind: "apiRetry", recovered: false });
+  });
+});

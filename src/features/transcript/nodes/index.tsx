@@ -9,7 +9,15 @@ import { Anchor } from "./Anchor";
 import { AskRow } from "./Ask";
 import { AssistantRow, AssistantSegment } from "./Assistant";
 import { InheritedBanner, InheritedDivider } from "./Fork";
-import { AttachmentLine, CompactRow, CompactSummaryCard, SystemLine, ToolResultLine, UnknownJson } from "./Misc";
+import {
+  ApiRetryRow,
+  AttachmentLine,
+  CompactRow,
+  CompactSummaryCard,
+  SystemLine,
+  ToolResultLine,
+  UnknownJson,
+} from "./Misc";
 import { NotificationRow, UserPromptView } from "./User";
 
 export { TranscriptContext, scrollToNode, type ScrollRequest, type TranscriptCtx } from "./scroll";
@@ -58,6 +66,8 @@ export function RowView({ row }: { row: Row }) {
       return <AskRow node={row.node} call={row.call} role={row.role} />;
     case "compact":
       return <CompactRow boundary={row.boundary} summary={row.summary} />;
+    case "apiRetry":
+      return <ApiRetryRow nodes={row.nodes} recovered={row.recovered} stateKey={row.key} />;
     case "node":
       return <NodeView node={row.node} />;
     case "inheritedBanner":

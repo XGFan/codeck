@@ -8,17 +8,19 @@ import {
   Globe,
   Pencil,
   Search,
+  Send,
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 
 import { CopyButton } from "@/components/ui/copy-button";
 import type { ToolCall } from "@/ipc/bindings";
 import { diffStrings, joinDiffs, rowsFromHunks, type DiffResult, type Hunk } from "@/lib/diff";
 import { langFromPath } from "@/lib/shiki";
 import { cn } from "@/lib/cn";
-import { scrollToNode } from "../nodes/scroll";
+import { Markdown } from "@/lib/markdown";
+import { scrollToNode, TranscriptContext } from "../nodes/scroll";
 import { toolKey } from "../keys";
 import { parseJson, prettyJson } from "../util";
 import { useFullInput, useOutput, type ToolCtx } from "./data";
@@ -488,6 +490,91 @@ export function CompactView({ nodeId, call, startMs, ctx }: RenderProps) {
         </div>
       )}
       {call.result ? <OutputView out={out} /> : <PendingSpinner />}
+    </Shell>
+  );
+}
+
+/* ───────────── SendMessage ───────────── */
+
+interface SendResult {
+  success?: boolean;
+  message?: string;
+  routing?: { targetColor?: string };
+}
+
+/**
+ * A message the agent sent: 「发消息给 ● teammate」, 「发消息给会话 …」 or 「续接 Subagent …」 with its summary;
+ * opened, the message itself and whether it was delivered (a resumed Subagent links to its card and notice).
+ */
+export function SendMessageView({ nodeId, call, startMs }: RenderProps) {
+  const t = useContext(TranscriptContext);
+  const input = parseJson(call.inputJson) ?? {};
+  const to = str(input.to) || str(input.recipient);
+  const message = str(input.message) || str(input.content);
+  const summary = str(input.summary) || message.split("\n", 1)[0]!;
+  const res = parseJson<SendResult>(call.result?.extraJson) ?? parseJson<SendResult>(call.result?.text);
+  const runs = t ? [...t.runs.values()] : [];
+  const run = runs.find((r) => r.agentId === to) ?? runs.find((r) => r.teammate && r.name === to);
+  const agent = !!run && !run.teammate;
+  const session = !run && (to.startsWith("uds:") || input.recipient_kind === "session");
+  const color = run?.color ?? res?.routing?.targetColor ?? null;
+  const verb = agent ? "续接 Subagent" : session ? "发消息给会话" : "发消息给";
+  const target = agent
+    ? (run.description ?? run.agentType ?? to)
+    : session
+      ? (t?.peerNames.get(to) ?? "另一个会话")
+      : to;
+  const failed = isErr(call) || res?.success === false;
+  const card = agent && run.toolUseId ? t?.toolNode.get(run.toolUseId) : undefined;
+  return (
+    <Shell
+      nodeId={nodeId}
+      call={call}
+      startMs={startMs}
+      failed={failed}
+      icon={<Send {...ip} />}
+      name={verb}
+      summary={
+        <>
+          <span data-testid="send-target" className="flex shrink-0 items-center gap-1.5 text-text" title={to}>
+            {color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />}
+            <span className="max-w-[24ch] truncate">{target}</span>
+          </span>
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+        </>
+      }
+    >
+      <Markdown text={message} className="bg-ground px-3 py-2.5 text-[14px] leading-[1.7]" />
+      {call.result && (
+        <div
+          data-testid="send-status"
+          className="flex flex-wrap items-center gap-x-2 border-t border-border bg-list px-3 py-1.5 text-[11.5px] text-secondary"
+        >
+          {failed ? (
+            <span className="whitespace-pre-wrap text-error">{res?.message ?? call.result.text}</span>
+          ) : (
+            <span className="text-live">{agent ? "已续接" : "已送达"}</span>
+          )}
+          {card && t && run?.toolUseId && (
+            <button
+              type="button"
+              onClick={() => scrollToNode({ scope: t.scope, nodeId: card, toolUseId: run.toolUseId! })}
+              className="text-accent hover:underline"
+            >
+              查看 Subagent ↑
+            </button>
+          )}
+          {agent && call.notificationNodeId && t && (
+            <button
+              type="button"
+              onClick={() => scrollToNode({ scope: t.scope, nodeId: call.notificationNodeId! })}
+              className="text-accent hover:underline"
+            >
+              跳到结束通知 ↓
+            </button>
+          )}
+        </div>
+      )}
     </Shell>
   );
 }

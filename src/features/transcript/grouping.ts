@@ -16,6 +16,8 @@ export interface RoleInfo {
   node: Node;
   /** Branch switcher for an assistant head (rendered before the role line). */
   branch: BranchPoint | null;
+  /** API retries (`system/api_error`) right before an API error message: it ends them (「重试 N 次后放弃」). */
+  retries?: Node[];
 }
 
 export type GroupItem =
@@ -69,6 +71,8 @@ export type Row = RowBase &
     | { kind: "ask"; node: Node; call: ToolCallBlock; role: RoleInfo | null }
     | { kind: "unknownBlock"; node: Node; blockType: string; rawJson: string; role: RoleInfo | null }
     | { kind: "compact"; boundary: Node; summary: Node | null }
+    /** Consecutive API retries Claude Code wrote (`system/api_error`); `recovered` when Claude went on after them. */
+    | { kind: "apiRetry"; nodes: Node[]; recovered: boolean }
     | { kind: "node"; node: Node }
     | {
         kind: "inheritedBanner";
@@ -117,6 +121,9 @@ export interface Grouping {
   /** CompactSummary node id → its expansion key. */
   compactKeyOf: Map<string, string>;
 }
+
+/** An API request Claude Code retries (`system/api_error`). */
+const isRetry = (n: Node) => n.body.kind === "system" && n.body.subtype === "api_error";
 
 export const anchorKey = (nodeId: string, toolUseId?: string | null) => (toolUseId ? `${nodeId}|${toolUseId}` : nodeId);
 
@@ -167,8 +174,26 @@ export function buildRows(input: GroupingInput): Grouping {
   const takeRole = () => {
     const r = pendingRole;
     pendingRole = null;
+    // The retries an API error ends point at its first row.
+    for (const n of r?.retries ?? []) mark(n.id, rows.length);
     return r;
   };
+  let retries: Node[] = [];
+  /** Consecutive API retries end at `next`: an API error message takes them, otherwise they are a row. */
+  const flushRetries = (next: Node | undefined) => {
+    if (retries.length === 0) return;
+    const nodes = retries;
+    retries = [];
+    if (next?.body.kind === "assistant" && next.body.isApiError) {
+      retriesBefore.set(next.id, nodes);
+      return;
+    }
+    push(
+      { kind: "apiRetry", key: `retry:${nodes[0]!.id}`, turn, nodes, recovered: next?.body.kind === "assistant" },
+      nodes.map((n) => [n.id]),
+    );
+  };
+  const retriesBefore = new Map<string, Node[]>();
 
   const emitThinking = (items: GroupItem[]) => {
     for (const it of items)
@@ -244,7 +269,7 @@ export function buildRows(input: GroupingInput): Grouping {
     if (!inRun || branch || body.isApiError) {
       endRun();
       inRun = true;
-      pendingRole = { node, branch };
+      pendingRole = { node, branch, retries: retriesBefore.get(node.id) };
     }
     const blocks = body.blocks;
     for (let i = 0; i < blocks.length; i++) {
@@ -337,6 +362,7 @@ export function buildRows(input: GroupingInput): Grouping {
 
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]!;
+    if (!isRetry(node)) flushRetries(node);
     const b = node.body;
 
     // Fork prefix: one banner row (+ the inherited rows when expanded), then the "new content" divider.
@@ -414,9 +440,11 @@ export function buildRows(input: GroupingInput): Grouping {
         break;
       default:
         endRun();
-        push({ kind: "node", key: node.id, turn, node }, [[node.id]]);
+        if (isRetry(node)) retries.push(node);
+        else push({ kind: "node", key: node.id, turn, node }, [[node.id]]);
     }
   }
+  flushRetries(undefined);
   endRun();
 
   if (!agent && input.orphanSubagentIds.length > 0) {

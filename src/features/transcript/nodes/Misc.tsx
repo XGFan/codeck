@@ -1,9 +1,9 @@
-import { ChevronDown, ChevronRight, Minimize2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Minimize2, TriangleAlert } from "lucide-react";
 import { Markdown } from "@/lib/markdown";
 import { cn } from "@/lib/cn";
 import type { Node } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
-import { formatTokens } from "@/lib/format";
+import { formatDuration, formatTokens } from "@/lib/format";
 import { compactKey } from "../keys";
 import { clock, prettyJson } from "../util";
 import { Anchor } from "./Anchor";
@@ -114,5 +114,98 @@ export function UnknownJson({ label, json }: { label: string; json: string }) {
         {prettyJson(json)}
       </pre>
     </div>
+  );
+}
+
+/** What one API retry says (`system/api_error`, shown as its JSON fields); null when its text is not that JSON. */
+export function retryInfo(node: Node): { error: string; attempt: number; max: number; waitMs: number | null } | null {
+  const b = node.body;
+  if (b.kind !== "system") return null;
+  const v = parseJsonObject(b.text);
+  if (!v) return null;
+  const e = (v.error ?? {}) as Record<string, unknown>;
+  const conn = (e.connection ?? null) as Record<string, unknown> | null;
+  const error =
+    (typeof e.formatted === "string" && e.formatted) ||
+    (conn && typeof conn.code === "string" && conn.code) ||
+    (typeof e.message === "string" && e.message.split("\n", 1)[0]) ||
+    "";
+  const attempt = typeof v.retryAttempt === "number" ? v.retryAttempt : 0;
+  const max = typeof v.maxRetries === "number" ? v.maxRetries : 0;
+  return { error, attempt, max, waitMs: typeof v.retryInMs === "number" ? v.retryInMs : null };
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const v: unknown = JSON.parse(text);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Consecutive API retries as one line — the error and how many — red, or grey when Claude went on after them;
+ * opened, each attempt and how long Claude Code waited before it.
+ */
+export function ApiRetryRow({ nodes, recovered, stateKey }: { nodes: Node[]; recovered: boolean; stateKey: string }) {
+  const open = useUi((s) => s.expanded[stateKey] ?? false);
+  const toggle = useUi((s) => s.toggleExpanded);
+  const infos = nodes.map(retryInfo);
+  const error = infos.find((i) => i?.error)?.error ?? "";
+  const what = error ? `API 请求失败：${error}` : "API 请求失败";
+  return (
+    <Anchor nodeId={nodes[0]!.id} className="flex flex-col gap-1">
+      <button
+        type="button"
+        data-testid="api-retry"
+        data-recovered={recovered || undefined}
+        aria-expanded={open}
+        onClick={() => toggle(stateKey)}
+        className={cn(
+          "flex items-center gap-2 text-left text-[12px] hover:underline",
+          recovered ? "text-secondary" : "text-error",
+        )}
+      >
+        {open ? (
+          <ChevronDown size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        )}
+        <TriangleAlert size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        <span className="min-w-0">
+          {what}
+          {recovered ? `，重试 ${nodes.length} 次后恢复` : ` · 重试 ${nodes.length} 次`}
+        </span>
+        <span className="shrink-0 text-secondary">{clock(nodes[0]!.timestampMs)}</span>
+      </button>
+      {open && (
+        <div
+          data-testid="api-retry-list"
+          className="ml-1.5 flex flex-col gap-0.5 border-l-2 border-border pl-4 text-[12px] text-secondary"
+        >
+          {nodes.map((n, i) => {
+            const r = infos[i];
+            const line = r
+              ? [
+                  r.max ? `第 ${r.attempt}/${r.max} 次` : `第 ${r.attempt || i + 1} 次`,
+                  r.waitMs != null ? `${formatDuration(r.waitMs, "detail")}后重试` : null,
+                  clock(n.timestampMs),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : n.body.kind === "system" && n.body.text;
+            // The first one's anchor is the row itself.
+            return i === 0 ? (
+              <div key={n.id}>{line}</div>
+            ) : (
+              <Anchor key={n.id} nodeId={n.id}>
+                {line}
+              </Anchor>
+            );
+          })}
+        </div>
+      )}
+    </Anchor>
   );
 }

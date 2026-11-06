@@ -131,3 +131,68 @@ export function peerMessages(text: string, from: string | null): TeammateMessage
   const body = text.trim().replace(/^The .+ plugin sent a message:\s*/, "");
   return [{ id: from, color: null, summary: null, body }];
 }
+
+/**
+ * What a relayed message shows, item by item: every report its own card; the end of a round with its result one
+ * card, carrying the report the same teammate sent just before it (dropped when it says nearly the same); the
+ * other events as they are.
+ */
+export type TeammateItem =
+  | { kind: "report"; message: TeammateMessage }
+  | (Extract<TeammatePart, { kind: "done" }> & { report: TeammateMessage | null })
+  | Exclude<TeammatePart, { kind: "report" | "done" }>;
+
+export function teammateItems(parts: TeammatePart[]): TeammateItem[] {
+  const out: TeammateItem[] = [];
+  parts.forEach((p, i) => {
+    if (p.kind === "report") {
+      const next = parts[i + 1];
+      p.messages.forEach((m, j) => {
+        // The report right before its sender's done goes with that card.
+        if (j === p.messages.length - 1 && next?.kind === "done" && m.id === next.who) return;
+        out.push({ kind: "report", message: m });
+      });
+    } else if (p.kind === "done") {
+      const prev = parts[i - 1];
+      const m = prev?.kind === "report" ? prev.messages[prev.messages.length - 1] : undefined;
+      out.push({ ...p, report: m && m.id === p.who && !nearlySame(m.body, p.result) ? m : null });
+    } else {
+      out.push(p);
+    }
+  });
+  return out;
+}
+
+const norm = (s: string) => s.replace(/[\s`*_#>|\-:：，。、；;,.!！?？()（）[\]]/g, "").toLowerCase();
+
+/** Whether two texts say nearly the same (one contains the other, or their character pairs mostly match). */
+export function nearlySame(a: string, b: string): boolean {
+  const x = norm(a);
+  const y = norm(b);
+  if (!x || !y) return false;
+  if (x.includes(y) || y.includes(x)) return true;
+  const pairs = (s: string) => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) m.set(s.slice(i, i + 2), (m.get(s.slice(i, i + 2)) ?? 0) + 1);
+    return m;
+  };
+  const px = pairs(x);
+  const py = pairs(y);
+  let common = 0;
+  for (const [g, n] of px) common += Math.min(n, py.get(g) ?? 0);
+  return (2 * common) / (x.length - 1 + (y.length - 1)) >= 0.8;
+}
+
+/** Other Sessions' sockets → names, from the `<cross-session-message from="uds:…" from-name="…">` they sent. */
+export function peerNames(nodes: Array<{ body: { kind: string; text?: string } }>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const n of nodes) {
+    if (n.body.kind !== "userPrompt" || !n.body.text) continue;
+    for (const m of n.body.text.matchAll(/<cross-session-message\b([^>]*)>/g)) {
+      const from = attr(m[1]!, "from");
+      const name = attr(m[1]!, "from-name");
+      if (from && name) out.set(from, name);
+    }
+  }
+  return out;
+}

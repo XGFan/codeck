@@ -1,5 +1,14 @@
 import type { ToolCall, TranscriptScope } from "@/ipc/bindings";
-import { BashView, CompactView, EditView, GenericView, ReadView, TaskView, WriteView } from "./renderers";
+import {
+  BashView,
+  CompactView,
+  EditView,
+  GenericView,
+  ReadView,
+  SendMessageView,
+  TaskView,
+  WriteView,
+} from "./renderers";
 import { parseJson } from "../util";
 import { useToolCtx } from "./data";
 
@@ -48,6 +57,8 @@ export function ToolCallView({ nodeId, call, startMs, sessionId, scope }: ToolCa
     case "TaskUpdate":
     case "TaskList":
       return <TaskView {...p} />;
+    case "SendMessage":
+      return <SendMessageView {...p} />;
     case "Grep":
     case "Glob":
     case "WebFetch":

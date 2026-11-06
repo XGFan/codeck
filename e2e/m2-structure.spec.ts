@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openSession, RICH_TITLE, reveal, scrollBy } from "./helpers";
 import type { JumpTarget } from "../src/ipc/bindings";
 
@@ -395,18 +395,19 @@ test("从其他 Session 发起 pendingJump 时打开目标 Session 并定位", a
   await expect(hit).toBeInViewport();
 });
 
-test("Teammate 消息显示为可折叠卡片而非用户提问", async ({ page }) => {
+test("Teammate 的报告是一张卡片：名字、「报告」、summary 作标题，正文直接显示，不当作你的消息", async ({ page }) => {
   await openSession(page, RICH_TITLE);
-  const card = page.getByTestId("teammate-message");
+  const card = page.getByTestId("teammate-message").first();
   await reveal(page.getByTestId("transcript"), card);
-  await expect(card).toContainText("Teammate · docs-writer");
-  await expect(card.getByTestId("teammate-preview")).toHaveText("限流文档已更新");
+  await expect(card).toContainText("docs-writer");
+  await expect(card.getByTestId("message-tag")).toHaveText("报告");
+  await expect(card.getByTestId("message-title")).toHaveText("限流文档已更新");
   await expect(card).not.toContainText("你 ·");
-  await expect(card.getByTestId("teammate-body")).toHaveCount(0);
-  await card.getByRole("button", { expanded: false }).click();
   const body = card.getByTestId("teammate-body");
   await expect(body).toContainText("已在 docs/rate-limit.md 补充配置说明");
   await expect(body.locator("li")).toHaveCount(2);
+  // Prose size, as Claude's text.
+  await expect(body.locator("p").first()).toHaveCSS("font-size", "14px");
   await expect(body).not.toContainText("This came from another Claude session");
 });
 
@@ -415,15 +416,27 @@ test("Teammate：一轮的结果是一张卡片，空闲、失败、分配任务
 }) => {
   await openSession(page, RICH_TITLE);
   const transcript = page.getByTestId("transcript");
-  const done = page.getByTestId("teammate-done");
+  const done = page.getByTestId("teammate-done").filter({ hasText: "限流文档写好了" });
   await reveal(transcript, done);
   await expect(done).toContainText("docs-writer");
   await expect(done).toContainText("完成");
   await expect(done).not.toContainText("idle_notification");
   await expect(done.getByTestId("teammate-result").locator("li")).toHaveCount(5);
+  await expect(done.getByTestId("message-tag")).toHaveText("完成");
   // A long result starts clamped.
   await done.getByRole("button", { name: "展开全文" }).click();
   await expect(done.getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
+
+  // A report and the end of the round in one message: one card, the report folded inside it.
+  const pair = page.getByTestId("teammate-done").filter({ hasText: "Retry-After 的示例写好了" });
+  await reveal(transcript, pair);
+  await expect(page.getByTestId("teammate-message").filter({ hasText: "429 示例已补" })).toHaveCount(0);
+  const report = pair.getByTestId("teammate-done-report");
+  await expect(report).toContainText("报告");
+  await expect(report).toContainText("429 示例已补");
+  await expect(report.locator("table")).toHaveCount(0);
+  await report.getByRole("button", { expanded: false }).click();
+  await expect(report.locator("table")).toBeVisible();
 
   const event = (kind: string) => page.locator(`[data-testid="teammate-event"][data-kind="${kind}"]`);
   await reveal(transcript, event("exited"));
@@ -443,22 +456,90 @@ test("Teammate：一轮的结果是一张卡片，空闲、失败、分配任务
   await expect(card).not.toContainText("Spawned successfully");
 });
 
-test("其他 Agent 经 SendMessage 发来的消息显示为可折叠卡片，写明来源，不当作你的消息", async ({ page }) => {
+test("其他 Agent 经 SendMessage 发来的消息是卡片，写明来源，不当作你的消息", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const transcript = page.getByTestId("transcript");
   const peer = page.getByTestId("peer-message");
   await reveal(transcript, peer.first());
-  const session = peer.filter({ hasText: "会话 · codeck-99" });
-  await expect(session.getByTestId("teammate-preview")).toHaveText("限流文档我这边也改了一处，合并前先拉一下。");
+  const session = peer.filter({ hasText: "codeck-99" });
+  await expect(session.getByTestId("message-tag")).toHaveText("会话");
   await expect(session).not.toContainText("你 ·");
-  await session.getByRole("button", { expanded: false }).click();
   const body = session.getByTestId("teammate-body");
+  await expect(body).toContainText("限流文档我这边也改了一处，合并前先拉一下。");
   await expect(body.locator("li")).toHaveCount(1);
   await expect(body).not.toContainText("cross-session-message");
   await expect(body).not.toContainText("This came from another Claude session");
-  await expect(peer.filter({ hasText: "Agent · ag-async1" }).getByTestId("teammate-preview")).toHaveText(
-    "集成测试还差窗口恢复的用例，正在补。",
-  );
+  const agent = peer.filter({ hasText: "ag-async1" });
+  await expect(agent.getByTestId("message-tag")).toHaveText("Agent");
+  await expect(agent.getByTestId("teammate-body")).toHaveText("集成测试还差窗口恢复的用例，正在补。");
+});
+
+test("SendMessage 写明发给谁（teammate 带颜色、会话写名字、Subagent 写续接）与摘要；展开是消息正文与是否送达", async ({
+  page,
+}) => {
+  const sid = await openSession(page, RICH_TITLE);
+  const at = async (toolUseId: string) => {
+    await jump(page, {
+      sessionId: sid,
+      scope: { kind: "main" },
+      branchChoices: [],
+      nodeId: "n14",
+      toolUseId,
+      agentPath: [],
+    });
+    const c = page.locator(`[data-anchor="n14|${toolUseId}"] [data-testid="tool-call"]`);
+    await expect(c).toBeVisible();
+    return c;
+  };
+  // A jump to a call may already have opened it.
+  const open = async (c: Locator) => {
+    const toggle = c.locator("button[aria-expanded]").first();
+    if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  };
+
+  const team = await at("tu_send_team");
+  await expect(team).toContainText("发消息给");
+  await expect(team).not.toContainText("SendMessage");
+  await expect(team.getByTestId("send-target")).toHaveText("docs-writer");
+  await expect(team.getByTestId("send-target").locator("span").first()).toHaveCSS("background-color", "rgb(0, 128, 0)");
+  await expect(team).toContainText("补 Retry-After 示例");
+  await open(team);
+  const body = team.getByTestId("tool-body");
+  await expect(body.locator("strong")).toHaveText("429 响应");
+  await expect(body).not.toContainText('"to"');
+  await expect(team.getByTestId("send-status")).toHaveText("已送达");
+
+  const session = await at("tu_send_session");
+  await expect(session).toContainText("发消息给会话");
+  await expect(session.getByTestId("send-target")).toHaveText("codeck-99");
+
+  const resume = await at("tu_sendmsg");
+  await expect(resume).toContainText("续接 Subagent");
+  await open(resume);
+  await expect(resume.getByTestId("send-status")).toContainText("已续接");
+  await resume.getByRole("button", { name: "跳到结束通知 ↓" }).click();
+  await expect(page.locator('[data-anchor="n-notify2"][data-highlighted]')).toBeVisible();
+});
+
+test("API 重试：放弃了的并进「API 错误」那一行，恢复了的是灰色的一行，点开列出每次；不显示 JSON", async ({ page }) => {
+  const sid = await openSession(page, RICH_TITLE);
+  const go = (nodeId: string) =>
+    jump(page, { sessionId: sid, scope: { kind: "main" }, branchChoices: [], nodeId, toolUseId: null, agentPath: [] });
+
+  await go("n-retry1");
+  const error = page.getByTestId("api-error");
+  await expect(error).toBeVisible();
+  await expect(error).toContainText("API 错误 · 重试 2 次后放弃");
+  await expect(page.getByTestId("transcript")).not.toContainText("retryAttempt");
+
+  await go("n-retry3");
+  const retry = page.getByTestId("api-retry");
+  await expect(retry).toHaveCount(1);
+  await expect(retry).toHaveText(/API 请求失败：529 Overloaded，重试 1 次后恢复/);
+  await expect(retry).toHaveAttribute("data-recovered", "true");
+  await retry.click();
+  await expect(page.getByTestId("api-retry-list")).toHaveText(/第 1\/10 次 · 520 毫秒后重试/);
 });
 
 test("当前 Session 被移除后会话区回到空状态", async ({ page }) => {

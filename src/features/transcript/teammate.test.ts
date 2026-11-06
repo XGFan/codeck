@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { peerMessages, previewOf, teammateParts } from "./teammate";
+import { nearlySame, peerMessages, previewOf, teammateItems, teammateParts } from "./teammate";
 
 const msg = (attrs: string, body: string) => `<teammate-message ${attrs}>\n${body}\n</teammate-message>`;
 const relayed = (...blocks: string[]) =>
@@ -79,5 +79,46 @@ describe("peerMessages", () => {
     expect(peerMessages("The plannotator plugin sent a message:\nFeedback.", "plannotator")).toEqual([
       { id: "plannotator", color: null, summary: null, body: "Feedback." },
     ]);
+  });
+});
+
+describe("teammateItems", () => {
+  const report = (body: string, summary?: string) =>
+    msg(`teammate_id="bench" color="green"${summary ? ` summary="${summary}"` : ""}`, body);
+  const done = (result: string) =>
+    msg('teammate_id="bench" color="green"', json({ type: "idle_notification", from: "bench", result }));
+
+  it("a report right before its sender's done goes into that card", () => {
+    const items = teammateItems(
+      teammateParts(
+        relayed(
+          report("| impl | p99 |\n|---|---|\n| redis | 7.2 ms |", "压测结果"),
+          done("压测完成：Redis p99 7.2 ms，脚本在 scripts/bench.sh。"),
+        ),
+      ),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "done", who: "bench", report: { id: "bench", summary: "压测结果" } });
+  });
+
+  it("drops the report when the result says nearly the same", () => {
+    const text = "Redis 计数完成，提交 7c41e2a，16 个测试全部通过。";
+    const items = teammateItems(teammateParts(relayed(report(text), done(`${text}`))));
+    expect(items).toEqual([expect.objectContaining({ kind: "done", report: null })]);
+    expect(nearlySame("**Redis** 计数完成，提交 `7c41e2a`。", "Redis 计数完成，提交 7c41e2a")).toBe(true);
+    expect(nearlySame("压测结果表", "Redis 计数完成，提交 7c41e2a")).toBe(false);
+  });
+
+  it("other reports stay cards of their own, one per message", () => {
+    const other = msg('teammate_id="redis" color="blue"', "Redis 写好了");
+    const items = teammateItems(
+      teammateParts(relayed(other, report("第一条"), report("第二条"), done("完全不同的结论"))),
+    );
+    expect(items.map((i) => (i.kind === "report" ? `report:${i.message.id}:${i.message.body}` : i.kind))).toEqual([
+      "report:redis:Redis 写好了",
+      "report:bench:第一条",
+      "done",
+    ]);
+    expect(items[2]).toMatchObject({ report: { body: "第二条" } });
   });
 });

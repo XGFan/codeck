@@ -428,6 +428,15 @@ export const richMain: Node[] = [
       origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: null },
     },
   ),
+  // A report and the end of the round in one message: one card, the report folded inside it.
+  userNode(
+    "n-team-pair",
+    t + 9_500,
+    'Another Claude session sent a message:\n<teammate-message teammate_id="docs-writer" color="green" summary="429 示例已补">\n已在文档末尾加了 429 响应的示例：\n\n| 字段 | 值 |\n|---|---|\n| status | 429 |\n| Retry-After | 1 |\n</teammate-message>\n\n<teammate-message teammate_id="docs-writer" color="green">\n{"type": "idle_notification", "from": "docs-writer", "timestamp": "2026-11-06T02:00:59.000Z", "idleReason": "available", "result": "Retry-After 的示例写好了，放在 docs/rate-limit.md 末尾。"}\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
+    {
+      origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: "429 示例已补" },
+    },
+  ),
   userNode(
     "n-team-batch",
     t + 11_000,
@@ -481,8 +490,47 @@ export const richMain: Node[] = [
     call(
       "tu_sendmsg",
       "SendMessage",
-      { to: "ag-async1", message: "再补一个窗口恢复的边界用例。" },
-      { text: "Resuming agent ag-async1" },
+      { to: "ag-async1", summary: "补窗口恢复用例", message: "再补一个窗口恢复的边界用例。" },
+      {
+        text: '{"success":true,"message":"Resuming agent ag-async1","resumedAgentId":"ag-async1"}',
+        extraJson: '{"success":true,"message":"Resuming agent ag-async1","resumedAgentId":"ag-async1"}',
+      },
+      { notificationNodeId: "n-notify2" },
+    ),
+    // To a teammate (its color comes with the result) and to another Session (named by the messages it sent).
+    call(
+      "tu_send_team",
+      "SendMessage",
+      {
+        to: "docs-writer",
+        summary: "补 Retry-After 示例",
+        message: "文档里再加一段 **429 响应**的示例，带 `Retry-After`。",
+        type: "message",
+        recipient: "docs-writer",
+        recipient_kind: "name",
+      },
+      {
+        text: '{"success":true,"message":"Message sent to docs-writer\'s inbox"}',
+        extraJson:
+          '{"success":true,"message":"Message sent to docs-writer\'s inbox","routing":{"sender":"team-lead","target":"@docs-writer","targetColor":"green"}}',
+      },
+    ),
+    call(
+      "tu_send_session",
+      "SendMessage",
+      {
+        to: "uds:/tmp/cc-socks/37039.sock",
+        summary: "合并前请先 rebase main",
+        message: "限流文档我这边也动了，合并前请先 rebase main。",
+        type: "message",
+        recipient: "uds:/tmp/cc-socks/37039.sock",
+        recipient_kind: "session",
+      },
+      {
+        text: '{"success":true,"message":"“合并前请先 rebase main” → uds:/tmp/cc-socks/37039.sock; in that session\'s inbox"}',
+        extraJson:
+          '{"success":true,"message":"“合并前请先 rebase main” → uds:/tmp/cc-socks/37039.sock; in that session\'s inbox"}',
+      },
     ),
   ]),
   userNode(
@@ -528,6 +576,35 @@ export const richMain: Node[] = [
     ts(),
     "接下来把限流参数接到 config.toml，键名用 `[rate_limit] per_minute`，例如：\n\n```toml\n[rate_limit]\nper_minute = 120\n```\n\n没配置时沿用 120。",
   ),
+  // Claude Code retried the request (system/api_error) and gave up: the error message ends those retries.
+  otherNode("n-retry1", ts(), {
+    kind: "system",
+    subtype: "api_error",
+    level: "error",
+    text: '{"error":{"connection":null,"formatted":"529 Overloaded","isNetworkDown":false,"message":"529 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"overloaded_error\\",\\"message\\":\\"Overloaded\\"}}","rateLimits":null,"status":529},"maxRetries":10,"retryAttempt":1,"retryInMs":530}',
+  }),
+  otherNode("n-retry2", ts(), {
+    kind: "system",
+    subtype: "api_error",
+    level: "error",
+    text: '{"error":{"connection":null,"formatted":"529 Overloaded","isNetworkDown":false,"message":"529 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"overloaded_error\\",\\"message\\":\\"Overloaded\\"}}","rateLimits":null,"status":529},"maxRetries":10,"retryAttempt":2,"retryInMs":1060}',
+  }),
+  asstNode(
+    "n-apierr",
+    ts(),
+    [text("API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.")],
+    {
+      model: "<synthetic>",
+      isApiError: true,
+    },
+  ),
+  // Retried once more, then went on.
+  otherNode("n-retry3", ts(), {
+    kind: "system",
+    subtype: "api_error",
+    level: "error",
+    text: '{"error":{"connection":null,"formatted":"529 Overloaded","isNetworkDown":false,"message":"529 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"overloaded_error\\",\\"message\\":\\"Overloaded\\"}}","rateLimits":null,"status":529},"maxRetries":10,"retryAttempt":1,"retryInMs":520}',
+  }),
   asstNode(
     "n17",
     ts(),

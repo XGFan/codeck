@@ -138,18 +138,21 @@ export function teamSession(): Session {
       to: "bench-runner",
       summary: "改用 oha 压测",
       message: "本机没有 wrk，改用 oha（`brew install oha`），其余不变。",
+      type: "message",
+      recipient: "bench-runner",
+      recipient_kind: "name",
+      content: "本机没有 wrk，改用 oha（`brew install oha`），其余不变。",
     },
-    {
-      content: "Message sent to bench-runner's inbox",
-      toolUseResult: {
+    (() => {
+      // As claude 2.1.318 returns it: the result object, also as the JSON text of the tool_result.
+      const r = {
         success: true,
         message: "Message sent to bench-runner's inbox",
-        pin: null,
-        resumedAgentId: null,
-        revivedAgentId: null,
-      },
-      ms: 200,
-    },
+        msg_id: s.ids.uuid(),
+        routing: { sender: "team-lead", target: "@bench-runner", targetColor: "green", summary: "改用 oha 压测" },
+      };
+      return { content: [{ type: "text", text: JSON.stringify(r) }], toolUseResult: r, ms: 200 };
+    })(),
   );
   w.say("让 bench-runner 改用 oha 再跑。", { end: true });
   w.endTurn(t2, 3, 1);
