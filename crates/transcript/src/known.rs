@@ -18,6 +18,9 @@ pub const ENTRY_TYPES: &[&str] = &[
     "agent-name",
     "queue-operation",
     "atis-latch",
+    // Claude Code 2.1.317+: the logged-in account / organization owning the Session, re-appended with
+    // `permission-mode` and `atis-latch`; nothing to show.
+    "session-owner",
     "file-history-snapshot",
     "file-history-delta",
     "bridge-session",
