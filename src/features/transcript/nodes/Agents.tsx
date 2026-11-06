@@ -152,7 +152,7 @@ export function SubagentCard({ run, call, node }: { run: SubagentRun; call?: Too
 
 export function ParallelAgents({ cards }: { cards: AgentCardData[] }) {
   return (
-    <div data-testid="parallel-agents" className="flex w-full flex-col gap-2 border-l-2 border-border pl-3">
+    <div data-testid="parallel-agents" className="flex w-full flex-col gap-2">
       <div className="text-[11px] text-secondary">并行 · {cards.length} 个 Subagent</div>
       {cards.map((c) => (
         <SubagentCard key={c.call.toolUseId} run={c.run} call={c.call} node={c.node} />

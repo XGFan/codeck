@@ -61,6 +61,8 @@ test("打开 Subagent 面板，嵌套卡片推入面包屑，Esc 关闭", async 
   const card = page.locator('[data-testid="subagent-card"][data-agent-id="ag-sync1"]');
   await reveal(page.getByTestId("transcript"), card);
   await expect(page.getByTestId("parallel-agents")).toContainText("并行 · 2 个 Subagent");
+  // Just the label and the cards: no line along their left.
+  await expect(page.getByTestId("parallel-agents")).toHaveCSS("border-left-width", "0px");
   await card.getByTestId("open-subagent").click();
 
   const panel = page.getByTestId("subagent-panel");
