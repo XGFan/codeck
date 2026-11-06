@@ -726,6 +726,10 @@ const REWIND_PICKER_SUB: &str = "Restore the code and/or conversation to the poi
 const REWIND_PICKER_FOOT: &str = "Enter to continue · Esc to cancel";
 const REWIND_CONFIRM_SUB: &str =
     "Confirm you want to restore to the point before you sent this message:";
+/// The same page when the code cannot be restored (a Session with no file history, such as one
+/// started with `-p`): only the conversation is offered.
+const REWIND_CONFIRM_SUB_CONVERSATION: &str =
+    "Confirm you want to restore the conversation to the point before you sent this message:";
 /// The picker's last row: the conversation as it is.
 pub const REWIND_CURRENT: &str = "(current)";
 
@@ -844,7 +848,8 @@ impl RewindConfirm {
 }
 
 pub fn rewind_confirm(lines: &[String]) -> Option<RewindConfirm> {
-    let start = rewind_screen(lines, REWIND_CONFIRM_SUB)?;
+    let start = rewind_screen(lines, REWIND_CONFIRM_SUB)
+        .or_else(|| rewind_screen(lines, REWIND_CONFIRM_SUB_CONVERSATION))?;
     let mut c = RewindConfirm {
         quote: Vec::new(),
         ago: None,
@@ -1573,6 +1578,25 @@ mod tests {
         // Not a picker: the confirm page, an idle screen.
         assert!(rewind_picker(&screen("rewind_confirm_code.txt")).is_none());
         assert!(rewind_picker(&screen("rewind_restored.txt")).is_none());
+    }
+
+    #[test]
+    fn rewind_confirm_without_file_history() {
+        let c = rewind_confirm(&screen("rewind_confirm_no_history.txt")).unwrap();
+        assert_eq!(c.quote, ["reply with just: two"]);
+        assert_eq!(c.ago.as_deref(), Some("45m ago"));
+        assert_eq!(c.code.as_deref(), Some("The code will be unchanged."));
+        assert!(c.warning.is_none());
+        let labels: Vec<(u32, &str)> = c.options.iter().map(|o| (o.0, o.1.as_str())).collect();
+        assert_eq!(
+            labels,
+            [
+                (1, "Restore conversation"),
+                (2, "Summarize from here"),
+                (3, "Summarize up to here"),
+                (4, "Never mind"),
+            ]
+        );
     }
 
     #[test]

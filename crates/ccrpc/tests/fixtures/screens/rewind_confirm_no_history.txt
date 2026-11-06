@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.318
+▝▜██████▀  Sonnet 4.5 · API Usage Billing
+ ▝▝   ▝▝   /tmp/proj
+
+
+❯ reply with just: one
+
+⏺ one
+
+❯ reply with just: two
+
+⏺ two
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Confirm you want to restore the conversation to the point before you sent this message:
+
+   │ reply with just: two
+   │ (45m ago)
+
+   This message and everything after it will be removed.
+   The code will be unchanged.
+
+   ❯ 1. Restore conversation
+     2. Summarize from here
+     3. Summarize up to here
+     4. Never mind
