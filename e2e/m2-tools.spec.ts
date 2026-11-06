@@ -61,6 +61,21 @@ test("你的消息里的 [Image #n] 显示成图片块：悬停预览、点击�
   await expect(chip).toHaveText("图片 #1");
   await expect(bubble).toContainText("（现在的用量见 图片 #1），并设置每日备份保留 7 份。");
   await expect(page.getByTestId("image-thumb")).toHaveCount(0);
+  // Its words on the line with the words after it: the same top and height (as in the input box).
+  const [label, next] = await chip.evaluate((b) => {
+    const r = document.createRange();
+    const after = b.parentElement!.nextSibling!;
+    r.setStart(after, 0);
+    r.setEnd(after, 1);
+    const a = b.querySelector("[data-testid=prompt-image-label]")!.getBoundingClientRect();
+    const n = r.getBoundingClientRect();
+    return [
+      [a.top, a.height],
+      [n.top, n.height],
+    ];
+  });
+  expect(label[0]).toBeCloseTo(next[0], 0);
+  expect(label[1]).toBeCloseTo(next[1], 0);
   await chip.hover();
   await expect(page.getByTestId("prompt-image-preview").locator("img")).toBeVisible();
   await chip.click();

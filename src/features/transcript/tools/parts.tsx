@@ -420,10 +420,17 @@ export function ImageMarker({
         }}
         onPointerLeave={() => setHover(false)}
         onClick={() => src && setOpen(true)}
-        className="mx-[5px] inline-flex items-center gap-1 rounded-[5px] border border-border bg-ground px-1.5 align-[1px] text-[12.5px] leading-[20px] text-text hover:border-accent-border hover:text-accent"
+        // Drawn as the input box draws its image blocks: in the line's own font and height, so its words sit on the
+        // line with the words around it.
+        className="mx-[4px] rounded-[5px] bg-code px-[3px] text-text shadow-[0_0_0_1px_var(--color-border)] hover:text-accent hover:shadow-[0_0_0_1px_var(--color-accent-border)]"
       >
-        <ImageIcon size={13} strokeWidth={1.8} className="text-secondary" aria-hidden />
-        {label}
+        <ImageIcon
+          size={12}
+          strokeWidth={1.8}
+          className="mr-[3px] inline-block align-[-1.5px] text-secondary"
+          aria-hidden
+        />
+        <span data-testid="prompt-image-label">{label}</span>
       </button>
       {hover && image && (
         <span
