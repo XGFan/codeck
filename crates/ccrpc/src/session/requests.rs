@@ -210,6 +210,9 @@ impl Engine {
         self.resolved.insert(id.to_string());
         if self.announced.as_ref().is_some_and(|a| a.is(id)) {
             self.announced = None;
+            // Its dialog may stay up a moment: PostToolUse comes before the Process File leaves
+            // waiting. Not taken for a new dialog meanwhile (nor sent to the analyzer).
+            self.answered_until = Some(Instant::now() + ANSWER_SETTLE);
         }
     }
 
