@@ -151,11 +151,9 @@ export function DiagnosticsContent() {
   const flagged = d.versions
     .filter((v) => v.failedLines > 0 || v.unknownItems > 0)
     .sort((a, b) => cmpVersion(b.version, a.version));
-  const unknownTypes =
-    d.unknownEntryTypes.length +
-    d.unknownBlockTypes.length +
-    d.unknownSystemSubtypes.length +
-    d.unrecognizedMessages.length;
+  // The three type tables below; messages and tools have cards of their own.
+  const unknownTypes = d.unknownEntryTypes.length + d.unknownBlockTypes.length + d.unknownSystemSubtypes.length;
+  const unrecognized = d.unrecognizedMessages.length;
 
   return (
     <div data-testid="diagnostics" className="flex flex-col gap-5">
@@ -180,7 +178,7 @@ export function DiagnosticsContent() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
         <Card testId="diag-card-parsed" label="已扫描文件" tone="neutral" value={formatCount(d.filesScanned)} />
         <Card
           testId="diag-card-failed"
@@ -200,6 +198,12 @@ export function DiagnosticsContent() {
           tone={d.unknownTools.length ? "warn" : "neutral"}
           value={`${d.unknownTools.length} 个`}
         />
+        <Card
+          testId="diag-card-messages"
+          label="认不出的消息"
+          tone={unrecognized ? "warn" : "neutral"}
+          value={`${unrecognized} 种`}
+        />
       </div>
 
       <NameCountSection testId="diag-entry-types" title="未知条目类型" rows={d.unknownEntryTypes} />
@@ -218,7 +222,7 @@ export function DiagnosticsContent() {
           {versionSummary(
             d.versions.map((v) => v.version),
             flagged.length,
-            d.failedLines > 0 || unknownTypes > 0 || d.unknownTools.length > 0,
+            d.failedLines > 0 || unknownTypes > 0 || d.unknownTools.length > 0 || unrecognized > 0,
           )}
         </div>
         {flagged.length > 0 && (

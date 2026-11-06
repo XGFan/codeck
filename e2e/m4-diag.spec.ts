@@ -14,7 +14,9 @@ test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) =
   await expect(dialog.getByTestId("diag-tools")).toContainText("ScheduleWakeup");
   // A user message with a structure mark this version does not recognize.
   await expect(dialog.getByTestId("diag-messages")).toContainText("<handoff-message>");
-  await expect(dialog.getByTestId("diag-card-types")).toContainText("4 种");
+  // Each card counts the tables of its own kind: entry / block / subtype for types, messages apart.
+  await expect(dialog.getByTestId("diag-card-types")).toContainText("3 种");
+  await expect(dialog.getByTestId("diag-card-messages")).toContainText("1 种");
   // Only the versions with failed lines or unknown items are listed; the line above says the whole range.
   await expect(dialog.getByTestId("diag-versions-summary")).toHaveText(
     "共 3 个版本，从 2.1.76 到 2.1.91；下表只列出有失败行或未知项的 2 个",
