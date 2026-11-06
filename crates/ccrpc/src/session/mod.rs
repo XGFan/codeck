@@ -41,7 +41,7 @@ use self::announce::Announced;
 use self::requests::{HookPrompt, HookRequest, PreTool};
 use self::rewind::RewindReq;
 pub use self::startup::{cmd_attach, cmd_new, resolve_target};
-use self::turn::{Marks, TurnTracker};
+use self::turn::{Marks, TurnTracker, Typed};
 
 pub const PROTOCOL: u32 = 3;
 /// Longest wait between two looks while a command waits.
@@ -256,8 +256,8 @@ pub struct Engine {
     announced: Option<Announced>,
     startup_checked: Option<Instant>,
     startup_last: Option<Vec<String>>,
-    /// Queued follow-ups: text and image paths.
-    follow_ups: VecDeque<(String, Vec<String>)>,
+    /// Queued follow-ups (checked: image paths absolute).
+    follow_ups: VecDeque<rpc::Input>,
     /// What the person typed (or a steer sent) waiting in Claude Code's own queue, oldest first:
     /// the transcript's queue minus task notifications and Teammate messages.
     queue: Vec<String>,
@@ -583,7 +583,9 @@ impl Engine {
             loop {
                 for ev in t.poll() {
                     match ev {
-                        TxEvent::UserPrompt { uuid, text } => self.marks.prompt(uuid, text),
+                        TxEvent::UserPrompt { uuid, text, images } => {
+                            self.marks.prompt(uuid, text, images)
+                        }
                         TxEvent::Enqueued { content } => self.marks.enqueue(content),
                         TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
                             self.turns.note_history_text(b.text.clone());
@@ -1109,7 +1111,7 @@ impl Engine {
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
         match c {
-            Command::Prompt { text, images } => self.send_prompt_with(text, images),
+            Command::Prompt { input } => self.send_input(input),
             Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
             Command::SetMode { mode } => self.set_mode(*mode),
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
@@ -1118,13 +1120,12 @@ impl Engine {
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Rewind { uuid } => self.rewind(uuid),
             Command::AnswerRewind { request_id, option } => self.answer_rewind(request_id, *option),
-            Command::Steer { text, images } => self.steer(text, images),
-            Command::FollowUp { text, images } => {
+            Command::Steer { input } => self.steer_input(input),
+            Command::FollowUp { input } => {
                 self.require(true, "")?;
-                Self::clean_text(text)?;
                 // Checked now, not only when sent after the turn.
-                let images = Self::image_paths(images)?;
-                self.follow_ups.push_back((text.clone(), images));
+                let input = Self::checked_input(input)?;
+                self.follow_ups.push_back(input);
                 Ok(json!({"queued": self.follow_ups.len()}))
             }
             Command::Abort => self.abort(),

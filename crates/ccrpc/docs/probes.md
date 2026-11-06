@@ -37,6 +37,15 @@
 - 斜杠命令：直接写 `/clear`、`/model X` 文本再回车即可执行（`/model` 会先发一次请求校验模型，失败时屏幕显示 `model not changed`）。
 - shift+tab 依次切换权限模式：manual → accept edits → plan → auto → manual。2.1.316 新配置目录的默认是 auto（分类器自动审批，不弹审批框）。
 
+## 文字与图片穿插（2026-11-06，2.1.318）
+
+环境：Claude Code 2.1.318，mock 模型，隔离的配置目录。
+
+- bracketed paste 一个图片路径时，`[Image #n]` 插在**光标处**；按顺序逐项粘贴文字与图片，输入框是 `AAA [Image #1] BBB [Image #2] CCC`。transcript 的 `user` 条目记一个文字块 `"AAA [Image #1] BBB [Image #2] CCC"`，后面是各张图片（按粘贴编号从小到大，按顺序粘贴时即文字里的顺序），另有 `imagePasteIds`。忙时插话相同：队列里显示穿插的文字，`queued_command` 附件带着文字与图片。
+- **必须一项一项粘贴**：几次粘贴连着写，图片落到了最后（路径是异步解析的）。每段文字要等输入框显示出来、每张图片要等多一个 `[Image #n]` 且路径离开输入框，再写下一项。
+- `n` 不可预料：整个 Session 共用一个计数，`[Pasted text #n]` 也占号，清掉的占位符也用掉号。Claude Code 不在占位符前后加空格。
+- 长的文字段在输入框里折叠成 `[Pasted text #k +N lines]`，记录的是全文；部分账号的 `<pasted_content id=…>` 包裹出现在图片之间时是什么样子没有实测。
+
 ## 审批框（2.1.316）
 
 ```

@@ -32,22 +32,57 @@ pub enum Key {
     Bytes(Vec<u8>),
 }
 
+/// One item of `parts`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Part {
+    Text(String),
+    /// An image file on the Host, pasted by path.
+    Image(String),
+}
+
+/// What `prompt`, `steer` and `follow_up` type into the input box.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Input {
+    /// `text` with `images`: the image files pasted by path before the text.
+    Text { text: String, images: Vec<String> },
+    /// `parts`: text and image files pasted one by one, in this order.
+    Parts(Vec<Part>),
+}
+
+impl Input {
+    pub fn text(text: impl Into<String>) -> Input {
+        Input::Text {
+            text: text.into(),
+            images: Vec::new(),
+        }
+    }
+
+    /// The text typed: `text`, or the parts' text joined.
+    pub fn typed_text(&self) -> String {
+        match self {
+            Input::Text { text, .. } => text.clone(),
+            Input::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    Part::Text(t) => Some(t.as_str()),
+                    Part::Image(_) => None,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Prompt {
-        text: String,
-        /// Image files on the Host, pasted by path before the text.
-        images: Vec<String>,
+        input: Input,
     },
     Steer {
-        text: String,
-        /// As `prompt`'s: pasted by path before the text.
-        images: Vec<String>,
+        input: Input,
     },
+    /// Sent as `prompt` once idle.
     FollowUp {
-        text: String,
-        /// As `prompt`'s: pasted by path when the follow-up is sent.
-        images: Vec<String>,
+        input: Input,
     },
     Abort,
     /// `ctrl+enter`: interrupt the turn and send what waits in Claude Code's queue now.
@@ -260,6 +295,46 @@ fn opt_strings(obj: &Map<String, Value>, cmd: &str, field: &str) -> Result<Vec<S
     }
 }
 
+/// `text` + `images`, or `parts` (then neither of the other two).
+fn parse_input(obj: &Map<String, Value>, cmd: &str) -> Result<Input, String> {
+    let parts = match obj.get("parts") {
+        None | Some(Value::Null) => {
+            return Ok(Input::Text {
+                text: req_text(obj, cmd, "text")?,
+                images: opt_strings(obj, cmd, "images")?,
+            });
+        }
+        Some(Value::Array(a)) => a,
+        Some(_) => return Err(format!("{cmd} 的 parts 必须是数组")),
+    };
+    if ["text", "images"]
+        .iter()
+        .any(|f| !matches!(obj.get(*f), None | Some(Value::Null)))
+    {
+        return Err(format!("{cmd} 给了 parts 就不能再给 text 或 images"));
+    }
+    if parts.is_empty() {
+        return Err(format!("{cmd} 的 parts 不能为空"));
+    }
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let item = v.as_object().filter(|o| o.len() == 1);
+            match item.map(|o| (o.get("text"), o.get("image"))) {
+                Some((Some(Value::String(t)), None)) => Ok(Part::Text(t.clone())),
+                Some((None, Some(Value::String(p)))) if !p.trim().is_empty() => {
+                    Ok(Part::Image(p.clone()))
+                }
+                _ => Err(format!(
+                    "{cmd} 的 parts[{i}] 必须是 {{\"text\": 字符串}} 或 {{\"image\": 图片路径}}"
+                )),
+            }
+        })
+        .collect::<Result<_, _>>()
+        .map(Input::Parts)
+}
+
 fn parse_decision(obj: &Map<String, Value>) -> Result<Decision, String> {
     match obj.get("decision") {
         None | Some(Value::Null) => Err("answer_permission 缺少 decision".into()),
@@ -354,8 +429,7 @@ fn parse_key(item: &Value, index: usize) -> Result<Key, String> {
 fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String> {
     match kind {
         "prompt" => Ok(Command::Prompt {
-            text: req_text(obj, kind, "text")?,
-            images: opt_strings(obj, kind, "images")?,
+            input: parse_input(obj, kind)?,
         }),
         "cancel_follow_up" => Ok(Command::CancelFollowUp {
             index: match obj.get("index") {
@@ -411,12 +485,10 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             Ok(Command::AnswerRewind { request_id, option })
         }
         "steer" => Ok(Command::Steer {
-            text: req_text(obj, kind, "text")?,
-            images: opt_strings(obj, kind, "images")?,
+            input: parse_input(obj, kind)?,
         }),
         "follow_up" => Ok(Command::FollowUp {
-            text: req_text(obj, kind, "text")?,
-            images: opt_strings(obj, kind, "images")?,
+            input: parse_input(obj, kind)?,
         }),
         "abort" => Ok(Command::Abort),
         "send_now" => Ok(Command::SendNow),
@@ -692,14 +764,76 @@ mod tests {
     }
 
     #[test]
+    fn parts_in_order_or_text_with_images() {
+        let r = parse(
+            r#"{"type":"prompt","parts":[{"text":"AAA "},{"image":"a.png"},{"text":""},{"image":"b.png"}]}"#,
+        );
+        let want = Input::Parts(vec![
+            Part::Text("AAA ".into()),
+            Part::Image("a.png".into()),
+            Part::Text(String::new()),
+            Part::Image("b.png".into()),
+        ]);
+        assert_eq!(
+            r.command,
+            Command::Prompt {
+                input: want.clone()
+            }
+        );
+        assert_eq!(want.typed_text(), "AAA ");
+        for kind in ["steer", "follow_up"] {
+            let r = parse(&format!(
+                r#"{{"type":"{kind}","parts":[{{"image":"a.png"}},{{"text":" look"}}],"text":null}}"#
+            ));
+            let input = match r.command {
+                Command::Steer { input } | Command::FollowUp { input } => input,
+                c => panic!("{c:?}"),
+            };
+            assert_eq!(
+                input,
+                Input::Parts(vec![
+                    Part::Image("a.png".into()),
+                    Part::Text(" look".into())
+                ])
+            );
+        }
+        // The old form stays.
+        let r = parse(r#"{"type":"prompt","text":"look","images":["a.png"]}"#);
+        assert_eq!(
+            r.command,
+            Command::Prompt {
+                input: Input::Text {
+                    text: "look".into(),
+                    images: vec!["a.png".into()]
+                }
+            }
+        );
+        // Not both forms, at least one item, each item exactly one of text / image.
+        for line in [
+            r#"{"type":"prompt","parts":[{"text":"a"}],"text":"a"}"#,
+            r#"{"type":"steer","parts":[{"text":"a"}],"images":[]}"#,
+            r#"{"type":"follow_up","parts":[]}"#,
+            r#"{"type":"prompt","parts":{"text":"a"}}"#,
+            r#"{"type":"prompt","parts":["a"]}"#,
+            r#"{"type":"prompt","parts":[{"text":"a","image":"b.png"}]}"#,
+            r#"{"type":"prompt","parts":[{"image":""}]}"#,
+            r#"{"type":"prompt","parts":[{"image":1}]}"#,
+            r#"{"type":"prompt","parts":[{"txt":"a"}]}"#,
+            r#"{"type":"prompt","parts":[{}]}"#,
+        ] {
+            let e = err(line);
+            assert_eq!(e.code, "bad_request", "{line}");
+        }
+    }
+
+    #[test]
     fn parses_every_command() {
         assert_eq!(
             parse(r#"{"id":"1","type":"prompt","text":"hi"}"#),
             Request {
                 id: Some("1".into()),
                 command: Command::Prompt {
-                    text: "hi".into(),
-                    images: vec![],
+                    input: Input::text("hi"),
                 },
             }
         );
@@ -708,8 +842,7 @@ mod tests {
             Request {
                 id: None,
                 command: Command::Steer {
-                    text: "stop".into(),
-                    images: vec![],
+                    input: Input::text("stop"),
                 },
             }
         );
@@ -718,8 +851,7 @@ mod tests {
             Request {
                 id: None,
                 command: Command::FollowUp {
-                    text: "next".into(),
-                    images: vec![],
+                    input: Input::text("next"),
                 },
             }
         );

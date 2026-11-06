@@ -66,14 +66,15 @@ impl TurnStats {
 #[derive(Default)]
 pub(super) struct Marks {
     pub(super) seq: u64,
-    pub(super) prompts: VecDeque<(u64, String, String)>,
+    /// Sequence, uuid, text and image count of each user prompt.
+    pub(super) prompts: VecDeque<(u64, String, String, usize)>,
     pub(super) enqueued: VecDeque<(u64, String)>,
 }
 
 impl Marks {
-    pub(super) fn prompt(&mut self, uuid: String, text: String) {
+    pub(super) fn prompt(&mut self, uuid: String, text: String, images: usize) {
         self.seq += 1;
-        self.prompts.push_back((self.seq, uuid, text));
+        self.prompts.push_back((self.seq, uuid, text, images));
         if self.prompts.len() > 64 {
             self.prompts.pop_front();
         }
@@ -94,12 +95,12 @@ impl Marks {
         self.prompts
             .iter()
             .rev()
-            .find(|(s, _, t)| {
+            .find(|(s, _, t, _)| {
                 *s > after
                     && (t.trim() == text.trim()
                         || (slash && recognize::collapse_ws(t) == recognize::collapse_ws(text)))
             })
-            .map(|(_, u, _)| u.as_str())
+            .map(|(_, u, _, _)| u.as_str())
     }
 
     /// A prompt sent with images: its recorded text may carry the `[Image #n]` placeholders.
@@ -107,8 +108,26 @@ impl Marks {
         self.prompts
             .iter()
             .rev()
-            .find(|(s, _, t)| *s > after && t.trim().ends_with(text.trim()))
-            .map(|(_, u, _)| u.as_str())
+            .find(|(s, _, t, _)| *s > after && t.trim().ends_with(text.trim()))
+            .map(|(_, u, _, _)| u.as_str())
+    }
+
+    /// A prompt sent as `parts` with images: it carries that many images, its text has an
+    /// `[Image #n]` where each went (see [`parts_match`]).
+    pub(super) fn parts_prompt_after(&self, after: u64, text: &str, images: usize) -> Option<&str> {
+        self.prompts
+            .iter()
+            .rev()
+            .find(|(s, _, t, n)| *s > after && *n == images && parts_match(t, text, Some(images)))
+            .map(|(_, u, _, _)| u.as_str())
+    }
+
+    /// A prompt sent as `parts` with images that went into Claude Code's queue: the queued text
+    /// shows each image as its `[Image #n]`.
+    pub(super) fn parts_enqueued_after(&self, after: u64, text: &str, images: usize) -> bool {
+        self.enqueued
+            .iter()
+            .any(|(s, t)| *s > after && parts_match(t, text, Some(images)))
     }
 
     /// A prompt that went into Claude Code's queue: its text, or (sent with images) ending with it.
@@ -130,6 +149,100 @@ impl Marks {
             .iter()
             .any(|(s, t)| *s > after && t.trim().is_empty())
     }
+}
+
+/// What a `prompt` or `steer` typed, to find it in the transcript and the input box.
+pub(super) struct Typed {
+    /// The text without control characters: `text`, or the parts' text joined.
+    pub(super) text: String,
+    pub(super) images: usize,
+    /// Sent as `parts` with images: the record has them among the text.
+    pub(super) parts: bool,
+    /// The start of its first text (or an image tag): still in the input box after Enter, it
+    /// was not submitted.
+    pub(super) needle: String,
+}
+
+impl Typed {
+    /// `text` after `images` images.
+    pub(super) fn plain(text: String, images: usize) -> Typed {
+        let needle = Self::start(&text);
+        Typed {
+            text,
+            images,
+            parts: false,
+            needle,
+        }
+    }
+
+    /// Checked `parts` with at least one image.
+    pub(super) fn parts(parts: &[rpc::Part]) -> Typed {
+        let input = rpc::Input::Parts(parts.to_vec());
+        let first = parts.iter().find_map(|p| match p {
+            rpc::Part::Text(t) if !t.trim().is_empty() => Some(t.as_str()),
+            _ => None,
+        });
+        Typed {
+            text: input.typed_text(),
+            images: parts
+                .iter()
+                .filter(|p| matches!(p, rpc::Part::Image(_)))
+                .count(),
+            parts: true,
+            needle: first.map_or_else(|| "[Image #".to_string(), Self::start),
+        }
+    }
+
+    fn start(text: &str) -> String {
+        text.trim()
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(20)
+            .collect()
+    }
+
+    /// The prompt the plugin's UserPromptSubmit reported is this one.
+    pub(super) fn hook_matches(&self, reported: &str) -> bool {
+        if self.parts {
+            parts_match(reported, &self.text, None)
+        } else {
+            reported.trim().ends_with(self.text.trim())
+        }
+    }
+}
+
+impl Marks {
+    /// The user prompt `typed` sent, recorded after `after`.
+    pub(super) fn typed_after(&self, after: u64, typed: &Typed) -> Option<&str> {
+        if typed.parts {
+            self.parts_prompt_after(after, &typed.text, typed.images)
+        } else if typed.images > 0 {
+            self.prompt_with_images_after(after, &typed.text)
+        } else {
+            self.prompt_after(after, &typed.text)
+        }
+    }
+
+    /// `typed` went into Claude Code's queue after `after`.
+    pub(super) fn typed_enqueued_after(&self, after: u64, typed: &Typed) -> bool {
+        if typed.parts {
+            self.parts_enqueued_after(after, &typed.text, typed.images)
+        } else {
+            self.prompt_enqueued_after(after, &typed.text, typed.images > 0)
+        }
+    }
+}
+
+/// Text recorded for a prompt sent as `parts` (`typed`: the parts' text joined): the same once its
+/// `[Image #n]` tags and all whitespace are left out (Claude Code numbers the tags itself and may
+/// set long pastes apart with blank lines). With `images`, the record has that many tags more
+/// than the typed text.
+pub(super) fn parts_match(recorded: &str, typed: &str, images: Option<usize>) -> bool {
+    let (r, rn) = recognize::without_image_tags(recorded);
+    let (t, tn) = recognize::without_image_tags(typed);
+    images.is_none_or(|n| rn == tn + n) && recognize::same_text(&r, &t)
 }
 
 /// What turn bookkeeping asks of the engine, in order.
@@ -566,14 +679,14 @@ impl Engine {
                     self.note_main_usage(model.as_deref(), effort.as_deref(), &usage);
                 }
             }
-            TxEvent::UserPrompt { uuid, text } => {
+            TxEvent::UserPrompt { uuid, text, images } => {
                 // A person's prompt after a rewind (a resend of the same one forks no Branch):
                 // the transcript's conversation is the TUI's again (a `!` command too). Slash commands and task
                 // notifications are not.
                 if !text.starts_with('/') && transcript::task_notification(&text).is_none() {
                     self.rewound = None;
                 }
-                self.marks.prompt(uuid, text)
+                self.marks.prompt(uuid, text, images)
             }
             TxEvent::Enqueued { content } => self.marks.enqueue(content),
             TxEvent::Queue(items) => self.set_queue(&items),
@@ -981,6 +1094,7 @@ mod tests {
         let bang = TxEvent::UserPrompt {
             uuid: "u1".into(),
             text: "! echo hi".into(),
+            images: 0,
         };
         assert_eq!(t.on_tx(&bang, now), vec![TurnOut::Opened]);
         assert!(t.active);
@@ -992,6 +1106,7 @@ mod tests {
         let slash = TxEvent::UserPrompt {
             uuid: "u2".into(),
             text: "/model x".into(),
+            images: 0,
         };
         assert!(t.on_tx(&slash, now).is_empty());
         assert!(!t.active);
@@ -1132,10 +1247,10 @@ mod tests {
     #[test]
     fn a_slash_command_confirms_whatever_spaces_were_typed() {
         let mut m = Marks::default();
-        m.prompt("u1".into(), "/release v1".into());
+        m.prompt("u1".into(), "/release v1".into(), 0);
         assert_eq!(m.prompt_after(0, "/release  v1 "), Some("u1"));
         assert_eq!(m.prompt_after(1, "/release v1"), None);
-        m.prompt("u2".into(), "hello world".into());
+        m.prompt("u2".into(), "hello world".into(), 0);
         assert_eq!(m.prompt_after(0, "hello  world"), None);
     }
 
@@ -1143,14 +1258,14 @@ mod tests {
     fn marks_compare_by_sequence_not_length() {
         let mut m = Marks::default();
         for i in 0..100 {
-            m.prompt(format!("u{i}"), format!("p{i}"));
+            m.prompt(format!("u{i}"), format!("p{i}"), 0);
         }
         let before = m.seq;
         assert!(
             m.prompt_after(before, "p99").is_none(),
             "old prompts do not count"
         );
-        m.prompt("new".into(), "hello ".into());
+        m.prompt("new".into(), "hello ".into(), 0);
         assert_eq!(m.prompt_after(before, "hello"), Some("new"));
         for i in 0..100 {
             m.enqueue(format!("s{i}"));
@@ -1169,5 +1284,129 @@ mod tests {
         m.enqueue("[Image #1] look".into());
         assert!(m.prompt_enqueued_after(b3, "look", true));
         assert!(!m.prompt_enqueued_after(b3, "look", false));
+    }
+
+    /// Marks fed from a transcript written as Claude Code records it.
+    fn marks_from(lines: &[Value]) -> Marks {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&main, text).unwrap();
+        let mut m = Marks::default();
+        for e in crate::transcript::Tailer::new(&main).poll() {
+            match e {
+                TxEvent::UserPrompt { uuid, text, images } => m.prompt(uuid, text, images),
+                TxEvent::Enqueued { content } => m.enqueue(content),
+                _ => {}
+            }
+        }
+        m
+    }
+
+    fn image() -> Value {
+        json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}})
+    }
+
+    fn parts(items: &[Option<&str>]) -> Vec<rpc::Part> {
+        items
+            .iter()
+            .map(|p| match p {
+                Some(t) => rpc::Part::Text(t.to_string()),
+                None => rpc::Part::Image("/tmp/x.png".into()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn interleaved_parts_confirm_by_text_and_image_count() {
+        // Pasted in order, Claude Code records one text with the placeholders in place, then the
+        // images (2.1.318).
+        let m = marks_from(&[
+            json!({"type": "user", "uuid": "u1", "imagePasteIds": [3, 5],
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "AAA [Image #3] BBB [Image #5] CCC"}, image(), image(),
+            ]}}),
+        ]);
+        let typed = Typed::parts(&parts(&[
+            Some("AAA "),
+            None,
+            Some(" BBB "),
+            None,
+            Some(" CCC"),
+        ]));
+        assert_eq!((typed.text.as_str(), typed.images), ("AAA  BBB  CCC", 2));
+        assert_eq!(m.typed_after(0, &typed), Some("u1"));
+        assert_eq!(m.typed_after(1, &typed), None, "only after the mark");
+        // Another image count, or other text, is another prompt.
+        let one = Typed::parts(&parts(&[Some("AAA "), None, Some(" BBB  CCC")]));
+        assert_eq!(m.typed_after(0, &one), None, "the record has 2 images");
+        let other = Typed::parts(&parts(&[Some("AAA "), None, Some(" BBB "), None]));
+        assert_eq!(m.typed_after(0, &other), None);
+        // The plugin reports the same text.
+        assert!(typed.hook_matches("AAA [Image #3] BBB [Image #5] CCC"));
+        assert!(!typed.hook_matches("AAA [Image #3] BBB"));
+        // As the old form would look for it: not found (its text is not at the end alone).
+        assert_eq!(
+            m.typed_after(0, &Typed::plain("AAA  BBB  CCC".into(), 2)),
+            None
+        );
+    }
+
+    #[test]
+    fn interleaved_parts_confirm_with_long_pastes_set_apart() {
+        // An account that wraps long pastes in `<pasted_content>` sets them apart with blank
+        // lines (seen after a leading image, 2.1.317): whitespace is not compared.
+        let m = marks_from(&[json!({"type": "user", "uuid": "u1",
+        "message": {"role": "user", "content": [
+            {"type": "text", "text": "look[Image #1]\n\n<pasted_content id=\"1b44\">\nline1\nline2\n</pasted_content id=\"1b44\">\n[Image #2]"},
+            image(), image(),
+        ]}})]);
+        let typed = Typed::parts(&parts(&[Some("look"), None, Some("line1\nline2"), None]));
+        assert_eq!(m.typed_after(0, &typed), Some("u1"));
+        // Images only.
+        let m = marks_from(&[json!({"type": "user", "uuid": "u2",
+            "message": {"role": "user", "content": [{"type": "text", "text": "[Image #7]"}, image()]}})]);
+        let only = Typed::parts(&parts(&[None]));
+        assert_eq!((only.text.as_str(), only.needle.as_str()), ("", "[Image #"));
+        assert_eq!(m.typed_after(0, &only), Some("u2"));
+    }
+
+    #[test]
+    fn interleaved_steer_confirms_by_its_enqueue() {
+        // Busy, the queue holds the interleaved text with the placeholders.
+        let m = marks_from(&[
+            json!({"type": "queue-operation", "operation": "enqueue", "content": "see [Image #2] and [Image #4] now"}),
+        ]);
+        let typed = Typed::parts(&parts(&[
+            Some("see "),
+            None,
+            Some(" and "),
+            None,
+            Some(" now"),
+        ]));
+        assert!(m.typed_enqueued_after(0, &typed));
+        assert!(!m.typed_enqueued_after(1, &typed));
+        // One placeholder short.
+        let three = Typed::parts(&parts(&[
+            Some("see "),
+            None,
+            Some(" and "),
+            None,
+            Some(" now"),
+            None,
+        ]));
+        assert!(!m.typed_enqueued_after(0, &three));
+        // A literal `[Image #9]` typed in the text is not one of the images.
+        let m = marks_from(&[
+            json!({"type": "queue-operation", "operation": "enqueue", "content": "a [Image #9] b[Image #3]"}),
+        ]);
+        let literal = Typed::parts(&parts(&[Some("a [Image #9] b"), None]));
+        assert!(m.typed_enqueued_after(0, &literal));
+        // The old form keeps its own rule: the text after the leading placeholders.
+        let m = marks_from(&[
+            json!({"type": "queue-operation", "operation": "enqueue", "content": "[Image #1] look"}),
+        ]);
+        assert!(m.typed_enqueued_after(0, &Typed::plain("look".into(), 1)));
+        assert!(!m.typed_enqueued_after(0, &Typed::plain("look".into(), 0)));
     }
 }

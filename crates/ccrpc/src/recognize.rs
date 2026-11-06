@@ -927,7 +927,14 @@ pub fn rewind_confirm(lines: &[String]) -> Option<RewindConfirm> {
 /// What the Rewind screens show of a prompt, for comparing: `[Image #N]` tags and all whitespace
 /// left out (the picker trims, the confirm page wraps and breaks long words).
 pub fn rewind_key(s: &str) -> String {
-    let mut out = String::new();
+    let (mut out, _) = without_image_tags(s);
+    out.retain(|c| !c.is_whitespace());
+    out
+}
+
+/// `s` with its `[Image #N]` tags left out, and how many there were.
+pub fn without_image_tags(s: &str) -> (String, usize) {
+    let (mut out, mut n) = (String::new(), 0);
     let mut rest = s;
     while let Some(at) = rest.find("[Image #") {
         out.push_str(&rest[..at]);
@@ -935,14 +942,14 @@ pub fn rewind_key(s: &str) -> String {
         let digits = tail.chars().take_while(char::is_ascii_digit).count();
         if digits > 0 && tail[digits..].starts_with(']') {
             rest = &tail[digits + 1..];
+            n += 1;
         } else {
             out.push_str("[Image #");
             rest = tail;
         }
     }
     out.push_str(rest);
-    out.retain(|c| !c.is_whitespace());
-    out
+    (out, n)
 }
 
 /// The prompt's first line as the picker shows it (leading blank lines left out).

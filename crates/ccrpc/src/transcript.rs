@@ -145,6 +145,8 @@ pub enum TxEvent {
     UserPrompt {
         uuid: String,
         text: String,
+        /// Image blocks the prompt carries.
+        images: usize,
     },
     /// The Main Line moved to another Branch: blocks emitted before this event that come after
     /// `at_uuid` are off it (`None`: the new Branch starts a new root, all earlier blocks are off).
@@ -862,7 +864,11 @@ impl Tailer {
                     out.push(TxEvent::Setting { model, effort });
                 }
                 if let Some(text) = content.and_then(|c| command_line(&c)) {
-                    out.push(TxEvent::UserPrompt { uuid, text });
+                    out.push(TxEvent::UserPrompt {
+                        uuid,
+                        text,
+                        images: 0,
+                    });
                 }
             }
             "queue-operation" if agent.is_none() => {
@@ -992,7 +998,11 @@ impl Tailer {
                             if agent.is_none()
                                 && let Some(text) = command_line(s).or_else(|| bash_line(s))
                             {
-                                out.push(TxEvent::UserPrompt { uuid, text });
+                                out.push(TxEvent::UserPrompt {
+                                    uuid,
+                                    text,
+                                    images: 0,
+                                });
                             }
                             return;
                         }
@@ -1012,6 +1022,7 @@ impl Tailer {
                             out.push(TxEvent::UserPrompt {
                                 uuid: uuid.clone(),
                                 text: s.clone(),
+                                images: 0,
                             });
                         }
                         out.push(TxEvent::Block(Box::new(tag(b))));
@@ -1050,6 +1061,7 @@ impl Tailer {
                             out.push(TxEvent::UserPrompt {
                                 uuid: uuid.clone(),
                                 text: text.join("\n"),
+                                images: blocks.iter().filter(|b| b.block_type() == "image").count(),
                             });
                         }
                         let mut images: Vec<String> = if image_prompt {
@@ -1703,7 +1715,7 @@ mod tests {
         let prompts: Vec<_> = evs
             .iter()
             .filter_map(|e| match e {
-                TxEvent::UserPrompt { uuid, text } => Some((uuid.as_str(), text.as_str())),
+                TxEvent::UserPrompt { uuid, text, .. } => Some((uuid.as_str(), text.as_str())),
                 _ => None,
             })
             .collect();

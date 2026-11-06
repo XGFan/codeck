@@ -411,6 +411,89 @@ fn mock_model_steer_image() {
     });
 }
 
+/// `[Image #n]` tags in `s` replaced by `#`, so the text around them can be compared (Claude Code
+/// picks the numbers).
+fn image_tags_as_hash(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(at) = rest.find("[Image #") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + 8..];
+        let digits = tail.chars().take_while(char::is_ascii_digit).count();
+        assert!(digits > 0 && tail[digits..].starts_with(']'), "{s}");
+        out.push('#');
+        rest = &tail[digits + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `parts`: text and images pasted one by one land in that order, as a prompt and as a steer
+/// while busy, on the scripted model (no credits).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_interleaved_parts() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let (a, b) = (env.work.join("a.png"), env.work.join("b.png"));
+    std::fs::write(&a, red_dot_png()).unwrap();
+    std::fs::write(&b, red_dot_png()).unwrap();
+
+    rpc.forget();
+    let d = rpc.call(
+        "p1",
+        json!({"type": "prompt", "parts": [
+            {"text": "AAA "}, {"image": a}, {"text": " BBB "}, {"image": b}, {"text": " CCC"},
+        ]}),
+    );
+    assert_eq!(d["delivered_as"], "prompt", "{d}");
+    let uuid = d["uuid"].as_str().expect("没有 uuid").to_string();
+    assert!(d["prompt_id"].is_string(), "{d}");
+    let u = rpc.until("user block", Duration::from_secs(10), |v| {
+        v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
+    });
+    assert_eq!(
+        image_tags_as_hash(u["text"].as_str().unwrap()),
+        "AAA # BBB # CCC",
+        "{u}"
+    );
+    assert_eq!(u["images"], json!(["image/png", "image/png"]), "{u}");
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    // While busy: Claude Code's queue shows the text with the images in place.
+    rpc.forget();
+    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    let st = rpc.call(
+        "s2",
+        json!({"type": "steer", "parts": [
+            {"text": "MOCK-STEERED see "}, {"image": a}, {"text": " and "}, {"image": b}, {"text": " now"},
+        ]}),
+    );
+    assert_eq!(st["delivered_as"], "queued", "{st}");
+    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+        v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
+    });
+    assert_eq!(
+        image_tags_as_hash(q["items"][0].as_str().unwrap_or_default()),
+        "MOCK-STEERED see # and # now",
+        "{q}"
+    );
+    rpc.event("turn_end", Duration::from_secs(30));
+    let t2 = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
+
+    // A `!` command cannot go with an image: refused before anything is typed.
+    rpc.send(json!({"id": "b1", "type": "prompt", "parts": [{"text": "!ls "}, {"image": a}]}));
+    let r = rpc.until("响应 b1", Duration::from_secs(10), |v| {
+        v["type"] == "response" && v["id"] == "b1"
+    });
+    assert_eq!(r["error"]["code"], "bad_request", "{r}");
+}
+
 /// Model and effort from here: `set_effort` / `set_model` mid-conversation ask first (built-in
 /// choice layouts), and `session_info` says what was set at once — from the command's output and
 /// the TUI's effort mark — on the scripted model (no credits).

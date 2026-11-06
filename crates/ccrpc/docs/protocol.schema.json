@@ -400,6 +400,46 @@
         }
       ]
     },
+    "part": {
+      "description": "parts 的一项：一段文字，或 Host 上的一个图片文件。",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "一段文字（空串跳过；Claude Code 不在图片前后加空格，空格由调用方给）。"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Host 上的图片文件路径。"
+            }
+          },
+          "required": [
+            "image"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "parts": {
+      "description": "文字与图片按顺序逐项粘贴（图片在输入框里是 [Image #n]）；给了 parts 就不能再给 text、images。",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/part"
+      }
+    },
     "command": {
       "description": "调用方发给 ccrpc 的命令，每行一个。",
       "oneOf": [
@@ -509,11 +549,44 @@
               "type": "string"
             },
             "description": "Host 上的图片文件路径，正文之前逐个粘贴。"
+          },
+          "parts": {
+            "$ref": "#/$defs/parts"
           }
         },
         "required": [
-          "type",
-          "text"
+          "type"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "text"
+            ],
+            "not": {
+              "required": [
+                "parts"
+              ]
+            }
+          },
+          {
+            "required": [
+              "parts"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "text"
+                  ]
+                },
+                {
+                  "required": [
+                    "images"
+                  ]
+                }
+              ]
+            }
+          }
         ],
         "additionalProperties": false
       },
@@ -539,11 +612,44 @@
               "type": "string"
             },
             "description": "Host 上的图片文件路径，正文之前逐个粘贴（同 prompt）。"
+          },
+          "parts": {
+            "$ref": "#/$defs/parts"
           }
         },
         "required": [
-          "type",
-          "text"
+          "type"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "text"
+            ],
+            "not": {
+              "required": [
+                "parts"
+              ]
+            }
+          },
+          {
+            "required": [
+              "parts"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "text"
+                  ]
+                },
+                {
+                  "required": [
+                    "images"
+                  ]
+                }
+              ]
+            }
+          }
         ],
         "additionalProperties": false
       },
@@ -569,11 +675,44 @@
               "type": "string"
             },
             "description": "Host 上的图片文件路径；发出时同 prompt，正文之前逐个粘贴。"
+          },
+          "parts": {
+            "$ref": "#/$defs/parts"
           }
         },
         "required": [
-          "type",
-          "text"
+          "type"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "text"
+            ],
+            "not": {
+              "required": [
+                "parts"
+              ]
+            }
+          },
+          {
+            "required": [
+              "parts"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "text"
+                  ]
+                },
+                {
+                  "required": [
+                    "images"
+                  ]
+                }
+              ]
+            }
+          }
         ],
         "additionalProperties": false
       },

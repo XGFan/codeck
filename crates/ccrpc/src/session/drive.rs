@@ -266,9 +266,68 @@ impl Engine {
         Ok(paths)
     }
 
-    pub(super) fn send_prompt_with(&mut self, text: &str, images: &[String]) -> CmdResult {
-        // Idle and no turn open. A turn that went idle without its Stop (interrupted) closes within
-        // a few seconds: wait for that.
+    /// `input` checked as when it is sent (follow-ups are checked as they are queued): image
+    /// paths made absolute; of `parts`, control characters left out of the text and empty text
+    /// items dropped, and without any image they become one `text`. A `!` first (a `!` command)
+    /// cannot go with images.
+    pub(super) fn checked_input(input: &rpc::Input) -> std::result::Result<rpc::Input, CmdErr> {
+        use rpc::{Input, Part};
+        let parts = match input {
+            Input::Text { text, images } => {
+                Self::clean_text(text)?;
+                return Ok(Input::Text {
+                    text: text.clone(),
+                    images: Self::image_paths(images)?,
+                });
+            }
+            Input::Parts(parts) => parts,
+        };
+        let mut out = Vec::new();
+        for p in parts {
+            match p {
+                Part::Text(t) => {
+                    let clean = pty::sanitize(t);
+                    if !clean.is_empty() {
+                        out.push(Part::Text(clean));
+                    }
+                }
+                Part::Image(path) => {
+                    let abs = Self::image_paths(std::slice::from_ref(path))?;
+                    out.extend(abs.into_iter().map(Part::Image));
+                }
+            }
+        }
+        let has_image = out.iter().any(|p| matches!(p, Part::Image(_)));
+        let first_bang = out.iter().find_map(|p| match p {
+            Part::Text(t) => Some(t.starts_with('!')),
+            Part::Image(_) => None,
+        });
+        let input = Input::Parts(out);
+        if !has_image {
+            let text = input.typed_text();
+            Self::clean_text(&text)?;
+            return Ok(Input::text(text));
+        }
+        if first_bang == Some(true) {
+            return err("bad_request", "! 命令不能带图片");
+        }
+        Ok(input)
+    }
+
+    /// `prompt` / `follow_up`: `text` after `images`, or `parts` in order.
+    pub(super) fn send_input(&mut self, input: &rpc::Input) -> CmdResult {
+        match input {
+            rpc::Input::Text { text, images } => self.send_prompt_with(text, images),
+            rpc::Input::Parts(_) => match Self::checked_input(input)? {
+                rpc::Input::Parts(parts) => self.send_parts(&parts),
+                rpc::Input::Text { text, .. } => self.send_prompt_with(&text, &[]),
+            },
+        }
+    }
+
+    /// Idle and no turn open. A turn that went idle without its Stop (interrupted) closes within
+    /// a few seconds: wait for that.
+    fn require_prompt_ready(&mut self) -> std::result::Result<(), CmdErr> {
         if self.state == State::Idle && self.turns.active() {
             self.wait_until(Duration::from_secs(6), |e| {
                 !e.turns.active() || e.state != State::Idle
@@ -277,7 +336,11 @@ impl Engine {
         self.require(
             self.state == State::Idle && !self.turns.active(),
             "not_idle",
-        )?;
+        )
+    }
+
+    pub(super) fn send_prompt_with(&mut self, text: &str, images: &[String]) -> CmdResult {
+        self.require_prompt_ready()?;
         let clean = Self::clean_text(text)?;
         // A `!` command (`!` first, as in the TUI): run in its shell mode, the output going to
         // the model.
@@ -288,26 +351,32 @@ impl Engine {
             return self.send_bang(cmd.trim());
         }
         let paths = Self::image_paths(images)?;
-        let images = &paths;
         self.clear_input()?;
-        self.paste_images(images)?;
+        self.paste_images(&paths)?;
         let before = self.marks.seq;
         let hook_before = self.hook_seq;
         self.paste_and_submit(&clean)?;
-        let found = |e: &Engine| -> Option<String> {
-            if images.is_empty() {
-                e.marks.prompt_after(before, &clean).map(str::to_string)
-            } else {
-                e.marks
-                    .prompt_with_images_after(before, &clean)
-                    .map(str::to_string)
-            }
-        };
+        self.confirm_prompt(&Typed::plain(clean, paths.len()), before, hook_before)
+    }
+
+    /// Checked `parts` with images, pasted one by one, then Enter.
+    fn send_parts(&mut self, parts: &[rpc::Part]) -> CmdResult {
+        self.require_prompt_ready()?;
+        self.clear_input()?;
+        let before = self.marks.seq;
+        let hook_before = self.hook_seq;
+        self.paste_parts(parts)?;
+        self.input_box_now()?;
+        self.keys(key::ENTER)?;
+        self.confirm_prompt(&Typed::parts(parts), before, hook_before)
+    }
+
+    /// After Enter: waits for the transcript to record `typed` (markers after `before`, hook
+    /// prompts after `hook_before`).
+    fn confirm_prompt(&mut self, typed: &Typed, before: u64, hook_before: u64) -> CmdResult {
+        let found = |e: &Engine| e.marks.typed_after(before, typed).map(str::to_string);
         // Claude Code may have started a turn just before Enter: then the prompt waits in its queue.
-        let queued = |e: &Engine| {
-            e.marks
-                .prompt_enqueued_after(before, &clean, !images.is_empty())
-        };
+        let queued = |e: &Engine| e.marks.typed_enqueued_after(before, typed);
         let ok = self.wait_after_keys(Duration::from_secs(30), |e| {
             found(e).is_some() || queued(e) || e.marks.blank_enqueued_after(before)
         });
@@ -318,19 +387,11 @@ impl Engine {
             // A blank enqueue may be another session's message: it is this prompt only when no
             // user entry follows at once and the text has left the input box.
             self.wait_after_keys(Duration::from_secs(2), |e| found(e).is_some() || queued(e));
-            let needle: String = clean
-                .trim()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take(20)
-                .collect();
             let still_typed = self
                 .screen()
                 .ok()
                 .and_then(|s| recognize::input_text(&s))
-                .is_some_and(|t| t.contains(&needle));
+                .is_some_and(|t| t.contains(&typed.needle));
             if found(self).is_none() && !queued(self) && still_typed {
                 return err("timeout", "回车后提示词还在输入框里");
             }
@@ -344,7 +405,7 @@ impl Engine {
             e.hook_prompts
                 .iter()
                 .rev()
-                .find(|(seq, _, t)| *seq > hook_before && t.trim().ends_with(clean.trim()))
+                .find(|(seq, _, t)| *seq > hook_before && typed.hook_matches(t))
                 .map(|(_, p, _)| p.clone())
         };
         if hook_prompt(self).is_none() {
@@ -422,6 +483,53 @@ impl Engine {
         Ok(())
     }
 
+    /// Pastes checked `parts` one by one, each once the input box shows it: Claude Code resolves
+    /// a pasted image path asynchronously, so pastes written back to back put the images last.
+    /// Each `[Image #n]` lands at the cursor, with no space around it.
+    fn paste_parts(&mut self, parts: &[rpc::Part]) -> std::result::Result<(), CmdErr> {
+        for p in parts {
+            match p {
+                rpc::Part::Image(path) => self.paste_images(std::slice::from_ref(path))?,
+                rpc::Part::Text(t) => {
+                    let had = self.input_box_now()?;
+                    self.paste(t)?;
+                    // Long text shows as a `[Pasted text …]` placeholder; trailing whitespace may
+                    // not show at all.
+                    let blank = t.trim().is_empty();
+                    let wait = Duration::from_millis(if blank { 300 } else { 2000 });
+                    let shown = self.wait_screen(wait, |_, s| {
+                        recognize::input_text(s).filter(|now| *now != had)
+                    });
+                    if shown.is_none() && !blank {
+                        return err("timeout", "粘贴的文字没出现在输入框里");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `steer`: `text` after `images`, or `parts` in order.
+    pub(super) fn steer_input(&mut self, input: &rpc::Input) -> CmdResult {
+        match input {
+            rpc::Input::Text { text, images } => self.steer(text, images),
+            rpc::Input::Parts(_) => {
+                self.require(matches!(self.state, State::Busy), "not_busy")?;
+                match Self::checked_input(input)? {
+                    rpc::Input::Parts(parts) => {
+                        self.clear_input()?;
+                        let before = self.marks.seq;
+                        self.paste_parts(&parts)?;
+                        self.input_box_now()?;
+                        self.keys(key::ENTER)?;
+                        self.confirm_steer(&Typed::parts(&parts), before)
+                    }
+                    rpc::Input::Text { text, .. } => self.steer(&text, &[]),
+                }
+            }
+        }
+    }
+
     pub(super) fn steer(&mut self, text: &str, images: &[String]) -> CmdResult {
         self.require(matches!(self.state, State::Busy), "not_busy")?;
         let clean = Self::clean_text(text)?;
@@ -429,20 +537,19 @@ impl Engine {
         let paths = Self::image_paths(images)?;
         self.clear_input()?;
         self.paste_images(&paths)?;
-        let with_images = !paths.is_empty();
         let before = self.marks.seq;
         self.paste_and_submit(&clean)?;
+        self.confirm_steer(&Typed::plain(clean, paths.len()), before)
+    }
+
+    /// After Enter: waits for the transcript to enqueue `typed` (or record it as a prompt, the
+    /// turn having just ended).
+    fn confirm_steer(&mut self, typed: &Typed, before: u64) -> CmdResult {
         let mut how = None;
         self.wait_after_keys(Duration::from_secs(10), |e| {
-            // With images, the recorded text starts with their `[Image #n]` placeholders.
-            let prompt = if with_images {
-                e.marks.prompt_with_images_after(before, &clean)
-            } else {
-                e.marks.prompt_after(before, &clean)
-            };
-            if e.marks.prompt_enqueued_after(before, &clean, with_images) {
+            if e.marks.typed_enqueued_after(before, typed) {
                 how = Some("queued");
-            } else if prompt.is_some() {
+            } else if e.marks.typed_after(before, typed).is_some() {
                 how = Some("prompt");
             }
             how.is_some()
@@ -517,8 +624,8 @@ impl Engine {
         Ok(json!({}))
     }
 
-    pub(super) fn follow_up_texts(&self) -> Vec<&str> {
-        self.follow_ups.iter().map(|(t, _)| t.as_str()).collect()
+    pub(super) fn follow_up_texts(&self) -> Vec<String> {
+        self.follow_ups.iter().map(rpc::Input::typed_text).collect()
     }
 
     pub(super) fn cancel_follow_up(&mut self, index: Option<usize>) -> CmdResult {
@@ -651,11 +758,79 @@ impl Engine {
         {
             return;
         }
-        let Some((text, images)) = self.follow_ups.pop_front() else {
+        let Some(input) = self.follow_ups.pop_front() else {
             return;
         };
-        if let Err((code, msg)) = self.send_prompt_with(&text, &images) {
-            self.emit(json!({"type": "follow_up_failed", "text": text, "error": {"code": code, "message": msg}}));
+        if let Err((code, msg)) = self.send_input(&input) {
+            self.emit(json!({"type": "follow_up_failed", "text": input.typed_text(), "error": {"code": code, "message": msg}}));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpc::{Input, Part};
+
+    #[test]
+    fn parts_are_checked_up_front() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("a.png");
+        std::fs::write(&img, b"png").unwrap();
+        let img = img.display().to_string();
+        let check = |parts: Vec<Part>| Engine::checked_input(&Input::Parts(parts));
+        let text = |t: &str| Part::Text(t.into());
+        // Empty text items dropped, control characters left out; every image path checked.
+        assert_eq!(
+            check(vec![
+                text("a\x07 "),
+                Part::Image(img.clone()),
+                text(""),
+                text(" b")
+            ]),
+            Ok(Input::Parts(vec![
+                text("a "),
+                Part::Image(img.clone()),
+                text(" b")
+            ]))
+        );
+        let missing = dir.path().join("none.png").display().to_string();
+        let e = check(vec![text("a"), Part::Image(missing)]).unwrap_err();
+        assert_eq!(e.0, "bad_request");
+        assert_eq!(check(vec![Part::Image(img.clone())]).map(|_| ()), Ok(()));
+        // Without images: one text, which must not be empty.
+        assert_eq!(
+            check(vec![text("a "), text(""), text("b")]),
+            Ok(Input::text("a b"))
+        );
+        assert_eq!(
+            check(vec![text(" "), text("\x07")]).unwrap_err().0,
+            "bad_request"
+        );
+        // A `!` command cannot go with images (without, it runs as one).
+        assert_eq!(
+            check(vec![text("!ls"), Part::Image(img.clone())])
+                .unwrap_err()
+                .0,
+            "bad_request"
+        );
+        assert_eq!(
+            check(vec![Part::Image(img.clone()), text("!ls")])
+                .unwrap_err()
+                .0,
+            "bad_request"
+        );
+        assert_eq!(check(vec![text("!"), text("ls")]), Ok(Input::text("!ls")));
+        // The old form: its text kept as given, its paths made absolute.
+        assert_eq!(
+            Engine::checked_input(&Input::Text {
+                text: "hi".into(),
+                images: vec![img.clone()]
+            }),
+            Ok(Input::Text {
+                text: "hi".into(),
+                images: vec![img]
+            })
+        );
     }
 }

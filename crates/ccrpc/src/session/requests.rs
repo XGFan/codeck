@@ -573,7 +573,7 @@ impl Engine {
                 Err(e) => return Err(e),
             }
         }
-        self.follow_ups.push_back((msg.to_string(), Vec::new()));
+        self.follow_ups.push_back(rpc::Input::text(msg));
         Ok(json!("follow_up"))
     }
 
