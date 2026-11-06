@@ -1,4 +1,4 @@
-import { ArrowUp, Clock, File, Folder, ImageIcon, MessageSquareText, Square, X } from "lucide-react";
+import { ArrowUp, Clock, File, Folder, MessageSquareText, Square } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/ipc";
@@ -20,6 +20,26 @@ import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
 import { queueText } from "./queue";
+import { ChipLayer, MirrorText } from "./ImageChips";
+import {
+  hasTokens,
+  moveToken,
+  normalize,
+  plain,
+  shiftTokens,
+  snap,
+  splice,
+  tokenAfter,
+  tokenBefore,
+  tokensIn,
+  token,
+  toParts,
+  widen,
+  type Tok,
+} from "./imageTokens";
+
+/** Copied tokens carry their images along (pasted back into an input box, they come back). */
+const TOKENS_MIME = "application/x-codeck-images";
 
 const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
 
@@ -119,10 +139,22 @@ export function Composer({ c }: { c: ConnState }) {
   const key = draftKey(c);
   const { text, images } = useConnect((s) => s.drafts[key]) ?? EMPTY_DRAFT;
   const setDraft = useConnect((s) => s.setDraft);
+  // Every change keeps the tokens and the images in step: renumbered in text order, an image without its token gone.
+  const update = (f: (d: Draft) => Draft) =>
+    setDraft(key, (d) => {
+      const n = f(d);
+      return { ...n, ...normalize(n.text, n.images) };
+    });
+  /** Replaces `[start, end)` with `insert` (and the images with `images`, when given); the caret goes after it. */
+  const edit = (start: number, end: number, insert: string, images?: (x: Draft["images"]) => Draft["images"]) => {
+    update((d) => {
+      const r = splice(d.text, start, end, insert);
+      caretAfter.current = r.caret;
+      return { ...d, text: r.text, images: images ? images(d.images) : d.images };
+    });
+  };
   const setText = (f: string | ((t: string) => string)) =>
-    setDraft(key, (d) => ({ ...d, text: typeof f === "function" ? f(d.text) : f }));
-  const setImages = (f: (x: Draft["images"]) => Draft["images"]) =>
-    setDraft(key, (d) => ({ ...d, images: f(d.images) }));
+    update((d) => ({ ...d, text: typeof f === "function" ? f(d.text) : f }));
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const live = !c.procExit && !c.sessionExited && c.ready;
@@ -153,6 +185,8 @@ export function Composer({ c }: { c: ConnState }) {
   const highlight = named ? named.name.length + 1 : 0;
   const mirror = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const mirrored = highlight > 0 || hasTokens(text);
   // The copy wraps and shows the lines the textarea does: as wide as its text (a scroll bar, index.css gives it
   // width, takes some once the text overflows), at its scroll also when it appears on a textarea already scrolled.
   useLayoutEffect(() => {
@@ -161,7 +195,7 @@ export function Composer({ c }: { c: ConnState }) {
     if (!m || !t) return;
     m.style.right = `${t.offsetWidth - t.clientWidth}px`;
     m.scrollTop = t.scrollTop;
-  }, [text, highlight]);
+  }, [text, highlight, mirrored]);
   const complete = (cmd: SlashCommand) => {
     setText(`/${cmd.name} `);
     setPick(0);
@@ -236,7 +270,8 @@ export function Composer({ c }: { c: ConnState }) {
     }
     if (c.picking) setPicking(c.conn, false);
     let msg: Record<string, unknown>;
-    const withImages = images.length ? { images: images.map((i) => i.path) } : {};
+    // With images: the words and the images in the order they are in the box (`parts`), else the text alone.
+    const content = images.length ? { parts: toParts(body, images) } : { text: body };
     let list: SlashCommand[] | undefined;
     if (body.startsWith("/")) {
       setSending(true);
@@ -245,13 +280,13 @@ export function Composer({ c }: { c: ConnState }) {
     }
     if (state === "idle") {
       const command = slashCommand(body, images.length > 0, list);
-      msg = command != null ? { type: "slash", command } : { type: "prompt", text: body, ...withImages };
+      msg = command != null ? { type: "slash", command } : { type: "prompt", ...content };
     } else if (state === "busy") {
       // A panel opened from the queue would hold the turn until someone closes it in the terminal.
       const panel = commandOf(body, list);
       if (panel?.source === "builtin" && panel.interactive)
         return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
-      msg = { type: "steer", text: body, ...withImages };
+      msg = { type: "steer", ...content };
     } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);
@@ -264,16 +299,22 @@ export function Composer({ c }: { c: ConnState }) {
     if (prompt) {
       // A placeholder at the transcript's end at once, and the box is free again (both back if it fails).
       setPending(c.conn, { uuid: null, at });
-      setText((t) => (t.trim() === body ? "" : t));
-      setImages((x) => x.filter((i) => !gone.has(i.path)));
+      update((d) => ({
+        text: d.text.trim() === body ? "" : d.text,
+        images: d.images.filter((i) => !gone.has(i.path)),
+      }));
     }
     const r = await command(c.conn, msg);
     setSending(false);
     if (!r.success) {
       if (prompt) {
         setPending(c.conn, null);
-        setText((t) => (t.trim() ? `${body}\n${t}` : body));
-        setImages((x) => [...sent, ...x.filter((i) => !gone.has(i.path))]);
+        // Back in the box, its images first (what was typed meanwhile numbered after them).
+        update((d) => {
+          const rest = d.images.filter((i) => !gone.has(i.path));
+          const after = shiftTokens(d.text, sent.length);
+          return { text: d.text.trim() ? `${body}\n${after}` : body, images: [...sent, ...rest] };
+        });
       }
       return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
     }
@@ -290,29 +331,80 @@ export function Composer({ c }: { c: ConnState }) {
     }
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
-    // Keep what was typed while it was being sent.
-    setText((t) => (t.trim() === body ? "" : t));
-    // Only the images that went with it: one pasted meanwhile stays.
-    setImages((x) => x.filter((i) => !gone.has(i.path)));
+    // Keep what was typed while it was being sent; only the images that went with it go.
+    update((d) => ({ text: d.text.trim() === body ? "" : d.text, images: d.images.filter((i) => !gone.has(i.path)) }));
   };
 
-  const onPaste = async (e: React.ClipboardEvent) => {
+  /** The selection, a part of a token counting as all of it. */
+  const selection = (el: HTMLTextAreaElement) => widen(text, el.selectionStart, el.selectionEnd);
+
+  const onPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const [start, end] = selection(e.currentTarget);
+    // Tokens copied from an input box: back with their images, numbered after the ones here.
+    const copied = e.clipboardData.getData(TOKENS_MIME);
+    if (copied) {
+      try {
+        const v = JSON.parse(copied) as Draft;
+        if (typeof v.text === "string" && Array.isArray(v.images)) {
+          e.preventDefault();
+          edit(start, end, shiftTokens(v.text, images.length), (x) => [...x, ...v.images]);
+          return;
+        }
+      } catch {
+        // Not ours after all: pasted as text.
+      }
+    }
     const files = [...e.clipboardData.items]
       .filter((i) => i.kind === "file" && extOf(i.type))
       .map((i) => i.getAsFile()!);
     if (files.length === 0) return;
     e.preventDefault();
+    const saved: Draft["images"] = [];
     for (const f of files) {
       try {
         const b64 = await toBase64(f);
         const path = await api.ccrpcSaveImage(b64, extOf(f.type)!);
         // A data: URL: the app's CSP allows data: images, not blob:.
-        setImages((x) => [...x, { path, url: `data:${f.type};base64,${b64}` }]);
+        saved.push({ path, url: `data:${f.type};base64,${b64}` });
       } catch (err) {
         setError(`图片保存失败：${errorText(err)}`);
       }
     }
+    if (saved.length === 0) return;
+    // A token where the caret was for each, numbered after the images already there.
+    update((d) => {
+      const tokens = saved.map((_, i) => token(d.images.length + i + 1)).join("");
+      const at = Math.min(start, d.text.length);
+      const r = splice(d.text, at, Math.min(end, d.text.length), tokens);
+      caretAfter.current = r.caret;
+      return { text: r.text, images: [...d.images, ...saved] };
+    });
   };
+
+  /** Copied or cut text with tokens: as 「[图片 n]」 for other apps, with the images for an input box. */
+  const onCopy = (e: React.ClipboardEvent<HTMLTextAreaElement>, cut: boolean) => {
+    const [start, end] = selection(e.currentTarget);
+    const piece = text.slice(start, end);
+    if (!hasTokens(piece)) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", plain(piece));
+    e.clipboardData.setData(TOKENS_MIME, JSON.stringify(normalize(piece, images)));
+    if (cut) edit(start, end, "");
+  };
+
+  /** A token dragged to `to`: moved there, the images following the new order. */
+  const moveTo = (tok: Tok, to: number) =>
+    update((d) => {
+      const r = moveToken(d.text, tok, to);
+      caretAfter.current = r.caret;
+      input.current?.focus();
+      return { ...d, text: r.text };
+    });
+
+  /** Where the selection is (the token it covers exactly is drawn selected). */
+  const [sel, setSel] = useState<[number, number]>([0, 0]);
+  const lastCaret = useRef(0);
+  const selectedToken = tokensIn(text).find((t) => t.start === sel[0] && t.end === sel[1])?.n ?? null;
 
   // What Enter does now, said in the empty box (no hint line of its own).
   const placeholder = !live
@@ -456,34 +548,17 @@ export function Composer({ c }: { c: ConnState }) {
             </div>
           </div>
         )}
-        {images.length > 0 && (
-          <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="images">
-            {images.map((img, i) => (
-              <span key={img.path} className="relative">
-                <img src={img.url} alt="" className="size-14 rounded border border-border object-cover" />
-                <button
-                  type="button"
-                  aria-label="去掉图片"
-                  onClick={() => setImages((x) => x.filter((_, j) => j !== i))}
-                  className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-text text-ground"
-                >
-                  <X size={10} aria-hidden />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="relative">
-          {/* The command named at the start, in color: drawn on a copy of the text under the (then clear) textarea. */}
-          {highlight > 0 && (
+        <div ref={box} className="relative">
+          {/* The command named at the start in color, the images as blocks: drawn on a copy of the text under the
+              (then clear) textarea. */}
+          {mirrored && (
             <div
               ref={mirror}
               aria-hidden
-              data-testid="command-highlight"
+              data-testid={highlight > 0 ? "command-highlight" : "composer-mirror"}
               className="pointer-events-none absolute inset-0 overflow-hidden pr-1.5 text-[14px] leading-[1.5] break-words whitespace-pre-wrap"
             >
-              <span className="text-accent">{text.slice(0, highlight)}</span>
-              {text.slice(highlight)}
+              <MirrorText text={text} highlight={highlight} selected={selectedToken} />
               {/* A last empty line still takes its height, as in the textarea. */}
               {"\u200b"}
             </div>
@@ -491,7 +566,21 @@ export function Composer({ c }: { c: ConnState }) {
           <textarea
             ref={input}
             value={text}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onSelect={(e) => {
+              const el = e.currentTarget;
+              let [start, end] = [el.selectionStart, el.selectionEnd];
+              // A caret never stays inside an image token: on to its end the way it moved.
+              if (start === end) {
+                const p = snap(el.value, start, Math.sign(start - lastCaret.current));
+                if (p !== start) el.setSelectionRange(p, p);
+                start = end = p;
+                lastCaret.current = p;
+              }
+              setSel([start, end]);
+              setCaret(start);
+            }}
+            onCopy={(e) => onCopy(e, false)}
+            onCut={(e) => onCopy(e, true)}
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
             rows={Math.min(10, Math.max(2, text.split("\n").length))}
@@ -505,6 +594,26 @@ export function Composer({ c }: { c: ConnState }) {
             onPaste={(e) => void onPaste(e)}
             onKeyDown={(e) => {
               if (isComposingKey(e.nativeEvent)) return;
+              // ⌫ / Delete take an image token whole (and its image); a selection over part of one, all of it.
+              if ((e.key === "Backspace" || e.key === "Delete") && !e.metaKey && !e.altKey && !e.ctrlKey) {
+                const el = e.currentTarget;
+                const [s0, e0] = [el.selectionStart, el.selectionEnd];
+                if (s0 === e0) {
+                  const t = e.key === "Backspace" ? tokenBefore(el.value, s0) : tokenAfter(el.value, s0);
+                  if (t) {
+                    e.preventDefault();
+                    edit(t.start, t.end, "");
+                    return;
+                  }
+                } else {
+                  const [s1, e1] = widen(el.value, s0, e0);
+                  if (s1 !== s0 || e1 !== e0) {
+                    e.preventDefault();
+                    edit(s1, e1, "");
+                    return;
+                  }
+                }
+              }
               if (pickedPath) {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault();
@@ -561,18 +670,16 @@ export function Composer({ c }: { c: ConnState }) {
             }}
             className={cn(
               "relative block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary",
-              highlight > 0 && "text-transparent caret-text",
+              mirrored && "text-transparent caret-text",
             )}
             data-testid="connect-input"
           />
+          {hasTokens(text) && (
+            <ChipLayer text={text} images={images} mirror={mirror} input={input} box={box} onMove={moveTo} />
+          )}
         </div>
         <div className="-ml-2 flex items-center gap-1 pt-1.5">
           <ConnectFooter c={c}>
-            {images.length > 0 && (
-              <span className="flex h-7 items-center gap-1.5 px-2" title="粘贴的图片">
-                <ImageIcon size={14} strokeWidth={1.7} aria-hidden /> {images.length}
-              </span>
-            )}
             <Tasks c={c} />
           </ConnectFooter>
           {/* Busy with nothing typed: stop (Esc in the terminal) instead of send. */}

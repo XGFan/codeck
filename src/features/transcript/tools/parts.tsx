@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, CircleX, Loader2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleX, ImageIcon, Loader2, X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { ImageRef, ToolCall } from "@/ipc/bindings";
@@ -366,6 +366,66 @@ export function ImageThumb({ image, ctx }: { image: ImageRef; ctx: ToolCtx | nul
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * An image where a prompt has it (`[Image #n]`, as Claude Code writes it), as a block in the line: hovered, a
+ * preview above it; clicked, the image large.
+ */
+export function ImageMarker({
+  image,
+  label,
+  ctx,
+}: {
+  image: ImageRef | undefined;
+  label: string;
+  ctx: ToolCtx | null;
+}) {
+  const [hover, setHover] = useState(false);
+  const [open, setOpen] = useState(false);
+  const q = useImage(image && ctx && (hover || open) ? { sessionId: ctx.sessionId, scope: ctx.scope, image } : null);
+  const src = q.data ? `data:${q.data.mediaType};base64,${q.data.dataBase64}` : null;
+  return (
+    <span className="relative inline-block whitespace-nowrap">
+      <button
+        type="button"
+        data-testid="prompt-image"
+        aria-label={`放大${label}`}
+        onPointerEnter={() => setHover(true)}
+        onPointerLeave={() => setHover(false)}
+        onClick={() => src && setOpen(true)}
+        className="mx-0.5 inline-flex items-center gap-1 rounded-[5px] border border-border bg-ground px-1.5 align-[1px] text-[12.5px] leading-[20px] text-text hover:border-accent-border hover:text-accent"
+      >
+        <ImageIcon size={13} strokeWidth={1.8} className="text-secondary" aria-hidden />
+        {label}
+      </button>
+      {hover && image && (
+        <span
+          role="tooltip"
+          data-testid="prompt-image-preview"
+          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1.5 flex w-[240px] flex-col gap-1 rounded-[10px] border border-border bg-ground p-2 text-[11px] text-secondary shadow-[0_12px_32px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]"
+        >
+          {src ? (
+            <img src={src} alt="" className="max-h-[150px] w-full rounded-md object-contain" />
+          ) : q.isError ? (
+            <span>图片不可用</span>
+          ) : (
+            <Loader2 size={14} className="animate-spin" aria-hidden />
+          )}
+          <span>{label}</span>
+        </span>
+      )}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="flex max-h-[90vh] w-auto max-w-[90vw] items-center justify-center p-2">
+          <DialogTitle className="sr-only">图片预览</DialogTitle>
+          <DialogDescription className="sr-only">{label}</DialogDescription>
+          {src && (
+            <img data-testid="image-large" src={src} alt="" className="max-h-[85vh] max-w-[88vw] object-contain" />
+          )}
+        </DialogContent>
+      </Dialog>
+    </span>
   );
 }
 

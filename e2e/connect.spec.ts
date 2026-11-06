@@ -594,14 +594,15 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   // Busy with nothing typed: the send button is a stop button.
   await expect(page.getByTestId("stop")).toBeVisible();
   await expect(page.getByTestId("send")).toHaveCount(0);
-  // An image goes along with a steer too.
+  // An image goes along with a steer too, where it was pasted.
+  await page.getByTestId("connect-input").fill("做完再跑一下测试");
   await pasteImage(page);
-  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
-  await send(page, "做完再跑一下测试");
+  await expect(page.getByTestId("image-chip")).toHaveCount(1);
+  await page.getByTestId("connect-input").press("Enter");
   await expect
     .poll(() => lastSent(page, "steer"))
-    .toMatchObject({ text: "做完再跑一下测试", images: ["/mock/Caches/dev.joy.codeck/images/1.png"] });
-  await expect(page.getByTestId("images")).toHaveCount(0);
+    .toMatchObject({ parts: [{ text: "做完再跑一下测试" }, { image: "/mock/Caches/dev.joy.codeck/images/1.png" }] });
+  await expect(page.getByTestId("image-chip")).toHaveCount(0);
   await expect(page.getByTestId("connect-input")).toHaveValue("");
   // The TUI's own queue, as the terminal shows it; sent at once on request (ctrl+enter there). A message from another
   // agent reads as its sender and first line, not its tag.
@@ -1054,18 +1055,97 @@ test("目录信任框是选择卡片", async ({ page }) => {
   expect(await lastSent(page, "answer_choice")).toMatchObject({ option: "Yes, I trust this folder" });
 });
 
-test("粘贴的图片随提示词发出", async ({ page }) => {
+/** The input box's words, the image tokens left out. */
+const words = (page: Page) =>
+  page.getByTestId("connect-input").evaluate((e: HTMLTextAreaElement) => e.value.replace(/⁢[^⁣]*⁣/g, "|"));
+
+test("粘贴的图片插在光标处，悬停预览，随提示词按位置发出", async ({ page }) => {
   await connectTo(page, TURNS);
   await expect(state(page)).toContainText("空闲");
+  const input = page.getByTestId("connect-input");
+  await input.fill("对比 和 MOCK-SLOW please");
+  // The caret after 「对比 」.
+  await input.press("Meta+ArrowLeft");
+  for (let i = 0; i < 3; i++) await input.press("ArrowRight");
   await pasteImage(page);
-  const preview = page.getByTestId("images").locator("img");
-  await expect(preview).toHaveCount(1);
-  // The app's CSP allows data: images only.
-  expect(await preview.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
-  await expect.poll(() => preview.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
-  await send(page, "MOCK-SLOW please");
-  expect((await lastSent(page, "prompt"))?.images).toEqual(["/mock/Caches/dev.joy.codeck/images/1.png"]);
+  const chips = page.getByTestId("image-chip");
+  await expect(chips).toHaveCount(1);
+  expect(await words(page)).toBe("对比 |和 MOCK-SLOW please");
+  // No previews above the box: hovering the token shows its image (a data: URL, the app's CSP allows no other).
   await expect(page.getByTestId("images")).toHaveCount(0);
+  await chips.first().hover();
+  const preview = page.getByTestId("image-preview").locator("img");
+  await expect(preview).toBeVisible();
+  expect(await preview.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+  await expect(page.getByTestId("image-preview")).toContainText("图片 1 · 1×1");
+  await input.press("Meta+ArrowRight");
+  await input.press("Enter");
+  await expect
+    .poll(() => lastSent(page, "prompt"))
+    .toMatchObject({
+      parts: [
+        { text: "对比 " },
+        { image: "/mock/Caches/dev.joy.codeck/images/1.png" },
+        { text: "和 MOCK-SLOW please" },
+      ],
+    });
+  await expect(chips).toHaveCount(0);
+});
+
+test("图片标记是一整块：光标跳过、⌫ 整块删掉，拖到别处后按新位置重新编号", async ({ page }) => {
+  await connectTo(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  const input = page.getByTestId("connect-input");
+  await input.fill("甲乙");
+  await input.press("Meta+ArrowLeft");
+  await input.press("ArrowRight");
+  await pasteImage(page);
+  await input.press("Meta+ArrowRight");
+  await pasteImage(page);
+  const chips = page.getByTestId("image-chip");
+  await expect(chips).toHaveCount(2);
+  expect(await words(page)).toBe("甲|乙|");
+  // ← from the end steps over the second token at once; ⌫ there takes the first whole.
+  await input.press("Meta+ArrowRight");
+  await input.press("ArrowLeft");
+  await input.press("ArrowLeft");
+  const caret = () =>
+    input.evaluate((e: HTMLTextAreaElement) => e.value.slice(0, e.selectionStart).replace(/⁢[^⁣]*⁣/g, "|"));
+  expect(await caret()).toBe("甲|");
+  await input.press("Backspace");
+  expect(await words(page)).toBe("甲乙|");
+  await expect(chips).toHaveCount(1);
+  await expect(chips.first()).toHaveAttribute("data-n", "1");
+
+  // Another one at the start, then dragged to the end: the two swap numbers.
+  await input.press("Meta+ArrowLeft");
+  await pasteImage(page);
+  await expect(chips).toHaveCount(2);
+  expect(await words(page)).toBe("|甲乙|");
+  const paths = async () => ((await probe(page)) as unknown as { images: number }).images;
+  expect(await paths()).toBe(3);
+  const first = (await chips.first().boundingBox())!;
+  await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(first.x + 30, first.y + first.height / 2, { steps: 3 });
+  await expect(page.getByTestId("image-drop")).toBeVisible();
+  // Between 「甲」 and 「乙」.
+  const second = (await chips.nth(1).boundingBox())!;
+  await page.mouse.move((first.x + first.width + second.x) / 2, first.y + first.height / 2, { steps: 4 });
+  await page.mouse.up();
+  expect(await words(page)).toBe("甲|乙|");
+  await input.press("Meta+ArrowRight");
+  await input.press("Enter");
+  await expect
+    .poll(() => lastSent(page, "prompt"))
+    .toMatchObject({
+      parts: [
+        { text: "甲" },
+        { image: "/mock/Caches/dev.joy.codeck/images/3.png" },
+        { text: "乙" },
+        { image: "/mock/Caches/dev.joy.codeck/images/2.png" },
+      ],
+    });
 });
 
 test("没发出的输入跟着 Session，切换、重启后仍在，发出后清掉", async ({ page }) => {
@@ -1073,22 +1153,22 @@ test("没发出的输入跟着 Session，切换、重启后仍在，发出后清
   await expect(state(page)).toContainText("空闲");
   await page.getByTestId("connect-input").fill("还没写完的草稿");
   await pasteImage(page);
-  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  await expect(page.getByTestId("image-chip")).toHaveCount(1);
   await open(page, TOOLS);
   await pick(page, "connect-button");
   await expect(state(page)).toContainText("空闲");
   await expect(page.getByTestId("connect-input")).toHaveValue("");
-  await expect(page.getByTestId("images")).toHaveCount(0);
+  await expect(page.getByTestId("image-chip")).toHaveCount(0);
   await open(page, TURNS);
-  await expect(page.getByTestId("connect-input")).toHaveValue("还没写完的草稿");
-  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  expect(await words(page)).toBe("还没写完的草稿|");
+  await expect(page.getByTestId("image-chip")).toHaveCount(1);
 
   // And across a restart: back when the Session is connected again.
   await page.reload();
   await open(page, TURNS);
   await pick(page, "connect-button");
-  await expect(page.getByTestId("connect-input")).toHaveValue("还没写完的草稿");
-  await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
+  expect(await words(page)).toBe("还没写完的草稿|");
+  await expect(page.getByTestId("image-chip")).toHaveCount(1);
   // Sent, it is gone for good.
   await page.getByTestId("connect-input").press("Enter");
   await expect(page.getByTestId("connect-input")).toHaveValue("");

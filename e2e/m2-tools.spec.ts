@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { openRich, reveal as revealIn } from "./helpers";
+import { openRich, openSession, reveal as revealIn } from "./helpers";
 
 /** Scrolls the transcript down from the top, opening collapsed tool groups, until `target` is rendered. */
 const reveal = (page: Page, target: Locator) => revealIn(page.getByTestId("transcript"), target, "top");
@@ -52,6 +52,19 @@ test("复制 Bash 命令", async ({ page }) => {
   await bash.getByRole("button", { name: "复制命令" }).click();
   const calls = await page.evaluate(() => window.__cvCalls ?? []);
   expect(calls.at(-1)).toEqual({ method: "copyText", args: ["cargo test --workspace"] });
+});
+
+test("你的消息里的 [Image #n] 显示成图片块：悬停预览、点击放大，下方不再另列缩略图", async ({ page }) => {
+  await openSession(page, "Longhorn 卷扩容与备份策略");
+  const bubble = page.getByTestId("user-bubble").filter({ hasText: "PVC" });
+  const chip = bubble.getByTestId("prompt-image");
+  await expect(chip).toHaveText("图片 #1");
+  await expect(bubble).toContainText("（现在的用量见 图片 #1），并设置每日备份保留 7 份。");
+  await expect(page.getByTestId("image-thumb")).toHaveCount(0);
+  await chip.hover();
+  await expect(page.getByTestId("prompt-image-preview").locator("img")).toBeVisible();
+  await chip.click();
+  await expect(page.getByTestId("image-large")).toBeVisible();
 });
 
 test("图片缩略图渲染并可放大", async ({ page }) => {

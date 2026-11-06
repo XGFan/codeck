@@ -21,6 +21,8 @@ export const IDS = {
 
 interface Turn {
   u: string;
+  /** Images pasted with the prompt (its `[Image #n]` placeholders say where). */
+  images?: number;
   /** Output of a local slash command, shown right after it. */
   out?: string;
   /** Omitted for a local command, which gets no reply. */
@@ -241,7 +243,8 @@ const defs: Def[] = [
     tokens: tok(9_400, 7_100, 480_000, 11_000),
     turns: [
       {
-        u: "把 postgres 的 PVC 从 20Gi 扩到 50Gi，并设置每日备份保留 7 份。",
+        u: "把 postgres 的 PVC 从 20Gi 扩到 50Gi（现在的用量见 [Image #1]），并设置每日备份保留 7 份。",
+        images: 1,
         a: "已修改 PVC 请求为 50Gi，并新增 `RecurringJob`（每日 03:00，retain=7）。",
       },
     ],
@@ -281,7 +284,15 @@ function turnNodes(prefix: string, startMs: number, turns: Turn[], inheritedCoun
     const uInherited = nodes.length < inheritedCount;
     const cmd = turn.u.match(/^(\/\S+|!)\s*(.*)$/s);
     const origin = cmd ? ({ kind: "command", name: cmd[1]!, args: cmd[2]! } as const) : undefined;
-    nodes.push(userNode(`${prefix}-u${i}`, t0, turn.u, { inherited: uInherited, origin }));
+    const id = `${prefix}-u${i}`;
+    const images = Array.from({ length: turn.images ?? 0 }, (_, ordinal) => ({
+      nodeId: id,
+      ordinal,
+      mediaType: "image/png",
+      bytes: 68,
+      toolUseId: null,
+    }));
+    nodes.push(userNode(id, t0, turn.u, { inherited: uInherited, origin, images }));
     if (turn.out) nodes.push(userNode(`${prefix}-o${i}`, t0, turn.out, { origin: { kind: "commandOutput" } }));
     if (turn.a === undefined) return;
     const blocks = [{ kind: "text", text: turn.a } as const];

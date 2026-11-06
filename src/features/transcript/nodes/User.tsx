@@ -11,7 +11,7 @@ import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
 import { promptParts } from "../promptCode";
-import { ImageRefs } from "../tools";
+import { ImageMarker, ImageRefs } from "../tools";
 import { type TeammateItem, peerMessages, previewOf, teammateItems, teammateParts } from "../teammate";
 import { clock, commandLine, prettyJson } from "../util";
 import { TaskPromptCard } from "./Agents";
@@ -63,10 +63,13 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
             {o.args && (o.name === "!" ? o.args : <> {o.args}</>)}
           </>
         ) : (
-          <PromptText text={body.text} />
+          <PromptText text={body.text} node={node} body={body} />
         )}
       </div>
-      {body.images.length > 0 && <PromptImages node={node} body={body} />}
+      {/* The images the text does not place (`[Image #n]`), below it; a command's, all of them. */}
+      {body.images.length > (o.kind === "command" ? 0 : markerCount(body.text)) && (
+        <PromptImages node={node} body={body} skip={o.kind === "command" ? 0 : markerCount(body.text)} />
+      )}
       {/* Under the bubble, as in Codex: time, rewind and copy on hover, the branch switcher at a branch head. */}
       <div
         data-testid="prompt-meta"
@@ -81,11 +84,34 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
   );
 }
 
-/** A typed prompt as typed, with its `inline code` and ```fenced blocks``` set as code (nothing else is markdown). */
-function PromptText({ text }: { text: string }) {
+const MARKER = /\[Image #(\d+)\]/g;
+
+/** `[Image #n]` placeholders in a prompt's words (not in its code), one per image in order. */
+const markerCount = (text: string) =>
+  promptParts(text).reduce((n, p) => n + (p.kind === "text" ? (p.text.match(MARKER)?.length ?? 0) : 0), 0);
+
+/**
+ * A typed prompt as typed, with its `inline code` and ```fenced blocks``` set as code (nothing else is markdown),
+ * and each `[Image #n]` as its image (the k-th placeholder is the k-th image).
+ */
+function PromptText({ text, node, body }: { text: string; node: Node; body: UserBody }) {
+  const { sessionId, scope } = useTranscriptCtx();
+  const ctx = { sessionId, scope, nodeId: node.id };
+  let k = 0;
+  const words = (s: string, key: number) => {
+    const out: ReactNode[] = [];
+    let at = 0;
+    for (const m of s.matchAll(MARKER)) {
+      if (m.index > at) out.push(s.slice(at, m.index));
+      out.push(<ImageMarker key={`${key}:${m.index}`} image={body.images[k++]} label={`图片 #${m[1]}`} ctx={ctx} />);
+      at = m.index + m[0].length;
+    }
+    out.push(s.slice(at));
+    return out;
+  };
   return promptParts(text).map((p, i) =>
     p.kind === "text" ? (
-      p.text
+      words(p.text, i)
     ) : p.kind === "code" ? (
       <code key={i} data-testid="prompt-code" className="rounded bg-code px-[5px] py-px font-mono text-[12.5px]">
         {p.text}
@@ -420,7 +446,7 @@ function TeammateEvent({ node, part }: { node: Node; part: Exclude<TeammateItem,
   );
 }
 
-function PromptImages({ node, body }: { node: Node; body: UserBody }) {
+function PromptImages({ node, body, skip }: { node: Node; body: UserBody; skip: number }) {
   const { sessionId, scope } = useTranscriptCtx();
-  return <ImageRefs images={body.images} ctx={{ sessionId, scope, nodeId: node.id }} />;
+  return <ImageRefs images={body.images.slice(skip)} ctx={{ sessionId, scope, nodeId: node.id }} />;
 }

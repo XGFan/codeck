@@ -1,12 +1,14 @@
 // Unsent input in a Session's input box, kept in localStorage across restarts.
 
+import { withTokens } from "./imageTokens";
+
 /** A pasted image waiting to be sent: its saved path and a preview `data:` URL. */
 export interface DraftImage {
   path: string;
   url: string;
 }
 
-/** What is typed in a Session's input box and not sent yet. */
+/** What is typed in a Session's input box and not sent yet: the text holds a token where each image goes (`imageTokens`). */
 export interface Draft {
   text: string;
   images: DraftImage[];
@@ -30,7 +32,12 @@ export function loadDrafts(): Record<string, Draft> {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? localStorage.getItem(OLD_DRAFTS_KEY) ?? "{}");
     if (!v || typeof v !== "object") return {};
-    return Object.fromEntries(Object.entries(v).filter(([k, d]) => SESSION_ID.test(k) && isDraft(d)));
+    return Object.fromEntries(
+      Object.entries(v)
+        .filter(([k, d]) => SESSION_ID.test(k) && isDraft(d))
+        // A draft from before image tokens: its images go first, where they were sent then.
+        .map(([k, d]) => [k, { ...(d as Draft), text: withTokens((d as Draft).text, (d as Draft).images) }]),
+    );
   } catch {
     return {};
   }
