@@ -102,6 +102,8 @@ pub enum Command {
     Abort,
     /// `ctrl+enter`: interrupt the turn and send what waits in Claude Code's queue now.
     SendNow,
+    /// `↑` on the empty input box: take what waits in Claude Code's queue back for editing.
+    EditQueue,
     AnswerPermission {
         request_id: String,
         decision: Decision,
@@ -513,6 +515,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         }),
         "abort" => Ok(Command::Abort),
         "send_now" => Ok(Command::SendNow),
+        "edit_queue" => Ok(Command::EditQueue),
         "answer_permission" => {
             let request_id = req_text(obj, kind, "request_id")?;
             let decision = parse_decision(obj)?;
@@ -683,6 +686,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::FollowUp { .. } => "follow_up",
         Command::Abort => "abort",
         Command::SendNow => "send_now",
+        Command::EditQueue => "edit_queue",
         Command::AnswerPermission { .. } => "answer_permission",
         Command::AnswerQuestion { .. } | Command::ChatAboutQuestion { .. } => "answer_question",
         Command::Slash { .. } => "slash",
@@ -1224,6 +1228,7 @@ mod tests {
             "follow_up",
             "abort",
             "send_now",
+            "edit_queue",
             "answer_permission",
             "answer_question",
             "slash",

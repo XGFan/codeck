@@ -110,6 +110,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `steer {text, images?}` / `steer {parts}` | `busy` 时写入，在本轮工具调用之间送达（可带图片，同 `prompt`） |
 | `follow_up {text, images?}` / `follow_up {parts}` | 进 ccrpc 队列，变成 `idle` 后依次按 `prompt` 发出（可带图片） |
 | `abort` | 发 `Esc`，等状态离开 `busy` / `waiting` |
+| `edit_queue` | `busy` 时同终端里在空输入框按 `↑`：把 Claude Code 队列里人输入的内容取回、清空输入框，返回取回的各条，供编辑后重发 |
 | `answer_permission {request_id, decision, message?}` | 作答审批（经插件；后台 Subagent 的审批按屏幕选项键），`message` 只能配 `deny`，作为反馈交给模型 |
 | `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项、自由文本，多选题可两者一起）；带 `chat: true` 时是对话框的 Chat about this（先聊聊），已答的题一并带上 |
 | `slash {command}` | 输入 `/<command>` 后回车 |

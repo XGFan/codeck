@@ -375,6 +375,69 @@ fn mock_model_send_now() {
     assert_eq!(t2["aborted"], false, "{t2}");
 }
 
+/// `edit_queue` (`↑` on the empty input box): what waits in Claude Code's queue comes back in the
+/// response, oldest first, with an image's `[Image #n]`; the queue and the input box are empty
+/// after it, and nothing of it runs after the turn.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_edit_queue() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let img = env.work.join("dot.png");
+    std::fs::write(&img, red_dot_png()).unwrap();
+
+    rpc.forget();
+    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED first"}));
+    rpc.call(
+        "s3",
+        json!({"type": "steer", "text": "MOCK-STEERED second", "images": [img]}),
+    );
+    rpc.until("queue", Duration::from_secs(10), |v| {
+        v["type"] == "queue" && v["items"].as_array().is_some_and(|a| a.len() == 2)
+    });
+
+    let d = rpc.call("e1", json!({"type": "edit_queue"}));
+    let items: Vec<String> = d["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| image_tags_as_hash(v.as_str().unwrap()))
+        .collect();
+    assert_eq!(items.len(), 2, "{d}");
+    assert_eq!(items[0], "MOCK-STEERED first", "{d}");
+    assert!(
+        items[1].contains('#') && items[1].ends_with("MOCK-STEERED second"),
+        "{d}"
+    );
+    rpc.until("queue", Duration::from_secs(5), |v| {
+        v["type"] == "queue" && v["items"] == json!([])
+    });
+    let screen = rpc.call("g1", json!({"type": "get_screen"})).to_string();
+    assert!(!screen.contains("MOCK-STEERED"), "{screen}");
+
+    let t1 = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t1["aborted"], false, "{t1}");
+    // No turn of the steers' own after it.
+    std::thread::sleep(Duration::from_secs(4));
+    while let Some(v) = rpc.recv(Duration::ZERO) {
+        assert_ne!(v["type"], "turn_end", "{v}");
+        assert!(!(v["type"] == "block" && v["text"] == "STEER-TURN"), "{v}");
+    }
+    let st = rpc.call("g2", json!({"type": "get_state"}));
+    assert_eq!(st["state"], "idle", "{st}");
+    // Nothing left to take back: refused without a key.
+    rpc.send(json!({"type": "edit_queue", "id": "e2"}));
+    let r = rpc.until("响应 e2", Duration::from_secs(5), |v| {
+        v["type"] == "response" && v["id"] == "e2"
+    });
+    assert_eq!(r["error"]["code"], "not_busy", "{r}");
+}
+
 /// A steer with an image while busy: pasted by path like a prompt's, it waits in Claude Code's
 /// queue with its `[Image #1]` placeholder, on the scripted model (no credits).
 #[test]

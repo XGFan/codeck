@@ -64,6 +64,8 @@ const STOP_CATCH_UP: Duration = Duration::from_secs(2);
 /// Code starts a turn of its own for what it queued (a background task's notification), and a
 /// prompt typed then lands in its queue instead.
 const FOLLOW_UP_SETTLE: Duration = Duration::from_secs(1);
+/// `edit_queue` is done this long after the last item `↑` took back (all are written at once).
+const POP_SETTLE: Duration = Duration::from_millis(300);
 /// `input needed` without an AskUserQuestion from the plugin becomes `dialog` after this long.
 const CLASSIFY_GRACE: Duration = Duration::from_millis(500);
 /// A permission prompt whose dialog matches no request is reported as `dialog` (or analyzed)
@@ -1160,6 +1162,7 @@ impl Engine {
             }
             Command::Abort => self.abort(),
             Command::SendNow => self.send_now(),
+            Command::EditQueue => self.edit_queue(),
             Command::AnswerPermission {
                 request_id,
                 decision,

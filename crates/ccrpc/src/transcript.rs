@@ -140,6 +140,11 @@ pub enum TxEvent {
     /// Claude Code's input queue changed (main line): what waits in it now, oldest first, task
     /// notifications included.
     Queue(Vec<String>),
+    /// `queue-operation` / `popAll`: `↑` in the TUI took this item back into the input box (one
+    /// record per item taken; what cannot be edited there stays queued).
+    Popped {
+        content: String,
+    },
     /// A user prompt entry in the main file (string content), or a slash command's record there as
     /// typed (`/name args`; no block, it only confirms the `prompt` that sent it).
     UserPrompt {
@@ -377,6 +382,22 @@ impl Tailer {
     /// Claude Code's input queue now (main line), oldest first.
     pub fn queue(&self) -> &[String] {
         &self.queue
+    }
+
+    /// The queued item with `content` gone: by its text; failing that, by its text with the
+    /// opening tag's attributes left out.
+    fn unqueue(&mut self, content: &str) {
+        let i = self
+            .queue
+            .iter()
+            .position(|q| q.trim() == content.trim())
+            .or_else(|| {
+                let key = queue_key(content);
+                self.queue.iter().position(|q| queue_key(q) == key)
+            });
+        if let Some(i) = i {
+            self.queue.remove(i);
+        }
     }
 
     /// Background tasks seen so far.
@@ -883,24 +904,17 @@ impl Tailer {
                     // Absorbed into the running turn (or dropped): by its text; failing that, by
                     // its text with the opening tag's attributes left out (a relayed message is
                     // enqueued with a `hop-chain` attribute that its `remove` does not carry).
-                    Some("remove") => {
-                        let i = self
-                            .queue
-                            .iter()
-                            .position(|q| q.trim() == content.trim())
-                            .or_else(|| {
-                                let key = queue_key(&content);
-                                self.queue.iter().position(|q| queue_key(q) == key)
-                            });
-                        if let Some(i) = i {
-                            self.queue.remove(i);
-                        }
-                    }
+                    Some("remove") => self.unqueue(&content),
                     // Taken to run as a turn: the oldest.
                     Some("dequeue") if !self.queue.is_empty() => {
                         self.queue.remove(0);
                     }
-                    // `↑` in the TUI takes all of it back into the input box.
+                    // `↑` in the TUI takes what can be edited back into the input box, one record
+                    // per item (2.1.318); one without its text took all of it.
+                    Some("popAll") if e.content.is_some() => {
+                        self.unqueue(&content);
+                        out.push(TxEvent::Popped { content });
+                    }
                     Some("popAll") => self.queue.clear(),
                     _ => {}
                 }
@@ -1782,6 +1796,26 @@ mod tests {
         let text: String = more.iter().map(|v| format!("{v}\n")).collect();
         std::io::Write::write_all(&mut f, text.as_bytes()).unwrap();
         assert_eq!(queues(t.poll()).last().unwrap(), &Vec::<String>::new());
+        // `↑` records each item it takes back; a message from another Session stays queued.
+        let more = [
+            op("enqueue", Some("d")),
+            op("enqueue", Some(&relayed(""))),
+            op("enqueue", Some("e")),
+            op("popAll", Some("d")),
+            op("popAll", Some("e")),
+        ];
+        let text: String = more.iter().map(|v| format!("{v}\n")).collect();
+        std::io::Write::write_all(&mut f, text.as_bytes()).unwrap();
+        let evs = t.poll();
+        let popped: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match e {
+                TxEvent::Popped { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(popped, ["d", "e"]);
+        assert_eq!(t.queue(), [relayed("")]);
     }
 
     /// A main file that shrank was replaced: nothing read from the old one is kept (queue,

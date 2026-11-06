@@ -80,6 +80,8 @@ pub(super) struct Marks {
     /// Sequence, uuid, text and image count of each user prompt.
     pub(super) prompts: VecDeque<(u64, String, String, usize)>,
     pub(super) enqueued: VecDeque<(u64, String)>,
+    /// Items `↑` took back out of Claude Code's queue (`popAll`), oldest first.
+    pub(super) popped: VecDeque<(u64, String)>,
 }
 
 impl Marks {
@@ -97,6 +99,23 @@ impl Marks {
         if self.enqueued.len() > 64 {
             self.enqueued.pop_front();
         }
+    }
+
+    pub(super) fn pop(&mut self, text: String) {
+        self.seq += 1;
+        self.popped.push_back((self.seq, text));
+        if self.popped.len() > 64 {
+            self.popped.pop_front();
+        }
+    }
+
+    /// What was taken back out of the queue after `after`, in order.
+    pub(super) fn popped_after(&self, after: u64) -> Vec<String> {
+        self.popped
+            .iter()
+            .filter(|(s, _)| *s > after)
+            .map(|(_, t)| t.clone())
+            .collect()
     }
 
     /// A slash or `!` command's record is rebuilt as `/name args` / `! cmd`: spaces typed in it
@@ -525,6 +544,12 @@ impl TurnTracker {
                     }
                 }
             }
+            // Taken back into the input box (`↑`, here or in the terminal): it does not run after
+            // the turn.
+            TxEvent::Popped { content } => {
+                let t = content.trim();
+                self.pending_steers.retain(|s| s.trim() != t);
+            }
             // Turns are delimited by the plugin's UserPromptSubmit / Stop; the marker says the
             // transcript has the turn's last message.
             TxEvent::TurnEnd { duration_ms } => {
@@ -725,6 +750,7 @@ impl Engine {
                 self.marks.prompt(uuid, text, images)
             }
             TxEvent::Enqueued { content } => self.marks.enqueue(content),
+            TxEvent::Popped { content } => self.marks.pop(content),
             TxEvent::Queue(items) => self.set_queue(&items),
             TxEvent::Branch { at_uuid } => {
                 self.rewound = None;
@@ -1157,6 +1183,22 @@ mod tests {
             images: 0,
         };
         assert!(t.on_tx(&slash, now).is_empty());
+        assert!(!t.active);
+    }
+
+    #[test]
+    fn a_steer_taken_back_does_not_run_after_the_turn() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        submit(&mut t, now, "p1", "go");
+        submit(&mut t, now, "p1", "steer");
+        let popped = TxEvent::Popped {
+            content: "steer".into(),
+        };
+        t.on_tx(&popped, now);
+        stop(&mut t, now, "p1", "ok");
+        let out = t.poll(now + STOP_CATCH_UP, Some(now));
+        assert_eq!(ends(&out).len(), 1);
+        assert!(!out.contains(&TurnOut::Opened));
         assert!(!t.active);
     }
 

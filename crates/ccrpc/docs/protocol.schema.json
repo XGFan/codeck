@@ -242,6 +242,7 @@
         "unsupported",
         "unrecognized_screen",
         "input_not_empty",
+        "delivered",
         "timeout",
         "exited",
         "io",
@@ -457,6 +458,9 @@
         },
         {
           "$ref": "#/$defs/commands/send_now"
+        },
+        {
+          "$ref": "#/$defs/commands/edit_queue"
         },
         {
           "$ref": "#/$defs/commands/answer_permission"
@@ -740,6 +744,23 @@
         "properties": {
           "type": {
             "const": "send_now"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "edit_queue": {
+        "title": "edit_queue",
+        "description": "同 TUI 里排队时在空输入框按 ↑：Claude Code 队列里人输入的内容（插话、在 TUI 里忙时输入的；不含别的 Session 或 Agent 发来的消息）全部取回输入框，随即清空输入框，内容在响应里返回，供调用方编辑后重发；busy 且 queue 里有可取回的内容时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "edit_queue"
           },
           "id": {
             "$ref": "#/$defs/id"
@@ -1387,6 +1408,23 @@
         "type": "object",
         "properties": {}
       },
+      "edit_queue": {
+        "title": "edit_queue",
+        "description": "取回的内容，输入框已清空。",
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "从 Claude Code 队列里取回的各条（先入在前），正文同 queue 事件；带图片的含 [Image #n]，图片本身不返回。"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
       "answer_permission": {
         "title": "answer_permission",
         "description": "作答后的状态。",
@@ -2028,6 +2066,16 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/send_now"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "edit_queue"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/edit_queue"
             }
           }
         },

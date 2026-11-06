@@ -611,6 +611,46 @@ impl Engine {
         }
     }
 
+    /// Takes what waits in Claude Code's queue back for editing, as `↑` on the empty input box in
+    /// the TUI: what can be edited there leaves the queue (a `popAll` record each) for the input
+    /// box, which is then emptied; the items are returned, oldest first.
+    pub(super) fn edit_queue(&mut self) -> CmdResult {
+        self.require(self.state == State::Busy, "not_busy")?;
+        if !self.queue.iter().any(|q| editable(q)) {
+            return err("bad_request", "队列里没有可取回的消息");
+        }
+        // `↑` joins what it takes back with what is in the box, which keeps `!` commands queued.
+        self.clear_input()?;
+        let before = self.marks.seq;
+        self.input_box_now()?;
+        self.keys(key::UP)?;
+        // One record per item, written together: done once none that can be edited is left, or
+        // a moment after the last one (what Claude Code keeps queued, e.g. a `!` command among
+        // others, stays); with none taken back, once the queue went out meanwhile.
+        let (mut seen, mut at) = (0, Instant::now());
+        self.wait_until(Duration::from_secs(5), |e| {
+            let n = e.marks.popped_after(before).len();
+            if n != seen {
+                (seen, at) = (n, Instant::now());
+            }
+            !e.queue.iter().any(|q| editable(q)) || (n > 0 && at.elapsed() >= POP_SETTLE)
+        });
+        let items = self.marks.popped_after(before);
+        // The box has them now (or, had the queue just gone out, the last prompt from history).
+        let cleared = self.clear_input();
+        if items.is_empty() {
+            cleared?;
+            if !self.queue.iter().any(|q| editable(q)) {
+                return err("delivered", "排队的消息已经送出");
+            }
+            return err("timeout", "5 秒内队列里的消息没有取回");
+        }
+        if let Err((_, m)) = &cleared {
+            crate::clog!("input box keeps what was taken back: {m}");
+        }
+        Ok(json!({"items": items}))
+    }
+
     pub(super) fn slash(&mut self, command: &str) -> CmdResult {
         self.require(self.state == State::Idle, "not_idle")?;
         let clean = Self::clean_text(command)?;
@@ -789,10 +829,30 @@ impl Engine {
     }
 }
 
+/// A queued item `↑` takes back into the input box: what the person typed (or a steer), not a
+/// message from another Session or agent (task notifications and Teammate messages are not in
+/// [`Engine::queue`]).
+fn editable(item: &str) -> bool {
+    let t = item.trim_start();
+    !t.starts_with("<cross-session-message") && !t.starts_with("<agent-message")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rpc::{Input, Part};
+
+    #[test]
+    fn only_what_was_typed_is_taken_back() {
+        assert!(editable("MOCK-STEERED now"));
+        assert!(editable("[Image #1] look"));
+        assert!(!editable(
+            "<cross-session-message from=\"uds:/tmp/a.sock\" from-name=\"c6\">\nhi\n</cross-session-message>"
+        ));
+        assert!(!editable(
+            "<agent-message from=\"a\">\nhi\n</agent-message>"
+        ));
+    }
 
     #[test]
     fn parts_are_checked_up_front() {
