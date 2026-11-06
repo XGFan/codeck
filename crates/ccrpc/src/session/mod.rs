@@ -188,6 +188,8 @@ pub struct Engine {
     no_checkin_since: Option<Instant>,
     /// An answer just went back through a hook: no announcing until then.
     answered_until: Option<Instant>,
+    /// `exit` is running: the question it asks first is answered by ccrpc, not reported as waiting.
+    exiting: bool,
     /// `get_messages` pages (its own thread).
     history: HistoryWorker,
     /// Main line's last model and context size; the permission mode the plugin last saw.
@@ -322,6 +324,7 @@ impl Engine {
             idle_at: None,
             no_checkin_since: None,
             answered_until: None,
+            exiting: false,
             history: HistoryWorker::start(wake.clone()),
             model: None,
             effort: None,
@@ -1058,6 +1061,9 @@ impl Engine {
             }
             _ => State::Idle,
         };
+        if self.exiting && matches!(next, State::Waiting { .. }) {
+            return;
+        }
         self.set_state(next);
     }
 

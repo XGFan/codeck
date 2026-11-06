@@ -763,6 +763,13 @@ impl Engine {
 
     /// `/exit`, then wait for claude to be gone; `close_pane` also ends the Pane's shell.
     pub(super) fn exit(&mut self, close_pane: bool, stop_tasks: bool) -> CmdResult {
+        self.exiting = true;
+        let r = self.exit_claude(close_pane, stop_tasks);
+        self.exiting = false;
+        r
+    }
+
+    fn exit_claude(&mut self, close_pane: bool, stop_tasks: bool) -> CmdResult {
         if self.state != State::Exited {
             self.require(self.state == State::Idle, "not_idle")?;
             let Some(pid) = self.claude_pid else {
@@ -781,7 +788,7 @@ impl Engine {
                 Some((Some(_), _)) if !stop_tasks => {
                     self.keys(key::ESC)?;
                     return err(
-                        "not_idle",
+                        "tasks_running",
                         "还有后台任务在运行：加 stop_tasks 退出并停掉它们",
                     );
                 }

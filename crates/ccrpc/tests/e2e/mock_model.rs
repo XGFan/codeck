@@ -1590,9 +1590,20 @@ fn mock_model_exit_with_tasks() {
     start_session(&mut rpc, &env);
     run_turn_allowing(&mut rpc, "bg", "MOCK-LONGTASK please");
     settle_idle(&mut rpc);
+    // ccrpc answers the question itself: the Session is not reported as waiting meanwhile.
+    let no_waiting = |rpc: &Rpc| {
+        assert!(
+            !rpc.seen
+                .iter()
+                .any(|v| v["type"] == "state" && v["state"] == "waiting"),
+            "exit 期间报了 waiting：{:?}",
+            rpc.seen
+        );
+    };
+    rpc.forget();
     rpc.send(json!({"id": "x1", "type": "exit"}));
     let r = rpc.until("x1", Duration::from_secs(30), |v| v["id"] == "x1");
-    assert_eq!(r["error"]["code"], "not_idle", "{r}");
+    assert_eq!(r["error"]["code"], "tasks_running", "{r}");
     // The question is dismissed: back at the input box, claude still running.
     wait_screen(&mut rpc, "x1s", |lines| {
         !lines
@@ -1603,8 +1614,11 @@ fn mock_model_exit_with_tasks() {
         rpc.call("x1g", json!({"type": "get_state"}))["state"],
         "idle"
     );
+    no_waiting(&rpc);
+    rpc.forget();
     rpc.call("x2", json!({"type": "exit", "stop_tasks": true}));
     rpc.event("session_exit", Duration::from_secs(20));
+    no_waiting(&rpc);
 }
 
 /// A background shell stopped with TaskStop ends in get_tasks: Claude Code sends no notification for
