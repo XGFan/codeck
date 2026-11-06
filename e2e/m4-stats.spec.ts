@@ -20,7 +20,7 @@ test("统计面板渲染卡片与图表", async ({ page }) => {
   const tokens = page.locator('[data-card="tokens"]');
   await expect(tokens).toContainText("输入");
   await expect(tokens).toContainText("输出");
-  await expect(tokens.getByTestId("cache-hit")).toHaveText(/缓存命中率 \d+%/);
+  await expect(tokens.getByTestId("cache-hit")).toHaveText(/缓存命中率 \d+\.\d%/);
   await expect(tokens.getByRole("img", { name: /输入构成：缓存读取 \d+%/ })).toBeVisible();
   await expect(page.getByTestId("daily-chart").locator("canvas").first()).toBeVisible();
   await expect(page.getByTestId("activity-chart").locator("canvas").first()).toBeVisible();

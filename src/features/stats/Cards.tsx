@@ -102,7 +102,7 @@ function TokenCard({ stats }: { stats: Stats }) {
         <span className="text-[12px] text-secondary">Token</span>
         <span className="flex-1" />
         <span data-testid="cache-hit" className="text-[12px] text-secondary">
-          缓存命中率 <span className="font-semibold text-text">{Math.round(pct(t.read))}%</span>
+          缓存命中率 <span className="font-semibold text-text">{pct(t.read).toFixed(1)}%</span>
         </span>
       </div>
       {/* Two fixed columns: a longer number on the left never pushes the output figure around. */}
