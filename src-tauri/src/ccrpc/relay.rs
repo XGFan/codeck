@@ -128,6 +128,28 @@ pub struct AnalyzerTest {
     pub elapsed_ms: u32,
 }
 
+/// ccrpc's analysis records (`ccrpc analyzer records`): where they are and each one, newest first.
+#[derive(Serialize, Clone, Debug, PartialEq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzerRecords {
+    pub dir: String,
+    pub records: Vec<AnalyzerRecord>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzerRecord {
+    /// The record's file.
+    pub file: String,
+    /// When (UTC, RFC 3339).
+    pub at: String,
+    /// The layout went into the library; otherwise `error` says why not.
+    pub learned: bool,
+    /// The dialog's title, when the analyzer gave one.
+    pub title: Option<String>,
+    pub error: Option<String>,
+}
+
 pub struct App {
     pub env: HashMap<String, String>,
     pub ccrpc: PathBuf,
@@ -233,6 +255,21 @@ impl App {
             model: v["model"].as_str().unwrap_or_default().to_string(),
             elapsed_ms: v["elapsed_ms"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
         })
+    }
+
+    /// `ccrpc analyzer records`.
+    pub fn analyzer_records(&self) -> R<AnalyzerRecords> {
+        let out = self.run(&["analyzer", "records"])?;
+        if !out.status.success() {
+            let e = self.stderr_error("analyzer records", &out.stderr);
+            // A ccrpc from before the subcommand answers with its usage.
+            if e.message.starts_with("用法：") {
+                return Err(failed("这个 ccrpc 没有分析记录，请更新 ccrpc"));
+            }
+            return Err(e);
+        }
+        parse_records(&out.stdout)
+            .map_err(|e| failed(format!("ccrpc analyzer records 的输出读不出：{e}")))
     }
 
     /// A subcommand's failure: the first line of its stderr (without `ccrpc: `) as the message,
@@ -882,6 +919,26 @@ fn is_session_id(s: &str) -> bool {
         })
 }
 
+fn parse_records(out: &[u8]) -> serde_json::Result<AnalyzerRecords> {
+    let v: serde_json::Value = serde_json::from_slice(out)?;
+    let text = |v: &serde_json::Value| v.as_str().map(str::to_string);
+    Ok(AnalyzerRecords {
+        dir: text(&v["dir"]).unwrap_or_default(),
+        records: v["records"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| AnalyzerRecord {
+                file: text(&r["file"]).unwrap_or_default(),
+                at: text(&r["at"]).unwrap_or_default(),
+                learned: r["outcome"] == "learned",
+                title: text(&r["title"]),
+                error: text(&r["error"]),
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1211,6 +1268,36 @@ printf '{"model":"%s","elapsed_ms":1234,"kind":"choice","options":2}\n' "$CCRPC_
         assert_eq!(
             old.test_analyzer(&a).unwrap_err().message,
             "这个 ccrpc 不支持测试分析器，请更新 ccrpc"
+        );
+    }
+
+    /// `ccrpc analyzer records` read into the settings' list; an old ccrpc without it is said to
+    /// need an update.
+    #[test]
+    fn analyzer_records_are_read_and_an_old_ccrpc_is_named() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(
+            d.path(),
+            r#"[ "$1 $2" = "analyzer records" ] || exit 2
+printf '%s\n' '{"dir":"/a","records":[{"file":"/a/2.json","at":"2026-11-06T03:38:30Z","outcome":"learned","kind":"choice","title":"T","error":null},{"file":"/a/1.json","at":"2026-11-05T12:30:41Z","outcome":"failed","title":null,"error":"E"}]}'"#,
+        );
+        let r = app.analyzer_records().unwrap();
+        assert_eq!(r.dir, "/a");
+        assert_eq!(
+            r.records
+                .iter()
+                .map(|r| (r.learned, r.title.as_deref(), r.error.as_deref()))
+                .collect::<Vec<_>>(),
+            [(true, Some("T"), None), (false, None, Some("E"))]
+        );
+
+        let old = fake_ccrpc(
+            d.path(),
+            "printf 'ccrpc: 用法：ccrpc analyzer test\\n' >&2; exit 1",
+        );
+        assert_eq!(
+            old.analyzer_records().unwrap_err().message,
+            "这个 ccrpc 没有分析记录，请更新 ccrpc"
         );
     }
 

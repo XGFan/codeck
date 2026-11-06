@@ -136,6 +136,8 @@ export interface CcrpcProbe {
   images: number;
   /** `ccrpcSetAnalyzer` calls. */
   analyzerSaves: number;
+  /** `ccrpcOpenAnalyzerRecords` calls. */
+  recordsOpened: number;
   /** `ccrpcSetPaneHidden` calls, in order. */
   paneHides: { holderId: string; hidden: boolean }[];
   /** 「新开的 Pane」 as last saved (`ccrpcSetHideNewPanes`). */
@@ -167,6 +169,7 @@ const probe: CcrpcProbe = {
   badge: 0,
   images: 0,
   analyzerSaves: 0,
+  recordsOpened: 0,
   paneHides: [],
   hideNewPanes: false,
   forks: [],
@@ -335,6 +338,8 @@ type CcrpcApi = Pick<
   | "ccrpcInfo"
   | "ccrpcSetAnalyzer"
   | "ccrpcTestAnalyzer"
+  | "ccrpcAnalyzerRecords"
+  | "ccrpcOpenAnalyzerRecords"
   | "ccrpcSetLaunchRules"
   | "ccrpcSetHideNewPanes"
   | "ccrpcSetPaneHidden"
@@ -382,6 +387,8 @@ function analyzerInfo(): AnalyzerInfo {
   };
 }
 
+const ANALYSES_DIR = "/mock/.local/share/ccrpc/analyses";
+
 export function createMockCcrpc(): CcrpcApi {
   window.__cvCcrpc = probe;
   return {
@@ -423,6 +430,29 @@ export function createMockCcrpc(): CcrpcApi {
       const key = apiKey?.trim() || analyzer.apiKey || SHELL_KEY;
       if (key.endsWith("bad")) throw appError("internal", "分析器请求失败：http status: 401");
       return { model: model?.trim() || "deepseek-flash", elapsedMs: 2345 };
+    },
+    ccrpcAnalyzerRecords: async () => ({
+      dir: ANALYSES_DIR,
+      records: [
+        {
+          file: `${ANALYSES_DIR}/1793936310091-78130.json`,
+          at: "2026-11-06T03:38:30Z",
+          learned: true,
+          title: "Computer Use wants to control these apps",
+          error: null,
+        },
+        {
+          file: `${ANALYSES_DIR}/1793891869922-60211.json`,
+          at: "2026-11-05T15:17:49Z",
+          learned: false,
+          title: null,
+          error: "分析器认为屏幕上没有等待作答的菜单",
+        },
+      ],
+    }),
+    ccrpcOpenAnalyzerRecords: async () => {
+      probe.recordsOpened++;
+      return null;
     },
     ccrpcSetLaunchRules: async (rules) => {
       launchRules = rules

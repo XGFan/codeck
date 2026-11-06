@@ -223,6 +223,27 @@ pub async fn ccrpc_test_analyzer(
     .await
 }
 
+/// ccrpc's analysis records (`ccrpc analyzer records`).
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_analyzer_records(
+    state: State<'_, CcrpcState>,
+) -> CmdResult<relay::AnalyzerRecords> {
+    with_ccrpc(&state, |app| app.analyzer_records()).await
+}
+
+/// Opens the analysis records' directory in Finder (ccrpc says where it is and creates it).
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_open_analyzer_records(state: State<'_, CcrpcState>) -> CmdResult<()> {
+    with_ccrpc(&state, |app| {
+        let dir = app.analyzer_records()?.dir;
+        tauri_plugin_opener::open_path(&dir, None::<&str>)
+            .map_err(|e| relay::io(format!("打不开分析记录目录：{e}")))
+    })
+    .await
+}
+
 /// Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved.
 #[tauri::command]
 #[specta::specta]

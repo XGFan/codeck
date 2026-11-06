@@ -46,6 +46,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ccrpc::ccrpc_info,
             ccrpc::ccrpc_set_analyzer,
             ccrpc::ccrpc_test_analyzer,
+            ccrpc::ccrpc_analyzer_records,
+            ccrpc::ccrpc_open_analyzer_records,
             ccrpc::ccrpc_set_launch_rules,
             ccrpc::ccrpc_set_hide_new_panes,
             ccrpc::ccrpc_set_pane_hidden,

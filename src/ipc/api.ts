@@ -1,5 +1,6 @@
 import type {
   AnalyzerInfo,
+  AnalyzerRecords,
   AnalyzerTest,
   AppInfo,
   Diagnostics,
@@ -79,6 +80,10 @@ export interface Api {
   ccrpcSetAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerInfo>;
   /** `ccrpc analyzer test` with these values, unsaved (`apiKey: null` = the saved or login shell's key); rejects with the reason. */
   ccrpcTestAnalyzer(apiKey: string | null, baseUrl: string | null, model: string | null): Promise<AnalyzerTest>;
+  /** `ccrpc analyzer records`: the analysis records' directory and each record, newest first. */
+  ccrpcAnalyzerRecords(): Promise<AnalyzerRecords>;
+  /** Opens the analysis records' directory in Finder. */
+  ccrpcOpenAnalyzerRecords(): Promise<null>;
   /** Saves the launch rules (extra claude arguments by directory for 「新建 Session」); returns what was saved. */
   ccrpcSetLaunchRules(rules: LaunchRule[]): Promise<LaunchRule[]>;
   /** Saves 「新开的 Pane」: whether Sessions started from now on (new and Resume) open hidden on the ToH Mac Client. */

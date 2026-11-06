@@ -50,6 +50,10 @@ export const commands = {
 	 *  key) without saving them: `ccrpc analyzer test`, one analysis of a built-in dialog.
 	 */
 	ccrpcTestAnalyzer: (apiKey: string | null, baseUrl: string | null, model: string | null) => __TAURI_INVOKE<AnalyzerTest>("ccrpc_test_analyzer", { apiKey, baseUrl, model }),
+	/**  ccrpc's analysis records (`ccrpc analyzer records`). */
+	ccrpcAnalyzerRecords: () => __TAURI_INVOKE<AnalyzerRecords>("ccrpc_analyzer_records"),
+	/**  Opens the analysis records' directory in Finder (ccrpc says where it is and creates it). */
+	ccrpcOpenAnalyzerRecords: () => __TAURI_INVOKE<null>("ccrpc_open_analyzer_records"),
 	/**  Saves the launch rules (trimmed; rules without arguments dropped) and returns what was saved. */
 	ccrpcSetLaunchRules: (rules: LaunchRule[]) => __TAURI_INVOKE<LaunchRule[]>("ccrpc_set_launch_rules", { rules }),
 	/**  Saves 「新开的 Pane」: whether the Sessions CoDeck starts from now on open hidden on the ToH Mac Client. */
@@ -127,6 +131,24 @@ export type AnalyzerInfo = {
 	/**  From the login shell (null: not set there; ccrpc's default then applies). */
 	shellBaseUrl: string | null,
 	shellModel: string | null,
+};
+
+export type AnalyzerRecord = {
+	/**  The record's file. */
+	file: string,
+	/**  When (UTC, RFC 3339). */
+	at: string,
+	/**  The layout went into the library; otherwise `error` says why not. */
+	learned: boolean,
+	/**  The dialog's title, when the analyzer gave one. */
+	title: string | null,
+	error: string | null,
+};
+
+/**  ccrpc's analysis records (`ccrpc analyzer records`): where they are and each one, newest first. */
+export type AnalyzerRecords = {
+	dir: string,
+	records: AnalyzerRecord[],
 };
 
 /**  `ccrpc analyzer test` passed: the analyzer described a built-in dialog in a way ccrpc accepts. */

@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
+import { format } from "date-fns";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/ipc";
-import type { AnalyzerInfo, LaunchRule } from "@/ipc/bindings";
+import type { AnalyzerInfo, AnalyzerRecords, LaunchRule } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { useConnect } from "./store";
 import { errorText } from "@/lib/errors";
@@ -17,7 +18,7 @@ function Row({ label, children, testId }: { label: string; children: React.React
   );
 }
 
-/** Settings › ccrpc: ccrpc's path, `ccrpc doctor`, the analyzer, launch rules, the log directory. Asks for `ccrpcInfo` when shown. */
+/** Settings › ccrpc: ccrpc's path, `ccrpc doctor`, the analyzer and its records, launch rules, the log directory. Asks for `ccrpcInfo` when shown. */
 export function CcrpcSettings() {
   const info = useConnect((s) => s.info);
   const infoError = useConnect((s) => s.infoError);
@@ -81,6 +82,9 @@ export function CcrpcSettings() {
       <Row label="界面分析器" testId="set-analyzer">
         {info ? <AnalyzerForm a={info.analyzer} /> : "…"}
       </Row>
+      <Row label="分析记录" testId="set-analyzer-records">
+        <AnalyzerRecordsList />
+      </Row>
       <Row label="新开的 Pane" testId="set-hide-new-panes">
         {info ? <HideNewPanes saved={info.hideNewPanes} /> : "…"}
       </Row>
@@ -90,6 +94,77 @@ export function CcrpcSettings() {
       <Row label="日志目录" testId="set-ccrpc-logs">
         <code className="break-all font-mono text-[13px]">{info?.logRoot ?? "…"}</code>
       </Row>
+    </div>
+  );
+}
+
+/** Records shown; the rest are in the directory. */
+const RECORDS_SHOWN = 10;
+
+/** ccrpc's analysis records, newest first: when, learned or failed, the dialog's title or why it failed; the files hold the rest. */
+function AnalyzerRecordsList() {
+  const [data, setData] = useState<AnalyzerRecords | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  useEffect(() => {
+    let gone = false;
+    api.ccrpcAnalyzerRecords().then(
+      (d) => !gone && setData(d),
+      (e) => !gone && setError(errorText(e)),
+    );
+    return () => {
+      gone = true;
+    };
+  }, []);
+  const open = async () => {
+    setOpenError(null);
+    try {
+      await api.ccrpcOpenAnalyzerRecords();
+    } catch (e) {
+      setOpenError(errorText(e));
+    }
+  };
+  if (error) return <div className="text-[13px] text-error">{error}</div>;
+  if (!data) return "…";
+  return (
+    <div className="flex flex-col gap-2 text-[13px]">
+      {data.records.length === 0 ? (
+        <div className="text-secondary">还没有分析记录</div>
+      ) : (
+        <ul className="m-0 flex list-none flex-col gap-1 p-0">
+          {data.records.slice(0, RECORDS_SHOWN).map((r) => (
+            <li key={r.file} data-testid="analyzer-record" className="flex gap-2">
+              <span className="w-[92px] shrink-0 tabular-nums text-secondary">
+                {format(new Date(r.at), "M月d日 HH:mm")}
+              </span>
+              <span className={cn("w-8 shrink-0", r.learned ? "text-text" : "text-error")}>
+                {r.learned ? "学会" : "失败"}
+              </span>
+              <span className="min-w-0 break-words">
+                {[r.title, r.learned ? null : r.error].filter(Boolean).join(" · ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-8"
+          onClick={() => void open()}
+          data-testid="analyzer-records-open"
+        >
+          打开记录目录
+        </Button>
+        <code className="min-w-0 break-all font-mono text-[12px] text-secondary">{data.dir}</code>
+      </div>
+      {openError && <div className="text-[12px] text-error">{openError}</div>}
+      <div className="text-[12px] text-secondary">
+        ccrpc 每次分析留一个文件，含当时的屏幕、送出的工具输入与模型回复，只留最近 200 条
+        {data.records.length > RECORDS_SHOWN ? `；这里列出最近 ${RECORDS_SHOWN} 条，共 ${data.records.length} 条` : ""}
+        。
+      </div>
     </div>
   );
 }

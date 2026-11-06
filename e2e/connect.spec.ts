@@ -38,6 +38,7 @@ type Probe = {
   guiLog: string[];
   badge: number;
   analyzerSaves: number;
+  recordsOpened: number;
   paneHides: { holderId: string; hidden: boolean }[];
   hideNewPanes: boolean;
 };
@@ -1088,6 +1089,21 @@ test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分
   await expect(page.getByTestId("analyzer-key")).toHaveValue("sk-bad");
   await expect(status).toContainText("来自登录 shell");
   expect((await probe(page)).analyzerSaves).toBe(3);
+});
+
+test("设置 › ccrpc：分析记录从新到旧列出学会的对话框与失败原因，可打开记录目录", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Meta+,");
+  await page.getByRole("tab", { name: "ccrpc" }).click();
+  const rows = page.getByTestId("analyzer-record");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("学会");
+  await expect(rows.nth(0)).toContainText("Computer Use wants to control these apps");
+  await expect(rows.nth(1)).toContainText("失败");
+  await expect(rows.nth(1)).toContainText("分析器认为屏幕上没有等待作答的菜单");
+  await expect(page.getByTestId("set-analyzer-records")).toContainText("/mock/.local/share/ccrpc/analyses");
+  await page.getByTestId("analyzer-records-open").click();
+  await expect.poll(async () => (await probe(page)).recordsOpened).toBe(1);
 });
 
 test("设置 › ccrpc › 启动参数：选目录、填参数、保存；参数为空的目录保存时去掉，可删除", async ({ page }) => {
