@@ -520,7 +520,7 @@ export type SessionDetail = {
 	files: SourceFile[],
 	forks: ForkChild[],
 	/**
-	 *  The Session this one is carried on in (it was parked in the background and its whole
+	 *  The Session this one is carried on in (it was moved to the background and its whole
 	 *  conversation copied there): the app opens that one instead. `None` for a listed Session.
 	 */
 	supersededBy: string | null,

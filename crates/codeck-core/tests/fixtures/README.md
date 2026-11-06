@@ -99,7 +99,7 @@ its tool_result must not produce a BranchPoint. Choosing the "Now add unit tests
 
 ## continued
 
-`continued/projects/-Users-dev-code-heron-bot/`: old `7c1e5a42…` and continued `9a3f6d18…` (real Claude Code 2.1.318 pair: a Session parked in the background from the agents page; `api-request*` lines dropped before sanitizing with `--cap 40`, session ids replaced).
+`continued/projects/-Users-dev-code-heron-bot/`: old `7c1e5a42…` and continued `9a3f6d18…` (real Claude Code 2.1.318 pair: a Session moved to the background from the agents page; `api-request*` lines dropped before sanitizing with `--cap 40`, session ids replaced).
 
 | file | path under `projects/<dir>/` | lines | failed | uuids | dup uuids | human prompts | assistant msg ids | tool_use | tool errors | tokens in/out/cr/cc |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -109,7 +109,7 @@ its tool_result must not produce a BranchPoint. Choosing the "Now add unit tests
 
 - Old: its conversation ends with a `session_cron_carry` attachment, `cost-state` and `{"type":"continued-in","continuedInSessionId":"9a3f6d18…"}`; only a `last-prompt` and another `cost-state` (no uuids) follow.
 - Continued: all 94 uuid-bearing old entries again (same uuids and `message.id`s; three `parentUuid`s differ, no `forkedFrom`), then 114 entries of its own, every uuid-bearing entry with `sessionKind:"bg"`, plus `agent-name` lines. Both share the first uuid and the first timestamp, so their `created_ms` is equal.
-- Hand-written, in both files alike (the copy keeps them equal): the Bash call `toolu_01CZ4fy7…` is an `Agent` call whose result names `agentId` `a5e1c0d7f2b9a4e36`, and the result of `toolu_01KjgPwR…` is a `<persisted-output>` preview of `tool-results/b7q2m9x4k.txt`. As in real parked Sessions, only the old Session's directory holds `subagents/agent-a5e1c0d7f2b9a4e36.jsonl` (+ `.meta.json`, hand-written: a prompt and one reply) and `tool-results/b7q2m9x4k.txt`; the continued Session has no directory.
+- Hand-written, in both files alike (the copy keeps them equal): the Bash call `toolu_01CZ4fy7…` is an `Agent` call whose result names `agentId` `a5e1c0d7f2b9a4e36`, and the result of `toolu_01KjgPwR…` is a `<persisted-output>` preview of `tool-results/b7q2m9x4k.txt`. As in real Sessions moved to the background, only the old Session's directory holds `subagents/agent-a5e1c0d7f2b9a4e36.jsonl` (+ `.meta.json`, hand-written: a prompt and one reply) and `tool-results/b7q2m9x4k.txt`; the continued Session has no directory.
 - Expect: the old Session is superseded (hidden from lists, counts, search and stats; opening it gives the continued one), the continued one is not a Fork, bills every copied message and takes the old one's Subagent Run and saved output; without the continued file (or once the old one has a prompt the continued one lacks) both are listed and billed normally.
 
 ## copies

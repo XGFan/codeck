@@ -57,7 +57,7 @@ _Avoid_: 用户消息, peer message, 队友输入
 _Avoid_: 分支, 副本, Resume（Resume 不产生新 Session，不算 Fork）
 
 **Continued Session**:
-Session 在 agents 页面转入后台时 Claude Code 新起的 Session：它复制了原 Session 的全部对话并接着进行，原 Session 由此**被接替**（superseded）。两者是同一个对话，只显示 Continued Session，打开原 Session 时转到它；它不是 Fork，也不标 Origin Session。
+Session 在 agents 页面转入后台（Move to Background）时 Claude Code 新起的 Session：它复制了原 Session 的全部对话并接着进行，原 Session 由此**被接替**（superseded）。两者是同一个对话，只显示 Continued Session，打开原 Session 时转到它；它不是 Fork，也不标 Origin Session。
 _Avoid_: Fork（不是分出去的另一条路）, 副本, Resume（Resume 不产生新 Session）
 
 **Cost**:

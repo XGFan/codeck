@@ -223,9 +223,10 @@ pub fn list_session_dir(
 }
 
 /// Gives a session the agent transcripts and sidecars of the sessions it supersedes that it lacks
-/// (`adopt`: superseded session → the session carrying it on). Parking a Session copies its
-/// conversation into the new one but leaves `subagents/`, `workflows/` and `tool-results/` behind,
-/// so the copied Agent and Workflow calls are linked, indexed and billed through the new session.
+/// (`adopt`: superseded session → the session carrying it on). Moving a Session to the background
+/// copies its conversation into the new one but leaves `subagents/`, `workflows/` and
+/// `tool-results/` behind, so the copied Agent and Workflow calls are linked, indexed and billed
+/// through the new session.
 /// A Subagent Run or Workflow Run the new session has itself keeps its own files; among several
 /// superseded sessions the first listed wins.
 pub fn adopt(

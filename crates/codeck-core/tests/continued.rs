@@ -1,4 +1,4 @@
-//! A Session parked in the background (`continued-in`): the Session carrying it on copies its whole
+//! A Session moved to the background (`continued-in`): the Session carrying it on copies its whole
 //! conversation, so only that one is listed, counted, searched and billed; the old one opens as it.
 //! The copy leaves the old Session's Subagent Runs and `tool-results/` behind: the new one takes
 //! them from the old one's directory.

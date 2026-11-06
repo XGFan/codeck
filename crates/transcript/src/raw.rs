@@ -94,7 +94,7 @@ pub struct RawEntry {
     pub agent_name: Option<String>,
     #[serde(default, deserialize_with = "lenient::object")]
     pub forked_from: Option<RawForkedFrom>,
-    /// `continued-in`: the Session that carries this one on (parked in the background).
+    /// `continued-in`: the Session that carries this one on (moved to the background).
     #[serde(default, deserialize_with = "lenient::string")]
     pub continued_in_session_id: Option<String>,
     /// `compact_boundary`.

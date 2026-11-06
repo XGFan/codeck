@@ -254,7 +254,7 @@ pub fn copy_neighbors(conn: &Connection, session_id: &str) -> CoreResult<Vec<Str
 /// (`None` = every session); returns the sessions whose flag changed.
 ///
 /// A session is superseded when its last `continued-in` names a session in the index that holds a
-/// copy of every one of its main-file prompts (by uuid). Parking a Session in the background
+/// copy of every one of its main-file prompts (by uuid). Moving a Session to the background
 /// (Claude Code 2.1.318) ends it with `continued-in` and copies its transcript into the new one, so
 /// the newer session alone tells the conversation. Prompts, not replies: the copy leaves out a
 /// reply that is only an empty thinking block (seen in real data), while a prompt the newer

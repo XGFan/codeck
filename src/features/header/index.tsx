@@ -38,7 +38,7 @@ export function SessionHeader() {
   const sessionId = useUi((s) => s.sessionId);
   const inset = useLeadingInset();
   const { data: d, error } = useSession(sessionId);
-  // A superseded Session (parked in the background, its conversation copied on) opens as the one carrying it on.
+  // A superseded Session (moved to the background, its conversation copied on) opens as the one carrying it on.
   const successor = d?.supersededBy ?? null;
   useEffect(() => {
     if (successor) useUi.getState().selectSession(successor);

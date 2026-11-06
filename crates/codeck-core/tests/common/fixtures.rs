@@ -23,7 +23,7 @@ pub mod ids {
     pub const FORK_ORIGIN: &str = "d3b58148-dbd3-54d8-a4e3-f272df8eac0d";
     pub const FORK_CHILD: &str = "d6ac0c3a-1415-5f66-bbd9-6cc17c0eb4f5";
     pub const FORK_DIR: &str = "-Users-dev-code-tidepool";
-    /// continued: parked in the background (ends with `continued-in` naming `CONTINUED_NEW`)
+    /// continued: moved to the background (ends with `continued-in` naming `CONTINUED_NEW`)
     pub const CONTINUED_OLD: &str = "7c1e5a42-93b0-5d8e-a6f1-2b4c8d0e9f13";
     /// continued: a verbatim copy of every `CONTINUED_OLD` entry, then its own turns
     pub const CONTINUED_NEW: &str = "9a3f6d18-2e7c-5b40-8d95-c1e0f7a2b364";

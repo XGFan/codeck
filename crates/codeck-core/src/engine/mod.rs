@@ -455,7 +455,7 @@ impl Engine {
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {
         let pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
         let mut live = live::detect(&pfs);
-        // A superseded Session's process stays as the foreground of the one it was parked in; the
+        // A superseded Session's process stays as the foreground of the one it was moved into; the
         // conversation is Live there, under the Session that carries it on.
         let superseded = self
             .index
