@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { api } from "@/ipc";
@@ -44,10 +45,10 @@ export const footBtn =
   "flex h-7 items-center gap-1.5 rounded-lg px-2 hover:bg-selection/60 hover:text-text disabled:opacity-50 disabled:hover:bg-transparent";
 
 /**
- * 「Connect」 in the header's title row, for a Session in `ccrpc ls` that is not connected (disabled until its ccrpc
- * plugin has reported), or whose connection ended with the Session (connecting again replaces it). 「Disconnect」 and
- * 「关闭」 in its place while connected; the other controls are at the foot of the input box ([`ConnectFooter`]).
- * An ended Session not in clay gets 「Resume」 instead (`resume`: what the index knows of it).
+ * The connection's place in the header's title row: 「Connect 中…」 while connecting, 「关闭」 while connected,
+ * 「Resume」 for an ended Session not in clay, and a failure's message; Connect, Disconnect and the Pane are in the
+ * 「···」 menu ([`ConnectMenuItems`]), the other controls at the foot of the input box ([`ConnectFooter`]).
+ * Keyed by Session: it also runs 自动 Connect, once per opening.
  */
 export function ConnectButton({
   sessionId,
@@ -60,21 +61,14 @@ export function ConnectButton({
   const c = useConnect((s) => connFor(s, sessionId));
   const taken = useConnect((s) => (entry ? holderConnected(s, entry.holder_id) : false));
   const connect = useConnect((s) => s.connect);
-  const disconnect = useConnect((s) => s.disconnect);
   const error = useConnect((s) => s.errors[sessionId]);
   const ccrpcError = useConnect((s) => s.lsError ?? s.infoError);
   const startResume = useConnect((s) => s.resume);
   const resuming = useConnect((s) => !!s.resuming[sessionId]);
-  const [connecting, setConnecting] = useState(false);
+  const connecting = useConnect((s) => !!s.connecting[sessionId]);
   /** This opening (the button is keyed by Session) has had a connection, or tried one: 自动 Connect is done. */
   const autoTried = useRef(false);
-  if (c) autoTried.current = true;
-  const doConnect = async (holderId: string) => {
-    autoTried.current = true;
-    setConnecting(true);
-    await connect(holderId, sessionId);
-    setConnecting(false);
-  };
+  if (c || connecting) autoTried.current = true;
   // 自动 Connect: opening a Session that can be Connected connects it, once per opening (not again after a
   // Disconnect, a failure or an ended connection, nor when it was connected already when opened); only after it stays
   // open a moment, so passing over Sessions with ↑↓ connects none of them.
@@ -85,9 +79,12 @@ export function ConnectButton({
       : null;
   useEffect(() => {
     if (!autoHolder || autoTried.current) return;
-    const t = window.setTimeout(() => void doConnect(autoHolder), AUTO_CONNECT_DELAY_MS);
+    const t = window.setTimeout(() => {
+      autoTried.current = true;
+      void connect(autoHolder, sessionId);
+    }, AUTO_CONNECT_DELAY_MS);
     return () => window.clearTimeout(t);
-    // doConnect is this render's (the button is keyed by Session).
+    // connect and sessionId do not change (the button is keyed by Session).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoHolder]);
 
@@ -99,23 +96,15 @@ export function ConnectButton({
         Resume 中…
       </span>
     );
-  // Connected: 「Disconnect」 in the same place (closes ccrpc's stdin; the Session keeps running), and 「关闭」 beside it.
-  if (c && isLive(c))
+  if (connecting)
     return (
-      <>
-        <button
-          type="button"
-          data-testid="connect-disconnect"
-          onClick={() => void disconnect(c.conn)}
-          className={pill}
-          title="Disconnect 后 Session 照常运行"
-        >
-          <Unlink size={13} strokeWidth={1.6} aria-hidden />
-          Disconnect
-        </button>
-        <ConnectClose c={c} />
-      </>
+      <span data-testid="connect-pending" className={cn(pill, "opacity-60")}>
+        <ShipWheel size={13} strokeWidth={1.6} aria-hidden />
+        Connect 中…
+      </span>
     );
+  // Connected: 「关闭」 (Disconnect is in the 「···」 menu).
+  if (c && isLive(c)) return <ConnectClose c={c} />;
   // Not in clay: an ended Session can be resumed (not one running elsewhere).
   if (!entry) {
     const offer = resume ? resumeOffer({ ...resume, ccrpcError }) : ({ kind: "hidden" } as const);
@@ -141,60 +130,77 @@ export function ConnectButton({
       </>
     );
   }
-  // In clay but its Holder is connected for another Session (after `/clear` there).
-  if (taken) return error ? <ConnectError errKey={sessionId} text={error} /> : null;
-  return (
-    <>
-      {error && <ConnectError errKey={sessionId} text={error} />}
-      <button
-        type="button"
-        data-testid="connect-button"
-        disabled={!entry.plugin || connecting}
-        title={
-          entry.plugin ? "经 ccrpc Connect，在这里发提示词、作答审批" : "ccrpc 插件未加载，重启 claude 后可 Connect"
-        }
-        onClick={() => void doConnect(entry.holder_id)}
-        className={pill}
-      >
-        <ShipWheel size={13} strokeWidth={1.6} aria-hidden />
-        Connect
-      </button>
-    </>
-  );
+  return error ? <ConnectError errKey={sessionId} text={error} /> : null;
 }
 
 /**
- * 「隐藏 Pane」/「显示 Pane」 in the header's title row, for any Session running in a clay Pane (`ccrpc ls`), connected
- * or not: hides the Pane on the ToH Mac Client (its hidden window) or shows it again; iOS and web list it either way.
- * Not shown when ccrpc is too old to say whether the Pane is hidden.
+ * The header 「···」 menu's items for a Session running in a clay Pane (`ccrpc ls`), then a separator when `separated`:
+ * 「Connect」 when not connected (disabled until its ccrpc plugin has reported; not offered while its Holder is
+ * connected for another Session, after `/clear` there), 「Disconnect」 while connected (closes ccrpc's stdin; the
+ * Session keeps running), and 「隐藏 Pane」/「显示 Pane」, which hides the Pane on the ToH Mac Client (its hidden
+ * window) or shows it again — iOS and web list it either way; not offered when ccrpc is too old to say.
  */
-export function PaneButton({ sessionId }: { sessionId: string }) {
+export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: string; separated?: boolean }) {
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
+  const c = useConnect((s) => connFor(s, sessionId));
+  const taken = useConnect((s) => (entry ? holderConnected(s, entry.holder_id) : false));
+  const connect = useConnect((s) => s.connect);
+  const disconnect = useConnect((s) => s.disconnect);
   const setPaneHidden = useConnect((s) => s.setPaneHidden);
-  const [busy, setBusy] = useState(false);
-  if (!entry || entry.hidden == null) return null;
-  const hidden = entry.hidden;
+  const resuming = useConnect((s) => !!s.resuming[sessionId]);
+  const connecting = useConnect((s) => !!s.connecting[sessionId]);
+  const live = c && isLive(c) ? c : null;
+  const canConnect = !live && entry && !taken && !resuming;
+  const pane = entry && entry.hidden != null ? { holder: entry.holder_id, hidden: entry.hidden } : null;
+  if (!live && !canConnect && !pane) return null;
   return (
-    <button
-      type="button"
-      data-testid="pane-visibility"
-      data-hidden={hidden}
-      disabled={busy}
-      title={
-        hidden
-          ? "Pane 在 ToH Mac 的隐藏窗口里，点击放回普通窗口"
-          : "把 Pane 收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示"
-      }
-      onClick={async () => {
-        setBusy(true);
-        await setPaneHidden(entry.holder_id, sessionId, !hidden);
-        setBusy(false);
-      }}
-      className={pill}
-    >
-      {hidden ? <Eye size={13} strokeWidth={1.6} aria-hidden /> : <EyeOff size={13} strokeWidth={1.6} aria-hidden />}
-      {hidden ? "显示 Pane" : "隐藏 Pane"}
-    </button>
+    <>
+      {live && (
+        <DropdownMenuItem
+          data-testid="connect-disconnect"
+          title="Disconnect 后 Session 照常运行"
+          onSelect={() => void disconnect(live.conn)}
+        >
+          <Unlink size={13} strokeWidth={1.5} aria-hidden />
+          Disconnect
+        </DropdownMenuItem>
+      )}
+      {canConnect && (
+        <DropdownMenuItem
+          data-testid="connect-button"
+          disabled={!entry.plugin || connecting}
+          title="经 ccrpc Connect，在这里发提示词、作答审批"
+          className="data-[disabled]:text-secondary"
+          onSelect={() => void connect(entry.holder_id, sessionId)}
+        >
+          <ShipWheel size={13} strokeWidth={1.5} aria-hidden />
+          Connect
+          {!entry.plugin && (
+            <span className="ml-3 text-[11.5px] text-secondary">ccrpc 插件未加载，重启 claude 后可用</span>
+          )}
+        </DropdownMenuItem>
+      )}
+      {pane && (
+        <DropdownMenuItem
+          data-testid="pane-visibility"
+          data-hidden={pane.hidden}
+          title={
+            pane.hidden
+              ? "Pane 在 ToH Mac 的隐藏窗口里，点击放回普通窗口"
+              : "把 Pane 收进 ToH Mac 的隐藏窗口，iOS 与 web 照常显示"
+          }
+          onSelect={() => void setPaneHidden(pane.holder, sessionId, !pane.hidden)}
+        >
+          {pane.hidden ? (
+            <Eye size={13} strokeWidth={1.5} aria-hidden />
+          ) : (
+            <EyeOff size={13} strokeWidth={1.5} aria-hidden />
+          )}
+          {pane.hidden ? "显示 Pane" : "隐藏 Pane"}
+        </DropdownMenuItem>
+      )}
+      {separated && <DropdownMenuSeparator />}
+    </>
   );
 }
 

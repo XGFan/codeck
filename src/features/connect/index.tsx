@@ -14,7 +14,7 @@ import { Requests } from "./Requests";
 import { resumeOffer } from "./resume";
 import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } from "./store";
 
-export { ConnectButton, PaneButton, STATE_WORD, useConnectDebugInfo } from "./Header";
+export { ConnectButton, ConnectMenuItems, STATE_WORD, useConnectDebugInfo } from "./Header";
 export { arrived, isFresh } from "./pending";
 export { QuestionForm } from "./QuestionForm";
 export { RewindButton, RewoundDivider, useRewindView, type RewindView } from "./RewindViews";
@@ -288,7 +288,7 @@ function SessionExited({ c }: { c: ConnState }) {
   const { data: d } = useSession(sessionId);
   const startResume = useConnect((s) => s.resume);
   const ccrpcError = useConnect((s) => s.lsError ?? s.infoError);
-  // Back in clay already (resumed in the terminal): 「Connect」 in the header, not a second claude.
+  // Back in clay already (resumed in the terminal): 「Connect」 in the header's menu, not a second claude.
   const inLs = useConnect((s) => lsEntryFor(s, sessionId) != null);
   const busy = useConnect((s) => (sessionId ? !!s.resuming[sessionId] : false));
   const offer =

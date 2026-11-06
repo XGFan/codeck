@@ -11,8 +11,8 @@ import {
 import {
   connFor,
   ConnectButton,
+  ConnectMenuItems,
   lsEntryFor,
-  PaneButton,
   STATE_WORD,
   useConnect,
   useConnectDebugInfo,
@@ -67,9 +67,9 @@ export function SessionHeader() {
       >
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">新 Session</h1>
-          <PaneButton sessionId={sessionId} />
           {/* Keyed: one per opening of a Session (自动 Connect tries once per opening). */}
           <ConnectButton key={sessionId} sessionId={sessionId} />
+          <MoreMenu sessionId={sessionId} resumeCommand={null} />
         </div>
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
           <StateWord sessionId={sessionId} live={null} lastActiveMs={null} />
@@ -91,7 +91,6 @@ export function SessionHeader() {
     >
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
-        <PaneButton sessionId={sessionId} />
         <ConnectButton
           key={sessionId}
           sessionId={sessionId}
@@ -189,8 +188,12 @@ function StateWord({
   );
 }
 
-/** 「···」: what used to crowd the title row, plus the connection's debug info while connected. */
-function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeCommand: string }) {
+/**
+ * 「···」: Connect / Disconnect and the Pane first (for a Session in clay), then what used to crowd the title row, and
+ * the connection's debug info while connected. A Session not in the index yet (`resumeCommand` null) has only the
+ * connection's items.
+ */
+function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeCommand: string | null }) {
   const showHidden = useUi((s) => s.showHidden);
   const setShowHidden = useUi((s) => s.setShowHidden);
   const debug = useConnectDebugInfo(sessionId);
@@ -206,22 +209,27 @@ function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeComma
           <Ellipsis size={14} strokeWidth={1.6} aria-hidden />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuCheckboxItem checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)}>
-          显示系统消息
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void api.copyText(resumeCommand)}>
-          <Copy size={13} strokeWidth={1.5} aria-hidden />
-          复制 Resume 命令
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void api.copyText(sessionId)}>
-          <Copy size={13} strokeWidth={1.5} aria-hidden />
-          复制 Session ID
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void api.revealSessionFile(sessionId, null)}>
-          <FolderOpen size={13} strokeWidth={1.5} aria-hidden />在 Finder 中显示
-        </DropdownMenuItem>
+      <DropdownMenuContent align="end" data-testid="header-menu">
+        <ConnectMenuItems sessionId={sessionId} separated={resumeCommand != null || debug != null} />
+        {resumeCommand != null && (
+          <>
+            <DropdownMenuCheckboxItem checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)}>
+              显示系统消息
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => void api.copyText(resumeCommand)}>
+              <Copy size={13} strokeWidth={1.5} aria-hidden />
+              复制 Resume 命令
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void api.copyText(sessionId)}>
+              <Copy size={13} strokeWidth={1.5} aria-hidden />
+              复制 Session ID
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void api.revealSessionFile(sessionId, null)}>
+              <FolderOpen size={13} strokeWidth={1.5} aria-hidden />在 Finder 中显示
+            </DropdownMenuItem>
+          </>
+        )}
         {debug && (
           <DropdownMenuItem onSelect={() => void api.copyText(debug)}>
             <Bug size={13} strokeWidth={1.5} aria-hidden />

@@ -28,6 +28,8 @@ interface ConnectStore {
   drafts: Record<string, Draft>;
   /** Sessions a Resume is under way for, until ccrpc names the Session or the failure is dealt with. */
   resuming: Record<string, true>;
+  /** Sessions a Connect is under way for (自动 or from the header's menu), until it is attached or failed. */
+  connecting: Record<string, true>;
 
   /** Subscribes to ccrpc's lines and exits and starts polling `ccrpc ls`; returns the cleanup. */
   start(): () => void;
@@ -260,6 +262,21 @@ export const useConnect = create<ConnectStore>((set, get) => {
       else delete resuming[sessionId];
       return { resuming };
     });
+  const attach = async (holderId: string, sessionId: string) => {
+    setErr(sessionId, null);
+    void api.ccrpcGuiLog(null, `connect ${holderId}`);
+    // Connections on nothing any more (ccrpc exited, or the Session ended and was resumed since) are
+    // replaced; a ccrpc still attached must be gone first, a second attach to the Session is refused.
+    const stale = Object.values(get().conns).filter(
+      (c) => (c.holderId === holderId || c.sessionId === sessionId) && !isLive(c),
+    );
+    await Promise.all(stale.map((c) => closeAndWait(c.conn)));
+    try {
+      addConn(await api.ccrpcConnect(holderId), holderId);
+    } catch (e) {
+      setErr(sessionId, `连接失败：${errorText(e)}`);
+    }
+  };
   const setErr = (key: string, e: string | null) =>
     set((s) => {
       const errors = { ...s.errors };
@@ -294,6 +311,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
     live: null,
     drafts: loadDrafts(),
     resuming: {},
+    connecting: {},
 
     start() {
       const offs: (() => void)[] = [];
@@ -372,18 +390,16 @@ export const useConnect = create<ConnectStore>((set, get) => {
     },
 
     async connect(holderId, sessionId) {
-      setErr(sessionId, null);
-      void api.ccrpcGuiLog(null, `connect ${holderId}`);
-      // Connections on nothing any more (ccrpc exited, or the Session ended and was resumed since) are
-      // replaced; a ccrpc still attached must be gone first, a second attach to the Session is refused.
-      const stale = Object.values(get().conns).filter(
-        (c) => (c.holderId === holderId || c.sessionId === sessionId) && !isLive(c),
-      );
-      await Promise.all(stale.map((c) => closeAndWait(c.conn)));
+      if (get().connecting[sessionId]) return;
+      set((s) => ({ connecting: { ...s.connecting, [sessionId]: true } }));
       try {
-        addConn(await api.ccrpcConnect(holderId), holderId);
-      } catch (e) {
-        setErr(sessionId, `连接失败：${errorText(e)}`);
+        await attach(holderId, sessionId);
+      } finally {
+        set((s) => {
+          const connecting = { ...s.connecting };
+          delete connecting[sessionId];
+          return { connecting };
+        });
       }
     },
 

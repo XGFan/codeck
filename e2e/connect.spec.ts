@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 /** The `turn_end` prompt ids of a recorded fixture, in order (they change when it is re-recorded). */
@@ -53,10 +53,25 @@ async function open(page: Page, title: string) {
   await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
 }
 
+/** The header's 「···」 menu, opened: Connect, Disconnect and the Pane are in it. */
+async function headerMenu(page: Page) {
+  const menu = page.getByTestId("header-menu");
+  if (!(await menu.isVisible())) await page.getByTestId("header-more").click();
+  return menu;
+}
+/** Clicks an item of the header's 「···」 menu. */
+const pick = async (page: Page, testId: string) => (await headerMenu(page)).getByTestId(testId).click();
+/** Checks an item of the header's 「···」 menu, then closes the menu. */
+async function inMenu(page: Page, testId: string, check: (item: Locator) => Promise<void>) {
+  await check((await headerMenu(page)).getByTestId(testId));
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("header-menu")).toHaveCount(0);
+}
+
 async function connectTo(page: Page, title: string) {
   await page.goto("/");
   await open(page, title);
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(page.getByTestId("connect-panel")).toBeVisible();
 }
 
@@ -91,44 +106,43 @@ async function pasteImage(page: Page) {
   });
 }
 
-test("标题栏：ccrpc ls 里的 Live Session 可 Connect，插件未报到时禁用，其他 Session 没有", async ({ page }) => {
+test("「···」菜单：ccrpc ls 里的 Live Session 可 Connect，插件未报到时禁用，其他 Session 没有；标题栏里没有", async ({
+  page,
+}) => {
   await page.goto("/");
   await open(page, RICH);
-  await expect(page.getByTestId("connect-button")).toBeEnabled();
+  await expect(page.getByTestId("header").getByRole("button", { name: "Connect" })).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toBeEnabled());
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
 
   await open(page, NO_PLUGIN);
-  await expect(page.getByTestId("connect-button")).toBeDisabled();
-  await expect(page.getByTestId("connect-button")).toHaveAttribute(
-    "title",
-    "ccrpc 插件未加载，重启 claude 后可 Connect",
-  );
+  await inMenu(page, "connect-button", async (b) => {
+    await expect(b).toHaveAttribute("data-disabled");
+    await expect(b).toContainText("ccrpc 插件未加载，重启 claude 后可用");
+  });
 
   await open(page, NOT_LISTED);
-  await expect(page.getByTestId("header-more")).toBeVisible();
-  await expect(page.getByTestId("connect-button")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toHaveCount(0));
 });
 
-test("标题栏：clay 里的 Session 不论是否 Connect 都可隐藏 / 显示 Pane，不在 clay 里的没有", async ({ page }) => {
+test("「···」菜单：clay 里的 Session 不论是否 Connect 都可隐藏 / 显示 Pane，不在 clay 里的没有", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH);
-  const btn = page.getByTestId("pane-visibility");
-  await expect(btn).toHaveText("隐藏 Pane");
-  await btn.click();
-  await expect(btn).toHaveText("显示 Pane");
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("隐藏 Pane"));
+  await pick(page, "pane-visibility");
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("显示 Pane"));
   const [hide] = (await probe(page)).paneHides;
   expect(hide.hidden).toBe(true);
 
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(page.getByTestId("connect-panel")).toBeVisible();
-  await expect(btn).toHaveText("显示 Pane");
-  await btn.click();
-  await expect(btn).toHaveText("隐藏 Pane");
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("显示 Pane"));
+  await pick(page, "pane-visibility");
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("隐藏 Pane"));
   expect((await probe(page)).paneHides).toEqual([hide, { holderId: hide.holderId, hidden: false }]);
 
   await open(page, NOT_LISTED);
-  await expect(page.getByTestId("header-more")).toBeVisible();
-  await expect(page.getByTestId("pane-visibility")).toHaveCount(0);
+  await inMenu(page, "pane-visibility", (b) => expect(b).toHaveCount(0));
 });
 
 test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ page }) => {
@@ -254,26 +268,27 @@ test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后�
   await open(page, RICH);
   await expect(page.getByTestId("connect-panel")).toBeVisible();
   await expect(state(page)).toContainText("空闲");
-  await page.getByTestId("connect-disconnect").click();
-  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await pick(page, "connect-disconnect");
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   await page.waitForTimeout(800);
-  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toBeVisible());
   // Opened again: connected again.
   await open(page, NOT_LISTED);
   await open(page, RICH);
   await expect(page.getByTestId("connect-panel")).toBeVisible();
   // Opened while connected already (another Session connected meanwhile): a Disconnect stays.
   await open(page, TOOLS);
-  await expect(page.getByTestId("connect-disconnect")).toBeVisible();
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
   await open(page, RICH);
-  await page.getByTestId("connect-disconnect").click();
-  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await pick(page, "connect-disconnect");
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   await page.waitForTimeout(800);
-  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   // Not a Session whose plugin has not reported.
   await open(page, NO_PLUGIN);
   await page.waitForTimeout(800);
-  await expect(page.getByTestId("connect-button")).toBeDisabled();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
 
   // Off in Settings › 通用, and remembered.
   await page.getByTestId("settings-button").click();
@@ -283,7 +298,8 @@ test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后�
   await page.keyboard.press("Escape");
   await open(page, TURNS);
   await page.waitForTimeout(800);
-  await expect(page.getByTestId("connect-button")).toBeEnabled();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toBeEnabled());
   await page.reload();
   await page.getByTestId("settings-button").click();
   await page.getByRole("tab", { name: "通用" }).click();
@@ -506,11 +522,13 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
 }) => {
   await connectTo(page, RICH);
   await expect(state(page)).toContainText("空闲");
-  // The header says the state once, in one word, with 「Disconnect」 where 「Connect」 was; the other connection controls sit at
-  // the foot of the input box, the send button at its right end.
+  // The header says the state once, in one word, with 「关闭」 (Disconnect is in its 「···」 menu); the other connection
+  // controls sit at the foot of the input box, the send button at its right end.
   const header = page.getByTestId("header");
   await expect(header.getByTestId("live-state")).toHaveText("空闲");
-  await expect(header.getByTestId("connect-disconnect")).toBeVisible();
+  await expect(header.getByTestId("connect-close")).toBeVisible();
+  await expect(header.getByTestId("connect-disconnect")).toHaveCount(0);
+  await inMenu(page, "connect-disconnect", (b) => expect(b).toBeVisible());
   await expect(header.getByTestId("connect-controls")).toHaveCount(0);
   const box = (await page.getByTestId("connect-input").boundingBox())!;
   expect((await page.getByTestId("connect-controls").boundingBox())!.y).toBeGreaterThan(box.y + box.height - 4);
@@ -669,7 +687,7 @@ test("Pane 里换了 Session（/clear）时选中跟着切换；复制排查信�
     /^holder_id: mclear0000001\nsession_id: c04e77a2-0003-4000-8000-000000000003\ncwd: \/work\/lumen\nlogs: \S+$/,
   );
 
-  await page.getByTestId("connect-disconnect").click();
+  await pick(page, "connect-disconnect");
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   await expect(page.getByTestId("connect-controls")).toHaveCount(0);
 });
@@ -683,8 +701,8 @@ test("关闭：空闲且没有后台任务时直接结束 Session 与 Pane，并
   expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true, stop_tasks: true });
   expect((await probe(page)).sent.some((s) => s.msg.type === "abort")).toBe(false);
   // The Pane is gone from `ccrpc ls`: nothing to connect.
-  await expect(page.getByTestId("connect-button")).toHaveCount(0);
-  await expect(page.getByTestId("connect-disconnect")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toHaveCount(0));
+  await inMenu(page, "connect-disconnect", (b) => expect(b).toHaveCount(0));
 });
 
 test("关闭：还有后台任务时先确认，取消则什么也不发", async ({ page }) => {
@@ -742,7 +760,7 @@ test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，
   await expect(row).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("transcript-new")).toHaveText("新 Session，发送第一条提示词后显示对话");
   await expect(page.getByTestId("header")).toContainText("/Users/dev/Developer/lumen-api/services");
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(page.getByTestId("connect-panel")).toBeVisible();
   await expect(state(page)).toContainText("空闲");
   await expect(page.getByTestId("connect-input")).toBeEnabled();
@@ -767,7 +785,7 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
 }) => {
   await page.goto("/");
   await page.locator('[data-testid=session-row][data-session-id="c1a70000-0000-4000-8000-0000000000c1"]').click();
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(state(page)).toContainText("空闲");
   const input = page.getByTestId("connect-input");
   const menu = page.getByTestId("slash-menu");
@@ -909,7 +927,7 @@ test("设置 › ccrpc › 新开的 Pane：默认显示，选「隐藏」即保
 test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立即重新开始", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH);
-  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await inMenu(page, "connect-button", (b) => expect(b).toBeVisible());
   const ids = await page.evaluate(() =>
     // Indexed rows only: the clay-new placeholder is Live through `ccrpc ls`, not the mock data.
     [...document.querySelectorAll("[data-testid=session-row]:not([data-pending]) [data-testid=live-dot]")].map((d) =>
@@ -920,7 +938,7 @@ test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立�
   await page.evaluate((list) => list.forEach((id) => window.__cvMock!.setLive(id, null)), ids);
   await expect(page.getByTestId("live-dot")).toHaveCount(0);
   // With nothing Live the watch stops and what it said last is dropped.
-  await expect(page.getByTestId("connect-button")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toHaveCount(0));
   await expect.poll(async () => (await probe(page)).watching).toBe(false);
   const before = (await probe(page)).watchStarts;
   // 「新建 Session」 works without an `ccrpc ls` answer.
@@ -932,7 +950,7 @@ test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立�
   );
   await expect.poll(async () => (await probe(page)).watchStarts, { timeout: 1500 }).toBe(before + 1);
   expect((await probe(page)).watching).toBe(true);
-  await expect(page.getByTestId("connect-button")).toBeVisible();
+  await inMenu(page, "connect-button", (b) => expect(b).toBeVisible());
 });
 
 test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一直「连接中」", async ({ page }) => {
@@ -944,16 +962,16 @@ test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一�
   await expect(page.getByTestId("reconnect")).toBeVisible();
 });
 
-test("Session 在终端里退出后：输入区只剩一行提示，头部重新出现「Connect」，resume 后可再次 Connect", async ({
+test("Session 在终端里退出后：输入区只剩一行提示，「···」菜单里重新出现「Connect」，resume 后可再次 Connect", async ({
   page,
 }) => {
   await connectTo(page, "（无标题）");
   await expect(page.getByTestId("session-exit")).toContainText("Session 已结束");
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
-  await expect(page.getByTestId("connect-disconnect")).toHaveCount(0);
+  await inMenu(page, "connect-disconnect", (b) => expect(b).toHaveCount(0));
   // Still in `ccrpc ls` (resumed in the terminal): no Resume, connecting again replaces the ended connection.
   await expect(page.getByTestId("session-exit-resume")).toHaveCount(0);
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect.poll(async () => (await probe(page)).guiLog.filter((l) => l === "connect mresumed00001").length).toBe(2);
   expect((await probe(page)).guiLog).toContain("close (replaced)");
   await expect(page.getByTestId("session-exit")).toHaveCount(1);
@@ -964,13 +982,13 @@ test("Resume：已结束、不在 clay 里的 Session 在新 Pane 里重新运�
   await page.goto("/");
   await open(page, "排查 Redis 连接池泄漏");
   const header = page.getByTestId("header");
-  await expect(header.getByTestId("connect-button")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toHaveCount(0));
   const resume = header.getByTestId("resume-button");
   await expect(resume).toHaveAttribute("title", /从 Main Line 末尾继续/);
   await resume.click();
   // The same Session, connected: no 「新 Session」 row, the header and the input area as for Connect.
   await expect(header.getByRole("heading", { name: "排查 Redis 连接池泄漏" })).toBeVisible();
-  await expect(header.getByTestId("connect-disconnect")).toBeVisible();
+  await expect(header.getByTestId("connect-close")).toBeVisible();
   await expect(page.getByTestId("connect-input")).toBeEnabled();
   await expect(header.getByTestId("resume-button")).toHaveCount(0);
   await expect(page.locator(`[data-testid=session-row][data-pending][data-session-id="${redis}"]`)).toHaveCount(0);
@@ -985,7 +1003,7 @@ test("Resume：ccrpc 在 ready 里就给出 Session ID 时同样连上（不停�
     (window.__cvCcrpc as unknown as { resumeNamedInReady: boolean }).resumeNamedInReady = true;
   });
   await page.getByTestId("resume-button").click();
-  await expect(page.getByTestId("header").getByTestId("connect-disconnect")).toBeVisible();
+  await expect(page.getByTestId("header").getByTestId("connect-close")).toBeVisible();
   await expect(page.getByTestId("resume-pending")).toHaveCount(0);
   await expect(page.getByTestId("connect-input")).toBeEnabled();
 });
@@ -1020,7 +1038,7 @@ test("Session 已结束的卡片上直接 Resume", async ({ page }) => {
   await card.getByTestId("session-exit-resume").click();
   await expect(page.getByTestId("session-exit")).toHaveCount(0);
   await expect(page.getByTestId("connect-input")).toBeEnabled();
-  await expect(page.getByTestId("connect-disconnect")).toBeVisible();
+  await expect(page.getByTestId("connect-close")).toBeVisible();
   expect((await probe(page)).guiLog.filter((l) => l === "resume 91d5be38-0004-4000-8000-000000000004")).toHaveLength(2);
 });
 
@@ -1056,7 +1074,7 @@ test("没发出的输入跟着 Session，切换、重启后仍在，发出后清
   await pasteImage(page);
   await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
   await open(page, TOOLS);
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(state(page)).toContainText("空闲");
   await expect(page.getByTestId("connect-input")).toHaveValue("");
   await expect(page.getByTestId("images")).toHaveCount(0);
@@ -1067,7 +1085,7 @@ test("没发出的输入跟着 Session，切换、重启后仍在，发出后清
   // And across a restart: back when the Session is connected again.
   await page.reload();
   await open(page, TURNS);
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(page.getByTestId("connect-input")).toHaveValue("还没写完的草稿");
   await expect(page.getByTestId("images").locator("img")).toHaveCount(1);
   // Sent, it is gone for good.
@@ -1075,7 +1093,7 @@ test("没发出的输入跟着 Session，切换、重启后仍在，发出后清
   await expect(page.getByTestId("connect-input")).toHaveValue("");
   await page.reload();
   await open(page, TURNS);
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(state(page)).toContainText("空闲");
   await expect(page.getByTestId("connect-input")).toHaveValue("");
 });
@@ -1162,7 +1180,7 @@ async function connectRewind(page: Page) {
   await page.goto("/");
   await page.evaluate(() => (window.__cvCcrpc as unknown as { list: (name: string) => void }).list("rewind"));
   await open(page, NOT_LISTED);
-  await page.getByTestId("connect-button").click();
+  await pick(page, "connect-button");
   await expect(page.getByTestId("connect-panel")).toBeVisible();
   await expect(state(page)).toContainText("空闲");
 }
