@@ -516,6 +516,12 @@ fn mock_model_interleaved_parts() {
     rpc.event("turn_end", Duration::from_secs(30));
     settle_idle(&mut rpc);
 
+    // An image alone, no text.
+    let d = rpc.call("p3", json!({"type": "prompt", "parts": [{"image": a}]}));
+    assert!(d["uuid"].is_string(), "{d}");
+    rpc.event("turn_end", Duration::from_secs(30));
+    settle_idle(&mut rpc);
+
     // `!` or `/` first cannot go with an image (a `!` command; a slash command, or a prompt
     // Claude Code would send without the image): refused before anything is typed.
     for (id, first) in [("b1", "!ls "), ("b2", "/review 看这个截图 ")] {

@@ -1121,6 +1121,23 @@ test("粘贴的图片插在光标处，悬停预览，随提示词按位置发�
   await expect(chips).toHaveCount(0);
 });
 
+test("只有图片、没有文字也能发出", async ({ page }) => {
+  await connectTo(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  await pasteImage(page);
+  await expect(page.getByTestId("image-chip")).toHaveCount(1);
+  await expect(page.getByTestId("send")).toBeEnabled();
+  await page.getByTestId("connect-input").press("Enter");
+  await expect
+    .poll(() => lastSent(page, "prompt"))
+    .toEqual({
+      type: "prompt",
+      parts: [{ image: "/mock/Caches/dev.joy.codeck/images/1.png" }],
+      id: expect.any(String),
+    });
+  await expect(page.getByTestId("image-chip")).toHaveCount(0);
+});
+
 test("图片标记是一整块：光标跳过、⌫ 整块删掉，拖到别处后按新位置重新编号", async ({ page }) => {
   await connectTo(page, TURNS);
   await expect(state(page)).toContainText("空闲");
