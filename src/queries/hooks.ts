@@ -53,7 +53,7 @@ export const useSessions = (query: SessionQuery, enabled = true) =>
     enabled,
   });
 
-const ALL_SESSIONS: SessionQuery = {
+export const ALL_SESSIONS: SessionQuery = {
   projectIds: [],
   sort: "lastActive",
   descending: true,

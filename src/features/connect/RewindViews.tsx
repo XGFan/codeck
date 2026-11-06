@@ -16,6 +16,8 @@ import { connFor, isLive, useConnect } from "./store";
 export interface RewindView {
   /** Prompts offering 「回退」. */
   rewindable: ReadonlySet<string>;
+  /** Prompts offering 「Fork」: the Main Line's but the first, Connected or not. */
+  forkable: ReadonlySet<string>;
   /** The rewound prompt's row: from it on the transcript is dimmed, under the divider `label`. */
   dimFrom: number | null;
   label: string;
@@ -28,8 +30,8 @@ const liveConn = (s: Parameters<typeof connFor>[0], sessionId: string | null) =>
 };
 
 /**
- * Rewind in the main transcript of a Connected Session (`transcript` null elsewhere): the Main Line prompts offering
- * 「回退」, and the rewound part. Entering 「选回退点」 scrolls to the last prompt; the marker goes once its prompt is no
+ * Rewind and Fork in the main transcript (`transcript` null elsewhere): the Main Line prompts offering 「Fork」, and while
+ * Connected those offering 「回退」 and the rewound part. Entering 「选回退点」 scrolls to the last prompt; the marker goes once its prompt is no
  * longer on the indexed Main Line (the next prompt forked).
  */
 export function useRewindView(transcript: Transcript | null, rows: Row[]): RewindView | null {
@@ -39,21 +41,22 @@ export function useRewindView(transcript: Transcript | null, rows: Row[]): Rewin
   const picking = useConnect((s) => !!liveConn(s, sessionId)?.picking);
   const clearRewound = useConnect((s) => s.clearRewound);
   const main = useMemo(
-    () => (transcript && conn ? mainLinePrompts(transcript.nodes, transcript.branchPoints) : null),
-    [transcript, conn],
+    () => (transcript ? mainLinePrompts(transcript.nodes, transcript.branchPoints) : null),
+    [transcript],
   );
   const view = useMemo<RewindView | null>(() => {
     if (!main) return null;
-    const ids = rewindable(main.ids, rewound?.uuid ?? null);
+    const ids = conn ? rewindable(main.ids, rewound?.uuid ?? null) : [];
     // Shown only on the Main Line itself: on another Branch, what follows the prompt is not what was rewound.
     const at =
       rewound && main.wholeMain ? rows.findIndex((r) => r.kind === "prompt" && r.node.id === rewound.uuid) : -1;
     return {
       rewindable: new Set(ids),
+      forkable: new Set(main.ids.slice(1)),
       dimFrom: at >= 0 ? at : null,
       label: rewound ? rewoundLabel(rewound.withCode) : "",
     };
-  }, [main, rewound, rows]);
+  }, [main, conn, rewound, rows]);
   const gone = !!main?.wholeMain && !!rewound && !main.ids.includes(rewound.uuid);
   useEffect(() => {
     if (gone && conn) clearRewound(conn);

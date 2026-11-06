@@ -76,6 +76,17 @@ pub enum Out {
 
 pub type Sink = Arc<dyn Fn(Out) + Send + Sync>;
 
+/// A Fork of the Session `session_id` (ccrpc `new --fork`), started in `cwd`.
+pub struct ForkArgs {
+    pub session_id: String,
+    pub cwd: String,
+    /// The Main Line prompt to fork before (`--fork-at`); none copies the whole Main Line.
+    pub at: Option<String>,
+    /// `conversation` or `both` (`--fork-restore`).
+    pub restore: Option<String>,
+    pub title: String,
+}
+
 /// What `ccrpc ls --json --watch` sends on: the whole list (a JSON array, as ccrpc printed it), or
 /// why it stopped by itself (the first line of its stderr).
 #[derive(Debug, PartialEq, Eq)]
@@ -398,6 +409,53 @@ impl App {
         args.extend(super::launch::args_for(rules, Path::new(cwd), &self.env).map_err(invalid)?);
         args.extend(["--resume".to_string(), session_id.to_string()]);
         // Named like a new Session's (`new` → its Holder ID once `ready` says it); gui.log has the arguments.
+        self.spawn(sink, "new", &args, "new")
+    }
+
+    /// Fork (ADR-0009): `ccrpc new [--hidden] --cwd <cwd> --fork <session_id> [--fork-at <uuid>]
+    /// [--fork-restore conversation|both] --fork-title <title> -- [launch rule's arguments]`, in a new Pane;
+    /// ccrpc adds `--resume <session_id> --fork-session` itself.
+    pub fn fork_session(
+        &self,
+        sink: Sink,
+        f: &ForkArgs,
+        rules: &[LaunchRule],
+        hidden: bool,
+    ) -> R<String> {
+        // toh types the command into the Pane's shell: only ids, a known restore and one line of title go through.
+        if !is_session_id(&f.session_id) {
+            return Err(invalid("Session ID 不对"));
+        }
+        if f.at.as_deref().is_some_and(|u| !is_session_id(u)) {
+            return Err(invalid("提示词的 uuid 不对"));
+        }
+        if f.restore
+            .as_deref()
+            .is_some_and(|r| r != "conversation" && r != "both")
+        {
+            return Err(invalid("恢复方式不对"));
+        }
+        if f.title.trim().is_empty() || f.title.contains(['\n', '\r']) {
+            return Err(invalid("Fork 的标题须是非空的一行"));
+        }
+        if !Path::new(&f.cwd).is_dir() {
+            return Err(invalid(format!("{} 不是目录", f.cwd)));
+        }
+        let mut args = hidden_arg(hidden);
+        args.extend([
+            "--cwd".to_string(),
+            f.cwd.clone(),
+            "--fork".into(),
+            f.session_id.clone(),
+        ]);
+        if let Some(at) = &f.at {
+            args.extend(["--fork-at".to_string(), at.clone()]);
+        }
+        if let Some(restore) = &f.restore {
+            args.extend(["--fork-restore".to_string(), restore.clone()]);
+        }
+        args.extend(["--fork-title".to_string(), f.title.clone(), "--".into()]);
+        args.extend(super::launch::args_for(rules, Path::new(&f.cwd), &self.env).map_err(invalid)?);
         self.spawn(sink, "new", &args, "new")
     }
 
@@ -929,6 +987,106 @@ mod tests {
                 app.resume_session(sink.clone(), bad, cwd.to_str().unwrap(), &[], false)
                     .is_err()
             );
+        }
+    }
+
+    /// Fork hands ccrpc the Origin Session, the prompt, the restore and the title, then the launch rule's
+    /// arguments after `--` (ccrpc adds `--resume --fork-session` itself); bad ids, restores and titles stop it.
+    #[test]
+    fn fork_passes_its_options_and_launch_rule_args_to_ccrpc() {
+        let d = tempfile::tempdir().unwrap();
+        let argv = d.path().join("argv");
+        let app = fake_ccrpc(
+            d.path(),
+            &format!("printf '%s\\n' \"$@\" > {}", argv.display()),
+        );
+        let cwd = d.path().join("work").join("app");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let cwd_s = cwd.display().to_string();
+        let rules = [LaunchRule {
+            dir: d.path().join("work").display().to_string(),
+            args: "--add-dir '/x y'".into(),
+        }];
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sink: Sink = Arc::new(move |o| {
+            if let Out::Exit(_) = o {
+                let _ = tx.send(());
+            }
+        });
+        let id = "d30b178c-94da-426f-a80a-2f1ce4b4b40f";
+        let at = "0a1b2c3d-94da-426f-a80a-2f1ce4b4b40f";
+        let fork = |at: Option<&str>, restore: Option<&str>, title: &str| ForkArgs {
+            session_id: id.into(),
+            cwd: cwd_s.clone(),
+            at: at.map(str::to_string),
+            restore: restore.map(str::to_string),
+            title: title.into(),
+        };
+        let run = |f: &ForkArgs, rules: &[LaunchRule], hidden: bool| {
+            app.fork_session(sink.clone(), f, rules, hidden).unwrap();
+            rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Ok(s) = std::fs::read_to_string(&argv) {
+                    let _ = std::fs::remove_file(&argv);
+                    // Skip `new --log <file>`.
+                    return s.lines().skip(3).map(str::to_string).collect::<Vec<_>>();
+                }
+                assert!(Instant::now() < deadline, "fake ccrpc did not run");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        assert_eq!(
+            run(
+                &fork(Some(at), Some("conversation"), "拆分 (Fork)"),
+                &rules,
+                true
+            ),
+            [
+                "--hidden",
+                "--cwd",
+                &cwd_s,
+                "--fork",
+                id,
+                "--fork-at",
+                at,
+                "--fork-restore",
+                "conversation",
+                "--fork-title",
+                "拆分 (Fork)",
+                "--",
+                "--add-dir",
+                "/x y",
+            ]
+        );
+        // The whole Session: no prompt, no restore.
+        assert_eq!(
+            run(&fork(None, None, "拆分 (Fork 2)"), &[], false),
+            [
+                "--cwd",
+                &cwd_s,
+                "--fork",
+                id,
+                "--fork-title",
+                "拆分 (Fork 2)",
+                "--"
+            ]
+        );
+        for bad in [
+            ForkArgs {
+                session_id: "x; rm -rf ~".into(),
+                ..fork(None, None, "t")
+            },
+            fork(Some("d30b178c 94da-426f-a80a-2f1ce4b4b40f"), None, "t"),
+            fork(Some(at), Some("code"), "t"),
+            fork(None, None, " "),
+            fork(None, None, "a\nb"),
+            ForkArgs {
+                cwd: d.path().join("gone").display().to_string(),
+                ..fork(None, None, "t")
+            },
+        ] {
+            assert!(app.fork_session(sink.clone(), &bad, &[], false).is_err());
         }
     }
 

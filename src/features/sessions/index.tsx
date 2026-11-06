@@ -7,7 +7,7 @@ import { formatCount, formatSpan } from "@/lib/format";
 import { useAllSessions, useProjects, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
 import { buildSidebar, ROW_PX, type SideSession } from "./groups";
-import { pendingSessions } from "./pending";
+import { forkingSessions, pendingSessions } from "./pending";
 import { Row, SidebarColumn, SidebarDialogs, useSidebar, type Selection } from "./Sidebar";
 
 /** Stable while the list loads, so the rows are not rebuilt on every render. */
@@ -34,6 +34,7 @@ export function SessionList() {
  */
 function usePending(list: SessionSummary[] | undefined, projects: ProjectSummary[] | undefined) {
   const ls = useConnect((s) => s.ls);
+  const forking = useConnect((s) => s.forking);
   const projectIds = useUi((s) => s.projectIds);
   const drill = useUi((s) => s.statsDrill);
   const wanted = !drill && ls.some((e) => e.session_id);
@@ -41,9 +42,9 @@ function usePending(list: SessionSummary[] | undefined, projects: ProjectSummary
   const { data: all } = useAllSessions(wanted);
   return useMemo(() => {
     if (!wanted || !list) return [];
-    const indexed = all ? new Set(all.map((s) => s.id)) : null;
+    const indexed = all ? new Set([...all.map((s) => s.id), ...forkingSessions(forking)]) : null;
     return pendingSessions(ls, indexed, { projectIds, drill: drill != null }, projects ?? []);
-  }, [wanted, list, all, ls, projectIds, drill, projects]);
+  }, [wanted, list, all, ls, forking, projectIds, drill, projects]);
 }
 
 /**

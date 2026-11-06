@@ -12,6 +12,8 @@ import {
   connFor,
   ConnectButton,
   ConnectMenuItems,
+  ForkMenuItem,
+  ForkPending,
   lsEntryFor,
   STATE_WORD,
   useConnect,
@@ -91,6 +93,7 @@ export function SessionHeader() {
     >
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
+        <ForkPending sessionId={sessionId} />
         <ConnectButton
           key={sessionId}
           sessionId={sessionId}
@@ -217,6 +220,7 @@ function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeComma
               显示系统消息
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
+            <ForkMenuItem sessionId={sessionId} />
             <DropdownMenuItem onSelect={() => void api.copyText(resumeCommand)}>
               <Copy size={13} strokeWidth={1.5} aria-hidden />
               复制 Resume 命令

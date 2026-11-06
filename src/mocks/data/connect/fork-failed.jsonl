@@ -1,0 +1,7 @@
+{"t": 1793700004200, "dir": "recv", "msg": {"type": "ready", "protocol": 3, "session_id": null, "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "starting", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": [], "holder_id": "mforkfail0001"}}
+{"t": 1793700004210, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700004220, "dir": "recv", "msg": {"type": "session_changed", "session_id": "c04e77a2-0003-4000-8000-000000000003", "previous": null}}
+{"t": 1793700004230, "dir": "recv", "msg": {"type": "fork", "error": {"code": "not_in_picker", "message": "终端的回退列表里没有这条提示词"}}}
+{"t": 1793700004240, "dir": "recv", "msg": {"type": "state", "state": "exited"}}
+{"t": 1793700004250, "dir": "recv", "msg": {"type": "session_exit"}}
+{"t": 1793700004260, "dir": "exit", "code": 1, "stderr": ""}

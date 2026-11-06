@@ -39,7 +39,7 @@ import {
   type SideSession,
 } from "./groups";
 import { NewSessionDialog } from "./NewSessionDialog";
-import { pendingSessions } from "./pending";
+import { forkingSessions, pendingSessions } from "./pending";
 
 const NO_PROJECTS: ProjectSummary[] = [];
 
@@ -59,13 +59,16 @@ export function useSidebar(): {
     [saved],
   );
   const ls = useConnect((s) => s.ls);
+  const forking = useConnect((s) => s.forking);
   const qc = useQueryClient();
   const sidebar = useMemo(() => {
     // Without the Projects no Session would find its group for a moment.
     if (!sessions || !projects || entries === undefined) return null;
-    const pending = pendingSessions(ls, new Set(sessions.map((s) => s.id)), { projectIds: [], drill: false }, projects);
+    // A Fork under way has no placeholder row: it shows once done (and indexed).
+    const known = new Set([...sessions.map((s) => s.id), ...forkingSessions(forking)]);
+    const pending = pendingSessions(ls, known, { projectIds: [], drill: false }, projects);
     return buildSidebar(sessions, pending, projects, entries ?? [], Date.now());
-  }, [sessions, projects, entries, ls]);
+  }, [sessions, projects, entries, ls, forking]);
   const saves = useRef(0);
   const save = (next: SidebarProject[]) => {
     qc.setQueryData(queryKeys.sidebarProjects, next);

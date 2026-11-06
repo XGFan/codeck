@@ -258,3 +258,99 @@ describe("replacing a connection (reconnect)", () => {
     expect(state().conns.c1).toBeUndefined();
   });
 });
+
+describe("Fork", () => {
+  const NEW = "99999999-2222-3333-4444-555555555555";
+  beforeEach(() => {
+    h.api.listSessions = async () => [];
+    h.api.ccrpcFork = async () => "f1";
+  });
+  const forked = () =>
+    line("f1", {
+      type: "fork",
+      session_id: NEW,
+      origin: SID,
+      text: "again",
+      title: "t (Fork)",
+      title_error: null,
+    } as unknown as InMsg);
+
+  it("its rewind's ⚠ card answered: the `fork` event comes before the answer, which then only closes the card", async () => {
+    await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: "u1", restore: "both" });
+    line("f1", ready("H9", null));
+    line("f1", { type: "session_changed", session_id: NEW, previous: null } as unknown as InMsg);
+    expect(state().forking[SID]).toEqual({ at: "u1", sessionId: NEW });
+    const req = {
+      type: "rewind",
+      request_id: "rewind:1",
+      uuid: "u1",
+      text: "again",
+      code: null,
+      warning: "⚠",
+      options: [{ option: "both", label: "Restore code and conversation" }],
+    };
+    line("f1", req as unknown as InMsg);
+    expect(state().conns.f1?.requests.length).toBe(1);
+    // As ccrpc does: the Fork is finished (and reported) before the answer's response.
+    h.api.ccrpcSend = async (conn: string, msg: Record<string, unknown>) => {
+      if (msg.type !== "answer_rewind") return;
+      queueMicrotask(() => {
+        forked();
+        line(conn, {
+          type: "response",
+          id: msg.id,
+          command: msg.type,
+          success: true,
+          data: { state: "idle", text: "again" },
+        } as unknown as InMsg);
+      });
+    };
+    await state().answerRewind("f1", req as never, "both");
+    expect(state().forking[SID]).toBeUndefined();
+    expect(state().drafts[NEW]?.text).toBe("again");
+    const c = state().conns.f1!;
+    expect(c.requests).toEqual([]);
+    expect(c.rewound).toBeNull();
+    expect(state().errors[SID]).toBeUndefined();
+  });
+
+  it("its rewind's answer refused before any key: the card stays to be answered again", async () => {
+    await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: "u1", restore: "both" });
+    line("f1", ready("H9", null));
+    line("f1", { type: "session_changed", session_id: NEW, previous: null } as unknown as InMsg);
+    const req = {
+      type: "rewind",
+      request_id: "rewind:1",
+      uuid: "u1",
+      text: "again",
+      code: null,
+      warning: "⚠",
+      options: [{ option: "both", label: "Restore code and conversation" }],
+    };
+    line("f1", req as unknown as InMsg);
+    h.api.ccrpcSend = async (conn: string, msg: Record<string, unknown>) => {
+      queueMicrotask(() =>
+        line(conn, {
+          type: "response",
+          id: msg.id,
+          command: msg.type,
+          success: false,
+          error: { code: "not_waiting", message: "当前状态为 idle" },
+        } as unknown as InMsg),
+      );
+    };
+    await state().answerRewind("f1", req as never, "both");
+    expect(state().conns.f1?.requests.length).toBe(1);
+    expect(state().forking[SID]).toBeTruthy();
+  });
+
+  it("ccrpc exits before its `fork` event: failed on the Origin, the connection dropped", async () => {
+    await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: null, restore: null });
+    line("f1", ready("H9", null));
+    exit("f1", 1, "ccrpc: 找不到 Session x 的 transcript\n");
+    await flush();
+    expect(state().errors[SID]).toBe("Fork 失败：找不到 Session x 的 transcript");
+    expect(state().forking[SID]).toBeUndefined();
+    expect(state().conns.f1).toBeUndefined();
+  });
+});

@@ -19,6 +19,7 @@ export { arrived, isFresh } from "./pending";
 export { hasPreview, OptionPreview } from "./OptionPreview";
 export { QuestionForm } from "./QuestionForm";
 export { RewindButton, RewoundDivider, useRewindView, type RewindView } from "./RewindViews";
+export { ForkButton, ForkMenuItem, ForkPending } from "./ForkViews";
 export { CcrpcSettings } from "./Settings";
 export { connFor, lsEntryFor, useConnect } from "./store";
 
@@ -226,6 +227,7 @@ function Panel({ c }: { c: ConnState }) {
       ref={floatRef}
       data-testid="connect-panel"
       data-connect-panel
+      data-conn={c.conn}
       onKeyDown={onKeyDown}
       className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
     >

@@ -8,6 +8,10 @@ export interface PendingSession {
   status: "busy" | "waiting" | "idle";
 }
 
+/** The Sessions of Forks under way (`useConnect`'s `forking`): no placeholder rows for them. */
+export const forkingSessions = (forking: Record<string, { sessionId: string | null }>) =>
+  Object.values(forking).flatMap((f) => (f.sessionId ? [f.sessionId] : []));
+
 /** The Project a cwd is in: the deepest Project whose path is the cwd or one of its parents. */
 export function projectOfCwd(cwd: string | null, projects: ProjectSummary[]): string | null {
   if (!cwd) return null;

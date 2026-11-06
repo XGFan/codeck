@@ -7,7 +7,9 @@
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks) are answered from what was replayed. `new-session` and `resume*` are not listed: `ccrpcNew` opens
 // the first; `ccrpcResume` opens `resume` (its `session_changed` names the Session asked for), or
-// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it). A recording whose meta has `on_request`
+// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it). `fork*` are not listed either: `ccrpcFork`
+// opens `fork` (before a prompt), `fork-session` (the whole Session), `fork-warning` (restoring code: the rewind's ⚠
+// confirm card first) or `fork-failed` (once a test set `forkFails`). A recording whose meta has `on_request`
 // stands for a Session other tests need out of `ccrpc ls`: it is listed once a test (or the console) calls
 // `__cvCcrpc.list(name)`.
 
@@ -140,6 +142,10 @@ export interface CcrpcProbe {
   pickDir?: string | null;
   /** Set by a test: the next Resume's `ready` names the Session already (the plugin checked in first). */
   resumeNamedInReady?: boolean;
+  /** `ccrpcFork` calls, in order. */
+  forks: { sessionId: string; cwd: string; at: string | null; restore: string | null; title: string }[];
+  /** Set by a test: the next Fork fails (`fork-failed.jsonl`). */
+  forkFails?: boolean;
   /** Recordings with `on_request` a test put into `ccrpc ls`, by name. */
   listed: string[];
   /** Puts a recording with `on_request` into `ccrpc ls` (pushed to the watch at once). */
@@ -159,6 +165,7 @@ const probe: CcrpcProbe = {
   analyzerSaves: 0,
   paneHides: [],
   hideNewPanes: false,
+  forks: [],
   listed: [],
   list: (name) => {
     probe.listed.push(name);
@@ -186,6 +193,7 @@ function lsNow(): LsEntry[] {
         f.name !== "new-session" &&
         !f.name.startsWith("resume-") &&
         f.name !== "resume" &&
+        !f.name.startsWith("fork") &&
         (!f.onRequest || probe.listed.includes(f.name)) &&
         !closedPanes.has(f.ls.holder_id),
     )
@@ -329,6 +337,7 @@ type CcrpcApi = Pick<
   | "ccrpcConnect"
   | "ccrpcNew"
   | "ccrpcResume"
+  | "ccrpcFork"
   | "ccrpcSend"
   | "ccrpcDisconnect"
   | "ccrpcGuiLog"
@@ -437,6 +446,24 @@ export function createMockCcrpc(): CcrpcApi {
             ? { ...l, msg: { ...l.msg, session_id: sessionId } }
             : l,
         );
+      return open({ ...fx, lines });
+    },
+    ccrpcFork: async (sessionId, cwd, at, restore, title) => {
+      probe.forks.push({ sessionId, cwd, at, restore, title });
+      const name = probe.forkFails
+        ? "fork-failed"
+        : at == null
+          ? "fork-session"
+          : restore === "both"
+            ? "fork-warning"
+            : "fork";
+      probe.forkFails = false;
+      const fx = fixtures.find((f) => f.name === name);
+      if (!fx) throw appError("internal", `没有 ${name} 的录制`);
+      // The Origin Session is the one asked for.
+      const lines = fx.lines.map((l) =>
+        l.msg?.type === "fork" && l.msg.origin ? { ...l, msg: { ...l.msg, origin: sessionId } } : l,
+      );
       return open({ ...fx, lines });
     },
     ccrpcNew: async () => {

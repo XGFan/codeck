@@ -73,6 +73,11 @@ export interface ConnState {
   notices: { id: number; text: string }[];
   /** The Session a Resume started this connection for: it stands for that Session until ccrpc names one. */
   resumeOf: string | null;
+  /**
+   * The Origin Session of a Fork under way on this connection (`ccrpc new --fork`), until its `fork` event: the
+   * connection does not stand for that Session.
+   */
+  forkOf: string | null;
   /** The model drafted product feedback: Claude Code's card above the input box (sent only from the terminal). */
   feedbackDraft: FeedbackDraft | null;
   /** 「选回退点」 (`/rewind` typed): every prompt that can be rewound to shows its 「回退」. */
@@ -87,7 +92,12 @@ export interface ConnState {
   pending: PendingPrompt | null;
 }
 
-export function initial(conn: string, holderId: string | null, resumeOf: string | null = null): ConnState {
+export function initial(
+  conn: string,
+  holderId: string | null,
+  resumeOf: string | null = null,
+  forkOf: string | null = null,
+): ConnState {
   return {
     conn,
     holderId,
@@ -111,6 +121,7 @@ export function initial(conn: string, holderId: string | null, resumeOf: string 
     unread: false,
     notices: [],
     resumeOf,
+    forkOf,
     feedbackDraft: null,
     picking: false,
     rewinding: null,
@@ -204,6 +215,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "permission_request":
     case "question":
     case "choice":
+    case "rewind":
       return upsertRequest(s, m);
     case "dialog":
       return upsertRequest(s, { ...m, request_id: `dialog:${m.waiting_for}` });
@@ -236,6 +248,8 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         model: s.model,
         effort: s.effort,
       };
+    case "fork":
+      return { ...s, forkOf: null };
     case "session_exit":
       return {
         ...s,

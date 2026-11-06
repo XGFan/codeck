@@ -1,0 +1,4 @@
+{"t": 1793700004100, "dir": "recv", "msg": {"type": "ready", "protocol": 3, "session_id": null, "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "starting", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": [], "holder_id": "mforksess0001"}}
+{"t": 1793700004110, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700004120, "dir": "recv", "msg": {"type": "session_changed", "session_id": "c04e77a2-0003-4000-8000-000000000003", "previous": null}}
+{"t": 1793700004130, "dir": "recv", "msg": {"type": "fork", "session_id": "c04e77a2-0003-4000-8000-000000000003", "origin": "91d5be38-0004-4000-8000-000000000004", "text": null, "title": "排查 Redis 连接池泄漏 (Fork)", "title_error": null}}

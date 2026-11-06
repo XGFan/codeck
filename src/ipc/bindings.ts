@@ -65,6 +65,11 @@ export const commands = {
 	ccrpcNew: (cwd: string) => __TAURI_INVOKE<string>("ccrpc_new", { cwd }),
 	/**  Resume: starts the ended Session `session_id` again in a new Pane (`claude --resume`) and connects to it. */
 	ccrpcResume: (sessionId: string, cwd: string) => __TAURI_INVOKE<string>("ccrpc_resume", { sessionId, cwd }),
+	/**
+	 *  Fork: starts a Fork of the Session `session_id` in a new Pane (before the Main Line prompt `at`, or
+	 *  all of it), named `title`, and connects to it; the result comes as ccrpc's `fork` event.
+	 */
+	ccrpcFork: (sessionId: string, cwd: string, at: string | null, restore: string | null, title: string) => __TAURI_INVOKE<string>("ccrpc_fork", { sessionId, cwd, at, restore, title }),
 	ccrpcSend: (conn: string, line: string) => __TAURI_INVOKE<null>("ccrpc_send", { conn, line }),
 	ccrpcDisconnect: (conn: string) => __TAURI_INVOKE<null>("ccrpc_disconnect", { conn }),
 	ccrpcGuiLog: (conn: string | null, text: string) => __TAURI_INVOKE<null>("ccrpc_gui_log", { conn, text }),

@@ -1,7 +1,7 @@
 import { ArrowUp, ChevronDown, ChevronRight, Clock } from "lucide-react";
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/ui/copy-button";
-import { arrived, isFresh, RewindButton } from "@/features/connect";
+import { arrived, ForkButton, isFresh, RewindButton } from "@/features/connect";
 import type { BranchPoint, Node } from "@/ipc/bindings";
 import { stripAnsi } from "@/lib/ansi";
 import { cn } from "@/lib/cn";
@@ -22,7 +22,7 @@ type UserBody = Extract<Node["body"], { kind: "userPrompt" }>;
 
 /** Human / command prompt (turn start), with the branch switcher when it is a branch head. */
 export function UserPromptView({ node, body, branch }: { node: Node; body: UserBody; branch?: BranchPoint | null }) {
-  const { rewindable } = useTranscriptCtx();
+  const { rewindable, forkable, sessionId } = useTranscriptCtx();
   const o = body.origin;
   if (o.kind === "teammate") return <TeammateCard node={node} body={body} />;
   if (o.kind === "peer") return <PeerCard node={node} body={body} />;
@@ -72,12 +72,13 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         body={body}
         placed={o.kind === "command" ? new Set() : placedImages(body.text, body.images.length)}
       />
-      {/* Under the bubble, as in Codex: time, rewind and copy on hover, the branch switcher at a branch head. */}
+      {/* Under the bubble, as in Codex: time, rewind, fork and copy on hover, the branch switcher at a branch head. */}
       <div
         data-testid="prompt-meta"
         className={cn("flex items-center gap-1.5 text-[11.5px] text-secondary", fresh && "prompt-arrive-meta")}
       >
         {rewindable.has(node.id) && <RewindButton nodeId={node.id} />}
+        {forkable.has(node.id) && <ForkButton sessionId={sessionId} nodeId={node.id} />}
         <CopyButton text={o.kind === "command" ? commandLine(o.name, o.args) : body.text} />
         {branch && <BranchSwitcher point={branch} />}
         <span>{clock(node.timestampMs)}</span>

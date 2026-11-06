@@ -347,6 +347,34 @@ pub async fn ccrpc_resume(
     .await
 }
 
+/// Fork: starts a Fork of the Session `session_id` in a new Pane (before the Main Line prompt `at`, or
+/// all of it), named `title`, and connects to it; the result comes as ccrpc's `fork` event.
+#[tauri::command]
+#[specta::specta]
+pub async fn ccrpc_fork(
+    handle: AppHandle,
+    state: State<'_, CcrpcState>,
+    session_id: String,
+    cwd: String,
+    at: Option<String>,
+    restore: Option<String>,
+    title: String,
+) -> CmdResult<String> {
+    let sink = sink(&handle);
+    let f = relay::ForkArgs {
+        session_id,
+        cwd,
+        at,
+        restore,
+        title,
+    };
+    with_ccrpc(&state, move |app| {
+        let s = crate::settings::load();
+        app.fork_session(sink, &f, &s.launch_rules, s.hide_new_panes)
+    })
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn ccrpc_send(state: State<'_, CcrpcState>, conn: String, line: String) -> CmdResult<()> {

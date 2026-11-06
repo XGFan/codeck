@@ -93,6 +93,17 @@ export interface Api {
   ccrpcNew(cwd: string): Promise<string>;
   /** Resume: `ccrpc new --cwd <cwd> -- --resume <sessionId>` in a new Pane; returns the connection id. */
   ccrpcResume(sessionId: string, cwd: string): Promise<string>;
+  /**
+   * Fork: `ccrpc new --cwd <cwd> --fork <sessionId> [--fork-at <at>] [--fork-restore <restore>] --fork-title <title>` in a
+   * new Pane; returns the connection id (the result comes as its `fork` event).
+   */
+  ccrpcFork(
+    sessionId: string,
+    cwd: string,
+    at: string | null,
+    restore: "conversation" | "both" | null,
+    title: string,
+  ): Promise<string>;
   ccrpcSend(conn: string, msg: object): Promise<void>;
   /** Closes ccrpc's stdin (the Session keeps running). */
   ccrpcDisconnect(conn: string): Promise<void>;

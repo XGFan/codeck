@@ -73,6 +73,8 @@ export interface TranscriptCtx {
   activeAgentId: string | null;
   /** Prompts offering 「回退」 (the Main Line's in a Connected Session's main transcript). */
   rewindable: ReadonlySet<string>;
+  /** Prompts offering 「Fork」 (the Main Line's but the first, in the main transcript). */
+  forkable: ReadonlySet<string>;
   /** Another Session's socket → its name, from the messages it sent (for SendMessage to that Session). */
   peerNames: ReadonlyMap<string, string>;
 }

@@ -196,7 +196,24 @@ export type EventMsg =
   /** The feedback draft card above the TUI's input box appeared (a draft) or went away (null). */
   | { type: "feedback_draft"; draft: FeedbackDraft | null }
   | { type: "session_changed"; session_id: string; previous: string | null }
+  /** A Fork's rewind stopped at the confirm page with the `⚠` warning (`new --fork-restore both`): answered as `rewind`'s. */
+  | RewindRequest
+  | ForkEvent
   | { type: "session_exit" };
+
+/** `ccrpc new --fork` is done (ADR-0009): the Fork's Session, or why it failed (ccrpc then closes the Pane and exits). */
+export type ForkEvent =
+  | {
+      type: "fork";
+      session_id: string;
+      origin: string;
+      /** The prompt put back into the input box (`! command` for a shell command); null without `--fork-at`. */
+      text: string | null;
+      title: string | null;
+      title_error: string | null;
+      error?: undefined;
+    }
+  | { type: "fork"; error: { code: string; message: string } };
 
 export type InMsg = ResponseMsg | EventMsg;
 

@@ -37,7 +37,7 @@ export const STATE_WORD: Record<string, string> = {
 /** How long an opened Session stays open before 自动 Connect connects it. */
 const AUTO_CONNECT_DELAY_MS = 300;
 
-const pill =
+export const pill =
   "flex h-7 items-center gap-1.5 rounded-md border border-border bg-ground px-2.5 text-[12px] hover:bg-selection disabled:opacity-50 disabled:hover:bg-ground";
 
 /** A quiet button in the input box's foot. */
