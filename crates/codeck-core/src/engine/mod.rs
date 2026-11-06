@@ -329,7 +329,7 @@ impl Engine {
 
     pub fn get_session(&self, id: &str) -> CoreResult<SessionDetail> {
         let live = self.live_map()?;
-        let (row, files, forks, failed, model_costs) = self.index.read(|c| {
+        let (row, files, forks, failed, model_costs, superseded_by) = self.index.read(|c| {
             let Some(row) = reader::session_detail(c, id)? else {
                 return Err(CoreError::NotFound("该 Session".into()));
             };
@@ -337,7 +337,8 @@ impl Engine {
             let forks = reader::fork_children(c, id)?;
             let failed = files.iter().map(|f| f.failed_lines).sum::<u64>();
             let model_costs = reader::model_costs(c, id)?;
-            Ok((row, files, forks, failed, model_costs))
+            let superseded_by = reader::superseded_by(c, id)?;
+            Ok((row, files, forks, failed, model_costs, superseded_by))
         })?;
         let mut summary = row.summary;
         summary.live = live.get(id).cloned();
@@ -368,6 +369,7 @@ impl Engine {
                 })
                 .collect(),
             forks,
+            superseded_by,
             failed_lines: failed as u32,
             resume_command: format!("claude --resume {}", shell_quote(id)),
         })
@@ -452,7 +454,14 @@ impl Engine {
 
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {
         let pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
-        Ok(live::detect(&pfs))
+        let mut live = live::detect(&pfs);
+        // A superseded Session's process stays as the foreground of the one it was parked in; the
+        // conversation is Live there, under the Session that carries it on.
+        let superseded = self
+            .index
+            .read(|c| reader::superseded_among(c, live.keys()))?;
+        live.retain(|id, _| !superseded.contains(id));
+        Ok(live)
     }
 
     /// Whether a Claude Code process is running `session_id` now (read afresh, not the last poll).

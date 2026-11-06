@@ -74,6 +74,8 @@ declare global {
       appendNode(sessionId: string, node: Node): void;
       /** A prompt sent after a rewind is indexed: the Main Line leaves the nodes from `atNodeId` on, ends with `node`. */
       forkMain(sessionId: string, atNodeId: string, node: Node): void;
+      /** `sessionId` was parked in the background and is carried on in `by` (its sync is reported). */
+      supersede(sessionId: string, by: string): void;
     };
   }
 }
@@ -146,6 +148,8 @@ const appended = new Map<string, Node[]>();
 const forks = new Map<string, { at: string; nodes: Node[] }>();
 const revisions = new Map<string, number>();
 const liveOverrides = new Map<string, LiveState | null>();
+/** Superseded Session → the one carrying it on (set by `__cvMock.supersede`). */
+const supersededBy = new Map<string, string>();
 let currentIndexStatus: IndexStatus = { ...indexStatusSeed };
 
 const listeners: { [K in EventName]: Set<(p: never) => void> } = {
@@ -308,7 +312,7 @@ function searchGroups(req: SearchRequest): SearchGroup[] {
   if (include.length === 0) return [];
   const bySession = new Map<string, SearchHit[]>();
   for (const doc of allDocs()) {
-    if (doc.hidden || !DEFAULT_ROLES.includes(doc.role)) continue;
+    if (doc.hidden || !DEFAULT_ROLES.includes(doc.role) || supersededBy.has(doc.sessionId)) continue;
     const s = summaryOf(doc.sessionId);
     if (req.projectId && !relatedProjects(s).includes(req.projectId)) continue;
     const lower = doc.text.toLowerCase();
@@ -412,7 +416,7 @@ function relatedProjects(s: SessionSummary): string[] {
 }
 
 function listSessions(q: SessionQuery): SessionSummary[] {
-  let rows = sessionData.map((d) => ({ d, s: summaryOf(d.summary.id) }));
+  let rows = sessionData.filter((d) => !supersededBy.has(d.summary.id)).map((d) => ({ d, s: summaryOf(d.summary.id) }));
   if (q.projectIds.length) rows = rows.filter(({ s }) => relatedProjects(s).some((p) => q.projectIds.includes(p)));
   if (q.timeRange) {
     const { fromMs, toMs } = q.timeRange;
@@ -502,8 +506,9 @@ function sessionDetail(sessionId: string): SessionDetail {
         : []),
     ],
     forks: sessionData
-      .filter((x) => x.forkOf?.id === sessionId)
+      .filter((x) => x.forkOf?.id === sessionId && !supersededBy.has(x.summary.id))
       .map((x) => ({ sessionId: x.summary.id, title: x.summary.title, createdMs: x.summary.createdMs })),
+    supersededBy: supersededBy.get(sessionId) ?? null,
     failedLines: 0,
     resumeCommand: `claude --resume ${sessionId}`,
   };
@@ -559,7 +564,7 @@ function getStats(req: StatsRequest): Stats {
   const daily = statsSeed.daily.filter((d) => inRange(d.day));
   const ranked = sessionData
     .map((d) => summaryOf(d.summary.id))
-    .filter((s) => s.messageCount > 0)
+    .filter((s) => s.messageCount > 0 && !supersededBy.has(s.id))
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 10)
     .map((s) => ({
@@ -658,6 +663,16 @@ export function createMockApi(): Api {
       findData(sessionId);
       forks.set(sessionId, { at: atNodeId, nodes: [node] });
       revisions.set(sessionId, (revisions.get(sessionId) ?? 0) + 1);
+    },
+    supersede(sessionId, by) {
+      findData(sessionId);
+      findData(by);
+      supersededBy.set(sessionId, by);
+      dispatch("sessionsChanged", {
+        changed: [sessionId],
+        removed: [],
+        projectsChanged: true,
+      } satisfies SessionsChanged);
     },
   };
 

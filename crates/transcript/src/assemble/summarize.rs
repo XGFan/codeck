@@ -101,6 +101,7 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
         root_uuid: s.main_path.first().map(|&i| s.nodes[i].uuid.clone()),
         fork_origin_id: s.fork_origin_id.clone(),
         fork_point_uuid,
+        continued_in_id: s.continued_in_id.clone(),
         is_empty: message_count == 0,
         duplicate_uuids: s.duplicate_uuids,
     }

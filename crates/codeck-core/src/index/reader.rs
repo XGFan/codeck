@@ -90,15 +90,15 @@ pub fn session_files(conn: &Connection, session_id: &str) -> CoreResult<Vec<File
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// Projects with at least one non-empty session started in or editing them, most recently active
-/// first.
+/// Projects with at least one listed session (non-empty, not superseded) started in or editing
+/// them, most recently active first.
 pub fn list_projects(conn: &Connection) -> CoreResult<Vec<ProjectSummary>> {
     let mut st = conn.prepare(
         "WITH rel AS (SELECT id AS session_id, project_id FROM sessions
                 UNION SELECT session_id, project_id FROM session_projects)
          SELECT p.id, p.path, p.display_name, p.missing, count(s.id), max(s.last_active_ms)
          FROM projects p JOIN rel ON rel.project_id = p.id
-            JOIN sessions s ON s.id = rel.session_id AND s.is_empty = 0
+            JOIN sessions s ON s.id = rel.session_id AND s.is_empty = 0 AND s.superseded = 0
          GROUP BY p.id ORDER BY max(s.last_active_ms) DESC, p.id",
     )?;
     let rows = st.query_map([], |r| {
@@ -114,12 +114,15 @@ pub fn list_projects(conn: &Connection) -> CoreResult<Vec<ProjectSummary>> {
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// Origin of a session: `forkedFrom`, else the latest earlier session sharing its `root_uuid`
-/// (the Fork fallback of docs/spec.md「数据模型」). `s` is the alias of the session row.
+/// Origin of a session: `forkedFrom`, else the latest earlier session sharing its `root_uuid` that
+/// is not superseded (the Fork fallback of docs/spec.md「数据模型」; a superseded session is the
+/// same conversation as the one carrying it on, never its origin). `s` is the alias of the session
+/// row.
 fn origin_expr(s: &str) -> String {
     format!(
         "coalesce({s}.fork_origin_id, (SELECT o2.id FROM sessions o2 WHERE {s}.root_uuid IS NOT NULL
             AND o2.root_uuid = {s}.root_uuid AND o2.id != {s}.id AND o2.created_ms < {s}.created_ms
+            AND o2.superseded = 0
             ORDER BY o2.created_ms DESC LIMIT 1))"
     )
 }
@@ -188,7 +191,8 @@ pub fn project_match(ids: &[String], args: &mut Vec<Value>) -> String {
     )
 }
 
-/// Non-empty sessions matching `q` (live filtering and `live` states are applied by the engine).
+/// Listed sessions (non-empty, not superseded) matching `q` (live filtering and `live` states are
+/// applied by the engine).
 ///
 /// Without a drill, the time range keeps sessions whose span overlaps it. With a drill, the
 /// session must have a contributing row inside the range, mirroring `stats::compute` exactly
@@ -197,7 +201,7 @@ pub fn project_match(ids: &[String], args: &mut Vec<Value>) -> String {
 /// - `Model`: a main or Subagent message of that model that carries tokens;
 /// - `Span`: a main-file message in `[from_ms, to_ms)` (an activity bar).
 pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<SessionSummary>> {
-    let mut conds = vec!["s.is_empty = 0".to_owned()];
+    let mut conds = vec!["s.is_empty = 0 AND s.superseded = 0".to_owned()];
     let mut args: Vec<Value> = Vec::new();
     if !q.project_ids.is_empty() {
         conds.push(project_match(&q.project_ids, &mut args));
@@ -370,7 +374,7 @@ pub fn model_costs(conn: &Connection, session_id: &str) -> CoreResult<Vec<ModelC
 pub fn fork_children(conn: &Connection, id: &str) -> CoreResult<Vec<ForkChild>> {
     let sql = format!(
         "SELECT c.id, c.title, coalesce(c.created_ms, c.last_active_ms) FROM sessions c
-         WHERE c.is_empty = 0 AND c.id != ?1
+         WHERE c.is_empty = 0 AND c.superseded = 0 AND c.id != ?1
             AND (c.fork_origin_id = ?1 OR (c.fork_origin_id IS NULL AND {origin} = ?1))
          ORDER BY coalesce(c.created_ms, c.last_active_ms)",
         origin = origin_expr("c")
@@ -384,6 +388,41 @@ pub fn fork_children(conn: &Connection, id: &str) -> CoreResult<Vec<ForkChild>> 
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The listed session a superseded one is carried on in (following `continued-in` through
+/// sessions superseded in turn); `None` when `id` is not superseded.
+pub fn superseded_by(conn: &Connection, id: &str) -> CoreResult<Option<String>> {
+    let mut st = conn
+        .prepare_cached("SELECT continued_in_id FROM sessions WHERE id = ?1 AND superseded = 1")?;
+    let mut cur = id.to_owned();
+    let mut seen = HashSet::from([cur.clone()]);
+    while let Some(next) = st
+        .query_row([&cur], |r| r.get::<_, Option<String>>(0))
+        .optional()?
+        .flatten()
+    {
+        if !seen.insert(next.clone()) {
+            break;
+        }
+        cur = next;
+    }
+    Ok((cur != id).then_some(cur))
+}
+
+/// Those of `ids` that are superseded.
+pub fn superseded_among<'a>(
+    conn: &Connection,
+    ids: impl IntoIterator<Item = &'a String>,
+) -> CoreResult<HashSet<String>> {
+    let mut st = conn.prepare_cached("SELECT 1 FROM sessions WHERE id = ?1 AND superseded = 1")?;
+    let mut out = HashSet::new();
+    for id in ids {
+        if st.exists([id])? {
+            out.insert(id.clone());
+        }
+    }
+    Ok(out)
 }
 
 /// Fork origin of a session (same rule as the summaries).
@@ -446,10 +485,10 @@ pub fn agent_stats(conn: &Connection, session_id: &str) -> CoreResult<HashMap<St
     Ok(out)
 }
 
-/// Number of non-empty sessions.
+/// Number of listed sessions (non-empty, not superseded).
 pub fn session_count(conn: &Connection) -> CoreResult<u32> {
     Ok(conn.query_row(
-        "SELECT count(*) FROM sessions WHERE is_empty = 0",
+        "SELECT count(*) FROM sessions WHERE is_empty = 0 AND superseded = 0",
         [],
         |r| r.get(0),
     )?)

@@ -13,6 +13,7 @@ struct FileFacts {
     last_leaves: Vec<String>,
     custom_title: Option<String>,
     ai_title: Option<String>,
+    continued_in: Option<String>,
 }
 
 /// Raw parent references of a node, resolved once the whole map is known.
@@ -120,6 +121,15 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
                         f.ai_title = Some(t.trim().to_owned());
                     }
                 }
+                "continued-in" => {
+                    if let Some(id) = e
+                        .continued_in_session_id
+                        .as_deref()
+                        .filter(|i| !i.is_empty())
+                    {
+                        f.continued_in = Some(id.to_owned());
+                    }
+                }
                 _ => {}
             }
             let Some(uuid) = e.uuid.as_deref() else {
@@ -157,6 +167,7 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
     s.versions = versions.into_iter().collect();
     s.custom_title = facts.iter().find_map(|f| f.custom_title.clone());
     s.ai_title = facts.iter().find_map(|f| f.ai_title.clone());
+    s.continued_in_id = facts.iter().find_map(|f| f.continued_in.clone());
 
     // First human prompt in title form.
     for (i, n) in s.nodes.iter().enumerate() {

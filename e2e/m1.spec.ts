@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openRich, RICH_TITLE } from "./helpers";
+import { openRich, openSession, RICH_TITLE } from "./helpers";
 
 // The index's Live state, not a connection's: 自动 Connect off (it is tested in connect.spec.ts).
 test.beforeEach(({ page }) =>
@@ -100,6 +100,24 @@ test("离开底部时出现新消息提示", async ({ page }) => {
   await expect(page.getByTestId("new-messages")).toBeVisible();
   await page.getByTestId("new-messages").click();
   await expect(page.getByText("另一条新消息")).toBeVisible();
+});
+
+test("打开的 Session 转入后台后切到接替它的 Session，列表里只剩后者", async ({ page }) => {
+  const old = await openSession(page, "排查 Redis 连接池泄漏", { folded: true });
+  const next = await page
+    .getByTestId("session-row")
+    .filter({ hasText: "迁移表单校验到 zod" })
+    .getAttribute("data-session-id");
+
+  await page.evaluate(([o, n]) => window.__cvMock!.supersede(o, n), [old, next!]);
+
+  const header = page.getByTestId("header");
+  await expect(header.getByRole("heading", { name: "迁移表单校验到 zod" })).toBeVisible();
+  await expect(page.locator(`[data-testid="session-row"][data-session-id="${old}"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-testid="session-row"][data-session-id="${next}"]`)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("等待作答的 Session 显示琥珀色点", async ({ page }) => {

@@ -115,7 +115,7 @@ pub fn run(conn: &Connection, r: &SearchRequest, force_like: bool) -> CoreResult
     let sql = format!(
         "WITH h AS MATERIALIZED (
             SELECT t.id, t.session_id, coalesce(t.ts_ms, 0) AS ts
-            FROM {from} JOIN sessions s ON s.id = t.session_id AND s.is_empty = 0
+            FROM {from} JOIN sessions s ON s.id = t.session_id AND s.is_empty = 0 AND s.superseded = 0
             WHERE {conds}),
          g AS MATERIALIZED (SELECT session_id, max(ts) AS last, count(*) AS n FROM h GROUP BY session_id),
          top AS (SELECT session_id, last, n FROM g ORDER BY last DESC, session_id LIMIT ?),

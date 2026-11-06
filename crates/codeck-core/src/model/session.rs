@@ -133,6 +133,9 @@ pub struct SessionDetail {
     pub versions: Vec<String>,
     pub files: Vec<SourceFile>,
     pub forks: Vec<ForkChild>,
+    /// The Session this one is carried on in (it was parked in the background and its whole
+    /// conversation copied there): the app opens that one instead. `None` for a listed Session.
+    pub superseded_by: Option<String>,
     pub failed_lines: u32,
     /// `claude --resume <id>`.
     pub resume_command: String,

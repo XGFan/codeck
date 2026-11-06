@@ -1,4 +1,5 @@
 import { Bug, Copy, Ellipsis, FolderOpen, Info } from "lucide-react";
+import { useEffect } from "react";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -37,6 +38,11 @@ export function SessionHeader() {
   const sessionId = useUi((s) => s.sessionId);
   const inset = useLeadingInset();
   const { data: d, error } = useSession(sessionId);
+  // A superseded Session (parked in the background, its conversation copied on) opens as the one carrying it on.
+  const successor = d?.supersededBy ?? null;
+  useEffect(() => {
+    if (successor) useUi.getState().selectSession(successor);
+  }, [successor]);
   const connected = useConnect((s) => connFor(s, sessionId));
   const lsCwd = useConnect((s) => lsEntryFor(s, sessionId)?.cwd ?? null);
   // A Connected or `ccrpc ls` Session not in the index yet (a new one, before its first prompt).

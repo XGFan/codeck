@@ -24,13 +24,14 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **Subagent Run**：通过 `subagents/agent-<id>.meta.json` 里的 `toolUseId` 关联到主对话中的 Agent 调用，可以嵌套（`spawnDepth`）。
 - **Workflow Run**：来自 `workflows/` 和 `journal.jsonl`。
 - **Fork**：和其他 Session 共享消息 uuid 的 Session，独立显示，标注 Origin Session，继承来的历史默认折叠。
+- **Continued Session**：Session 在 agents 页面转入后台时（← 进入 agents 页面，选中它后回车），原 Session 的 transcript 以 `continued-in` 条目结束、指向 Claude Code 新起的 Session，新 Session 复制原 Session 的条目（uuid、`message.id` 相同，没有 `forkedFrom`）后接着进行。新 Session 在索引里、且含有原 Session 主对话的全部用户输入（按 uuid；不比 assistant 消息，复制时会漏掉只有空 thinking 的回复）时，原 Session **被接替**：不进 Session 列表、Project 的 Session 计数、搜索、统计的 Session 数与排行、Fork 列表，不显示 Live 状态；按 id 打开它（Fork 的 Origin Session 链接、正打开着它时它被接替等）就转到新 Session（逐级跟随）。新 Session 是同一个对话的延续，不算 Fork：不标 Origin Session，历史不折叠。新 Session 不在索引里或缺了原 Session 的用户输入（如原 Session 之后又接着对话）时，两个照常显示。
 - **Branch / Main Line**：消息按 parentUuid 构成一棵树。Main Line 是走到最新叶子的那条路径（优先用 `last-prompt.leafUuid`，否则取时间戳最新的叶子）。
 - **compact**：compact 边界会切断 parentUuid 链；边界通过 `logicalParentUuid` 接回压缩前的历史，但只接受文件中位置更早的条目（否则会成环），找不到时接到文件中前一条消息，因此 Main Line 跨越 compact 保持连续。
-- **Fork 判定**：条目带 `forkedFrom` 的即为 Fork，继承部分以此标记；没有该字段时，以和更早的 Session 共享首条消息作为兜底。
+- **Fork 判定**：条目带 `forkedFrom` 的即为 Fork，继承部分以此标记；没有该字段时，以和更早的、未被接替的 Session 共享首条消息作为兜底。
 - **Live Session**：`~/.claude/sessions/<pid>.json` 存在、进程存活且 `procStart` 一致；`status` 区分 busy、waiting 和 idle。不看 transcript 的修改时间：Claude Code 退出时删掉进程文件，刚写过的 Session 也可能已经结束。
 - 标题优先级：`custom-title` > `ai-title` > 第一条用户输入。
 - **用户输入的判定**：只有用户亲手输入的内容、斜杠命令和 `!` shell 命令算作"你"的消息；系统注入、任务通知、命令输出、compact 摘要和 Teammate Message 都不算，不参与消息数、分支、标题和"你"角色的搜索。Claude 工作期间输入、排队到下一轮才送达的内容，文件里只记为 `queued_command` 附件（没有对应的 `user` 条目），按同样的规则当作用户消息处理：亲手输入的算"你"的消息，排队的任务通知、Teammate 消息按各自类型显示。新版 Claude Code 把 `/rename`、`/model` 这类本地执行的斜杠命令及其输出记成 `system`（`local_command`）条目，旧版记成 `user` 条目，两种按同样的规则处理：命令算"你"的消息，输出按命令输出显示，空输出隐藏。长段粘贴被 Claude Code 包在 `<pasted_content id="xxxx">` 标签里时（账号级开关），显示、标题和搜索都用去掉标签后的原文。
-- **计数口径**：消息数 = 用户输入 + assistant 消息（按 `message.id` 合并拆分的片段），只计主对话；token 按 `message.id` 只计一次，每个字段取各片段的最大值；Session 的 token 合计包含其 Subagent。同一条 assistant 消息出现在多个 Session 中时（resume / Fork 会把之前的对话复制进新 Session 的文件），token 和 Cost 只计入最早创建的那个 Session，统计也只计一次（与 ccusage 一致）；Session 被删除后，归属转给下一个仍包含它的 Session。消息数不受影响。
+- **计数口径**：消息数 = 用户输入 + assistant 消息（按 `message.id` 合并拆分的片段），只计主对话；token 按 `message.id` 只计一次，每个字段取各片段的最大值；Session 的 token 合计包含其 Subagent。同一条 assistant 消息出现在多个 Session 中时（resume / Fork 会把之前的对话复制进新 Session 的文件），token 和 Cost 只计入最早创建的那个 Session，统计也只计一次（与 ccusage 一致）；Session 被删除或被接替后，归属转给下一个仍包含它的 Session（被接替的 Session 排在最后）。消息数不受影响；统计不计被接替的 Session 的消息数，它仍计费的 token 与 Cost 照常计入总数。
 - **Cost**：参照 ccusage 的算法，按 LiteLLM 价格表逐条计算 assistant 消息：输入、输出、缓存读取、缓存写入各按单价计；缓存写入区分 5 分钟和 1 小时（1 小时按价格表中的单价，没有时按输入单价的 2 倍）；模型有 200K 以上单价时，各项超过 200K 的部分按该单价计；fast 模式乘以模型的 fast 倍率；条目自带 `costUSD`（旧版 Claude Code）时直接采用。模型名去掉 `[1m]`、`@地区`、日期后缀再匹配；匹配不到的消息不计入金额并单独计数，界面上提示"无价格"。
 - **价格表**：内置一份 LiteLLM 中 `claude-*` 模型的快照；启动时以及之后每 10 分钟检查一次，缓存超过一天就在后台重新下载 LiteLLM 价格表（ADR-0005），存到 Caches 下的 `pricing.json`，价格有变化时重新计算全部 Cost。下载失败沿用缓存或内置快照，不提示。
 - 数据根目录：默认 `~/.claude`，识别 `CLAUDE_CONFIG_DIR`，也可以在设置里修改；只支持一个数据根目录。不读取 `~/.claude/transcripts/`。

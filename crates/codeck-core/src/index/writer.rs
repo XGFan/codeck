@@ -250,10 +250,61 @@ pub fn copy_neighbors(conn: &Connection, session_id: &str) -> CoreResult<Vec<Str
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// Re-derives `sessions.superseded` for the sessions `scope` and those continued in one of them
+/// (`None` = every session); returns the sessions whose flag changed.
+///
+/// A session is superseded when its last `continued-in` names a session in the index that holds a
+/// copy of every one of its main-file prompts (by uuid). Parking a Session in the background
+/// (Claude Code 2.1.318) ends it with `continued-in` and copies its transcript into the new one, so
+/// the newer session alone tells the conversation. Prompts, not replies: the copy leaves out a
+/// reply that is only an empty thinking block (seen in real data), while a prompt the newer
+/// session lacks means the older one went on by itself. One key lookup per prompt; when the newer
+/// session is missing or lacks a prompt, both are shown.
+pub fn update_superseded(
+    conn: &Connection,
+    scope: Option<&HashSet<String>>,
+) -> CoreResult<Vec<String>> {
+    let rule = format!(
+        "continued_in_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM sessions n
+            WHERE n.id = sessions.continued_in_id AND n.id != sessions.id)
+        AND NOT EXISTS (SELECT 1 FROM messages mo
+            WHERE mo.session_id = sessions.id AND mo.agent_id = '' AND mo.role = {MSG_PROMPT}
+                AND NOT EXISTS (SELECT 1 FROM messages mn WHERE mn.session_id = sessions.continued_in_id
+                    AND mn.agent_id = '' AND mn.key = mo.key))"
+    );
+    let flip = |filter: &str| {
+        format!(
+            "UPDATE sessions SET superseded = NOT superseded
+             WHERE ({filter}) AND superseded != ({rule}) RETURNING id"
+        )
+    };
+    let mut out = Vec::new();
+    match scope {
+        None => {
+            let mut st = conn.prepare(&flip("continued_in_id IS NOT NULL OR superseded = 1"))?;
+            for r in st.query_map([], |r| r.get::<_, String>(0))? {
+                out.push(r?);
+            }
+        }
+        Some(ids) => {
+            let mut st = conn.prepare_cached(&flip("id = ?1 OR continued_in_id = ?1"))?;
+            for id in ids {
+                for r in st.query_map([id], |r| r.get::<_, String>(0))? {
+                    out.push(r?);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Billing (ccusage's dedupe): every assistant message is billed once, in the copy whose session
-/// started first (then by session id, main before Subagents); `billed` marks that copy. Then the
-/// sessions' token and cost columns are re-summed from their billed messages. `sessions` limits
-/// both steps (it must include every session sharing a message with a changed one); `None` = all.
+/// started first (then by session id, main before Subagents); `billed` marks that copy. Superseded
+/// sessions come last, so the session carrying the conversation on bills what it copied (as when
+/// a session is deleted). Then the sessions' token and cost columns are re-summed from their billed
+/// messages. `sessions` limits both steps (it must include every session sharing a message with a
+/// changed one); `None` = all.
 pub fn rebill(conn: &Connection, sessions: Option<&HashSet<String>>) -> CoreResult<()> {
     let scope = match sessions {
         Some(ids) => {
@@ -281,8 +332,10 @@ pub fn rebill(conn: &Connection, sessions: Option<&HashSet<String>>) -> CoreResu
             "UPDATE messages SET billed = NOT EXISTS (
                 SELECT 1 FROM messages o JOIN sessions so ON so.id = o.session_id
                 WHERE o.key = messages.key AND o.role = {MSG_ASSISTANT}
-                    AND (coalesce(so.created_ms, so.last_active_ms), o.session_id, o.agent_id) <
-                        ((SELECT coalesce(s.created_ms, s.last_active_ms) FROM sessions s
+                    AND (so.superseded, coalesce(so.created_ms, so.last_active_ms), o.session_id,
+                        o.agent_id) <
+                        ((SELECT s.superseded FROM sessions s WHERE s.id = messages.session_id),
+                        (SELECT coalesce(s.created_ms, s.last_active_ms) FROM sessions s
                             WHERE s.id = messages.session_id), messages.session_id, messages.agent_id))
              WHERE role = {MSG_ASSISTANT}{msg_scope}"
         ),
@@ -676,6 +729,8 @@ pub struct SessionRow {
     pub root_uuid: Option<String>,
     pub fork_origin_id: Option<String>,
     pub fork_point_uuid: Option<String>,
+    /// From `continued-in`; `superseded` is derived from it by [`update_superseded`].
+    pub continued_in_id: Option<String>,
     pub is_empty: bool,
     /// Duplicate uuids within a single file (first occurrence wins), from assembly.
     pub dup_uuids: u32,
@@ -687,9 +742,9 @@ pub fn write_session(conn: &Connection, s: &SessionRow) -> CoreResult<()> {
             last_active_ms, duration_ms, message_count, tool_call_count, subagent_count,
             in_tok, out_tok, cr_tok, cc_tok, main_in_tok, main_out_tok, main_cr_tok, main_cc_tok,
             git_branch, primary_model, models_json, versions_json, leaf_uuid, root_uuid,
-            fork_origin_id, fork_point_uuid, is_empty, dup_uuids)
+            fork_origin_id, fork_point_uuid, is_empty, dup_uuids, continued_in_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
     )?
     .execute(params![
         s.id,
@@ -722,6 +777,7 @@ pub fn write_session(conn: &Connection, s: &SessionRow) -> CoreResult<()> {
         s.fork_point_uuid,
         s.is_empty,
         s.dup_uuids,
+        s.continued_in_id,
     ])?;
     Ok(())
 }

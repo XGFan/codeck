@@ -3,7 +3,9 @@
 //! Semantics (each chart dimension has a [`Drill`](crate::model::Drill) in `index::reader` that
 //! returns exactly the contributing sessions):
 //! - Scope: non-empty sessions; the time range applies to each message's own timestamp
-//!   (`messages.ts_ms`), both bounds inclusive.
+//!   (`messages.ts_ms`), both bounds inclusive. A superseded session (see
+//!   `writer::update_superseded`) is the same conversation as the one carrying it on: it adds only
+//!   what it still bills to tokens and cost, never a session, message, day or ranking entry.
 //! - `overview.messages`, `heat_daily`, `overview.sessions`,
 //!   `overview.active_days` and the ranked sessions' `messages`: main-file messages only
 //!   (human/command prompts + assistant messages by `message.id`, as `message_count`).
@@ -67,16 +69,19 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
     let (from, to) = range_bounds(r.time_range.as_ref());
     let ranged = r.time_range.is_some();
 
-    // Sessions in scope → index, with their titles.
+    // Sessions in scope → index, with their titles; and the superseded ones.
     let mut sessions: HashMap<String, usize> = HashMap::new();
     let mut titles: Vec<(String, String)> = Vec::new();
+    let mut superseded: Vec<bool> = Vec::new();
     {
-        let mut st = conn.prepare("SELECT id, title FROM sessions WHERE is_empty = 0")?;
+        let mut st =
+            conn.prepare("SELECT id, title, superseded FROM sessions WHERE is_empty = 0")?;
         let mut rows = st.query([])?;
         while let Some(row) = rows.next()? {
             let id: String = row.get(0)?;
             sessions.insert(id.clone(), titles.len());
             titles.push((id, row.get(1)?));
+            superseded.push(row.get(2)?);
         }
     }
 
@@ -114,7 +119,7 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
                 continue;
             };
             let day = t.date();
-            if row.get::<_, bool>(1)? {
+            if row.get::<_, bool>(1)? && !superseded[si] {
                 session_active[si] = true;
                 sess_messages[si] += 1;
                 messages += 1;
@@ -152,7 +157,7 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
     let mut top: Vec<SessionStat> = titles
         .into_iter()
         .enumerate()
-        .filter(|&(i, _)| sess_messages[i] > 0 || sess_output[i] > 0.0)
+        .filter(|&(i, _)| !superseded[i] && (sess_messages[i] > 0 || sess_output[i] > 0.0))
         .map(|(i, (session_id, title))| SessionStat {
             session_id,
             title,

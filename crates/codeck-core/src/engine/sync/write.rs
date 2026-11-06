@@ -24,6 +24,27 @@ pub(super) fn session_exists(conn: &Connection, sid: &str) -> CoreResult<Option<
 /// looking up the neighbors of each.
 pub(super) const REBILL_ALL_ABOVE: usize = 200;
 
+/// Re-derives which sessions are superseded among the changed and removed ones and those continued
+/// in them (all of them when `all` or after a full scan); a session whose flag changed is reported
+/// as changed (and billed again by [`rebill_changed`]), and the Project counts as changed.
+pub(super) fn update_superseded(
+    conn: &Connection,
+    cs: &mut ChangeSet,
+    all: bool,
+) -> CoreResult<()> {
+    let flipped = if all || cs.changed.len() > REBILL_ALL_ABOVE {
+        writer::update_superseded(conn, None)?
+    } else {
+        let scope: HashSet<String> = cs.changed.iter().chain(&cs.removed).cloned().collect();
+        writer::update_superseded(conn, Some(&scope))?
+    };
+    if !flipped.is_empty() {
+        cs.projects_changed = true;
+        cs.changed.extend(flipped);
+    }
+    Ok(())
+}
+
 /// Re-bills the changed sessions and every session sharing a message with them; those whose
 /// totals may have moved are reported as changed too.
 pub(super) fn rebill_changed(
@@ -139,6 +160,7 @@ pub(super) fn write_work(
         root_uuid: a.root_uuid.clone(),
         fork_origin_id: a.fork_origin_id.clone(),
         fork_point_uuid: a.fork_point_uuid.clone(),
+        continued_in_id: a.continued_in_id.clone(),
         is_empty: a.is_empty,
         dup_uuids: a.duplicate_uuids,
     };

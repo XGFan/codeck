@@ -80,6 +80,8 @@ pub struct SessionSkeleton {
     pub versions: Vec<String>,
     /// `forkedFrom.sessionId` of the first fork-inherited entry.
     pub fork_origin_id: Option<String>,
+    /// `continuedInSessionId` of the last `continued-in` entry (of the largest file that has one).
+    pub continued_in_id: Option<String>,
 }
 
 /// `type` of a [`SkeletonNode`]'s entry; `Other` for any other type (the record keeps the string).
@@ -276,6 +278,8 @@ pub struct SessionAggregates {
     /// From `forkedFrom`.
     pub fork_origin_id: Option<String>,
     pub fork_point_uuid: Option<String>,
+    /// From the last `continued-in` entry.
+    pub continued_in_id: Option<String>,
     pub is_empty: bool,
     pub duplicate_uuids: u32,
 }
@@ -301,6 +305,7 @@ impl Default for SessionAggregates {
             root_uuid: None,
             fork_origin_id: None,
             fork_point_uuid: None,
+            continued_in_id: None,
             is_empty: true,
             duplicate_uuids: 0,
         }

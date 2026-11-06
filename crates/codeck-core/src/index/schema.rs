@@ -1,7 +1,7 @@
 //! DDL and schema version.
 
 /// `PRAGMA user_version`; any mismatch deletes and recreates the index.
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 
 /// `files.role`.
 pub const ROLE_MAIN: i64 = 0;
@@ -43,9 +43,11 @@ CREATE TABLE sessions (
   main_in_tok INTEGER NOT NULL, main_out_tok INTEGER NOT NULL, main_cr_tok INTEGER NOT NULL, main_cc_tok INTEGER NOT NULL,
   git_branch TEXT, primary_model TEXT, models_json TEXT NOT NULL DEFAULT '[]', versions_json TEXT NOT NULL DEFAULT '[]',
   leaf_uuid TEXT, root_uuid TEXT, fork_origin_id TEXT, fork_point_uuid TEXT, is_empty INTEGER NOT NULL DEFAULT 0,
-  dup_uuids INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, unpriced INTEGER NOT NULL DEFAULT 0);
+  dup_uuids INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, unpriced INTEGER NOT NULL DEFAULT 0,
+  continued_in_id TEXT, superseded INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX sessions_project_active ON sessions(project_id, last_active_ms DESC);
 CREATE INDEX sessions_root ON sessions(root_uuid);
+CREATE INDEX sessions_continued_in ON sessions(continued_in_id) WHERE continued_in_id IS NOT NULL;
 CREATE TABLE messages (
   session_id TEXT NOT NULL, agent_id TEXT NOT NULL DEFAULT '', key TEXT NOT NULL, role INTEGER NOT NULL,
   ts_ms INTEGER NOT NULL, model TEXT, in_tok INTEGER NOT NULL DEFAULT 0, out_tok INTEGER NOT NULL DEFAULT 0,

@@ -18,7 +18,7 @@ use crate::model::{IndexPhase, IndexStatus};
 use crate::{project, scan};
 use compute::{SessionWork, compute_session};
 use plan::{SessionPlan, batches, diff_sidecars, plan_sync};
-use write::{rebill_changed, session_exists, write_work};
+use write::{rebill_changed, session_exists, update_superseded, write_work};
 
 impl Engine {
     /// `scope`: only these sessions changed (a filesystem batch); the whole root is scanned
@@ -174,6 +174,7 @@ impl Engine {
             }
             self.index.write(|conn| {
                 let tx = conn.transaction()?;
+                update_superseded(&tx, &mut cs, rebill_all)?;
                 if rebill_all {
                     writer::rebill(&tx, None)?;
                 } else {
