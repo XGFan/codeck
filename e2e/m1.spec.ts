@@ -290,24 +290,3 @@ test("头部显示 Cost，悬停可看按模型明细；其余统计在 ⓘ 的�
   expect(title).toContain("claude-sonnet-5-5");
   expect(title).toContain("claude-haiku-4-5");
 });
-
-test("按 Project 筛选后的列表可按 Cost 排序", async ({ page }) => {
-  await page.goto("/");
-  await filterProject(page, "orbit-web");
-  await page.getByRole("button", { name: "排序方式" }).click();
-  await page.getByRole("menuitem", { name: "Cost" }).click();
-  const values = async () =>
-    (await page.getByTestId("row-cost").allTextContents()).map((c) =>
-      c.startsWith("<") ? 0.005 : Number(c.replace(/[$,]/g, "")),
-    );
-  // The list refetches after the sort changes; wait for the new order.
-  await expect
-    .poll(async () => {
-      const v = await values();
-      return v.length > 3 && v.every((x, i) => i === 0 || v[i - 1] >= x);
-    })
-    .toBe(true);
-  const costs = await page.getByTestId("row-cost").allTextContents();
-  // A session whose model has no price shows $0 (the untitled one has no model).
-  expect(costs).toContain("$0");
-});

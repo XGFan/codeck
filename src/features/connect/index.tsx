@@ -1,4 +1,4 @@
-import { Info, Plus, Unplug, X } from "lucide-react";
+import { Info, Unplug, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
@@ -116,23 +116,6 @@ export function ElsewhereBanner() {
         <X size={12} aria-hidden />
       </button>
     </div>
-  );
-}
-
-/** Opens 「新建 Session」 (the directory picker, ⌘N). */
-export function NewSessionButton() {
-  const open = useUi((s) => s.setNewSessionOpen);
-  return (
-    <button
-      type="button"
-      data-testid="new-session"
-      aria-label="新建 Session"
-      title="新建 Session"
-      onClick={() => open(true)}
-      className="flex size-[22px] shrink-0 items-center justify-center rounded-md text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent"
-    >
-      <Plus size={13} strokeWidth={1.8} aria-hidden />
-    </button>
   );
 }
 

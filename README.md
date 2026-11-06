@@ -2,7 +2,7 @@
 
 macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
 
-- **侧栏按 Project 分组**：只列你添加的 Project，组和组里的 Session 按你最后一次输入排序，AI 回复不会让它们跳动；像 `~/Project/<公司>` 这样装着多个仓库的目录可以「收拢子 Project」，子仓库成为它下面的子组；运行中的 Session 在顶部单列；没添加的 Project 的 Session 收在底部「其他」里。
+- **侧栏按 Project 分组**：顶部固定的 Live 列出正在运行的 Session；中间只列你添加的 Project，顺序由你拖动排定，组里的 Session 按你最后一次输入排序，AI 回复不会让它们跳动；像 `~/Project/<公司>` 这样装着多个仓库的目录可以「收拢子 Project」，子仓库成为它下面的子组；底部固定的 Recent 按时间列出其余所有 Session，没添加的 Project 的也在这里。
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
 - **读得舒服**：参考 Codex 的排版，每轮的过程折叠成「已处理 1 分 50 秒」一行、只露出回答，展开后每次工具调用是一行字（Subagent 面板里连续的合成「读取 1 个文件、编辑 2 个文件、运行 1 条命令」一行），Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话记录；对话列宽度拖动边缘即可调节。
 - **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。

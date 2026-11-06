@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { BranchChoice, Drill, JumpTarget, SessionSort, TimeRange, TranscriptScope } from "@/ipc/bindings";
+import type { BranchChoice, Drill, JumpTarget, TimeRange, TranscriptScope } from "@/ipc/bindings";
 import type { WeeklyReset } from "@/lib/cycle";
 
 export type CollapsiblePane = "sessions";
@@ -77,8 +77,6 @@ interface UiState {
   pendingJump: JumpTarget | null;
   highlight: Highlight | null;
   expanded: Record<string, boolean>;
-  sessionSort: SessionSort;
-  sessionDescending: boolean;
   statsDrill: Drill | null;
   /** Time range of the stats view a drill came from; applied to the session list only while the drill is active. */
   statsDrillRange: TimeRange | null;
@@ -125,7 +123,6 @@ interface UiState {
   setHighlight: (h: Highlight | null) => void;
   toggleExpanded: (key: string, defaultValue?: boolean) => void;
   setExpanded: (key: string, value: boolean) => void;
-  setSessionSort: (sort: SessionSort, descending?: boolean) => void;
   setStatsDrill: (drill: Drill | null, range?: TimeRange | null) => void;
   setSettingsOpen: (open: boolean) => void;
   toggleCollapsed: (pane: CollapsiblePane) => void;
@@ -139,8 +136,6 @@ export const useUi = create<UiState>()((set) => ({
   searchOpen: false,
   statsOpen: false,
   pendingJump: null,
-  sessionSort: "lastActive",
-  sessionDescending: true,
   statsDrill: null,
   statsDrillRange: null,
   settingsOpen: false,
@@ -193,8 +188,6 @@ export const useUi = create<UiState>()((set) => ({
   toggleExpanded: (key, defaultValue = false) =>
     set((s) => ({ expanded: { ...s.expanded, [key]: !(s.expanded[key] ?? defaultValue) } })),
   setExpanded: (key, value) => set((s) => ({ expanded: { ...s.expanded, [key]: value } })),
-  setSessionSort: (sessionSort, descending) =>
-    set((s) => ({ sessionSort, sessionDescending: descending ?? s.sessionDescending })),
   setStatsDrill: (statsDrill, range = null) => set({ statsDrill, statsDrillRange: statsDrill ? range : null }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   toggleCollapsed: (pane) =>

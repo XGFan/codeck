@@ -45,11 +45,12 @@ export interface Group {
 }
 
 export interface Sidebar {
-  /** Every Live Session (and pending one), latest first. */
-  running: SideSession[];
+  /** Every Live Session (and pending one), latest first: the 「Live」 list. */
+  live: SideSession[];
+  /** The added Projects, in their order. */
   groups: Group[];
-  /** Sessions in no added Project, latest first. */
-  other: SideSession[];
+  /** Every indexed Session that is not Live, in an added Project or not, latest first: the 「Recent」 list. */
+  recent: SideSession[];
 }
 
 const ACTIVE_MS = 30 * 24 * 3600 * 1000;
@@ -81,8 +82,8 @@ export const childProjects = (path: string, projects: ProjectSummary[]) =>
   projects.filter((p) => isUnder(p.path, path)).length;
 
 /**
- * The sidebar: Sessions grouped by the added Project they started in (only once each), groups ordered by their
- * latest user input; Live ones also listed under 「运行中」.
+ * The sidebar: Sessions grouped by the added Project they started in (only once each; groups in the order the user
+ * gave them), the Live ones listed again under 「Live」, the others again under 「Recent」.
  */
 export function buildSidebar(
   sessions: SessionSummary[],
@@ -139,14 +140,10 @@ export function buildSidebar(
       },
     ]),
   );
-  const other: SideSession[] = [];
   for (const { s, path } of rows) {
     const e = path ? entryFor(path, entries) : null;
     const g = e && groups.get(e.path);
-    if (!g) {
-      other.push(s);
-      continue;
-    }
+    if (!g) continue;
     g.total++;
     g.lastMs = Math.max(g.lastMs, s.timeMs);
     if (s.live && (!g.live || URGENCY[s.live] > URGENCY[g.live])) g.live = s.live;
@@ -169,7 +166,6 @@ export function buildSidebar(
     sub.lastMs = Math.max(sub.lastMs, s.timeMs);
   }
 
-  const order = new Map(entries.map((e, i) => [e.path, i]));
   const list: Group[] = [...groups.values()].map(({ subMap, ...g }) => {
     g.sessions.sort(byTime);
     const subs = [...subMap.values()];
@@ -180,16 +176,50 @@ export function buildSidebar(
     subs.sort((a, b) => b.lastMs - a.lastMs || a.name.localeCompare(b.name));
     return { ...g, subs };
   });
-  list.sort((a, b) => b.lastMs - a.lastMs || order.get(a.path)! - order.get(b.path)!);
-  other.sort(byTime);
+  const all = rows.map((r) => r.s);
   return {
-    running: rows
-      .map((r) => r.s)
-      .filter((s) => s.live)
-      .sort(byTime),
+    live: all.filter((s) => s.live).sort(byTime),
     groups: list,
-    other,
+    recent: all.filter((s) => !s.live && !s.pending).sort(byTime),
   };
+}
+
+/** `entries` with the one at `from` moved to insertion point `to` (0…length, counted before the move). */
+export function moveEntry<T>(entries: T[], from: number, to: number): T[] {
+  if (from < 0 || from >= entries.length) return entries;
+  const out = entries.filter((_, i) => i !== from);
+  out.splice(to > from ? to - 1 : to, 0, entries[from]!);
+  return out;
+}
+
+export const ROW_PX = 28;
+export const LIVE_ROWS = 5;
+export const RECENT_ROWS = 6;
+/** 「Live」's heading and padding; 「Recent」's heading, padding and top border. */
+export const LIVE_CHROME = 34;
+export const RECENT_CHROME = 37;
+/** The Project list keeps its heading (32), 4 rows, its bottom padding and the border above it. */
+const MIDDLE_MIN = 32 + 4 * ROW_PX + 10 + 1;
+
+/**
+ * Rows shown by 「Live」 and 「Recent」 in a column `height` px tall (between 「新建 Session」 and the foot): up to 5
+ * and 6, then fewer — 「Recent」 first, down to one each — while the Project list would get less than its heading
+ * and 4 rows. A list with nothing in it is not shown.
+ */
+export function fitRows(
+  height: number,
+  live: number,
+  recent: number,
+  recentOpen: boolean,
+): { live: number; recent: number } {
+  let l = Math.min(live, LIVE_ROWS);
+  let r = recentOpen ? Math.min(recent, RECENT_ROWS) : 0;
+  // Collapsed, 「Recent」 is its heading and border alone (no list padding).
+  const recentH = () => (!recent ? 0 : recentOpen ? RECENT_CHROME + r * ROW_PX : RECENT_CHROME - 4);
+  const used = () => (live ? LIVE_CHROME + l * ROW_PX : 0) + recentH() + MIDDLE_MIN;
+  while (used() > height && r > 1) r--;
+  while (used() > height && l > 1) l--;
+  return { live: l, recent: r };
 }
 
 /** Rows a list shows before 「显示更多」, and how many more each click adds. */
@@ -199,60 +229,52 @@ export const MORE_ROWS = 20;
 export const groupKey = (path: string) => `g:${path}`;
 export const subKey = (path: string, projectId: string) => `s:${path}\n${projectId}`;
 export const restKey = (path: string) => `r:${path}`;
-export const OTHER_KEY = "other";
+/** 「Recent」 open or collapsed (in the same remembered map as the groups). */
+export const RECENT_KEY = "recent";
 
-/** Groups start open; sub-groups, 「其他 N 个子 Project」 and 「其他」 start closed. */
-export const isOpen = (expanded: Record<string, boolean>, key: string) => expanded[key] ?? key.startsWith("g:");
+/** Groups and 「Recent」 start open; sub-groups and 「其他 N 个子 Project」 start closed. */
+export const isOpen = (expanded: Record<string, boolean>, key: string) =>
+  expanded[key] ?? (key.startsWith("g:") || key === RECENT_KEY);
 
 export type Item =
-  | { kind: "section"; key: string; label: string; count?: number }
-  | { kind: "running"; key: string; s: SideSession; project: string | null }
-  | { kind: "group"; key: string; g: Group; open: boolean }
-  | { kind: "row"; key: string; s: SideSession; depth: 1 | 2; tag: string | null }
+  | { kind: "section"; key: string }
+  | { kind: "group"; key: string; g: Group; open: boolean; index: number }
+  | { kind: "row"; key: string; s: SideSession; depth: 1 | 2 }
   | { kind: "more"; key: string; list: string; rest: number; depth: 1 | 2 }
   | { kind: "sub"; key: string; sub: SubGroup; open: boolean }
-  | { kind: "subsRest"; key: string; count: number; open: boolean }
-  | { kind: "other"; key: string; count: number; open: boolean };
+  | { kind: "subsRest"; key: string; count: number; open: boolean };
 
-/** The sidebar's rows top to bottom, under the open / 「显示更多」 state (`limits`: rows shown per list key). */
+/**
+ * The Project list's rows top to bottom, under the open / 「显示更多」 state (`limits`: rows shown per list key);
+ * `headersOnly` (while a group is dragged) lists the group headers alone.
+ */
 export function flatten(
   sb: Sidebar,
   expanded: Record<string, boolean>,
   limits: Record<string, number>,
-  names: Map<string, string>,
+  headersOnly = false,
 ): Item[] {
   const out: Item[] = [];
-  const list = (key: string, rows: SideSession[], depth: 1 | 2, tag: (s: SideSession) => string | null) => {
+  const list = (key: string, rows: SideSession[], depth: 1 | 2) => {
     const n = limits[key] ?? FIRST_ROWS;
-    for (const s of rows.slice(0, n)) out.push({ kind: "row", key: `${key}\n${s.id}`, s, depth, tag: tag(s) });
+    for (const s of rows.slice(0, n)) out.push({ kind: "row", key: `${key}\n${s.id}`, s, depth });
     if (rows.length > n) out.push({ kind: "more", key: `${key}\nmore`, list: key, rest: rows.length - n, depth });
   };
-  const none = () => null;
 
-  if (sb.running.length > 0) {
-    out.push({ kind: "section", key: "sec:running", label: "运行中", count: sb.running.length });
-    for (const s of sb.running)
-      out.push({
-        kind: "running",
-        key: `run\n${s.id}`,
-        s,
-        project: s.projectId ? (names.get(s.projectId) ?? null) : null,
-      });
-  }
-  out.push({ kind: "section", key: "sec:projects", label: "Project" });
-  for (const g of sb.groups) {
+  out.push({ kind: "section", key: "sec:projects" });
+  sb.groups.forEach((g, index) => {
     const gk = groupKey(g.path);
-    const open = isOpen(expanded, gk);
-    out.push({ kind: "group", key: gk, g, open });
-    if (!open) continue;
-    list(gk, g.sessions, 1, none);
+    const open = !headersOnly && isOpen(expanded, gk);
+    out.push({ kind: "group", key: gk, g, open, index });
+    if (!open) return;
+    list(gk, g.sessions, 1);
     const active = g.subs.filter((s) => s.active);
     const rest = g.subs.filter((s) => !s.active);
     const sub = (s: SubGroup) => {
       const sk = subKey(g.path, s.projectId);
       const subOpen = isOpen(expanded, sk);
       out.push({ kind: "sub", key: sk, sub: s, open: subOpen });
-      if (subOpen) list(sk, s.sessions, 2, none);
+      if (subOpen) list(sk, s.sessions, 2);
     };
     active.forEach(sub);
     if (rest.length > 0) {
@@ -261,18 +283,13 @@ export function flatten(
       out.push({ kind: "subsRest", key: rk, count: rest.length, open: restOpen });
       if (restOpen) rest.forEach(sub);
     }
-  }
-  if (sb.other.length > 0) {
-    const open = isOpen(expanded, OTHER_KEY);
-    out.push({ kind: "other", key: OTHER_KEY, count: sb.other.length, open });
-    if (open) list(OTHER_KEY, sb.other, 1, (s) => (s.projectId ? (names.get(s.projectId) ?? null) : null));
-  }
+  });
   return out;
 }
 
 /**
- * What to open, and how many rows to show, for Session `id` to have a row (it was opened from ⌘K, a link, …);
- * null when it has none or already has one.
+ * What to open, and how many rows to show, for Session `id` to have a row in the Project list (it was opened from
+ * ⌘K, a link, …); null when it has none there or already has one.
  */
 export function reveal(
   sb: Sidebar,
@@ -295,7 +312,7 @@ export function reveal(
         if (r) return r;
       }
     }
-    return at([OTHER_KEY], OTHER_KEY, sb.other);
+    return null;
   };
   const w = where();
   if (!w) return null;

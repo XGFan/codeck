@@ -13,8 +13,8 @@ _Avoid_: 会话文件, conversation, chat, transcript（指整体时）
 _Avoid_: 项目目录, workspace, folder
 
 **Live Session**:
-仍有 Claude Code 进程在运行、可能继续追加内容的 Session；其余 Session 视为已结束。
-_Avoid_: 活跃会话, active session, 进行中的会话
+仍有 Claude Code 进程在运行、可能继续追加内容的 Session；其余 Session 视为已结束。侧栏顶部列出它们的那一块就叫「Live」。
+_Avoid_: 活跃会话, active session, 进行中的会话, 运行中 / Running（指侧栏那一块时）
 
 **Connect**:
 经 ccrpc 连上一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，从此可以在应用里向它发提示词、作答审批与提问。

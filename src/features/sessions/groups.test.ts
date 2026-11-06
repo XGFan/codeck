@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectSummary, SessionSummary } from "@/ipc/bindings";
-import { buildSidebar, flatten, groupKey, OTHER_KEY, restKey, reveal, subKey, suggested } from "./groups";
+import { buildSidebar, fitRows, flatten, groupKey, moveEntry, restKey, reveal, subKey, suggested } from "./groups";
 
 const NOW = Date.UTC(2026, 10, 6, 12);
 const MIN = 60_000;
@@ -49,13 +49,13 @@ const projects = [project("/a"), project("/b"), project(W), project(`${W}/x`), p
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
 
 describe("buildSidebar", () => {
-  it("groups by the Project a Session started in and orders by the latest user input, not the latest reply", () => {
+  it("keeps the groups in the user's order and their Sessions by the latest user input, not the latest reply", () => {
     const sb = buildSidebar(
       [
         // Replied to just now, prompted long ago: stays behind.
         session("a-old", "/a", NOW - 3 * DAY, { lastActiveMs: NOW }),
         session("a-new", "/a", NOW - DAY),
-        session("b1", "/b", NOW - 2 * DAY),
+        session("b1", "/b", NOW - MIN),
         session("w-root", W, NOW - 5 * DAY),
       ],
       [],
@@ -63,9 +63,11 @@ describe("buildSidebar", () => {
       [{ path: "/a" }, { path: "/b" }],
       NOW,
     );
+    // /b has the newest Session but stays second.
     expect(sb.groups.map((g) => g.path)).toEqual(["/a", "/b"]);
     expect(ids(sb.groups[0]!.sessions)).toEqual(["a-new", "a-old"]);
-    expect(ids(sb.other)).toEqual(["w-root"]);
+    // 「Recent」 has every Session, in a group or not.
+    expect(ids(sb.recent)).toEqual(["b1", "a-new", "a-old", "w-root"]);
   });
 
   it("nesting gathers the Projects under a directory as sub-groups; a deeper added Project keeps its own", () => {
@@ -85,15 +87,13 @@ describe("buildSidebar", () => {
     expect(w.total).toBe(3);
     expect(w.childProjects).toBe(3);
     expect(ids(nested.groups.find((g) => g.path === `${W}/x`)!.sessions)).toEqual(["x1"]);
-    // Ordered by the newest Session anywhere in the group.
-    expect(nested.groups[0]!.path).toBe(W);
 
     const flat = buildSidebar(sessions, [], projects, [{ path: W }], NOW);
     expect(ids(flat.groups[0]!.sessions)).toEqual(["root"]);
-    expect(ids(flat.other)).toEqual(["y1", "x1", "old1"]);
+    expect(flat.groups[0]!.total).toBe(1);
   });
 
-  it("lists Live and pending Sessions under 「运行中」; a pending one joins the group its cwd is in", () => {
+  it("lists Live and pending Sessions under 「Live」, not under 「Recent」; a pending one joins the group its cwd is in", () => {
     const sb = buildSidebar(
       [session("a1", "/a", NOW - DAY, { live: live("waiting") }), session("a2", "/a", NOW - 2 * DAY)],
       [{ id: "p1", cwd: "/a/sub", status: "idle" }],
@@ -101,7 +101,8 @@ describe("buildSidebar", () => {
       [{ path: "/a" }],
       NOW,
     );
-    expect(ids(sb.running)).toEqual(["p1", "a1"]);
+    expect(ids(sb.live)).toEqual(["p1", "a1"]);
+    expect(ids(sb.recent)).toEqual(["a2"]);
     expect(ids(sb.groups[0]!.sessions)).toEqual(["p1", "a1", "a2"]);
     expect(sb.groups[0]!.live).toBe("waiting");
   });
@@ -115,10 +116,9 @@ describe("flatten", () => {
     session("b1", "/b", NOW - 2 * DAY),
   ];
   const sb = buildSidebar(sessions, [], projects, [{ path: "/a" }, { path: W, nest: true }], NOW);
-  const names = new Map(projects.map((p) => [p.id, p.displayName]));
 
-  it("shows 5 rows then 「显示更多」; sub-groups and 「其他」 start closed, inactive sub-Projects folded", () => {
-    const items = flatten(sb, {}, {}, names);
+  it("shows 5 rows then 「显示更多」; sub-groups start closed, inactive sub-Projects folded", () => {
+    const items = flatten(sb, {}, {});
     expect(items.map((i) => i.kind)).toEqual([
       "section",
       "group",
@@ -127,26 +127,46 @@ describe("flatten", () => {
       "group",
       "sub",
       "subsRest",
-      "other",
     ]);
     expect(items.find((i) => i.kind === "more")).toMatchObject({ rest: 2 });
     expect(items.find((i) => i.kind === "subsRest")).toMatchObject({ count: 1 });
   });
 
-  it("follows the open state and 「显示更多」, tags 「其他」's rows with their Project", () => {
-    const items = flatten(
-      sb,
-      { [groupKey("/a")]: false, [subKey(W, `${W}/y`)]: true, [restKey(W)]: true, [OTHER_KEY]: true },
-      {},
-      names,
-    );
-    const rows = items.filter((i) => i.kind === "row");
-    expect(rows.map((r) => [r.s.id, r.depth, r.tag])).toEqual([
-      ["y1", 2, null],
-      ["b1", 1, "b"],
-    ]);
+  it("follows the open state and 「显示更多」", () => {
+    const items = flatten(sb, { [groupKey("/a")]: false, [subKey(W, `${W}/y`)]: true, [restKey(W)]: true }, {});
+    expect(items.filter((i) => i.kind === "row").map((r) => [r.s.id, r.depth])).toEqual([["y1", 2]]);
     expect(items.filter((i) => i.kind === "sub").map((s) => s.sub.projectId)).toEqual([`${W}/y`, `${W}/old`]);
-    expect(flatten(sb, {}, { [groupKey("/a")]: 25 }, names).filter((i) => i.kind === "row")).toHaveLength(7);
+    expect(flatten(sb, {}, { [groupKey("/a")]: 25 }).filter((i) => i.kind === "row")).toHaveLength(7);
+  });
+
+  it("lists the group headers alone while one is dragged", () => {
+    expect(flatten(sb, {}, {}, true).map((i) => i.kind)).toEqual(["section", "group", "group"]);
+  });
+});
+
+describe("moveEntry", () => {
+  it("moves to an insertion point counted before the move", () => {
+    const abc = ["a", "b", "c"];
+    expect(moveEntry(abc, 2, 0)).toEqual(["c", "a", "b"]);
+    expect(moveEntry(abc, 0, 3)).toEqual(["b", "c", "a"]);
+    expect(moveEntry(abc, 0, 2)).toEqual(["b", "a", "c"]);
+    expect(moveEntry(abc, 1, 1)).toEqual(abc);
+  });
+});
+
+describe("fitRows", () => {
+  it("shows up to 5 Live and 6 Recent rows, fewer of each only when there are fewer", () => {
+    expect(fitRows(900, 9, 1800, true)).toEqual({ live: 5, recent: 6 });
+    expect(fitRows(900, 2, 3, true)).toEqual({ live: 2, recent: 3 });
+    expect(fitRows(900, 2, 3, false)).toEqual({ live: 2, recent: 0 });
+  });
+
+  it("in a short column shrinks 「Recent」 first, then 「Live」, keeping the Project list's heading and 4 rows", () => {
+    // 5 Live (34 + 140) + 6 Recent (37 + 168) + the Project list's 155 = 534.
+    expect(fitRows(534, 9, 1800, true)).toEqual({ live: 5, recent: 6 });
+    expect(fitRows(534 - 28 * 3, 9, 1800, true)).toEqual({ live: 5, recent: 3 });
+    expect(fitRows(534 - 28 * 7, 9, 1800, true)).toEqual({ live: 3, recent: 1 });
+    expect(fitRows(100, 9, 1800, true)).toEqual({ live: 1, recent: 1 });
   });
 });
 

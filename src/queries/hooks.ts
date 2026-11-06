@@ -64,14 +64,12 @@ const ALL_SESSIONS: SessionQuery = {
 /** Every Session, unfiltered, most recent first: not the list on screen, whose Project / time filter may hide some. */
 export const useAllSessions = (enabled = true) => useSessions(ALL_SESSIONS, enabled);
 
-/** Session list for the current project / sort selection in the UI store. */
+/** The Sessions of the Project filter / stats drill in the UI store (the sidebar orders them itself). */
 export function useSessionList() {
   const projectIds = useUi((s) => s.projectIds);
-  const sort = useUi((s) => s.sessionSort);
-  const descending = useUi((s) => s.sessionDescending);
   const drill = useUi((s) => s.statsDrill);
   const drillRange = useUi((s) => s.statsDrillRange);
-  return useSessions({ projectIds, sort, descending, timeRange: drill ? drillRange : null, drill });
+  return useSessions({ projectIds, sort: "lastActive", descending: true, timeRange: drill ? drillRange : null, drill });
 }
 
 export const useSession = (sessionId: string | null) =>

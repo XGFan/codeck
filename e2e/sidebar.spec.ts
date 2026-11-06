@@ -18,7 +18,7 @@ async function groupMenu(page: Page, path: string, item: string) {
     .click();
 }
 
-test("侧栏按 Project 分组：组按最后一次用户输入排序，Live Session 另列在「运行中」", async ({ page }) => {
+test("侧栏三块：Live 列出 Live Session，Project 按添加的顺序分组，Recent 列出其余的", async ({ page }) => {
   await page.goto("/");
   const groups = page.getByTestId("sidebar-group");
   await expect(groups).toHaveCount(3);
@@ -26,22 +26,27 @@ test("侧栏按 Project 分组：组按最后一次用户输入排序，Live Ses
   await expect(groups.nth(1)).toContainText("orbit-web");
   await expect(groups.nth(2)).toContainText("homelab-infra");
 
-  const running = page.getByTestId("running-row");
+  const live = page.getByTestId("live-row");
   // The Session open in clay but not indexed yet comes first, then by the latest user input.
-  await expect(running).toHaveCount(3);
-  await expect(running.nth(0)).toContainText("新 Session");
-  await expect(running.nth(1)).toContainText(RICH_TITLE);
-  await expect(running.nth(1)).toContainText("lumen-api");
-  await expect(running.nth(2)).toContainText("优化首页首屏加载");
-  // Each Session has one row in the groups, Live ones included.
+  await expect(live).toHaveCount(3);
+  await expect(live.nth(0)).toContainText("新 Session");
+  await expect(live.nth(1)).toContainText(RICH_TITLE);
+  await expect(live.nth(1)).toContainText("lumen-api");
+  await expect(live.nth(2)).toContainText("优化首页首屏加载");
+  // Waiting for an answer: tagged in 「Live」 and in its group.
+  await expect(live.nth(2).getByTestId("waiting-tag")).toHaveText("等待作答");
+  const waitingRow = page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" });
+  await expect(waitingRow.getByTestId("waiting-tag")).toBeVisible();
+  // One row per Session in the groups; 「Recent」 has the 8 that are not Live.
   await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toHaveCount(1);
+  await expect(page.getByTestId("recent-toggle")).toContainText("8");
+  await expect(page.getByTestId("recent-row").filter({ hasText: RICH_TITLE })).toHaveCount(0);
+  await expect(page.getByTestId("recent-row").first()).toContainText("认证模块重构");
 
-  await running.nth(2).click();
+  await live.nth(2).click();
   await expect(page.getByTestId("header").getByRole("heading")).toContainText("优化首页首屏加载");
-  await expect(page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(waitingRow).toHaveAttribute("aria-selected", "true");
+  await expect(live.nth(2)).toHaveAttribute("aria-selected", "true");
 });
 
 test("AI 回复不改变 Session 在组里的位置", async ({ page }) => {
@@ -103,14 +108,14 @@ test("在组的「···」菜单里按 ↑↓ 只移动菜单项，不切换 Se
   await expect(page.locator("[data-testid=session-row][aria-selected=true]")).toHaveCount(0);
 });
 
-test("从侧栏移除后它的 Session 在「其他」里；「添加 Project」再加回来", async ({ page }) => {
+test("从侧栏移除后它的 Session 仍在 Recent 里；「添加 Project」再加回来", async ({ page }) => {
   await page.goto("/");
   await groupMenu(page, "/Users/dev/Developer/homelab-infra", "从侧栏移除");
   await expect(page.getByTestId("sidebar-group")).toHaveCount(2);
-  const longhorn = page.getByTestId("session-row").filter({ hasText: "Longhorn 卷扩容与备份策略" });
-  await expect(longhorn).toHaveCount(0);
-  await page.getByTestId("sidebar-other").click();
-  await expect(longhorn).toContainText("homelab-infra");
+  await expect(page.getByTestId("session-row").filter({ hasText: "Longhorn 卷扩容与备份策略" })).toHaveCount(0);
+  await expect(page.getByTestId("recent-row").filter({ hasText: "Longhorn 卷扩容与备份策略" })).toContainText(
+    "homelab-infra",
+  );
 
   await page.getByTestId("add-project-button").click();
   const dialog = page.getByTestId("add-project");
@@ -119,8 +124,106 @@ test("从侧栏移除后它的 Session 在「其他」里；「添加 Project」
   await rows.first().click();
   await dialog.getByRole("button", { name: "添加" }).click();
   await expect(dialog).toBeHidden();
+  // Added at the end.
+  await expect(page.getByTestId("sidebar-group").nth(2)).toHaveAttribute(
+    "data-path",
+    "/Users/dev/Developer/homelab-infra",
+  );
+});
+
+test("拖动组头调整 Project 的顺序；菜单里的「上移 / 下移」也可以", async ({ page }) => {
+  await page.goto("/");
+  const groups = page.getByTestId("sidebar-group");
+  const paths = () => groups.evaluateAll((els) => els.map((e) => e.getAttribute("data-path")!.split("/").pop()));
+  await expect.poll(paths).toEqual(["lumen-api", "orbit-web", "homelab-infra"]);
+  // Folded, so every header is in view.
+  await group(page, LUMEN)
+    .getByRole("button", { name: /lumen-api/ })
+    .click();
+  await group(page, "/Users/dev/Developer/orbit-web")
+    .getByRole("button", { name: /orbit-web/ })
+    .click();
+
+  const from = (await group(page, "/Users/dev/Developer/homelab-infra").boundingBox())!;
+  const to = (await group(page, LUMEN).boundingBox())!;
+  await page.mouse.move(from.x + 60, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 60, from.y + from.height / 2 - 10, { steps: 3 });
+  // Dragging: the groups show their headers alone (homelab-infra's rows go too), a line marks where it lands.
+  await expect(page.getByTestId("session-row")).toHaveCount(0);
+  await page.mouse.move(to.x + 60, to.y + 4, { steps: 5 });
+  await expect(page.getByTestId("drop-line")).toBeVisible();
+  await page.mouse.up();
+  // WebKit recomputes :hover only when the pointer moves, not when the rows move under it.
+  await page.mouse.move(0, 0);
+  await expect.poll(paths).toEqual(["homelab-infra", "lumen-api", "orbit-web"]);
+  // The release does not fold the dragged group.
+  await expect(group(page, "/Users/dev/Developer/homelab-infra").getByRole("button").first()).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  await groupMenu(page, LUMEN, "下移");
+  await expect.poll(paths).toEqual(["homelab-infra", "orbit-web", "lumen-api"]);
+  await groupMenu(page, LUMEN, "上移");
+  await expect.poll(paths).toEqual(["homelab-infra", "lumen-api", "orbit-web"]);
+});
+
+test("拖动时上面的组展开着：被按住的组头留在原处，手抖不改变顺序", async ({ page }) => {
+  await page.goto("/");
+  const groups = page.getByTestId("sidebar-group");
+  const paths = () => groups.evaluateAll((els) => els.map((e) => e.getAttribute("data-path")!.split("/").pop()));
+  const orbit = group(page, "/Users/dev/Developer/orbit-web");
+  // lumen-api above it is open, its rows push orbit-web down.
+  await expect(page.getByTestId("session-row").filter({ hasText: "排查 Redis 连接池泄漏" })).toBeVisible();
+  const box = (await orbit.boundingBox())!;
+  const x = box.x + 60;
+  const y = box.y + box.height / 2;
+
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 5, { steps: 2 });
+  await expect(page.getByTestId("drop-line")).toBeVisible();
+  // Folded under the pointer: the pressed header is where it was.
+  expect(Math.abs((await orbit.boundingBox())!.y - box.y)).toBeLessThan(2);
+  await page.mouse.up();
+  await page.mouse.move(0, 0);
+  await expect.poll(paths).toEqual(["lumen-api", "orbit-web", "homelab-infra"]);
+
+  // One header up: before lumen-api.
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 30, { steps: 4 });
+  await page.mouse.up();
+  await page.mouse.move(0, 0);
+  await expect.poll(paths).toEqual(["orbit-web", "lumen-api", "homelab-infra"]);
+});
+
+test("Recent 可收起，重启后保持", async ({ page }) => {
+  await page.goto("/");
+  const toggle = page.getByTestId("recent-toggle");
+  await expect(page.getByTestId("recent-row").first()).toBeVisible();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("recent-row")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("recent-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("recent-row")).toHaveCount(0);
+});
+
+test("⌘K 按 Project 筛选时只替换中间的 Project，Live 与 Recent 保留", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Meta+K");
+  await page.getByTestId("search").getByRole("combobox").fill("lumen-api");
+  await page.getByTestId("search-project").filter({ hasText: "lumen-api" }).click();
+  await expect(page.getByTestId("project-chip")).toContainText("lumen-api");
+  await expect(page.getByTestId("sidebar-group")).toHaveCount(0);
+  // Started in orbit-web but editing lumen-api: listed, tagged with where it started.
+  await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toContainText("orbit-web");
+  await expect(page.getByTestId("live-row")).toHaveCount(3);
+  await expect(page.getByTestId("recent-toggle")).toBeVisible();
+  await page.getByRole("button", { name: "清除 Project 筛选" }).click();
   await expect(page.getByTestId("sidebar-group")).toHaveCount(3);
-  await expect(page.getByTestId("sidebar-other")).toHaveCount(0);
 });
 
 test("收拢子 Project：路径下的 Project 成为子组，已单独添加的仍是自己的组", async ({ page }) => {
@@ -143,10 +246,10 @@ test("收拢子 Project：路径下的 Project 成为子组，已单独添加的
   await sub.click();
   await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toBeVisible();
 
-  // Turned off in the group's menu: orbit-web's Sessions go to 「其他」.
+  // Turned off in the group's menu: orbit-web's Sessions are in no group (still in 「Recent」).
   await groupMenu(page, "/Users/dev/Developer", "收拢子 Project（3 个）");
   await expect(page.getByTestId("sidebar-sub")).toHaveCount(0);
-  await expect(page.getByTestId("sidebar-other")).toContainText("4");
+  await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toHaveCount(0);
 });
 
 test("⌘N 选已添加的 Project 新建 Session；组头「+」直接在它的目录新建", async ({ page }) => {
@@ -168,7 +271,7 @@ test("⌘N 选已添加的 Project 新建 Session；组头「+」直接在它的
   await expect.poll(() => guiLog(page)).toContain("new /Users/dev/Developer/homelab-infra");
 });
 
-test("首次启动自动打开「添加 Project」；取消后侧栏为空，Session 都在「其他」里", async ({ page }) => {
+test("首次启动自动打开「添加 Project」；取消后没有组，Session 仍在 Live 与 Recent 里", async ({ page }) => {
   await page.goto("/?firstRun");
   const dialog = page.getByTestId("add-project");
   await expect(dialog).toBeVisible();
@@ -176,7 +279,6 @@ test("首次启动自动打开「添加 Project」；取消后侧栏为空，Ses
   await dialog.getByRole("button", { name: "取消" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId("sidebar-group")).toHaveCount(0);
-  // The 10 Sessions and the one open in clay, not indexed yet.
-  await expect(page.getByTestId("sidebar-other")).toContainText("11");
-  await expect(page.getByTestId("running-row")).toHaveCount(3);
+  await expect(page.getByTestId("live-row")).toHaveCount(3);
+  await expect(page.getByTestId("recent-toggle")).toContainText("8");
 });
