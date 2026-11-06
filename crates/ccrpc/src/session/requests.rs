@@ -663,6 +663,152 @@ impl Engine {
         self.wait_leave_request(request_id)
     }
 
+    /// `Chat about this` on an AskUserQuestion's dialog, with the answers given so far: the hook
+    /// (if one waits) is let go with no decision, so the dialog stays; then, with keys, each
+    /// answered question is answered and each other one passed with `right`, the cursor comes
+    /// back (`left` from the Review tab) to the first one not answered, and its `Chat about this`
+    /// is pressed. Claude Code records the call as rejected, listing the answers, and the model
+    /// goes on (it asks what to clarify).
+    pub(super) fn chat_about_question(
+        &mut self,
+        request_id: &str,
+        answers: &[Option<Answer>],
+    ) -> CmdResult {
+        self.check_request(WaitKind::Question, request_id)?;
+        let held = self.requests.iter().position(|r| r.id == request_id);
+        let input = match held {
+            Some(i) => self.requests[i].input.clone(),
+            None => match self
+                .tailer
+                .as_ref()
+                .and_then(|t| t.pending_by_id(request_id))
+            {
+                Some(p) => p.input.clone(),
+                None => {
+                    return err(
+                        "unknown_request",
+                        format!("当前挂起的请求不是 {request_id}"),
+                    );
+                }
+            },
+        };
+        let questions = input
+            .get("questions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !answers.is_empty() && answers.len() != questions.len() {
+            return err(
+                "bad_request",
+                format!("有 {} 道题，给了 {} 个答案", questions.len(), answers.len()),
+            );
+        }
+        let answer = |i: usize| answers.get(i).and_then(Option::as_ref);
+        let Some(target) = (0..questions.len()).find(|&i| answer(i).is_none()) else {
+            return err("bad_request", "每道题都有答案，应直接提交");
+        };
+        // Validates every answer before the first key.
+        let mut plan = Vec::new();
+        for (i, q) in questions.iter().enumerate() {
+            let multi = q
+                .get("multiSelect")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if let Some(a) = answer(i) {
+                question_answers(std::slice::from_ref(q), std::slice::from_ref(a)).map_err(
+                    |m| {
+                        (
+                            "bad_request",
+                            m.replace("第 1 题", &format!("第 {} 题", i + 1)),
+                        )
+                    },
+                )?;
+                if multi && matches!(a, Answer::Other(_) | Answer::Both(..)) {
+                    return err(
+                        "unsupported",
+                        format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1),
+                    );
+                }
+            }
+            let title = q
+                .get("question")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            plan.push((title, answer(i), multi));
+        }
+        // While the hook runs the dialog takes no number keys: let it go (no decision, so the
+        // dialog stays), then give the dialog a moment.
+        if let Some(stream) = held.and_then(|i| self.requests[i].reply.take()) {
+            let _ = hook::send_reply(stream, None);
+            std::thread::sleep(Duration::from_millis(800));
+        }
+        let tabbed = questions.len() > 1;
+        for (title, a, multi) in &plan {
+            if !self.request_is(&WaitKind::Question, request_id) {
+                return err(
+                    "unknown_request",
+                    format!("作答中请求已经变了，不再是 {request_id}"),
+                );
+            }
+            match a {
+                Some(a) => {
+                    self.answer_one_on_screen(title, a, *multi)?;
+                }
+                None if tabbed => {
+                    self.ask_screen_of(title)?;
+                    self.keys(key::RIGHT)?;
+                }
+                None => {}
+            }
+        }
+        if tabbed {
+            let review = self.wait_screen(Duration::from_secs(3), |_, s| {
+                matches!(
+                    recognize::ask(&s.lines),
+                    Some(recognize::AskScreen::Review { .. })
+                )
+                .then_some(())
+            });
+            if review.is_none() {
+                return Err(self.unrecognized("answer_question", None));
+            }
+            // Back one tab at a time, each seen before the next key.
+            for (title, ..) in plan[target..].iter().rev() {
+                self.keys(key::LEFT)?;
+                self.ask_screen_of(title)?;
+            }
+        }
+        let q = self.ask_screen_of(&plan[target].0)?;
+        let Some(n) = q.chat else {
+            return Err(self.unrecognized("answer_question", None));
+        };
+        self.keys(n.to_string().as_bytes())?;
+        self.answered(request_id);
+        self.wait_leave_request(request_id)
+    }
+
+    /// The dialog's page of the question titled `title` (waited for up to 3 s).
+    fn ask_screen_of(
+        &mut self,
+        title: &str,
+    ) -> std::result::Result<recognize::AskQuestion, CmdErr> {
+        let found = self.wait_screen(Duration::from_secs(3), |_, s| {
+            match recognize::ask(&s.lines) {
+                Some(recognize::AskScreen::Question(q))
+                    if recognize::same_text(&q.title, title) =>
+                {
+                    Some(q)
+                }
+                _ => None,
+            }
+        });
+        match found {
+            Some((q, _)) => Ok(q),
+            None => Err(self.unrecognized("answer_question", None)),
+        }
+    }
+
     /// Answers an AskUserQuestion with keys on its dialog (no hook waits for it): each question's
     /// option number (a multi-select one toggles to the wanted set, then Submit), or `Type
     /// something.` then the text; several questions end on the Review tab.

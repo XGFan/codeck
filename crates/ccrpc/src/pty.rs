@@ -298,6 +298,7 @@ pub mod key {
     pub const UP: &[u8] = b"\x1b[A";
     pub const DOWN: &[u8] = b"\x1b[B";
     pub const RIGHT: &[u8] = b"\x1b[C";
+    pub const LEFT: &[u8] = b"\x1b[D";
     pub const CTRL_U: &[u8] = b"\x15";
     /// `ctrl+enter` (kitty keyboard protocol): send what waits in Claude Code's queue now. Not
     /// offered to `send_keys` by name.

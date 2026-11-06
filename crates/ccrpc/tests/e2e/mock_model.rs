@@ -1208,6 +1208,93 @@ fn mock_model_ask_before_attach() {
     );
 }
 
+/// `Chat about this` (`answer_question` with `chat`): the hook is let go and the dialog answered
+/// with keys, the answers given so far kept; Claude Code records the call as rejected, listing
+/// them, and the turn goes on to the model's reply. Two questions with only the second answered
+/// (the first passed with `right`), with only the first answered, and a single question.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_ask_chat() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let chat = |rpc: &mut Rpc, n: usize, text: &str, answers: Value| -> String {
+        rpc.forget();
+        rpc.call(&format!("p{n}"), json!({"type": "prompt", "text": text}));
+        let q = rpc.event("question", Duration::from_secs(30));
+        rpc.call(
+            &format!("c{n}"),
+            json!({"type": "answer_question", "request_id": q["request_id"], "chat": true, "answers": answers}),
+        );
+        let t = rpc.event("turn_end", Duration::from_secs(30));
+        assert_eq!(t["aborted"], false, "{t}");
+        let m = rpc.call(&format!("m{n}"), json!({"type": "get_messages"}));
+        m["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rfind(|b| b["kind"] == "tool_result")
+            .and_then(|b| b["content"].as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    // Every question answered: refused before any key, the dialog still up.
+    rpc.forget();
+    rpc.call("p0", json!({"type": "prompt", "text": "MOCK-ASK which"}));
+    let q = rpc.event("question", Duration::from_secs(30));
+    rpc.send(
+        json!({"id": "c0", "type": "answer_question", "request_id": q["request_id"],
+        "chat": true, "answers": [{"options": ["Red"]}]}),
+    );
+    let r = rpc.until("c0", Duration::from_secs(10), |v| v["id"] == "c0");
+    assert_eq!(r["error"]["code"], "bad_request", "{r}");
+    // None answered: the call may leave `answers` out.
+    rpc.call(
+        "a0",
+        json!({"type": "answer_question", "request_id": q["request_id"], "chat": true}),
+    );
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    let r = chat(
+        &mut rpc,
+        1,
+        "MOCK-ASKS both",
+        json!([null, {"options": ["S", "L"]}]),
+    );
+    assert!(
+        r.contains("The user wants to clarify these questions."),
+        "{r}"
+    );
+    assert!(
+        r.contains("- \"Which color?\"\n  (No answer provided)"),
+        "{r}"
+    );
+    assert!(r.contains("- \"Which sizes?\"\n  Answer: S, L"), "{r}");
+
+    let r = chat(
+        &mut rpc,
+        2,
+        "MOCK-ASKS both",
+        json!([{"options": ["Blue"]}, null]),
+    );
+    assert!(r.contains("- \"Which color?\"\n  Answer: Blue"), "{r}");
+    assert!(
+        r.contains("- \"Which sizes?\"\n  (No answer provided)"),
+        "{r}"
+    );
+
+    let r = chat(&mut rpc, 3, "MOCK-ASK which", json!([null]));
+    assert!(
+        r.contains("The user wants to clarify these questions."),
+        "{r}"
+    );
+    assert!(
+        r.contains("- \"Which color?\"\n  (No answer provided)"),
+        "{r}"
+    );
+}
+
 /// A follow-up queued while a background task ends during the turn's last answer: right after
 /// Stop, Claude Code runs the task's notification as a turn of its own; the follow-up goes out
 /// after that turn instead of racing it into Claude Code's queue (and being reported failed).

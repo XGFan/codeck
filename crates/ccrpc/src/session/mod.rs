@@ -1139,6 +1139,10 @@ impl Engine {
                 request_id,
                 answers,
             } => self.answer_question(request_id, answers),
+            Command::ChatAboutQuestion {
+                request_id,
+                answers,
+            } => self.chat_about_question(request_id, answers),
             Command::Slash { command } => self.slash(command),
             Command::SetModel { model } => self.slash(&format!("model {model}")),
             Command::SetEffort { level } => self.slash(&format!("effort {level}")),

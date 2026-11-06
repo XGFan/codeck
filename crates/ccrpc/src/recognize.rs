@@ -333,6 +333,8 @@ pub struct AskQuestion {
     pub options: Vec<MenuOption>,
     /// Number of the `Type something` row.
     pub other: Option<u32>,
+    /// Number of the `Chat about this` row (below the rule under the options).
+    pub chat: Option<u32>,
     pub multi: bool,
     /// Screen row of the unnumbered `Submit` row of a multi-select question.
     pub submit_row: Option<usize>,
@@ -393,6 +395,10 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
         .iter()
         .find(|o| o.label.starts_with("Type something"))
         .map(|o| o.number);
+    let chat = all
+        .iter()
+        .find(|o| o.label.starts_with("Chat about this"))
+        .map(|o| o.number);
     let options: Vec<MenuOption> = all
         .iter()
         .filter(|o| {
@@ -417,6 +423,7 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
         tabbed,
         options,
         other,
+        chat,
         multi,
         submit_row,
         cursor_row,
@@ -1178,6 +1185,7 @@ mod tests {
             .collect();
         assert_eq!(labels, vec![(1, "Tabs"), (2, "Spaces")]);
         assert_eq!(q.other, Some(3));
+        assert_eq!(q.chat, Some(4));
     }
 
     #[test]
@@ -1190,6 +1198,7 @@ mod tests {
         assert_eq!(q.options.len(), 3);
         assert!(q.options.iter().all(|o| o.checked == Some(false)));
         assert_eq!(q.other, Some(4));
+        assert_eq!(q.chat, Some(5));
         assert!(q.submit_row.is_some());
         let Some(AskScreen::Question(q)) = ask(&screen("ask_multi_q2_checked.txt")) else {
             panic!()

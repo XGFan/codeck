@@ -111,6 +111,12 @@ pub enum Command {
         request_id: String,
         answers: Vec<Answer>,
     },
+    /// `answer_question` with `chat`: the dialog's `Chat about this`, with the answers given so far
+    /// (`None`: not answered; at least one is not).
+    ChatAboutQuestion {
+        request_id: String,
+        answers: Vec<Option<Answer>>,
+    },
     Slash {
         command: String,
     },
@@ -520,6 +526,28 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
                 message,
             })
         }
+        "answer_question" if obj.get("chat").is_some_and(|c| c != &Value::Null) => {
+            if obj["chat"] != Value::Bool(true) {
+                return Err("answer_question 的 chat 只能是 true".into());
+            }
+            let request_id = req_text(obj, kind, "request_id")?;
+            let items = match obj.get("answers") {
+                None | Some(Value::Null) => &[][..],
+                Some(Value::Array(a)) => a.as_slice(),
+                Some(_) => return Err("answer_question 的 answers 必须是数组".into()),
+            };
+            let mut answers = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                answers.push(match item {
+                    Value::Null => None,
+                    item => Some(parse_answer(item, kind, index)?),
+                });
+            }
+            Ok(Command::ChatAboutQuestion {
+                request_id,
+                answers,
+            })
+        }
         "answer_question" => {
             let request_id = req_text(obj, kind, "request_id")?;
             let items = match obj.get("answers") {
@@ -656,7 +684,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::Abort => "abort",
         Command::SendNow => "send_now",
         Command::AnswerPermission { .. } => "answer_permission",
-        Command::AnswerQuestion { .. } => "answer_question",
+        Command::AnswerQuestion { .. } | Command::ChatAboutQuestion { .. } => "answer_question",
         Command::Slash { .. } => "slash",
         Command::SetModel { .. } => "set_model",
         Command::SetEffort { .. } => "set_effort",
@@ -915,6 +943,28 @@ mod tests {
                         Answer::Other("x".into()),
                         Answer::Both(vec!["c".into()], "y".into()),
                     ],
+                },
+            }
+        );
+        assert_eq!(
+            parse(
+                r#"{"type":"answer_question","request_id":"q1","chat":true,"answers":[null,{"options":["a"]}]}"#
+            ),
+            Request {
+                id: None,
+                command: Command::ChatAboutQuestion {
+                    request_id: "q1".into(),
+                    answers: vec![None, Some(Answer::Options(vec!["a".into()]))],
+                },
+            }
+        );
+        assert_eq!(
+            parse(r#"{"type":"answer_question","request_id":"q1","chat":true}"#),
+            Request {
+                id: None,
+                command: Command::ChatAboutQuestion {
+                    request_id: "q1".into(),
+                    answers: vec![],
                 },
             }
         );
