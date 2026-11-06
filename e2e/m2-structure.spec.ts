@@ -192,6 +192,20 @@ test("思考：一行写「思考 · N 行」，首尾空行不计也不显示�
   expect(await size("先看一下现有中间件的组织方式。")).toBe("14px");
 });
 
+test("你的消息里 ` 与 ``` 包着的内容显示为代码，反引号不显示，其余照原样", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const t = page.getByTestId("transcript");
+  const bubble = t.getByTestId("user-bubble").filter({ hasText: "接下来把限流参数" });
+  await reveal(t, bubble);
+  await expect(bubble.getByTestId("prompt-code")).toHaveText("[rate_limit] per_minute");
+  await expect(bubble.getByTestId("prompt-code-block")).toHaveText("[rate_limit]\nper_minute = 120");
+  await expect(bubble).not.toContainText("`");
+  await expect(bubble).toContainText("没配置时沿用 120。");
+  expect(await bubble.getByTestId("prompt-code-block").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(
+    /mono/i,
+  );
+});
+
 test("折叠行的箭头大小不随摘要长短变化", async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 1400 });
   await openSession(page, RICH_TITLE, { folded: true });

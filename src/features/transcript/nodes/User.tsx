@@ -5,9 +5,11 @@ import type { BranchPoint, Node } from "@/ipc/bindings";
 import { stripAnsi } from "@/lib/ansi";
 import { cn } from "@/lib/cn";
 import { Markdown } from "@/lib/markdown";
+import { HighlightedCode } from "@/lib/shiki";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
+import { promptParts } from "../promptCode";
 import { ImageRefs } from "../tools";
 import { type TeammateMessage, type TeammatePart, peerMessages, previewOf, teammateParts } from "../teammate";
 import { clock, commandLine, prettyJson } from "../util";
@@ -60,7 +62,7 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
             {o.args && (o.name === "!" ? o.args : <> {o.args}</>)}
           </>
         ) : (
-          body.text
+          <PromptText text={body.text} />
         )}
       </div>
       {body.images.length > 0 && <PromptImages node={node} body={body} />}
@@ -75,6 +77,29 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         <span>{clock(node.timestampMs)}</span>
       </div>
     </Anchor>
+  );
+}
+
+/** A typed prompt as typed, with its `inline code` and ```fenced blocks``` set as code (nothing else is markdown). */
+function PromptText({ text }: { text: string }) {
+  return promptParts(text).map((p, i) =>
+    p.kind === "text" ? (
+      p.text
+    ) : p.kind === "code" ? (
+      <code key={i} data-testid="prompt-code" className="rounded bg-code px-[5px] py-px font-mono text-[12.5px]">
+        {p.text}
+      </code>
+    ) : (
+      <pre
+        key={i}
+        data-testid="prompt-code-block"
+        className="my-1.5 overflow-x-auto rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] whitespace-pre"
+      >
+        <code>
+          <HighlightedCode code={p.text} lang={p.lang} />
+        </code>
+      </pre>
+    ),
   );
 }
 

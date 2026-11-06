@@ -523,7 +523,11 @@ export const richMain: Node[] = [
     kind: "compactSummary",
     text: "用户要求为 lumen-api 的 /v1/chat 增加按 API key 的令牌桶限流（默认 120/min）。已完成：新增 rate_limit.rs 并在中间件栈注册；修复 governor 0.8 的导入；全部 412 个测试通过。待办：把限流参数接入 config.toml，并补充 Prometheus 指标。",
   }),
-  userNode("n16", ts(), "接下来把限流参数接到 config.toml，键名用 `[rate_limit] per_minute`。"),
+  userNode(
+    "n16",
+    ts(),
+    "接下来把限流参数接到 config.toml，键名用 `[rate_limit] per_minute`，例如：\n\n```toml\n[rate_limit]\nper_minute = 120\n```\n\n没配置时沿用 120。",
+  ),
   asstNode(
     "n17",
     ts(),
