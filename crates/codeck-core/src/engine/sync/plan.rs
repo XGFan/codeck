@@ -236,8 +236,13 @@ pub(super) fn diff_sidecars(
     let mut dirty = HashSet::new();
     if let Some(prev) = prev {
         for (path, v) in &now {
-            if prev.get(path) != Some(v) {
+            let was = prev.get(path);
+            if was != Some(v) {
                 dirty.insert(v.2.clone());
+                // A sidecar handed to another session (`scan::adopt`) changes its old owner too.
+                if let Some(w) = was {
+                    dirty.insert(w.2.clone());
+                }
             }
         }
         for (path, v) in prev {
@@ -427,5 +432,11 @@ mod tests {
         );
         let (dirty, _) = diff_sidecars(Some(&now), &scan, &db);
         assert!(dirty.is_empty());
+
+        // A sidecar handed to another session (unchanged on disk) changes both owners.
+        let mut prev = now.clone();
+        prev.get_mut(&scan.sidecars[0].path).unwrap().2 = "old".into();
+        let (dirty, _) = diff_sidecars(Some(&prev), &scan, &db);
+        assert_eq!(dirty, ["a".to_owned(), "old".to_owned()].into());
     }
 }

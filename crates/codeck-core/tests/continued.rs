@@ -228,3 +228,166 @@ fn without_a_full_copy_in_the_index_both_sessions_are_shown() {
     assert_eq!(listed(&env), both);
     assert_eq!(env.engine.get_session(OLD).unwrap().superseded_by, None);
 }
+
+#[test]
+fn moving_the_old_session_on_again_hands_its_subagent_to_the_new_successor() {
+    let env = Env::indexed(data_root(&["continued"]));
+    let rows = |sid: &str| -> (i64, i64, i64) {
+        let db = env.db();
+        let n = |sql: &str| -> i64 { db.query_row(sql, [sid, AGENT], |r| r.get(0)).unwrap() };
+        (
+            n("SELECT count(*) FROM messages WHERE session_id = ?1 AND agent_id = ?2"),
+            n("SELECT count(*) FROM subagents WHERE session_id = ?1 AND agent_id = ?2"),
+            n("SELECT count(*) FROM msg_text WHERE session_id = ?1 AND agent_id = ?2"),
+        )
+    };
+    assert!(rows(NEW).0 > 0 && rows(NEW).2 > 0);
+
+    // The old one is resumed (a new prompt) and moved to the background again: it now continues
+    // in NEXT, a copy of everything so far; the first successor lacks the new prompt.
+    const NEXT: &str = "4d2f8b17-6a3e-5c90-b1d4-7e8a2c5f9031";
+    let prompt = |sid: &str| {
+        format!(
+            r#"{{"type":"user","uuid":"6e1b9c42-8d3a-4f17-a5c0-2b9e7d4f1a68","parentUuid":null,"sessionId":"{sid}","timestamp":"2026-11-06T03:00:00.000Z","message":{{"role":"user","content":"resumed once more"}}}}"#
+        )
+    };
+    let old_file = file(&env, OLD);
+    let mut f = OpenOptions::new().append(true).open(&old_file).unwrap();
+    writeln!(f, "{}", prompt(OLD)).unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"continued-in","sessionId":"{OLD}","continuedInSessionId":"{NEXT}"}}"#
+    )
+    .unwrap();
+    drop(f);
+    let next_file = file(&env, NEXT);
+    let mut copy = std::fs::read_to_string(file(&env, NEW)).unwrap();
+    copy.push_str(&prompt(NEXT));
+    copy.push('\n');
+    std::fs::write(&next_file, copy).unwrap();
+    env.engine.apply_changes(&[old_file, next_file]).unwrap();
+    env.engine
+        .index_text_backlog(&|_| {}, &std::sync::atomic::AtomicBool::new(false))
+        .unwrap();
+
+    assert_eq!(
+        env.engine
+            .get_session(OLD)
+            .unwrap()
+            .superseded_by
+            .as_deref(),
+        Some(NEXT)
+    );
+    // The first successor keeps nothing of the Subagent Run; the new one has all of it.
+    assert_eq!(rows(NEW), (0, 0, 0));
+    let (m, s, t) = rows(NEXT);
+    assert!(m > 0 && s == 1 && t > 0, "{:?}", (m, s, t));
+    assert_eq!(
+        env.engine.get_session(NEW).unwrap().summary.subagent_count,
+        0
+    );
+    let next = env.engine.get_session(NEXT).unwrap();
+    assert_eq!(next.summary.subagent_count, 1);
+    assert_eq!(next.tokens_subagents.output, 120.0);
+    let path = env.engine.session_file_path(NEXT, Some(AGENT)).unwrap();
+    assert!(path.to_string_lossy().contains(OLD), "{path:?}");
+}
+
+#[test]
+fn a_fork_of_the_old_session_is_listed_under_the_continued_one() {
+    let root = data_root(&["continued"]);
+    const CHILD: &str = "2b7e4c19-5f0a-5d38-9c62-8a1d3e6f0b47";
+    std::fs::write(
+        root.path()
+            .join("projects")
+            .join(CONTINUED_DIR)
+            .join(format!("{CHILD}.jsonl")),
+        format!(
+            r#"{{"type":"user","uuid":"9c4d2e71-0b8f-4a35-8e16-3f7a5b2c9d04","parentUuid":null,"sessionId":"{CHILD}","timestamp":"2026-11-06T04:00:00.000Z","forkedFrom":{{"sessionId":"{OLD}","messageUuid":"9c4d2e71-0b8f-4a35-8e16-3f7a5b2c9d04"}},"message":{{"role":"user","content":"a fork of the old one"}}}}
+"#
+        ),
+    )
+    .unwrap();
+    let env = Env::scanned(root);
+    let forks: Vec<String> = env
+        .engine
+        .get_session(NEW)
+        .unwrap()
+        .forks
+        .into_iter()
+        .map(|f| f.session_id)
+        .collect();
+    assert_eq!(forks, vec![CHILD]);
+}
+
+#[test]
+fn two_sessions_continued_in_each_other_hide_neither() {
+    let root = data_root(&["continued"]);
+    let dir = root.path().join("projects").join(CONTINUED_DIR);
+    let mut copy = std::fs::read_to_string(dir.join(format!("{OLD}.jsonl"))).unwrap();
+    copy.push_str(&format!(
+        r#"{{"type":"continued-in","sessionId":"{NEW}","continuedInSessionId":"{OLD}"}}"#
+    ));
+    copy.push('\n');
+    std::fs::write(dir.join(format!("{NEW}.jsonl")), copy).unwrap();
+    let env = Env::scanned(root);
+    let mut both = vec![NEW.to_owned(), OLD.to_owned()];
+    both.sort();
+    assert_eq!(listed(&env), both);
+}
+
+#[test]
+fn an_adopted_file_recorded_under_an_unlinked_session_is_taken_back_from_it() {
+    use common::ids::BASIC;
+    let env = Env::indexed(data_root(&["continued", "basic"]));
+    // A stale index: the Subagent's rows sit under a session no `continued-in` link reaches (as
+    // an earlier sync could leave them); only the `files` table says who holds the file.
+    let db = env.db();
+    for table in [
+        "files",
+        "messages",
+        "tool_calls",
+        "subagents",
+        "msg_text",
+        "persisted_outputs",
+    ] {
+        db.execute(
+            &format!("UPDATE {table} SET session_id = ?1 WHERE session_id = ?2 AND agent_id = ?3"),
+            [BASIC, NEW, AGENT],
+        )
+        .unwrap();
+    }
+    let rows = |sid: &str| -> i64 {
+        db.query_row(
+            "SELECT (SELECT count(*) FROM messages WHERE session_id = ?1 AND agent_id = ?2)
+                + (SELECT count(*) FROM subagents WHERE session_id = ?1 AND agent_id = ?2)
+                + (SELECT count(*) FROM msg_text WHERE session_id = ?1 AND agent_id = ?2)
+                + (SELECT count(*) FROM files WHERE session_id = ?1 AND agent_id = ?2)",
+            [sid, AGENT],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert!(rows(BASIC) > 0);
+
+    // A filesystem batch naming only the Subagent's file.
+    let agent_file = std::fs::canonicalize(
+        env.root
+            .path()
+            .join("projects")
+            .join(CONTINUED_DIR)
+            .join(OLD)
+            .join(format!("subagents/agent-{AGENT}.jsonl")),
+    )
+    .unwrap();
+    env.engine.apply_changes(&[agent_file]).unwrap();
+    env.engine
+        .index_text_backlog(&|_| {}, &std::sync::atomic::AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(rows(BASIC), 0);
+    assert!(rows(NEW) > 0);
+    assert_eq!(
+        env.engine.get_session(NEW).unwrap().summary.subagent_count,
+        1
+    );
+}

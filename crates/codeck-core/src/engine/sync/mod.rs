@@ -34,32 +34,52 @@ impl Engine {
         let scope = scope.filter(|_| {
             self.sidecar_state.lock().is_some() && !self.full_scan_next.load(Ordering::Relaxed)
         });
-        // A session that became superseded (or stopped being) hands its agent files over (or gets
-        // them back) only on a scan made after the flag changed: one more pass over those sessions.
+        // A session that became superseded, stopped being, or changed the session carrying it on
+        // hands its agent files over (or gets them back) only on a scan made after that: more
+        // passes over those sessions until nothing changes (a few at most). A later pass that
+        // fails, or a handover left unfinished, still reports what was changed; the next sync
+        // scans everything (also set by `scan_scope`).
+        if scope.is_none() {
+            self.full_scan_next.store(false, Ordering::Relaxed);
+        }
+        let mut later_failed = false;
         let r = self
             .sync_locked(p, keep_cache, scope)
-            .and_then(|(mut cs, flipped)| {
-                if !flipped.is_empty() {
-                    let (more, _) = self.sync_locked(p, keep_cache, Some(&flipped))?;
-                    cs.changed.extend(more.changed);
-                    cs.removed.extend(more.removed);
-                    cs.projects_changed |= more.projects_changed;
-                    cs.changed.sort();
-                    cs.changed.dedup();
-                    cs.removed.sort();
-                    cs.removed.dedup();
+            .map(|(mut cs, mut moved)| {
+                for _ in 0..MAX_HANDOVER_PASSES {
+                    if moved.is_empty() {
+                        break;
+                    }
+                    match self.sync_locked(p, keep_cache, Some(&moved)) {
+                        Ok((more, next)) => {
+                            cs.changed.extend(more.changed);
+                            cs.removed.extend(more.removed);
+                            cs.projects_changed |= more.projects_changed;
+                            moved = next;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "交接被接替 Session 的文件失败");
+                            later_failed = true;
+                            break;
+                        }
+                    }
                 }
-                Ok(cs)
+                later_failed |= !moved.is_empty();
+                cs.changed.sort();
+                cs.changed.dedup();
+                cs.removed.sort();
+                cs.removed.dedup();
+                cs
             });
-        if r.is_err() {
+        if r.is_err() || later_failed {
             self.full_scan_next.store(true, Ordering::Relaxed);
-        } else if scope.is_none() {
-            self.full_scan_next.store(false, Ordering::Relaxed);
         }
         r
     }
 
-    /// Also returns the sessions whose superseded flag changed.
+    /// Also returns the sessions whose agent files may now belong elsewhere: those whose
+    /// superseded flag or carrying session changed, with the sessions carrying them before and
+    /// after.
     fn sync_locked(
         &self,
         p: Option<&dyn Fn(&IndexStatus)>,
@@ -67,30 +87,30 @@ impl Engine {
         scope: Option<&BTreeSet<String>>,
     ) -> CoreResult<(ChangeSet, BTreeSet<String>)> {
         let p: &dyn Fn(&IndexStatus) = p.unwrap_or(&|_| {});
-        // Sessions linked by `continued-in` are synced together: agent files move between them.
-        let scope = match scope {
-            Some(s) => Some(self.index.read(|c| reader::with_continued(c, s))?),
-            None => None,
-        };
-        let scope = scope.as_ref();
-        let (mut scan, db_files) = match scope {
-            Some(s) => (
-                scan::scan_sessions(&self.cfg.data_root, s),
-                self.index.read(|c| reader::files_of_sessions(c, s))?,
-            ),
+        let (mut scan, db_files, scope) = match scope {
+            Some(s) => {
+                let (scan, db, s) = self.scan_scope(s)?;
+                (scan, db, Some(s))
+            }
             None => (
                 scan::scan_root(&self.cfg.data_root),
                 self.index.read(reader::all_files)?,
+                None,
             ),
         };
-        let mut adopt = self.index.read(reader::adoptions)?;
+        let scope = scope.as_ref();
+        let adopt_before = self.index.read(reader::adoptions)?;
         let mains: HashSet<&String> = scan
             .files
             .iter()
             .filter(|f| f.role == FileRole::Main)
             .map(|f| &f.session_id)
             .collect();
-        adopt.retain(|_, to| mains.contains(to));
+        let adopt: Vec<(String, String)> = adopt_before
+            .iter()
+            .filter(|(_, to)| mains.contains(to))
+            .cloned()
+            .collect();
         scan::adopt(&mut scan.files, &mut scan.sidecars, &adopt);
         let (sidecar_dirty, sidecar_now) = {
             let prev = self.sidecar_state.lock();
@@ -257,6 +277,67 @@ impl Engine {
         cs.changed.sort();
         cs.changed.dedup();
         cs.removed.sort();
-        Ok((cs, flipped.into_iter().collect()))
+        let adopt_after = self.index.read(reader::adoptions)?;
+        let mut moved: BTreeSet<String> = flipped.into_iter().collect();
+        for (old, to) in adopt_before.iter().chain(&adopt_after) {
+            let before = adopt_before.iter().find(|(o, _)| o == old).map(|(_, t)| t);
+            let after = adopt_after.iter().find(|(o, _)| o == old).map(|(_, t)| t);
+            if before != after {
+                moved.insert(old.clone());
+                moved.insert(to.clone());
+            }
+        }
+        Ok((cs, moved))
+    }
+
+    /// The scan of `scope` widened until it holds every session an agent file may move between:
+    /// those linked by `continued-in`, the owner of each scanned agent file's row, and the
+    /// session whose directory holds each agent file the rows of `scope` record (a file adopted
+    /// by a session the links no longer reach). Also returns the `files` rows of the final scope.
+    fn scan_scope(
+        &self,
+        scope: &BTreeSet<String>,
+    ) -> CoreResult<(scan::ScanResult, Vec<reader::FileRecord>, BTreeSet<String>)> {
+        let mut scope = self.index.read(|c| reader::with_continued(c, scope))?;
+        let mut tries = 0;
+        loop {
+            let found = scan::scan_sessions(&self.cfg.data_root, &scope);
+            let db = self.index.read(|c| reader::files_of_sessions(c, &scope))?;
+            let scanned: HashSet<&std::path::Path> =
+                found.files.iter().map(|f| f.path.as_path()).collect();
+            let agent_paths: Vec<String> = found
+                .files
+                .iter()
+                .filter(|f| f.role != FileRole::Main)
+                .map(|f| f.path.to_string_lossy().into_owned())
+                .collect();
+            let mut more = self.index.read(|c| {
+                reader::owners_outside(c, agent_paths.iter().map(String::as_str), &scope)
+            })?;
+            for r in db.iter().filter(|r| r.role != FileRole::Main) {
+                let path = std::path::Path::new(&r.path);
+                if !scanned.contains(path)
+                    && path.exists()
+                    && let Some(sid) = scan::session_of_agent_path(path)
+                    && !scope.contains(&sid)
+                {
+                    more.insert(sid);
+                }
+            }
+            tries += 1;
+            if more.is_empty() {
+                return Ok((found, db, scope));
+            }
+            if tries > MAX_HANDOVER_PASSES {
+                // Still not every session involved: the next sync scans everything.
+                self.full_scan_next.store(true, Ordering::Relaxed);
+                return Ok((found, db, scope));
+            }
+            scope.extend(more);
+            scope = self.index.read(|c| reader::with_continued(c, &scope))?;
+        }
     }
 }
+
+/// Extra sync passes for agent files changing session, and widenings of a scoped scan.
+const MAX_HANDOVER_PASSES: usize = 3;

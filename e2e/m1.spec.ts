@@ -102,7 +102,9 @@ test("离开底部时出现新消息提示", async ({ page }) => {
   await expect(page.getByText("另一条新消息")).toBeVisible();
 });
 
-test("打开的 Session 转入后台后切到接替它的 Session，列表里只剩后者", async ({ page }) => {
+test("打开的 Session 转入后台后切到接替它的 Session，列表里只剩后者；接替者再转入后台时接着切过去", async ({
+  page,
+}) => {
   const old = await openSession(page, "排查 Redis 连接池泄漏", { folded: true });
   const next = await page
     .getByTestId("session-row")
@@ -118,6 +120,32 @@ test("打开的 Session 转入后台后切到接替它的 Session，列表里只
     "aria-selected",
     "true",
   );
+
+  // Moved to the background again while open: on to the newest Session.
+  const third = await page
+    .getByTestId("session-row")
+    .filter({ hasText: "优化首页首屏加载" })
+    .getAttribute("data-session-id");
+  await page.evaluate(([o, n]) => window.__cvMock!.supersede(o, n), [next!, third!]);
+  await expect(header.getByRole("heading", { name: /优化首页首屏加载/ })).toBeVisible();
+});
+
+test("转入后台的 Session 又单独显示后，打开它不再转到之前接替它的 Session", async ({ page }) => {
+  const old = await openSession(page, "排查 Redis 连接池泄漏", { folded: true });
+  const next = await page
+    .getByTestId("session-row")
+    .filter({ hasText: "迁移表单校验到 zod" })
+    .getAttribute("data-session-id");
+  const header = page.getByTestId("header");
+  await page.evaluate(([o, n]) => window.__cvMock!.supersede(o, n), [old, next!]);
+  await expect(header.getByRole("heading", { name: "迁移表单校验到 zod" })).toBeVisible();
+
+  // Shown again (e.g. it went on by itself): its cached detail still names the old successor until refetched.
+  await page.evaluate((o) => window.__cvMock!.supersede(o, null), old);
+  await page.locator(`[data-testid="session-row"][data-session-id="${old}"]`).click();
+  await expect(header.getByRole("heading", { name: "排查 Redis 连接池泄漏" })).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(header.getByRole("heading", { name: "排查 Redis 连接池泄漏" })).toBeVisible();
 });
 
 test("等待作答的 Session 显示琥珀色点", async ({ page }) => {

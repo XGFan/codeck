@@ -259,7 +259,8 @@ pub fn copy_neighbors(conn: &Connection, session_id: &str) -> CoreResult<Vec<Str
 /// the newer session alone tells the conversation. Prompts, not replies: the copy leaves out a
 /// reply that is only an empty thinking block (seen in real data), while a prompt the newer
 /// session lacks means the older one went on by itself. One key lookup per prompt; when the newer
-/// session is missing or lacks a prompt, both are shown.
+/// session is missing or lacks a prompt, both are shown. A newer session continued back in this
+/// one (a cycle) does not count, so two sessions never hide each other.
 pub fn update_superseded(
     conn: &Connection,
     scope: Option<&HashSet<String>>,
@@ -267,7 +268,8 @@ pub fn update_superseded(
     let rule = format!(
         "continued_in_id IS NOT NULL
         AND EXISTS (SELECT 1 FROM sessions n
-            WHERE n.id = sessions.continued_in_id AND n.id != sessions.id)
+            WHERE n.id = sessions.continued_in_id AND n.id != sessions.id
+                AND (n.continued_in_id IS NULL OR n.continued_in_id != sessions.id))
         AND NOT EXISTS (SELECT 1 FROM messages mo
             WHERE mo.session_id = sessions.id AND mo.agent_id = '' AND mo.role = {MSG_PROMPT}
                 AND NOT EXISTS (SELECT 1 FROM messages mn WHERE mn.session_id = sessions.continued_in_id

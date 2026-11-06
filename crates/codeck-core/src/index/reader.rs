@@ -371,16 +371,21 @@ pub fn model_costs(conn: &Connection, session_id: &str) -> CoreResult<Vec<ModelC
 }
 
 /// Sessions whose Origin Session is `id` (via `forkedFrom` or the shared-root fallback).
+/// Forks of a session `id` carries on count as its own (their Origin Session opens as `id`).
 pub fn fork_children(conn: &Connection, id: &str) -> CoreResult<Vec<ForkChild>> {
+    let mut ids = vec![id.to_owned()];
+    ids.extend(superseded_into(conn, id)?);
+    let marks = vec!["?"; ids.len()].join(",");
     let sql = format!(
         "SELECT c.id, c.title, coalesce(c.created_ms, c.last_active_ms) FROM sessions c
-         WHERE c.is_empty = 0 AND c.superseded = 0 AND c.id != ?1
-            AND (c.fork_origin_id = ?1 OR (c.fork_origin_id IS NULL AND {origin} = ?1))
+         WHERE c.is_empty = 0 AND c.superseded = 0 AND c.id NOT IN ({marks})
+            AND (c.fork_origin_id IN ({marks})
+                OR (c.fork_origin_id IS NULL AND {origin} IN ({marks})))
          ORDER BY coalesce(c.created_ms, c.last_active_ms)",
         origin = origin_expr("c")
     );
     let mut st = conn.prepare(&sql)?;
-    let rows = st.query_map([id], |r| {
+    let rows = st.query_map(params_from_iter(ids.iter().chain(&ids).chain(&ids)), |r| {
         Ok(ForkChild {
             session_id: r.get(0)?,
             title: r.get(1)?,
@@ -393,6 +398,11 @@ pub fn fork_children(conn: &Connection, id: &str) -> CoreResult<Vec<ForkChild>> 
 /// The listed session a superseded one is carried on in (following `continued-in` through
 /// sessions superseded in turn); `None` when `id` is not superseded.
 pub fn superseded_by(conn: &Connection, id: &str) -> CoreResult<Option<String>> {
+    Ok(successor(conn, id)?.map(|(to, _)| to))
+}
+
+/// [`superseded_by`] with the number of `continued-in` hops to it.
+fn successor(conn: &Connection, id: &str) -> CoreResult<Option<(String, usize)>> {
     let mut st = conn
         .prepare_cached("SELECT continued_in_id FROM sessions WHERE id = ?1 AND superseded = 1")?;
     let mut cur = id.to_owned();
@@ -407,39 +417,65 @@ pub fn superseded_by(conn: &Connection, id: &str) -> CoreResult<Option<String>> 
         }
         cur = next;
     }
-    Ok((cur != id).then_some(cur))
+    Ok((cur != id).then(|| (cur, seen.len() - 1)))
 }
 
-/// The sessions `id` carries on: superseded by it directly or through others, nearest first.
+/// The sessions `id` carries on: superseded by it directly or through others, nearest first
+/// (fewest `continued-in` hops, then by id: the order of [`adoptions`]).
 pub fn superseded_into(conn: &Connection, id: &str) -> CoreResult<Vec<String>> {
     let mut st = conn
         .prepare_cached("SELECT id FROM sessions WHERE continued_in_id = ?1 AND superseded = 1")?;
     let mut out: Vec<String> = Vec::new();
-    let mut next = 0;
-    let mut cur = id.to_owned();
-    loop {
-        for r in st.query_map([&cur], |r| r.get::<_, String>(0))? {
-            let r = r?;
-            if r != id && !out.contains(&r) {
-                out.push(r);
+    let mut level = vec![id.to_owned()];
+    while !level.is_empty() {
+        let mut next: Vec<String> = Vec::new();
+        for cur in &level {
+            for r in st.query_map([cur], |r| r.get::<_, String>(0))? {
+                let r = r?;
+                if r != id && !out.contains(&r) && !next.contains(&r) {
+                    next.push(r);
+                }
             }
         }
-        let Some(n) = out.get(next) else {
-            return Ok(out);
-        };
-        cur = n.clone();
-        next += 1;
+        next.sort();
+        out.extend(next.iter().cloned());
+        level = next;
     }
+    Ok(out)
 }
 
-/// Every superseded session → the listed session carrying it on (as [`superseded_by`]).
-pub fn adoptions(conn: &Connection) -> CoreResult<HashMap<String, String>> {
+/// Every superseded session with the listed session carrying it on (as [`superseded_by`]),
+/// nearest first (fewest `continued-in` hops, then by id): the order `scan::adopt` gives
+/// precedence by.
+pub fn adoptions(conn: &Connection) -> CoreResult<Vec<(String, String)>> {
     let mut st = conn.prepare_cached("SELECT id FROM sessions WHERE superseded = 1")?;
     let ids: Vec<String> = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-    let mut out = HashMap::new();
+    let mut out = Vec::new();
     for id in ids {
-        if let Some(to) = superseded_by(conn, &id)? {
-            out.insert(id, to);
+        if let Some((to, hops)) = successor(conn, &id)? {
+            out.push((hops, id, to));
+        }
+    }
+    out.sort();
+    Ok(out.into_iter().map(|(_, id, to)| (id, to)).collect())
+}
+
+/// Sessions outside `scope` whose `files` rows hold one of `paths` (a file adopted by, or still
+/// recorded under, a session the scan did not reach).
+pub fn owners_outside<'a>(
+    conn: &Connection,
+    paths: impl IntoIterator<Item = &'a str>,
+    scope: &BTreeSet<String>,
+) -> CoreResult<BTreeSet<String>> {
+    let mut st = conn.prepare_cached("SELECT session_id FROM files WHERE path = ?1")?;
+    let mut out = BTreeSet::new();
+    for p in paths {
+        if let Some(sid) = st
+            .query_row([p], |r| r.get::<_, String>(0))
+            .optional()?
+            .filter(|s| !scope.contains(s))
+        {
+            out.insert(sid);
         }
     }
     Ok(out)

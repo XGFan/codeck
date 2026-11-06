@@ -92,13 +92,20 @@ impl Engine {
             listing.sidecars.extend(l.sidecars);
         }
         // The Sessions this one carries on: the agent files and sidecars it lacks come from their
-        // directories, as the index has them (`scan::adopt`), and so do their `tool-results/`.
+        // directories, as the index has them (`scan::adopt`, same precedence: nearest first), and so
+        // do their `tool-results/`.
         let olds = self.index.read(|c| {
             let mut out = Vec::new();
-            for old in reader::superseded_into(c, sid)? {
-                for f in reader::session_files(c, &old)? {
+            // Only the listed session at the end of the chain adopts (as the index does).
+            let olds = if reader::superseded_by(c, sid)?.is_none() {
+                reader::superseded_into(c, sid)?
+            } else {
+                Vec::new()
+            };
+            for old in &olds {
+                for f in reader::session_files(c, old)? {
                     if f.role == FileRole::Main
-                        && let Some(d) = Path::new(&f.path).parent().map(|p| p.join(&old))
+                        && let Some(d) = Path::new(&f.path).parent().map(|p| p.join(old))
                     {
                         out.push((old.clone(), d));
                     }
@@ -108,10 +115,12 @@ impl Engine {
         })?;
         let mut inherited_dirs = Vec::new();
         if !olds.is_empty() {
-            let adopt: HashMap<String, String> = olds
-                .iter()
-                .map(|(old, _)| (old.clone(), sid.to_owned()))
-                .collect();
+            let mut adopt: Vec<(String, String)> = Vec::new();
+            for (old, _) in &olds {
+                if !adopt.iter().any(|(o, _)| o == old) {
+                    adopt.push((old.clone(), sid.to_owned()));
+                }
+            }
             for (old, d) in &olds {
                 let l = scan::list_session_dir(d, old, &mut seen);
                 listing.agent_files.extend(l.agent_files);

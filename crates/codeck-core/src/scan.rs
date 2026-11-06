@@ -222,18 +222,21 @@ pub fn list_session_dir(
     out
 }
 
+/// The session whose directory holds an agent file (`<project dir>/<sid>/subagents/…`).
+pub fn session_of_agent_path(path: &Path) -> Option<String> {
+    let subagents = path
+        .ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == "subagents"))?;
+    Some(subagents.parent()?.file_name()?.to_str()?.to_owned())
+}
+
 /// Gives a session the agent transcripts and sidecars of the sessions it supersedes that it lacks
-/// (`adopt`: superseded session → the session carrying it on). Moving a Session to the background
-/// copies its conversation into the new one but leaves `subagents/`, `workflows/` and
-/// `tool-results/` behind, so the copied Agent and Workflow calls are linked, indexed and billed
-/// through the new session.
-/// A Subagent Run or Workflow Run the new session has itself keeps its own files; among several
-/// superseded sessions the first listed wins.
-pub fn adopt(
-    files: &mut [ScannedFile],
-    sidecars: &mut [SidecarFile],
-    adopt: &HashMap<String, String>,
-) {
+/// (`adopt`: superseded session → the session carrying it on, nearest first). Moving a Session to
+/// the background copies its conversation into the new one but leaves `subagents/`, `workflows/`
+/// and `tool-results/` behind, so the copied Agent and Workflow calls are linked, indexed and
+/// billed through the new session. A Subagent Run or Workflow Run the new session has itself keeps
+/// its own files; among several superseded sessions the nearest (earliest in `adopt`) wins.
+pub fn adopt(files: &mut [ScannedFile], sidecars: &mut [SidecarFile], adopt: &[(String, String)]) {
     if adopt.is_empty() {
         return;
     }
@@ -250,9 +253,15 @@ pub fn adopt(
             }
         }
     }
-    let targets: HashSet<&String> = adopt.values().collect();
-    // (target, key) → the session whose files provide it: the target's own first.
-    let mut owner: HashMap<(String, String), String> = HashMap::new();
+    // superseded session → (precedence, target); the target's own files rank before all.
+    let rank: HashMap<&str, (usize, &str)> = adopt
+        .iter()
+        .enumerate()
+        .map(|(i, (old, to))| (old.as_str(), (i + 1, to.as_str())))
+        .collect();
+    let targets: HashSet<&str> = adopt.iter().map(|(_, to)| to.as_str()).collect();
+    // (target, key) → (precedence, session whose files provide it).
+    let mut owner: HashMap<(String, String), (usize, String)> = HashMap::new();
     let keyed = files
         .iter()
         .filter_map(|f| Some((f.session_id.clone(), file_key(f)?)))
@@ -263,22 +272,25 @@ pub fn adopt(
         )
         .collect::<Vec<_>>();
     for (sid, key) in &keyed {
-        if targets.contains(sid) {
-            owner.insert((sid.clone(), key.clone()), sid.clone());
-        }
-    }
-    for (sid, key) in &keyed {
-        if let Some(to) = adopt.get(sid) {
-            owner
-                .entry((to.clone(), key.clone()))
-                .or_insert_with(|| sid.clone());
+        let (r, to) = if targets.contains(sid.as_str()) {
+            (0, sid.as_str())
+        } else if let Some(&(r, to)) = rank.get(sid.as_str()) {
+            (r, to)
+        } else {
+            continue;
+        };
+        let e = owner
+            .entry((to.to_owned(), key.clone()))
+            .or_insert_with(|| (r, sid.clone()));
+        if r < e.0 {
+            *e = (r, sid.clone());
         }
     }
     let take = |sid: &mut String, key: String| {
-        if let Some(to) = adopt.get(sid)
-            && owner.get(&(to.clone(), key)) == Some(sid)
+        if let Some(&(_, to)) = rank.get(sid.as_str())
+            && owner.get(&(to.to_owned(), key)).map(|o| &o.1) == Some(sid)
         {
-            *sid = to.clone();
+            *sid = to.to_owned();
         }
     };
     for f in files.iter_mut() {
@@ -451,10 +463,11 @@ mod tests {
         }
         let mut r = scan_root(tmp.path());
         let to_new = |s: &str| (s.to_owned(), "new".to_owned());
+        // "older" is listed first (nearer), so it wins over "old" for a run both hold.
         adopt(
             &mut r.files,
             &mut r.sidecars,
-            &HashMap::from([to_new("old"), to_new("older")]),
+            &[to_new("older"), to_new("old")],
         );
         let owner = |agent: &str| {
             let f = r
@@ -483,14 +496,15 @@ mod tests {
                 pair("old/subagents/agent-x.meta.json", "old"),
             ]
         );
-        // Transcript and meta move together; of two superseded sessions the first listed wins.
+        // Transcript and meta move together; of two superseded sessions the nearer one (listed
+        // first, not first in scan order) wins.
         assert_eq!(
             owner("y"),
             vec![
-                pair("old/subagents/agent-y.jsonl", "new"),
-                pair("old/subagents/agent-y.meta.json", "new"),
-                pair("older/subagents/agent-y.jsonl", "older"),
-                pair("older/subagents/agent-y.meta.json", "older"),
+                pair("old/subagents/agent-y.jsonl", "old"),
+                pair("old/subagents/agent-y.meta.json", "old"),
+                pair("older/subagents/agent-y.jsonl", "new"),
+                pair("older/subagents/agent-y.meta.json", "new"),
             ]
         );
         assert_eq!(

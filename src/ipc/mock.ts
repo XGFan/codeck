@@ -74,8 +74,8 @@ declare global {
       appendNode(sessionId: string, node: Node): void;
       /** A prompt sent after a rewind is indexed: the Main Line leaves the nodes from `atNodeId` on, ends with `node`. */
       forkMain(sessionId: string, atNodeId: string, node: Node): void;
-      /** `sessionId` was moved to the background and is carried on in `by` (its sync is reported). */
-      supersede(sessionId: string, by: string): void;
+      /** `sessionId` was moved to the background and is carried on in `by`, or is shown again (`null`); its sync is reported. */
+      supersede(sessionId: string, by: string | null): void;
     };
   }
 }
@@ -666,8 +666,10 @@ export function createMockApi(): Api {
     },
     supersede(sessionId, by) {
       findData(sessionId);
-      findData(by);
-      supersededBy.set(sessionId, by);
+      if (by) {
+        findData(by);
+        supersededBy.set(sessionId, by);
+      } else supersededBy.delete(sessionId);
       dispatch("sessionsChanged", {
         changed: [sessionId],
         removed: [],

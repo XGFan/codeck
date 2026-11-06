@@ -1,5 +1,5 @@
 import { Bug, Copy, Ellipsis, FolderOpen, Info } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -37,12 +37,20 @@ function costBreakdown(costs: ModelCost[], unpriced: number): string {
 export function SessionHeader() {
   const sessionId = useUi((s) => s.sessionId);
   const inset = useLeadingInset();
-  const { data: d, error } = useSession(sessionId);
-  // A superseded Session (moved to the background, its conversation copied on) opens as the one carrying it on.
+  const { data: d, error, isStale } = useSession(sessionId);
+  // A superseded Session (moved to the background, its conversation copied on) opens as the one carrying it on: on
+  // fresh data only (a cached detail may predate it being shown again), and never straight back to the Session just
+  // left that way (a cycle); a Session superseded while open after a redirect is followed on.
   const successor = d?.supersededBy ?? null;
+  const hop = useRef<{ from: string; to: string } | null>(null);
   useEffect(() => {
-    if (successor) useUi.getState().selectSession(successor);
-  }, [successor]);
+    if (hop.current && sessionId !== hop.current.to) hop.current = null;
+  }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || !successor || isStale || successor === hop.current?.from) return;
+    hop.current = { from: sessionId, to: successor };
+    useUi.getState().selectSession(successor);
+  }, [sessionId, successor, isStale]);
   const connected = useConnect((s) => connFor(s, sessionId));
   const lsCwd = useConnect((s) => lsEntryFor(s, sessionId)?.cwd ?? null);
   // A Connected or `ccrpc ls` Session not in the index yet (a new one, before its first prompt).
