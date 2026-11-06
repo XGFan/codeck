@@ -1,7 +1,7 @@
 import { Network, Radar, Square, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
 import { Popover } from "radix-ui";
 import { footBtn } from "./Header";
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
@@ -44,16 +44,16 @@ function toolNodes(transcript: Transcript | undefined): Map<string, string> {
   return m;
 }
 
+/** What clicking a task's name does: open its Subagent Run, or jump to the tool call that started it. */
+type OpenTask = (t: Task) => { title: string; go: () => void } | null;
+
 /**
- * Background tasks: beside the input box, the running ones counted by kind (Shell / Subagent / Monitor / Workflow;
- * nothing when none runs); the list (grouped by kind, with stop) in a popover, finished ones only on request. A
- * Subagent opens its Subagent Run in the side panel; the others jump to the tool call that started them.
+ * Background tasks: beside the input box, a button for each kind with running tasks (Shell / Subagent / Monitor /
+ * Workflow; nothing when none runs) with its count; each opens a popover listing that kind's running tasks (with
+ * stop), its finished ones only on request. A Subagent opens its Subagent Run in the side panel; the others jump to
+ * the tool call that started them.
  */
 export function Tasks({ c }: { c: ConnState }) {
-  const command = useConnect((s) => s.command);
-  const refresh = useConnect((s) => s.refreshTasks);
-  const setError = useConnect((s) => s.setError);
-  const [showDone, setShowDone] = useState(false);
   const openSession = useUi((s) => s.sessionId);
   const setPanelStack = useUi((s) => s.setPanelStack);
   const { data: transcript } = useCurrentTranscript();
@@ -67,14 +67,15 @@ export function Tasks({ c }: { c: ConnState }) {
       stack.unshift(id);
     return stack;
   };
+  // The kind whose popover is open: its button stays while it is, after its last running task was stopped too.
+  const [openKind, setOpenKind] = useState<string | null>(null);
   const running = c.tasks.filter((t) => t.status === "running");
-  const done = c.tasks.length - running.length;
-  if (running.length === 0) return null;
-  const counts = byKind(running).map(([kind, ts]) => ({ ...kindOf(kind), n: ts.length }));
-  const groups = byKind(showDone ? c.tasks : running);
+  const kinds = byKind(running).map(([kind, ts]) => ({ kind, n: ts.length }));
+  if (openKind && !kinds.some((k) => k.kind === openKind) && c.tasks.some((t) => t.kind === openKind))
+    kinds.push({ kind: openKind, n: 0 });
+  if (kinds.length === 0) return null;
 
-  const name = (t: Task) => t.description || t.command || t.id;
-  const open = (t: Task) => {
+  const open: OpenTask = (t) => {
     if (t.kind === "agent") {
       // A Teammate is listed under a task id of its own: found by its description.
       const run =
@@ -90,95 +91,114 @@ export function Tasks({ c }: { c: ConnState }) {
     };
   };
 
+  return kinds.map(({ kind, n }) => (
+    <KindTasks
+      key={kind}
+      c={c}
+      kind={kind}
+      n={n}
+      all={c.tasks.filter((t) => t.kind === kind)}
+      open={open}
+      shown={openKind === kind}
+      onShown={(o) => setOpenKind(o ? kind : null)}
+    />
+  ));
+}
+
+/** One kind's button (`n` of them running) and its popover. */
+function KindTasks({
+  c,
+  kind,
+  n,
+  all,
+  open,
+  shown,
+  onShown,
+}: {
+  c: ConnState;
+  kind: string;
+  n: number;
+  all: Task[];
+  open: OpenTask;
+  shown: boolean;
+  onShown: (open: boolean) => void;
+}) {
+  const command = useConnect((s) => s.command);
+  const refresh = useConnect((s) => s.refreshTasks);
+  const setError = useConnect((s) => s.setError);
+  const [showDone, setShowDone] = useState(false);
+  const k = kindOf(kind);
+  const done = all.length - n;
+  // None running (the last one just stopped, the popover still open): the finished ones.
+  const list = showDone || n === 0 ? all : all.filter((t) => t.status === "running");
+  const name = (t: Task) => t.description || t.command || t.id;
+
   return (
-    <Popover.Root onOpenChange={(o) => o && void refresh(c.conn)}>
-      <Popover.Trigger
-        className={footBtn}
-        data-testid="tasks"
-        title={`后台运行中：${counts.map((k) => `${k.n} 个 ${k.label}`).join("、")}`}
-      >
-        {counts.map((k, i) => (
-          <Fragment key={k.kind}>
-            {i > 0 && (
-              <span className="opacity-40" aria-hidden>
-                ·
-              </span>
-            )}
-            <span data-testid={`tasks-${k.kind}`} className="flex items-center gap-1">
-              <k.Icon size={14} strokeWidth={1.7} aria-hidden />
-              {k.n} {k.label}
-            </span>
-          </Fragment>
-        ))}
+    <Popover.Root
+      open={shown}
+      onOpenChange={(o) => {
+        onShown(o);
+        if (o) void refresh(c.conn);
+      }}
+    >
+      <Popover.Trigger className={footBtn} data-testid={`tasks-${kind}`} title={`后台运行中：${n} 个 ${k.label}`}>
+        <k.Icon size={14} strokeWidth={1.7} aria-hidden />
+        {n} {k.label}
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
-          align="end"
+          align="start"
           sideOffset={4}
           className="z-50 w-96 rounded-md border border-border bg-ground p-2 shadow-lg"
         >
-          <div className="max-h-80 space-y-2 overflow-y-auto" data-testid="tasks-list">
-            {groups.map(([kind, ts]) => {
-              const k = kindOf(kind);
+          <ul className="max-h-80 space-y-0.5 overflow-y-auto" data-testid="tasks-list" data-kind={kind}>
+            {list.map((t) => {
+              const target = open(t);
+              const sub = (t.kind === "shell" || t.kind === "monitor") && t.command !== name(t) ? t.command : null;
               return (
-                <section key={kind} data-testid="tasks-group" data-kind={kind}>
-                  <h3 className="flex items-center gap-1.5 px-2 pb-0.5 text-[11px] font-medium text-secondary">
-                    <k.Icon size={12} strokeWidth={1.8} aria-hidden />
-                    {k.label}
-                  </h3>
-                  <ul className="space-y-0.5">
-                    {ts.map((t) => {
-                      const target = open(t);
-                      const sub =
-                        (t.kind === "shell" || t.kind === "monitor") && t.command !== name(t) ? t.command : null;
-                      return (
-                        <li key={t.id} className="flex items-center gap-2 rounded px-2 py-1 text-[12px]">
-                          <div className="min-w-0 flex-1">
-                            {target ? (
-                              <Popover.Close
-                                data-testid={t.kind === "agent" ? "task-open" : "task-jump"}
-                                onClick={target.go}
-                                title={target.title}
-                                className="block max-w-full truncate text-left text-accent hover:underline"
-                              >
-                                {name(t)}
-                              </Popover.Close>
-                            ) : (
-                              <span className="block truncate" title={t.command ?? t.description ?? ""}>
-                                {name(t)}
-                              </span>
-                            )}
-                            {sub && (
-                              <span className="block truncate font-mono text-[11px] text-secondary" title={sub}>
-                                {sub}
-                              </span>
-                            )}
-                          </div>
-                          <span className="shrink-0 text-secondary">{STATUS[t.status] ?? t.status}</span>
-                          {t.status === "running" && (
-                            <button
-                              type="button"
-                              disabled={c.state !== "idle"}
-                              aria-label="停止"
-                              title={c.state !== "idle" ? "空闲时才能停止" : "停止"}
-                              className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-selection disabled:opacity-40"
-                              onClick={async () => {
-                                const r = await command(c.conn, { type: "stop_task", task_id: t.id });
-                                if (!r.success) setError(errorKey(c), `停止失败：${r.error?.message ?? ""}`);
-                                void refresh(c.conn);
-                              }}
-                            >
-                              <Square size={10} aria-hidden />
-                            </button>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
+                <li key={t.id} className="flex items-center gap-2 rounded px-2 py-1 text-[12px]">
+                  <div className="min-w-0 flex-1">
+                    {target ? (
+                      <Popover.Close
+                        data-testid={t.kind === "agent" ? "task-open" : "task-jump"}
+                        onClick={target.go}
+                        title={target.title}
+                        className="block max-w-full truncate text-left text-accent hover:underline"
+                      >
+                        {name(t)}
+                      </Popover.Close>
+                    ) : (
+                      <span className="block truncate" title={t.command ?? t.description ?? ""}>
+                        {name(t)}
+                      </span>
+                    )}
+                    {sub && (
+                      <span className="block truncate font-mono text-[11px] text-secondary" title={sub}>
+                        {sub}
+                      </span>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-secondary">{STATUS[t.status] ?? t.status}</span>
+                  {t.status === "running" && (
+                    <button
+                      type="button"
+                      disabled={c.state !== "idle"}
+                      aria-label="停止"
+                      title={c.state !== "idle" ? "空闲时才能停止" : "停止"}
+                      className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-selection disabled:opacity-40"
+                      onClick={async () => {
+                        const r = await command(c.conn, { type: "stop_task", task_id: t.id });
+                        if (!r.success) setError(errorKey(c), `停止失败：${r.error?.message ?? ""}`);
+                        void refresh(c.conn);
+                      }}
+                    >
+                      <Square size={10} aria-hidden />
+                    </button>
+                  )}
+                </li>
               );
             })}
-          </div>
+          </ul>
           {done > 0 && (
             <button
               type="button"

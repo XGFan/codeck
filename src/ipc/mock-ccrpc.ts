@@ -93,6 +93,8 @@ interface Conn {
   /** The last `session_info` (or `ready`): what a synthesized one changes. */
   info: Record<string, unknown>;
   closed: boolean;
+  /** Tasks `stop_task` stopped on this connection: `get_tasks` reports them stopped. */
+  stopped: Set<string>;
 }
 
 /** What `/model <alias>` sets in the mock: the display name ccrpc reports at once, and its effort mark. */
@@ -249,7 +251,12 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       return respond(id, msg, s);
     }
     case "get_tasks":
-      return respond(id, msg, { tasks: c.fx.tasks });
+      return respond(id, msg, {
+        tasks: c.fx.tasks.map((t) => (c.stopped.has(t.id) ? { ...t, status: "stopped" } : t)),
+      });
+    case "stop_task":
+      c.stopped.add(String(msg.task_id));
+      return respond(id, msg, {});
     // ctrl+enter: the TUI's queue goes out at once.
     case "send_now":
       later(() => emit(id, { type: "queue", items: [] }));
@@ -297,7 +304,7 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
 
 function open(fx: Fixture): string {
   const id = `mock${++seq}`;
-  conns.set(id, { fx, cursor: 0, state: null, info: {}, closed: false });
+  conns.set(id, { fx, cursor: 0, state: null, info: {}, closed: false, stopped: new Set() });
   replay(id);
   return id;
 }

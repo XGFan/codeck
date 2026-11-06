@@ -554,42 +554,58 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   const lastRow = (await rows.nth((await rows.count()) - 1).boundingBox())!;
   const panelBox = (await page.getByTestId("composer").boundingBox())!;
   expect(lastRow.y + lastRow.height).toBeLessThan(panelBox.y);
-  // Background tasks: the running ones counted by kind; the list grouped by kind, finished ones on request.
+  // Background tasks: a button for each kind with running ones, with their count; each lists only its kind,
+  // finished ones on request.
   await expect(page.getByTestId("tasks-shell")).toHaveText("1 Shell");
+  await expect(page.getByTestId("tasks-agent")).toHaveText("1 Subagent");
   await expect(page.getByTestId("tasks-monitor")).toHaveText("1 Monitor");
-  await expect(page.getByTestId("tasks-agent")).toHaveCount(0);
-  await page.getByTestId("tasks").click();
-  const groups = page.getByTestId("tasks-group");
-  const tasks = page.getByTestId("tasks-list").locator("li");
-  await expect(groups).toHaveCount(2);
-  await expect(groups.nth(0)).toHaveAttribute("data-kind", "shell");
-  await expect(groups.nth(0)).toContainText("pnpm test:e2e --watch");
-  await expect(groups.nth(1)).toHaveAttribute("data-kind", "monitor");
-  await expect(groups.nth(1)).toContainText("限流 429 日志");
-  await expect(groups.nth(1)).toContainText("tail -F logs/ratelimit.log");
-  // A shell whose call is not in the transcript is not a link.
-  await expect(groups.nth(0).getByTestId("task-jump")).toHaveCount(0);
+  await expect(page.getByTestId("tasks-workflow")).toHaveCount(0);
+  const list = page.getByTestId("tasks-list");
+  const tasks = list.locator("li");
+  await page.getByTestId("tasks-shell").click();
+  await expect(list).toHaveAttribute("data-kind", "shell");
+  await expect(tasks).toHaveCount(1);
+  await expect(tasks).toContainText("pnpm test:e2e --watch");
+  // A shell whose call is not in the transcript is not a link; it has no finished ones.
+  await expect(list.getByTestId("task-jump")).toHaveCount(0);
+  await expect(page.getByTestId("tasks-done")).toHaveCount(0);
+  await page.keyboard.press("Escape");
   // A Monitor jumps to the tool call that started it.
-  await groups.nth(1).getByTestId("task-jump").click();
-  await expect(page.getByTestId("tasks-list")).toHaveCount(0);
+  await page.getByTestId("tasks-monitor").click();
+  await expect(list).toHaveAttribute("data-kind", "monitor");
+  await expect(tasks).toHaveCount(1);
+  await expect(tasks).toContainText("限流 429 日志");
+  await expect(tasks).toContainText("tail -F logs/ratelimit.log");
+  await list.getByTestId("task-jump").click();
+  await expect(list).toHaveCount(0);
   await expect(page.locator('[data-anchor$="tu_monitor"]').first()).toBeInViewport();
-  await page.getByTestId("tasks").click();
+  // Subagents: the running one, the finished one on request.
+  await page.getByTestId("tasks-agent").click();
+  await expect(list).toHaveAttribute("data-kind", "agent");
+  await expect(tasks).toHaveCount(1);
   await page.getByTestId("tasks-done").click();
-  await expect(tasks).toHaveCount(4);
-  await expect(groups.nth(1)).toHaveAttribute("data-kind", "agent");
-  await expect(groups.nth(1)).toContainText("为限流中间件补集成测试");
+  await expect(tasks).toHaveCount(2);
   // A Subagent opens its Subagent Run in the side panel.
-  await groups.nth(1).getByTestId("task-open").first().click();
-  await expect(page.getByTestId("tasks-list")).toHaveCount(0);
+  await tasks.filter({ hasText: "为限流中间件补集成测试" }).getByTestId("task-open").click();
+  await expect(list).toHaveCount(0);
   await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText([
     "test-engineer · 为限流中间件补集成测试",
   ]);
   await page.getByTestId("panel-close").click();
   // A Teammate is listed under a task id of its own: it opens its Subagent Run by its description.
-  await page.getByTestId("tasks").click();
-  await groups.nth(1).locator("li").filter({ hasText: "补限流文档" }).getByTestId("task-open").click();
+  await page.getByTestId("tasks-agent").click();
+  await tasks.filter({ hasText: "补限流文档" }).getByTestId("task-open").click();
   await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText(["writer · 补限流文档"]);
   await page.getByTestId("panel-close").click();
+  // Its only Shell stopped: the popover stays open and says so; closed, the Shell button is gone.
+  await page.getByTestId("tasks-shell").click();
+  await tasks.getByRole("button", { name: "停止" }).click();
+  await expect.poll(() => lastSent(page, "stop_task")).toMatchObject({ task_id: "bg-run" });
+  await expect(tasks).toContainText("已停止");
+  await expect(page.getByTestId("tasks-shell")).toHaveText("0 Shell");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("tasks-shell")).toHaveCount(0);
+  await expect(page.getByTestId("tasks-agent")).toHaveText("1 Subagent");
   // The LCP Live Session waits (CoDeck's Live data).
   await expect.poll(async () => (await probe(page)).badge).toBe(1);
 
@@ -719,7 +735,7 @@ test("关闭：还有后台任务时先确认，取消则什么也不发", async
   await expect(state(page)).toContainText("空闲");
   await page.getByTestId("connect-close").click();
   const confirm = page.getByTestId("connect-close-confirm");
-  await expect(confirm).toContainText("停掉 2 个后台任务");
+  await expect(confirm).toContainText("停掉 3 个后台任务");
   await confirm.getByRole("button", { name: "取消" }).click();
   await expect(confirm).toHaveCount(0);
   expect(await lastSent(page, "exit")).toBeUndefined();
@@ -736,7 +752,7 @@ test("关闭：忙时确认后先中止本轮再结束", async ({ page }) => {
   await send(page, "改一下 README");
   await expect(state(page)).toContainText("工作中");
   await page.getByTestId("connect-close").click();
-  await expect(page.getByTestId("connect-close-confirm")).toContainText("中止本轮、停掉 2 个后台任务");
+  await expect(page.getByTestId("connect-close-confirm")).toContainText("中止本轮、停掉 3 个后台任务");
   await page.getByTestId("connect-close-ok").click();
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   const types = (await probe(page)).sent.map((s) => s.msg.type);
