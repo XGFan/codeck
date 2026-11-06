@@ -1555,6 +1555,49 @@ fn mock_model_follows_the_background_session() {
     assert_eq!(st["session_id"], new, "{st}");
     assert_eq!(st["state"], "idle", "{st}");
 
+    // Slash commands in the background Session (while one is typed its suggestions show above
+    // the box; the mode line stays under it), then a prompt: none of them is left in the box.
+    let extra = tempfile::tempdir().unwrap();
+    rpc.forget();
+    rpc.call(
+        "s1",
+        json!({"type": "slash", "command": format!("add-dir {}", extra.path().display())}),
+    );
+    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+        v["type"] == "choice" || v["type"] == "dialog"
+    });
+    assert_eq!(c["title"], "Add directory to workspace", "{c}");
+    rpc.call(
+        "c1",
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, for this session"}),
+    );
+    wait_state(&mut rpc, "idle", 10);
+    rpc.forget();
+    rpc.call(
+        "m1",
+        json!({"type": "set_model", "model": "claude-opus-4-7"}),
+    );
+    // Mid-conversation Claude Code asks first.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(v) = rpc.recv(Duration::from_millis(200))
+            && v["type"] == "choice"
+        {
+            rpc.call(
+                "c2",
+                json!({"type": "answer_choice", "request_id": v["request_id"], "option": v["options"][0]["label"]}),
+            );
+            break;
+        }
+    }
+    settle_idle(&mut rpc);
+    rpc.forget();
+    let d = rpc.call("p4", json!({"type": "prompt", "text": "hello three"}));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
+    let st = rpc.call("g3", json!({"type": "get_state"}));
+    assert_eq!(st["model"], "claude-opus-4-7", "{st}");
+
     let row = ls();
     assert_eq!(row["session_id"], new, "{row}");
     assert_eq!(row["plugin"], true, "{row}");
@@ -1600,12 +1643,28 @@ fn mock_model_follows_a_running_turn_into_the_background() {
     rpc.call("k1", json!({"type": "send_keys", "keys": ["left"]}));
     let ch = rpc.event("session_changed", Duration::from_secs(20));
     assert!(ch["previous"].is_string(), "{ch}");
+    let from = rpc.seen.len();
     let t = rpc.event("turn_end", Duration::from_secs(60));
     assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
     assert_eq!(t["aborted"], false, "{t}");
     assert!(
         t["last_text"].as_str().unwrap_or("").contains("slow"),
         "{t}"
+    );
+    // The reply the background claude finished comes as a block; the copied prompt does not
+    // come again.
+    let blocks: Vec<&Value> = rpc.seen[from..]
+        .iter()
+        .filter(|v| v["type"] == "block")
+        .collect();
+    let replies = blocks
+        .iter()
+        .filter(|b| b["kind"] == "text" && b["text"].as_str().is_some_and(|t| t.contains("slow")))
+        .count();
+    assert_eq!(replies, 1, "{blocks:#?}");
+    assert!(
+        !blocks.iter().any(|b| b["text"] == "MOCK-SLOW please"),
+        "{blocks:#?}"
     );
 }
 

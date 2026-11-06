@@ -554,7 +554,10 @@ impl Engine {
         }
         // A turn running when the conversation moved goes on there.
         self.turns.moved();
-        let history = path.exists();
+        // Seen as it happens, the new transcript is read live: past the copy it holds only what
+        // the background claude wrote since (the rest of a reply moved mid-turn). Found later
+        // (attach), it is history.
+        let history = path.exists() && (copied.is_empty() || !self.ready_sent);
         self.switch_to(sid, &path, history, copied);
     }
 

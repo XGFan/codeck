@@ -225,14 +225,15 @@ impl TurnTracker {
     }
 
     /// The plugin's UserPromptSubmit, Stop, StopFailure and PreToolUse (other events: nothing).
-    pub(super) fn on_hook(&mut self, m: &HookMsg, now: Instant) -> Vec<TurnOut> {
+    /// `busy`: the Session is working (busy or waiting) as the hook arrives.
+    pub(super) fn on_hook(&mut self, m: &HookMsg, now: Instant, busy: bool) -> Vec<TurnOut> {
         let i = &m.input;
         let s = |k: &str| i[k].as_str().map(str::to_string);
         match m.event.as_str() {
             "UserPromptSubmit" => {
                 let text =
                     ::transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
-                self.prompt_submitted(s("prompt_id").unwrap_or_default(), text, now)
+                self.prompt_submitted(s("prompt_id").unwrap_or_default(), text, now, busy)
             }
             "Stop" | "StopFailure" => self.stop(
                 Stop {
@@ -258,7 +259,13 @@ impl TurnTracker {
         }
     }
 
-    fn prompt_submitted(&mut self, pid: String, text: String, now: Instant) -> Vec<TurnOut> {
+    fn prompt_submitted(
+        &mut self,
+        pid: String,
+        text: String,
+        now: Instant,
+        busy: bool,
+    ) -> Vec<TurnOut> {
         let notice = text.trim_start().starts_with("<task-notification>");
         let mut out = self.finish_stopped(now);
         // A steer's own turn has no UserPromptSubmit: one now is a new prompt.
@@ -270,8 +277,9 @@ impl TurnTracker {
             match &self.stats.prompt_id {
                 // Input while busy is delivered within the same turn (steer), or after its Stop
                 // as a turn of its own.
-                // Moved to a background claude: its prompts carry its own prompt id.
-                Some(p) if *p == pid || self.stats.moved => {
+                // Moved to a background claude: its input while it works on the turn carries its
+                // own prompt id. Idle there, a prompt is a new one.
+                Some(p) if *p == pid || (self.stats.moved && busy) => {
                     if !notice {
                         self.pending_steers.push(text);
                     }
@@ -594,6 +602,7 @@ impl Engine {
     }
 
     pub(super) fn on_hook(&mut self, m: HookMsg) {
+        let busy = matches!(self.state, State::Busy | State::Waiting { .. });
         let i = &m.input;
         crate::clog!(
             "hook {} prompt={} tool={} tool_use={} agent={}",
@@ -631,15 +640,15 @@ impl Engine {
                 if self.hook_prompts.len() > 64 {
                     self.hook_prompts.pop_front();
                 }
-                let out = self.turns.on_hook(&m, Instant::now());
+                let out = self.turns.on_hook(&m, Instant::now(), busy);
                 self.apply_turns(out);
             }
             "Stop" | "StopFailure" => {
-                let out = self.turns.on_hook(&m, Instant::now());
+                let out = self.turns.on_hook(&m, Instant::now(), busy);
                 self.apply_turns(out);
             }
             "PreToolUse" => {
-                let out = self.turns.on_hook(&m, Instant::now());
+                let out = self.turns.on_hook(&m, Instant::now(), busy);
                 self.apply_turns(out);
                 if let Some(id) = s("tool_use_id") {
                     self.pre_tools.push_back(PreTool {
@@ -730,7 +739,7 @@ mod tests {
             input,
             reply: None,
         };
-        t.on_hook(&m, now)
+        t.on_hook(&m, now, true)
     }
 
     fn submit(t: &mut TurnTracker, now: Instant, pid: &str, text: &str) -> Vec<TurnOut> {
@@ -892,6 +901,28 @@ mod tests {
         let e = ends(&out);
         assert_eq!(e[0]["prompt_id"], "p1");
         assert_eq!(e[0]["aborted"], false);
+    }
+
+    /// A prompt (a person's, a task notification) while the background claude sits idle with
+    /// the moved turn still open is a new turn: the moved one ends as aborted.
+    #[test]
+    fn a_prompt_while_the_background_claude_is_idle_is_a_new_turn() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        submit(&mut t, now, "p1", "hi");
+        t.moved();
+        let m = HookMsg {
+            event: "UserPromptSubmit".into(),
+            input: json!({"prompt_id": "bg-2", "prompt": "next"}),
+            reply: None,
+        };
+        let out = t.on_hook(&m, now, false);
+        let e = ends(&out);
+        assert_eq!(e[0]["prompt_id"], "p1");
+        assert_eq!(e[0]["aborted"], true);
+        assert_eq!(out.last(), Some(&TurnOut::Opened));
+        stop(&mut t, now, "bg-2", "done");
+        let out = marker(&mut t, now, 100);
+        assert_eq!(ends(&out)[0]["prompt_id"], "bg-2");
     }
 
     #[test]

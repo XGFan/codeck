@@ -293,7 +293,7 @@ pub fn feedback_draft(lines: &[String]) -> Option<FeedbackCard> {
 /// `❯` (spaces or a line break typed there would make a key text), the cursor right after it.
 /// `None` when no input box shows below that row.
 pub fn input_empty_below(s: &crate::screen::Screen, below: usize) -> Option<bool> {
-    if agents_page(&s.lines) || (s.moved && !mode_line_under_box(&s.lines)) {
+    if agents_page(&s.lines, s.moved) || (s.moved && !mode_line_under_box(&s.lines)) {
         return None;
     }
     let rules: Vec<usize> = (below + 1..s.lines.len())
@@ -460,10 +460,11 @@ pub fn is_input_rule(l: &str) -> bool {
 
 /// The agents page (`←` on an empty input box, 2.1.318, `tests/fixtures/screens/agents_list.txt`):
 /// its box at the bottom looks like the input box but starts a new background Session. Known by
-/// its box's placeholder, the key hints under it (they change with the selection and once
-/// something is typed), the note at its top, or its section headings at the left edge (`Working`,
-/// `Working 2` when folded; the conversation's own lines are indented or start with a mark).
-pub fn agents_page(lines: &[String]) -> bool {
+/// its box's placeholder or the key hints under it (they change with the selection and once
+/// something is typed). Once the Pane's conversation moved to the background (`moved`) also by
+/// the note at its top or its section headings at the left edge (`Working`, `Working 2` when
+/// folded; the conversation's own lines are indented or start with a mark).
+pub fn agents_page(lines: &[String], moved: bool) -> bool {
     const HINTS: [&str; 4] = [
         "ctrl+x to delete",
         "ctrl+x to stop",
@@ -490,8 +491,9 @@ pub fn agents_page(lines: &[String]) -> bool {
     }
     lines.iter().any(|l| {
         l.trim_start() == "❯ describe a task for a new session"
-            || l.starts_with("Your conversation moved to the background")
-            || heading(l.trim_end())
+            || (moved
+                && (l.starts_with("Your conversation moved to the background")
+                    || heading(l.trim_end())))
     })
 }
 
@@ -527,7 +529,7 @@ pub fn input_box(lines: &[String]) -> Option<String> {
         .collect();
     let (&bottom, rest) = rules.split_last()?;
     let &top = rest.last()?;
-    if bottom <= top + 1 || agents_page(lines) {
+    if bottom <= top + 1 || agents_page(lines, false) {
         return None;
     }
     // `❯`, or `!` in shell mode (its text then starts with `!`).
@@ -569,7 +571,7 @@ pub fn shell_input(s: &crate::screen::Screen) -> Option<String> {
 pub fn input_text(s: &crate::screen::Screen) -> Option<String> {
     // Moved to the background, the Pane may show the agents page with hints not seen yet: only
     // a box with the mode line under it is the conversation's.
-    if s.moved && !mode_line_under_box(&s.lines) {
+    if s.moved && (!mode_line_under_box(&s.lines) || agents_page(&s.lines, true)) {
         return None;
     }
     let full = input_box(&s.lines)?;
@@ -1226,17 +1228,17 @@ mod tests {
     fn agents_page_has_no_input_box() {
         // Its box starts a new background Session: never typed into.
         let list = screen("agents_list.txt");
-        assert!(agents_page(&list));
+        assert!(agents_page(&list, false));
         assert_eq!(input_box(&list), None);
         // The background Session it opens shows the usual input box and mode line.
         let bg = screen("background_session.txt");
-        assert!(!agents_page(&bg));
+        assert!(!agents_page(&bg, true));
         assert_eq!(input_box(&bg).as_deref(), Some(""));
         assert_eq!(
             permission_mode(&bg),
             Some(crate::rpc::PermissionMode::Manual)
         );
-        assert!(!agents_page(&screen("idle_prompt.txt")));
+        assert!(!agents_page(&screen("idle_prompt.txt"), true));
     }
 
     /// The agents page's hints change with the selection and once a task is typed into its box;
@@ -1273,8 +1275,8 @@ mod tests {
             "  enter to send · esc to clear",
             false,
         );
-        for l in [&stop, &draft, &unseen] {
-            assert!(agents_page(l), "{l:#?}");
+        for l in [&stop, &draft] {
+            assert!(agents_page(l, false), "{l:#?}");
             assert_eq!(input_box(l), None);
         }
         // Moved to the background: only a box with the mode line under it is the conversation's.
@@ -1283,6 +1285,21 @@ mod tests {
             moved: true,
             ..Default::default()
         };
+        // The headings count only then: a screen that merely shows such a line is not the page.
+        assert!(agents_page(&unseen, true));
+        assert!(!agents_page(&unseen, false));
+        assert_eq!(input_text(&scr(unseen)), None);
+        let mut idle = screen("idle_prompt.txt");
+        idle[0] = "Working".into();
+        assert_eq!(input_box(&idle).as_deref(), Some(""));
+        // A command typed into the background Session lists its suggestions above the box; the
+        // mode line stays under it (2.1.318).
+        let mut typed = screen("background_session.txt");
+        let n = typed.len();
+        typed[n - 5] = "  ❯ /model                      Set the AI model for Claude Code".into();
+        typed[n - 3] = "❯ /model".into();
+        typed[n - 1] = "  ⏸ manual mode on".into();
+        assert_eq!(input_text(&scr(typed)).as_deref(), Some("/model"));
         let mut odd = screen("background_session.txt");
         let n = odd.len();
         odd[n - 1] = "  enter to send · esc to clear".into();
