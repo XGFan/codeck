@@ -100,7 +100,7 @@ function FilteredList({ sel }: { sel: Selection }) {
     <>
       <div
         data-tauri-drag-region="deep"
-        className="flex h-[30px] shrink-0 items-center gap-1.5 border-b border-border pr-2 pl-4 text-[12px] text-secondary"
+        className="flex h-[30px] shrink-0 items-center gap-[6px] border-b border-border pr-[8px] pl-[16px] text-[12px] text-secondary"
       >
         {projectIds.length > 0 && (
           <span

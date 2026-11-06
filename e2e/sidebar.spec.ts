@@ -49,6 +49,46 @@ test("侧栏三块：Live 列出 Live Session，Project 按添加的顺序分组
   await expect(live.nth(2)).toHaveAttribute("aria-selected", "true");
 });
 
+test("三块的标题、Live 点、组头箭头、Recent 行的标题左边对齐；Live 标题不带数量", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("recent-row").first()).toBeVisible();
+  const lefts = await page.evaluate(() => {
+    const pane = document.querySelector("[data-testid=pane-sessions]")!.getBoundingClientRect().left;
+    // The left of the first piece of text inside `el`.
+    const text = (el: Element) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, (n) =>
+        n.textContent!.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
+      );
+      const r = document.createRange();
+      r.selectNodeContents(walker.nextNode()!);
+      return Math.round(r.getBoundingClientRect().left - pane);
+    };
+    const box = (el: Element) => Math.round(el.getBoundingClientRect().left - pane);
+    const live = document.querySelector("[data-testid=live]")!;
+    const project = [...document.querySelectorAll("[data-testid=pane-sessions] span")].find(
+      (e) => e.textContent === "Project",
+    )!;
+    return {
+      liveHeading: text(live.firstElementChild!),
+      projectHeading: text(project),
+      recentHeading: text(document.querySelector("[data-testid=recent-toggle]")!),
+      liveDot: box(live.querySelector("[data-testid=live-dot]")!),
+      groupChevron: box(document.querySelector("[data-testid=sidebar-group] svg")!),
+      recentTitle: text(document.querySelector("[data-testid=recent-row]")!),
+      liveHeadingText: live.firstElementChild!.textContent,
+    };
+  });
+  expect(lefts).toEqual({
+    liveHeading: 16,
+    projectHeading: 16,
+    recentHeading: 16,
+    liveDot: 16,
+    groupChevron: 16,
+    recentTitle: 16,
+    liveHeadingText: "Live",
+  });
+});
+
 test("AI 回复不改变 Session 在组里的位置", async ({ page }) => {
   await page.goto("/");
   const lumen = page.getByTestId("session-row").filter({ hasText: "排查 Redis 连接池泄漏" });

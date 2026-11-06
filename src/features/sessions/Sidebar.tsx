@@ -237,9 +237,7 @@ function LivePanel({
       className="flex shrink-0 flex-col pb-[6px]"
       style={{ height: LIVE_CHROME + rows * ROW_PX }}
     >
-      <div className={SECTION}>
-        Live<span className="font-normal tabular-nums">{sessions.length}</span>
-      </div>
+      <div className={SECTION}>Live</div>
       <div
         tabIndex={0}
         role="listbox"
@@ -315,11 +313,13 @@ function RecentPanel({
         onClick={onToggle}
         className={cn(
           SECTION,
-          "h-[32px] w-full cursor-default text-left outline-none focus-visible:outline-2 focus-visible:outline-accent",
+          // The chevron at the right end, where the Project list has its 「+」: the headings all start at 16px.
+          "h-[32px] w-full cursor-default pr-[14px] text-left outline-none focus-visible:outline-2 focus-visible:outline-accent",
         )}
       >
-        <Chevron open={open} />
         Recent<span className="font-normal tabular-nums">{formatCount(sessions.length)}</span>
+        <span className="flex-1" />
+        <Chevron open={open} />
       </button>
       {open && (
         <div
@@ -579,7 +579,8 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
     switch (it.kind) {
       case "section":
         return (
-          <div className={cn(SECTION, "h-full pr-0.5")}>
+          // Inside the list's 6px padding: 10px more, so it starts at 16px like 「Live」 and 「Recent」.
+          <div className={cn(SECTION, "h-full pr-[2px] pl-[10px]")}>
             <span className="flex-1">Project</span>
             {drag ? (
               <span className="font-normal">拖到要放的位置</span>
