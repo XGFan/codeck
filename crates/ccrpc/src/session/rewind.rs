@@ -157,8 +157,12 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
 impl Engine {
     /// Main Line prompts and commands in order, read on a thread (a long transcript takes a while; reads are
     /// served meanwhile).
-    fn main_prompts(&mut self) -> std::result::Result<Vec<Prompt>, CmdErr> {
-        let Some(path) = self.tailer.as_ref().map(|t| t.main_path().to_path_buf()) else {
+    /// `from`: another transcript to read them from (a Fork not yet written: its Origin Session's).
+    fn main_prompts(&mut self, from: Option<&Path>) -> std::result::Result<Vec<Prompt>, CmdErr> {
+        let Some(path) = from
+            .map(Path::to_path_buf)
+            .or_else(|| self.tailer.as_ref().map(|t| t.main_path().to_path_buf()))
+        else {
             return err("not_found", "Session 还没有 transcript");
         };
         let (tx, rx) = mpsc::channel();
@@ -178,8 +182,13 @@ impl Engine {
     }
 
     pub(super) fn rewind(&mut self, uuid: &str) -> CmdResult {
+        self.rewind_in(uuid, None)
+    }
+
+    /// `rewind`, the prompts read from `from` when given (see [`Engine::main_prompts`]).
+    pub(super) fn rewind_in(&mut self, uuid: &str, from: Option<&Path>) -> CmdResult {
         self.require(self.state == State::Idle, "not_idle")?;
-        let mut prompts = self.main_prompts()?;
+        let mut prompts = self.main_prompts(from)?;
         // Restoring the conversation shows in the transcript only with the next prompt: until then
         // the TUI's conversation ends before the prompt rewound to.
         if let Some(cut) = self
@@ -334,7 +343,7 @@ impl Engine {
 
     /// Back out of the picker / confirm page with Esc until neither is on the screen (each Esc
     /// only while one of them is).
-    fn leave_rewind(&mut self) {
+    pub(super) fn leave_rewind(&mut self) {
         let shown =
             |s: &Screen| rewind_picker(&s.lines).is_some() || rewind_confirm(&s.lines).is_some();
         for _ in 0..3 {

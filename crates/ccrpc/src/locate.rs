@@ -186,9 +186,62 @@ pub fn is_transcript_path(roots: &Roots, path: &Path) -> bool {
             .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
+/// The transcript of the Session `sid` (`<projects>/<dir>/<sid>.jsonl`): first in the directory
+/// Claude Code uses for `cwd`, then in any project directory.
+pub fn find_transcript(roots: &Roots, sid: &str, cwd: Option<&str>) -> Option<PathBuf> {
+    if sid.is_empty() || !sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return None;
+    }
+    let projects = roots.projects_dir();
+    let name = format!("{sid}.jsonl");
+    let encoded = cwd.map(|c| {
+        c.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+    });
+    let first = encoded.map(|e| projects.join(e).join(&name));
+    let rest = std::fs::read_dir(&projects)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join(&name));
+    first
+        .into_iter()
+        .chain(rest)
+        .find(|p| p.is_file() && is_transcript_path(roots, p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_a_transcript_by_session_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = Roots {
+            toh_state: None,
+            claude_config: dir.path().to_path_buf(),
+        };
+        let sid = "0f6c2b4e-1111-2222-3333-444455556666";
+        let other = dir.path().join("projects/-elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join(format!("{sid}.jsonl")), "{}\n").unwrap();
+        // Not under the cwd's directory: found in another project directory.
+        assert_eq!(
+            find_transcript(&roots, sid, Some("/w/app")),
+            Some(other.join(format!("{sid}.jsonl")))
+        );
+        // The cwd's directory comes first.
+        let own = dir.path().join("projects/-w-app");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join(format!("{sid}.jsonl")), "{}\n").unwrap();
+        assert_eq!(
+            find_transcript(&roots, sid, Some("/w/app")),
+            Some(own.join(format!("{sid}.jsonl")))
+        );
+        assert_eq!(find_transcript(&roots, "../x", Some("/w/app")), None);
+        assert_eq!(find_transcript(&roots, "missing", None), None);
+    }
 
     fn proc(pid: u32, ppid: u32, name: &str) -> Proc {
         Proc {

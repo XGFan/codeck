@@ -230,3 +230,12 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - **transcript**：转入时 OLD 末尾写 `session_cron_carry` attachment、`cost-state`、`continued-in`（`continuedInSessionId: NEW`）。idle 时转入，NEW 的文件要等下一条提示词才出现（开头是复制来的 OLD 全部条目）；回复进行中转入，NEW 立即出现：OLD 只有那条提示词、没有回复，B 写一条不带 `promptId` 的 `<system-reminder>Your previous response was interrupted mid-generation…` 用户条目，接着把回复写完，照常有 Stop（`stop_hook_summary`）与 `turn_duration`，没有 UserPromptSubmit；屏幕显示 `Continuing an interrupted response.`。
 - **挂着审批 / 提问时**：审批框与 AskUserQuestion 都吃掉 `←`，界面不变、不转入后台；要先作答。B 里的审批框也一样。
 - **退出**：在 B 的界面里输入 `/exit` 回到 agents 列表，B 照常运行；B 的界面里 `ctrl+c` 两次不退出。在 agents 列表里 `ctrl+c` 两次 P 退出，Pane 回到 shell（ccrpc 发 `session_exit`），B 留在 daemon 里继续运行、没有 Pane 显示它。
+
+## Fork（`--resume --fork-session`，2026-11-06，2.1.318）
+
+- `claude --resume <id> --fork-session` 起来后插件以 `source: "fork"` 报到（新 Session 的 id，transcript 路径指向还不存在的文件）；回退或 `/rename` 之前不写任何文件，此时退出什么都不留。
+- 回退（只恢复对话）后才写出新 transcript，只含回退点之前的历史；复制来的条目 uuid 与原 Session 相同，**没有 `forkedFrom`**。`last-prompt`、`file-history-snapshot` 里仍可能提到回退掉的那条提示词的 uuid。
+- 文件历史随之复制（`copyFileHistoryForResume`）：Fork 里回退到改过文件的提示词之前，确认页照样有「Restore code and conversation」与 ⚠ 警告，恢复的是工作目录里的文件（与原 Session 共用）。
+- `/rename` 记成本地命令（`system` / `local_command` 条目，接在 Main Line 末尾）并写 `custom-title` / `agent-name`。不回退直接 `/rename` 时整段历史分几次写出（先 `custom-title`，再是复制来的条目），所以要等文件长度稳定才算写完。
+- 选择器与确认页上的时间（`5s ago`）是原提示词的发送时间，与原 transcript 一致。
+

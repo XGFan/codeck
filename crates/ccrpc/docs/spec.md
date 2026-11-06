@@ -16,6 +16,7 @@
 
 ```
 ccrpc new [--cwd DIR] [--size COLSxROWS] [--hidden] [--log FILE] [-- claude 参数…]   # 经 toh new 在 clay 里启动 claude，然后进入 RPC 循环
+ccrpc new … --fork <sessionId> [--fork-at <uuid>] [--fork-restore conversation|both] [--fork-title 标题] [-- claude 参数…]   # 同上，启动的是那个 Session 的 Fork（见下）
 ccrpc attach [--log FILE] <Holder ID | sessionId>   # 接入已在运行的 Session，进入 RPC 循环
 ccrpc ls [--json [--watch]]                 # 本机 clay 里运行中的 Claude Code：Holder ID、sessionId、status、cwd、plugin（已报到）或 -（制表符分隔）；--json 为数组：holder_id、session_id、status、cwd、plugin、hidden、claude_pid、version、title；--watch 先打一行，之后变了再打一行
 ccrpc hide | show <Holder ID>               # 经 toh hide / toh show 在 Mac 上隐藏 / 显示这个 clay Pane
@@ -36,6 +37,7 @@ ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按�
 - `--log FILE`：追加写日志（0600）：开头一行 ccrpc 与 Claude Code 的版本、Holder、sessionId；发出的事件与响应（block 只记 kind 与 uuid，带屏幕的事件另记整屏）、状态判定、识别决策（审批框用了哪种布局、choice 的布局及其来源，并记当时的整屏）、收到的命令、插件的 hook 事件、写入的按键与粘贴（粘贴只记长度与前 60 字，即提示词的开头也会进日志）。
 - `--size`：`new` 的 PTY 初始尺寸（缺省 120×40；ToH 缺省的 80×24 里反馈草稿卡片会把输入框挤出屏幕），有人显示这个 Pane 时改成那一端的尺寸。
 - `--hidden`：Pane 开在 clay 的隐藏窗口里（`toh new --window hidden`，ToH ADR-0050），Mac Client 不显示它，iOS 与 web 照常列出；没人显示时尺寸就停在 `--size`。`ls --json` 的 `hidden` 即 Pane 在不在隐藏窗口里，不在 clay 里的 Pane（kitty 等）为 `null`。
+- **Fork**（`new --fork <sessionId>`，CoDeck 的 ADR-0009）：在 claude 参数之后追加 `--resume <sessionId> --fork-session`，`ready` 之后接着把它做成 Fork，结果以 `fork` 事件报出；做完之前（含挂起确认时）收到的命令排在它之后执行，只有不写入的命令（`get_state` 等）、作答等着调用方的界面的 `answer_choice`、`send_keys`、这次回退的 `answer_rewind` 与 `exit` 立即执行（不必等前面排着的），格式不对的行立即报错；`abort` 不会插进 Fork 的步骤。步骤：等到插件报到（`source: "fork"`，得知新 Session 的 id，照常发 `session_changed`）且 idle、输入框出现（启动界面照常以 `choice` / `dialog` 发出，由调用方作答；60 秒内没到 idle 时失败，得知新 Session 的 id 之后有 `choice` 或请求等着调用方作答的时间不计）→ 有 `--fork-at` 时回退到这条提示词之前（同 `rewind` + `answer_rewind`，但提示词按 **Origin Session** 的 transcript 找：`--fork-session` 起来后、回退或 `/rename` 之前新 Session 不写文件；`--fork-restore` 缺省为 `conversation`，`both` 时确认页没有这一项（之后没有代码改动）就按 `conversation`；选了 `both` 而确认页带 `⚠` 警告时不按，以 `rewind` 事件挂起这次回退，`options` 只列 `both` 与 `conversation`，等调用方 `answer_rewind`：选项照常作答，`cancel` 按 `conversation` 作答；还没按键就被拒绝（`unknown_request`、`not_waiting`）时仍挂起、可再答；确认页在终端里被作答时以终端的结果为准，被取消（没写出 transcript）报 `cancelled`；挂起期间 claude 退出报 `exited`）→ 有 `--fork-title` 时 `/rename <标题>`（先清空输入框里放回的提示词，不再放回；标题是单行）→ 等新 Session 的 transcript 出现（≤10s）→ 发 `fork`。Origin Session 的 transcript 按 id 在 projects 目录下找（先找 cwd 对应的目录）；新 Session 的 transcript 开头复制自它，这些条目（按 uuid）同转入后台的复制部分一样不发 `block`、不确认命令。失败（找不到 Origin Session 或 `--fork-at` 的提示词、回退失败、claude 先退出等）时发 `fork` 的 `error`，排着的命令都报 `exited`，claude 还在就退出它（先离开回退的选择器，`/exit` 不行时按两次 ctrl+c），再关掉 Pane（在 shell 里输入 `exit`），然后 ccrpc 以退出码 1 结束；做完之前 stdin 关闭或收到 SIGTERM 时同样结束 claude 与 Pane（没做完的 Fork 不留下）；回退作答之后（新 Session 已写出文件）`/rename` 失败不算失败，`fork` 带 `title_error`。
 - `ls --json` 的 `title`：transcript 里最后一条 `custom-title`，没有则最后一条 `ai-title`（transcript 取报到里的，没有报到时按 cwd 推算 `<projects>/<cwd 编码>/<sessionId>.jsonl`）。
 - 转入后台的 Pane（见 3 节）：`ls` 的 `session_id`、`status`、`cwd`、`version`、`title` 与 `plugin` 取后台 claude 的进程文件与报到；`claude_pid` 仍是 Pane 里的 claude。后台 claude 还没起来或已被停掉时照旧取 Pane 里的 claude 的。
 - `ls --json --watch`：先打一行全表，之后表变了再打一行，stdin 关闭即退出。由 `toh ls --json --watch`（Pane 来去、隐藏 / 显示）与进程文件目录、报到目录的文件事件唤醒；`ps` 只在 Pane 或进程文件增减、列出的 claude 进程不在了时重跑，标题从上次读到的位置往后读。另每 30 秒看一次，兜住没删进程文件就退出的 claude。
@@ -133,6 +135,7 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 | `progress` | busy 时屏幕上的进度行：`text`（去掉符号的整行）、`verb`、`elapsed_s`、`tokens`（没有为 null）；文字变了时发，至多每秒一次（动词变了立即发） |
 | `feedback_draft` | 模型用 SendFeedback 起草了产品反馈，Claude Code 在输入框上方显示卡片（从第 0 列画起的框，`✻ Product feedback drafted: <标题>`，末行 `1 to review · 2 to send · 0 to dismiss` 紧接底边，底边下方到输入框上沿或屏幕底只有空行或思考等级标记；对话里引用的同样文字不算）：`draft` 为 `{title, tool_use_id, input}`（主线最后一次 SendFeedback 调用，标题与卡片相同——卡片截断时以它开头——才带 `tool_use_id` 与 `input`，否则为 null；之后对上了会再发一次）。只在 idle 时判定：Claude Code 在本轮进行中隐藏卡片、对话框会盖住它，这期间草稿照旧算在；idle 时输入框显示而卡片不在满 1 秒、或经 `dismiss_feedback_draft` 关掉时 `draft` 为 null |
 | `session_changed` | `session_id`、`previous`（`ready` 时还不知道 sessionId 的为 null） |
+| `fork` | `new --fork` 做完时发一次（见第 2 节）：成功为 `session_id`（新 Session）、`origin`、`text`（回退时放回输入框的提示词全文，`!` 命令为 `! 命令`；没有 `--fork-at` 为 null）、`title`（改成的标题，没有 `--fork-title` 或改名失败为 null）、`title_error`（改名失败的原因，否则为 null）；失败为 `error: {code, message}`（`code` 同命令的错误码，`exited` 时 `message` 是 claude 退出前屏幕上的报错行） |
 | `session_exit` | — |
 
 - 不发 slash 命令的本地记录（`<command-name>` 等）与 `isMeta` 条目。

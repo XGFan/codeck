@@ -1930,3 +1930,207 @@ fn mock_model_follows_the_background_session_of_a_second_pane() {
     let st = second.call("g2", json!({"type": "get_state"}));
     assert_eq!(st["session_id"], ch["session_id"], "{st}");
 }
+
+/// `new --fork`: a Fork of a running Session from before one of its prompts (conversation only),
+/// from before the prompt that wrote a file (code too: the warning waits for the caller, cancel
+/// keeps the code), of the whole Session, and a Fork that fails (nothing left, exit code 1).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_fork() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let w = env.work.join("w.txt");
+    let write = format!("MOCK-WRITE {} now", w.display());
+    run_turn_allowing(&mut rpc, "p1", "first plain");
+    run_turn_allowing(&mut rpc, "p2", &write);
+    run_turn_allowing(&mut rpc, "p3", "third one");
+    settle_idle(&mut rpc);
+    let origin = rpc.call("g0", json!({"type": "get_state"}))["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let msgs = rpc.call("m1", json!({"type": "get_messages"}));
+    let prompts: Vec<String> = msgs["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["kind"] == "user")
+        .map(|b| b["uuid"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(prompts.len(), 3, "{prompts:?}");
+    let transcript_of = |sid: &str| -> std::path::PathBuf {
+        for d in std::fs::read_dir(env.cc_dir.join("projects"))
+            .unwrap()
+            .flatten()
+        {
+            let p = d.path().join(format!("{sid}.jsonl"));
+            if p.exists() {
+                return p;
+            }
+        }
+        panic!("没有 {sid} 的 transcript");
+    };
+    let origin_len = std::fs::metadata(transcript_of(&origin)).unwrap().len();
+    // Waits for the Fork, answering startup dialogs as `start_session` does.
+    let fork_of = |opts: &[&str]| -> (Rpc, Value) {
+        let log = std::env::var("CCRPC_E2E_FORK_LOG").unwrap_or_default();
+        let mut all = vec!["--fork", origin.as_str()];
+        if !log.is_empty() {
+            all.extend(["--log", log.as_str()]);
+        }
+        all.extend(opts);
+        let mut f = Rpc::start_in(&env, &env.work, &all);
+        let ready = f.event("ready", Duration::from_secs(20));
+        f.shell_pid = shell_pid(&env, ready["holder_id"].as_str().unwrap());
+        let done = f.until("fork", Duration::from_secs(90), |v| {
+            if v["type"] == "dialog" {
+                panic!("Fork 启动时出现了认不出的界面：{v}");
+            }
+            v["type"] == "fork" || v["type"] == "rewind"
+        });
+        (f, done)
+    };
+
+    // 1. Before the third prompt, the conversation only.
+    let (mut f1, done) = fork_of(&["--fork-at", &prompts[2], "--fork-title", "origin (Fork)"]);
+    assert!(done["error"].is_null(), "{done}");
+    let sid = done["session_id"].as_str().unwrap().to_string();
+    assert_ne!(sid, origin);
+    assert_eq!(done["origin"], origin.as_str(), "{done}");
+    assert_eq!(done["text"], "third one", "{done}");
+    assert_eq!(done["title"], "origin (Fork)", "{done}");
+    let ch = f1
+        .seen
+        .iter()
+        .find(|v| v["type"] == "session_changed")
+        .cloned();
+    assert_eq!(ch.unwrap()["session_id"], sid.as_str());
+    // The copied history comes as no blocks.
+    assert!(
+        !f1.seen
+            .iter()
+            .any(|v| v["type"] == "block" && v["kind"] == "user"),
+        "{:?}",
+        f1.seen
+    );
+    let fork_tx = std::fs::read_to_string(transcript_of(&sid)).unwrap();
+    let uuids = |tx: &str| -> Vec<String> {
+        tx.lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter_map(|v| v["uuid"].as_str().map(str::to_string))
+            .collect()
+    };
+    let entries = uuids(&fork_tx);
+    assert!(entries.contains(&prompts[0]) && entries.contains(&prompts[1]));
+    assert!(
+        !entries.contains(&prompts[2]),
+        "回退掉的提示词不该在 Fork 里"
+    );
+    assert!(fork_tx.contains("\"customTitle\":\"origin (Fork)\""));
+    // The Origin Session is untouched; the Fork goes on as any Session.
+    assert_eq!(
+        std::fs::metadata(transcript_of(&origin)).unwrap().len(),
+        origin_len
+    );
+    f1.forget();
+    f1.call("f1p", json!({"type": "prompt", "text": "after fork"}));
+    let t = f1.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["last_text"], "ok", "{t}");
+    drop(f1);
+
+    // 2. Before the prompt that wrote w.txt, code too: the warning waits; cancel keeps the code.
+    assert!(w.exists());
+    let (mut f2, rw) = fork_of(&[
+        "--fork-at",
+        &prompts[1],
+        "--fork-restore",
+        "both",
+        "--fork-title",
+        "origin (Fork 2)",
+    ]);
+    assert_eq!(rw["type"], "rewind", "{rw}");
+    assert!(rw["warning"].is_string(), "{rw}");
+    let options: Vec<&str> = rw["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["option"].as_str().unwrap())
+        .collect();
+    assert_eq!(options, ["both", "conversation"], "{rw}");
+    let st = f2.call("f2g", json!({"type": "get_state"}));
+    assert_eq!(st["request"]["request_id"], rw["request_id"], "{st}");
+    let a = f2.call(
+        "f2a",
+        json!({"type": "answer_rewind", "request_id": rw["request_id"], "cancel": true}),
+    );
+    assert_eq!(a["text"], write.as_str(), "{a}");
+    let done = f2.event("fork", Duration::from_secs(30));
+    assert!(done["error"].is_null(), "{done}");
+    assert_eq!(done["text"], write.as_str(), "{done}");
+    assert!(w.exists(), "取消时只恢复对话，代码不变");
+    drop(f2);
+
+    // 3. The whole Session.
+    let (f3, done) = fork_of(&["--fork-title", "origin (Fork 3)"]);
+    assert!(done["error"].is_null(), "{done}");
+    assert!(done["text"].is_null(), "{done}");
+    let tx = std::fs::read_to_string(transcript_of(done["session_id"].as_str().unwrap())).unwrap();
+    let entries = uuids(&tx);
+    assert!(
+        prompts.iter().all(|p| entries.contains(p)),
+        "整段 Fork 应含全部提示词"
+    );
+    drop(f3);
+
+    // 3b. A prompt sent right after `ready` waits for the Fork, then goes into the new Session.
+    let log = std::env::var("CCRPC_E2E_FORK_LOG").unwrap_or_default();
+    let mut opts = vec!["--fork", origin.as_str(), "--fork-at", &prompts[2]];
+    if !log.is_empty() {
+        opts.extend(["--log", log.as_str()]);
+    }
+    let mut f5 = Rpc::start_in(&env, &env.work, &opts);
+    let ready = f5.event("ready", Duration::from_secs(20));
+    f5.shell_pid = shell_pid(&env, ready["holder_id"].as_str().unwrap());
+    f5.send(json!({"id": "early", "type": "prompt", "text": "early prompt"}));
+    let done = f5.event("fork", Duration::from_secs(90));
+    assert!(done["error"].is_null(), "{done}");
+    let r = f5.until("early", Duration::from_secs(60), |v| v["id"] == "early");
+    assert_eq!(r["success"], true, "{r}");
+    let tx = std::fs::read_to_string(transcript_of(done["session_id"].as_str().unwrap())).unwrap();
+    assert!(tx.contains("early prompt"));
+    drop(f5);
+
+    // 3c. The warning's confirm page left with Esc in the TUI: no rewind, the Fork is cancelled.
+    let (mut f6, rw) = fork_of(&["--fork-at", &prompts[1], "--fork-restore", "both"]);
+    assert_eq!(rw["type"], "rewind", "{rw}");
+    f6.call("esc", json!({"type": "send_keys", "keys": ["esc", "esc"]}));
+    let done = f6.event("fork", Duration::from_secs(30));
+    assert_eq!(done["error"]["code"], "cancelled", "{done}");
+    f6.stdin.take();
+    assert_eq!(f6.child.wait().unwrap().code(), Some(1));
+
+    // 4. A prompt that is not on the Main Line: the Fork fails and ccrpc ends with 1.
+    let (mut f4, done) = fork_of(&["--fork-at", "00000000-0000-0000-0000-000000000000"]);
+    assert_eq!(done["error"]["code"], "not_found", "{done}");
+    f4.stdin.take();
+    let status = f4.child.wait().unwrap();
+    assert_eq!(status.code(), Some(1));
+
+    // 5. No such Session: refused before any Pane is opened.
+    let out = ccrpc_cmd(&env)
+        .args(["new", "--cwd"])
+        .arg(&env.work)
+        .args([
+            "--fork",
+            "11111111-2222-3333-4444-555555555555",
+            "--",
+            "--plugin-dir",
+        ])
+        .arg(&env.plugin_dir)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("找不到 Session"));
+}

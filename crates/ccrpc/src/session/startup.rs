@@ -2,6 +2,7 @@
 //! `toh`, and running the engine on stdin.
 
 use super::*;
+use crate::rpc::RewindOption;
 
 fn stdin_lines(wake: Arc<Wake>) -> Receiver<String> {
     let (tx, rx) = mpsc::channel();
@@ -148,10 +149,23 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     let mut cwd = None;
     let mut hidden = false;
     let mut size = WORK_SIZE;
+    let (mut fork, mut fork_at, mut fork_restore, mut fork_title) = (None, None, None, None);
     let mut it = opts.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--cwd" => cwd = Some(it.next().context("--cwd 需要目录")?.clone()),
+            "--fork" => fork = Some(it.next().context("--fork 需要 sessionId")?.clone()),
+            "--fork-at" => fork_at = Some(it.next().context("--fork-at 需要 uuid")?.clone()),
+            "--fork-restore" => {
+                fork_restore = Some(match it.next().map(String::as_str) {
+                    Some("conversation") => RewindOption::Conversation,
+                    Some("both") => RewindOption::Both,
+                    _ => bail!("--fork-restore 只能是 conversation 或 both"),
+                })
+            }
+            "--fork-title" => {
+                fork_title = Some(it.next().context("--fork-title 需要标题")?.clone())
+            }
             "--hidden" => hidden = true,
             "--log" => crate::log::open(Path::new(it.next().context("--log 需要文件")?))?,
             "--size" => size = parse_size(it.next().context("--size 需要 COLSxROWS")?)?,
@@ -161,6 +175,28 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     // The plugin must be there for the Session to be controllable (ADR-0003).
     if !claude_args.iter().any(|a| a == "--plugin-dir") && !crate::plugin::enabled(roots) {
         bail!("ccrpc 插件未启用：先运行 ccrpc plugin install");
+    }
+    let fork = match fork {
+        Some(origin) => Some(fork_job(
+            roots,
+            origin,
+            cwd.as_deref(),
+            fork_at,
+            fork_restore,
+            fork_title,
+        )?),
+        None if fork_at.is_some() || fork_restore.is_some() || fork_title.is_some() => {
+            bail!("--fork-at、--fork-restore、--fork-title 要和 --fork 一起用")
+        }
+        None => None,
+    };
+    let mut claude_args = claude_args.to_vec();
+    if let Some(f) = &fork {
+        claude_args.extend([
+            "--resume".to_string(),
+            f.origin.clone(),
+            "--fork-session".to_string(),
+        ]);
     }
     let mut toh_args = Vec::new();
     if let Some(d) = &cwd {
@@ -196,5 +232,58 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     toh_args.push("claude".into());
     toh_args.extend(claude_args.iter().cloned());
     let pane = toh::new_pane(roots, &toh_args)?;
-    run_engine(Engine::open(roots.clone(), &pane, Out::stdout())?)
+    let mut e = Engine::open(roots.clone(), &pane, Out::stdout())?;
+    e.fork = fork;
+    run_engine(e)
+}
+
+/// A Session ID or entry uuid: letters, digits and `-`, not starting with `-` (it goes into
+/// claude's arguments).
+fn is_id(s: &str) -> bool {
+    s.len() <= 64
+        && s.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// `new --fork`: what to make of the Session started from `origin` (its transcript must be there).
+fn fork_job(
+    roots: &Roots,
+    origin: String,
+    cwd: Option<&str>,
+    at: Option<String>,
+    restore: Option<RewindOption>,
+    title: Option<String>,
+) -> Result<ForkJob> {
+    if !is_id(&origin) {
+        bail!("--fork 的 sessionId 不对：{origin}");
+    }
+    if at.as_deref().is_some_and(|u| !is_id(u)) {
+        bail!("--fork-at 的 uuid 不对");
+    }
+    if restore.is_some() && at.is_none() {
+        bail!("--fork-restore 要和 --fork-at 一起用");
+    }
+    let title = match title {
+        Some(t) => {
+            let t = pty::sanitize(&t).trim().to_string();
+            if t.is_empty() || t.contains(['\n', '\t']) {
+                bail!("--fork-title 须是非空的一行");
+            }
+            Some(t)
+        }
+        None => None,
+    };
+    let here = std::env::current_dir().ok();
+    let cwd = cwd
+        .map(str::to_string)
+        .or_else(|| here.map(|d| d.display().to_string()));
+    let path = locate::find_transcript(roots, &origin, cwd.as_deref())
+        .with_context(|| format!("找不到 Session {origin} 的 transcript"))?;
+    Ok(ForkJob::new(
+        origin,
+        path,
+        at,
+        restore.unwrap_or(RewindOption::Conversation),
+        title,
+    ))
 }

@@ -31,6 +31,7 @@ use crate::wake::{FsWatch, Wake};
 
 mod announce;
 mod drive;
+mod fork;
 mod requests;
 mod rewind;
 mod startup;
@@ -38,6 +39,7 @@ mod tasks;
 mod turn;
 
 use self::announce::Announced;
+pub use self::fork::ForkJob;
 use self::requests::{HookPrompt, HookRequest, PreTool};
 use self::rewind::RewindReq;
 pub use self::startup::{cmd_attach, cmd_new, resolve_target};
@@ -252,6 +254,8 @@ pub struct Engine {
     /// The prompt a conversation restore went back before: the TUI's conversation ends before it
     /// until the transcript shows the next prompt.
     rewound: Option<String>,
+    /// `new --fork`: the Fork still to be made (or done).
+    fork: Option<ForkJob>,
     /// What went out for the current waiting.
     announced: Option<Announced>,
     startup_checked: Option<Instant>,
@@ -354,6 +358,7 @@ impl Engine {
             rewind: None,
             rewind_seq: 0,
             rewound: None,
+            fork: None,
             announced: None,
             startup_checked: None,
             startup_last: None,
@@ -571,6 +576,13 @@ impl Engine {
         if self.session_id.as_deref() == Some(sid.as_str()) && self.tailer.is_some() {
             return;
         }
+        // A Fork's first Session (from its check-in or its SessionStart) starts with a copy of
+        // the Origin Session's entries.
+        let copied = if copied.is_empty() && self.session_id.is_none() {
+            self.fork_copied()
+        } else {
+            copied
+        };
         let prev = self.session_id.replace(sid.clone());
         // Also the first one after `ready` (`new`: the plugin checks in after the startup screens).
         if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
@@ -1119,7 +1131,9 @@ impl Engine {
             Command::DismissFeedbackDraft => self.dismiss_feedback_draft(),
             Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
             Command::Rewind { uuid } => self.rewind(uuid),
-            Command::AnswerRewind { request_id, option } => self.answer_rewind(request_id, *option),
+            Command::AnswerRewind { request_id, option } => {
+                self.answer_rewind_cmd(request_id, *option)
+            }
             Command::Steer { input } => self.steer_input(input),
             Command::FollowUp { input } => {
                 self.require(true, "")?;
@@ -1259,7 +1273,25 @@ impl Engine {
             // Between commands only: a command in progress is never cut off.
             if startup::terminated() {
                 crate::clog!("SIGTERM: detaching");
+                if self.fork_unfinished() {
+                    self.end_fork_pane();
+                }
                 break;
+            }
+            // `new --fork`: nothing that writes runs before the Fork is made. Disconnected
+            // before it is: its claude and Pane end (a Fork not made is not left behind).
+            if self.fork_holding() {
+                let seen = self.wake.seen();
+                self.tick();
+                self.step_fork();
+                if self.fork_holding() {
+                    if !self.take_input_while_forking() {
+                        self.end_fork_pane();
+                        break;
+                    }
+                    self.wake.wait(seen, IDLE_TICK);
+                }
+                continue;
             }
             // Lines read while the last command ran come first, in order.
             if let Some(line) = self.deferred.pop_front() {
@@ -1335,6 +1367,7 @@ impl Engine {
             }
         }
         if self.abort_point
+            && !self.fork_unfinished()
             && matches!(self.state, State::Busy | State::Waiting { .. })
             && self
                 .deferred

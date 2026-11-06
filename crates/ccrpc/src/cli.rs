@@ -15,6 +15,7 @@ use crate::wake::{FsWatch, Wake};
 
 const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir DIR] <命令>
   ccrpc new [--cwd DIR] [--size COLSxROWS] [--hidden] [--log FILE] [-- claude 参数…]
+  ccrpc new … --fork <sessionId> [--fork-at <uuid>] [--fork-restore conversation|both] [--fork-title 标题] [-- claude 参数…]
   ccrpc attach [--log FILE] <Holder ID | sessionId>
   ccrpc ls [--json [--watch]]
   ccrpc hide | show <Holder ID>
