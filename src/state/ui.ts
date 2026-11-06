@@ -9,8 +9,16 @@ const WEEKLY_RESET_KEY = "codeck.weeklyReset";
 const CONV_WIDTH_KEY = "codeck.conversationWidth";
 const AUTO_CONNECT_KEY = "codeck.autoConnect";
 const SIDEBAR_EXPANDED_KEY = "codeck.sidebarExpanded";
+const SIDEBAR_WIDTH_KEY = "codeck.sidebarWidth";
+const RECENT_ROWS_KEY = "codeck.recentRows";
 
-/** The conversation column's width (px): dragged at its edges, centered; double-click goes back to the default. */
+/** The sidebar's width (px): dragged at its right edge; double-click goes back to the default. */
+export const SIDEBAR_WIDTH = { default: 320, min: 240, max: 440 };
+
+/** 「Recent」's rows: dragged at its top edge, whole rows, at least one. */
+export const RECENT_ROWS = { default: 6, min: 1, max: 60 };
+
+/** The conversation column's width (px), set in 「设置 › 通用」; centered. */
 export const CONV_WIDTH = { default: 720, min: 480, max: 1600 };
 
 /** A remembered preference over `fallback`; `fallback` alone when storage is unavailable or garbled. */
@@ -24,6 +32,10 @@ function load<T extends object>(key: string, fallback: T): T {
 
 function clampWidth(px: number): number {
   return Number.isFinite(px) ? Math.round(Math.min(CONV_WIDTH.max, Math.max(CONV_WIDTH.min, px))) : CONV_WIDTH.default;
+}
+
+function clamp(n: number, r: { default: number; min: number; max: number }): number {
+  return Number.isFinite(n) ? Math.round(Math.min(r.max, Math.max(r.min, n))) : r.default;
 }
 
 function save(key: string, value: unknown) {
@@ -96,6 +108,12 @@ interface UiState {
   setSidebarExpanded: (changes: Record<string, boolean>) => void;
   /** Rows shown per sidebar list after 「显示更多」 (`FIRST_ROWS` when absent). */
   sidebarLimits: Record<string, number>;
+  /** The sidebar's width (`SIDEBAR_WIDTH`); remembered across launches. */
+  sidebarWidth: number;
+  setSidebarWidth: (px: number) => void;
+  /** 「Recent」's rows when there is room (`RECENT_ROWS`); remembered across launches. */
+  recentRows: number;
+  setRecentRows: (rows: number) => void;
   setSidebarLimits: (changes: Record<string, number>) => void;
   /** 「新建 Session」 (⌘N): pick the directory. */
   newSessionOpen: boolean;
@@ -155,6 +173,18 @@ export const useUi = create<UiState>()((set) => ({
       return { sidebarExpanded };
     }),
   sidebarLimits: {},
+  sidebarWidth: clamp(load(SIDEBAR_WIDTH_KEY, { px: SIDEBAR_WIDTH.default }).px, SIDEBAR_WIDTH),
+  setSidebarWidth: (px) => {
+    const sidebarWidth = clamp(px, SIDEBAR_WIDTH);
+    save(SIDEBAR_WIDTH_KEY, { px: sidebarWidth });
+    set({ sidebarWidth });
+  },
+  recentRows: clamp(load(RECENT_ROWS_KEY, { rows: RECENT_ROWS.default }).rows, RECENT_ROWS),
+  setRecentRows: (rows) => {
+    const recentRows = clamp(rows, RECENT_ROWS);
+    save(RECENT_ROWS_KEY, { rows: recentRows });
+    set({ recentRows });
+  },
   setSidebarLimits: (changes) => set((s) => ({ sidebarLimits: { ...s.sidebarLimits, ...changes } })),
   newSessionOpen: false,
   setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),

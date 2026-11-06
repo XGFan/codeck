@@ -12,7 +12,7 @@ import { useHotkey } from "@/lib/hotkeys";
 import { api } from "@/ipc";
 import type { DataRootSource } from "@/ipc/bindings";
 import { queryKeys, useAppInfo, useIndexStatus } from "@/queries";
-import { useUi } from "@/state/ui";
+import { CONV_WIDTH, useUi } from "@/state/ui";
 import { errorText } from "@/lib/errors";
 import { cn } from "@/lib/cn";
 import { setThemePref, type ThemePref, useThemePref } from "@/lib/theme";
@@ -76,6 +76,37 @@ function WeeklyResetField() {
         <span>重置</span>
       </div>
       <div className="text-[12px] text-secondary">统计页的「本周期」从最近一次重置算起，按本机时区。</div>
+    </div>
+  );
+}
+
+/** The conversation column's width (`CONV_WIDTH`), centered in the pane; narrower panes narrow it too. */
+function ConvWidthField() {
+  const width = useUi((s) => s.convWidth);
+  const setWidth = useUi((s) => s.setConvWidth);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-3">
+        <input
+          type="range"
+          aria-label="对话宽度"
+          min={CONV_WIDTH.min}
+          max={CONV_WIDTH.max}
+          step={20}
+          value={width}
+          onChange={(e) => setWidth(Number(e.target.value))}
+          className="w-56 accent-accent"
+        />
+        <span data-testid="conv-width-value" className="w-16 text-[13px] tabular-nums">
+          {width} px
+        </span>
+        <Button variant="outline" disabled={width === CONV_WIDTH.default} onClick={() => setWidth(CONV_WIDTH.default)}>
+          恢复默认
+        </Button>
+      </div>
+      <div className="text-[12px] text-secondary">
+        对话记录与输入区的宽度，居中显示；窗口窄时随之变窄。默认 720 px。
+      </div>
     </div>
   );
 }
@@ -151,6 +182,9 @@ function GeneralTab() {
             打开可以 Connect 的 Session 时自动 Connect；Disconnect 后要再次打开才会再连。
           </div>
         </div>
+      </Row>
+      <Row label="对话宽度" testId="set-conv-width">
+        <ConvWidthField />
       </Row>
       <Row label="统计周期" testId="set-cycle">
         <WeeklyResetField />

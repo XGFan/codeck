@@ -139,7 +139,7 @@ export function AddProjectDialog({
             侧栏只显示添加的 Project，其余 Session 在「其他」里。
           </DialogDescription>
         </div>
-        <label className="mx-[18px] mb-1.5 flex h-8 items-center gap-2 rounded-lg border border-border px-2.5">
+        <label className="mx-[18px] mb-1.5 flex h-[32px] items-center gap-2 rounded-lg border border-border px-2.5">
           <Search size={14} strokeWidth={1.8} className="shrink-0 text-secondary" aria-hidden />
           <input
             value={query}
@@ -198,4 +198,4 @@ export function AddProjectDialog({
 }
 
 const BUTTON =
-  "flex h-7 items-center gap-1.5 rounded-md border border-border bg-ground px-3 text-[12px] text-text outline-none focus-visible:outline-2 focus-visible:outline-accent";
+  "flex h-[28px] items-center gap-1.5 rounded-md border border-border bg-ground px-3 text-[12px] text-text outline-none focus-visible:outline-2 focus-visible:outline-accent";

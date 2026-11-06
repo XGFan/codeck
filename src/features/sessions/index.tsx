@@ -147,7 +147,7 @@ function FilteredList({ sel }: { sel: Selection }) {
         role="listbox"
         aria-label="Session 列表"
         onKeyDown={onKeyDown}
-        className="min-h-0 flex-1 overflow-y-auto px-1.5 pt-1 pb-2.5 outline-none"
+        className="min-h-0 flex-1 overflow-y-auto px-[6px] pt-[4px] pb-[10px] outline-none"
       >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((v) => {

@@ -1,7 +1,7 @@
 import { useUi } from "@/state/ui";
 import { ConnectPanel, ConnectRoot, ElsewhereBanner } from "@/features/connect";
 import { FindBar } from "@/features/find";
-import { StatsToggle, Toolbar, useSessionsHidden } from "@/features/layout";
+import { SidebarResizer, StatsToggle, Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
 import { SearchOverlay } from "@/features/search";
 import { SessionHeader } from "@/features/header";
@@ -18,20 +18,22 @@ export default function App() {
   const hideList = useSessionsHidden().hidden;
   // The conversation column's width, for the transcript and the input area under it.
   const convWidth = useUi((s) => s.convWidth);
+  const sidebarWidth = useUi((s) => s.sidebarWidth);
 
   return (
     <div className="grid h-full grid-rows-[1fr]" style={{ "--conv-w": `${convWidth}px` } as React.CSSProperties}>
-      <div className="grid min-h-0" style={{ gridTemplateColumns: `${hideList ? 0 : 320}px 1fr` }}>
+      <div className="grid min-h-0" style={{ gridTemplateColumns: `${hideList ? 0 : sidebarWidth}px 1fr` }}>
         <section
           data-testid="pane-sessions"
           aria-hidden={hideList || undefined}
           className={cn(
-            "flex min-h-0 flex-col border-r border-border bg-list",
+            "relative flex min-h-0 flex-col border-r border-border bg-list",
             hideList && "invisible overflow-hidden border-r-0",
           )}
         >
           <SessionList />
           {!hideList && <StatusBar />}
+          {!hideList && <SidebarResizer />}
         </section>
 
         <main data-testid="pane-conversation" className="flex min-h-0 min-w-0 flex-col bg-ground">

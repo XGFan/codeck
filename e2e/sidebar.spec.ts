@@ -199,6 +199,53 @@ test("拖动时上面的组展开着：被按住的组头留在原处，手抖�
   await expect.poll(paths).toEqual(["orbit-web", "lumen-api", "homelab-infra"]);
 });
 
+test("侧栏宽度：拖动右边缘调节（240–440），重启后保持，双击恢复 320", async ({ page }) => {
+  await page.goto("/");
+  const pane = page.getByTestId("pane-sessions");
+  const width = async () => Math.round((await pane.boundingBox())!.width);
+  expect(await width()).toBe(320);
+  const h = (await page.getByTestId("sidebar-resize").boundingBox())!;
+  await page.mouse.move(h.x + h.width / 2, h.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(h.x + h.width / 2 + 60, h.y + 300, { steps: 4 });
+  await page.mouse.up();
+  expect(await width()).toBe(380);
+  // Not past the limits.
+  await page.mouse.move(h.x + 60 + h.width / 2, h.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(h.x + 400, h.y + 300, { steps: 4 });
+  await page.mouse.up();
+  expect(await width()).toBe(440);
+  await page.reload();
+  expect(await width()).toBe(440);
+  await page.getByTestId("sidebar-resize").dblclick();
+  expect(await width()).toBe(320);
+});
+
+test("Recent 高度：拖动上边缘按整行调节，最少 1 行，重启后保持", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+  const recent = page.getByTestId("recent");
+  const rows = async () => Math.round(((await recent.boundingBox())!.height - 37) / 28);
+  await expect(page.getByTestId("recent-row").first()).toBeVisible();
+  // 8 Sessions, 6 shown at first.
+  expect(await rows()).toBe(6);
+  const drag = async (dy: number) => {
+    const h = (await page.getByTestId("recent-resize").boundingBox())!;
+    await page.mouse.move(h.x + 100, h.y + h.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(h.x + 100, h.y + h.height / 2 + dy, { steps: 4 });
+    await page.mouse.up();
+  };
+  await drag(-56);
+  expect(await rows()).toBe(8);
+  await drag(400);
+  expect(await rows()).toBe(1);
+  await page.reload();
+  await expect(page.getByTestId("recent-row").first()).toBeVisible();
+  expect(await rows()).toBe(1);
+});
+
 test("Recent 可收起，重启后保持", async ({ page }) => {
   await page.goto("/");
   const toggle = page.getByTestId("recent-toggle");
@@ -206,6 +253,9 @@ test("Recent 可收起，重启后保持", async ({ page }) => {
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByTestId("recent-row")).toHaveCount(0);
+  // Collapsed, the heading is centered in what is left: a 32px heading under the border.
+  expect(Math.round((await page.getByTestId("recent").boundingBox())!.height)).toBe(33);
+  expect(Math.round((await toggle.boundingBox())!.height)).toBe(32);
   await page.reload();
   await expect(page.getByTestId("recent-toggle")).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByTestId("recent-row")).toHaveCount(0);

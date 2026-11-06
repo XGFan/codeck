@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectSummary, SessionSummary } from "@/ipc/bindings";
-import { buildSidebar, fitRows, flatten, groupKey, moveEntry, restKey, reveal, subKey, suggested } from "./groups";
+import {
+  buildSidebar,
+  fitRows,
+  flatten,
+  groupKey,
+  moveEntry,
+  recentRoom,
+  restKey,
+  reveal,
+  subKey,
+  suggested,
+} from "./groups";
 
 const NOW = Date.UTC(2026, 10, 6, 12);
 const MIN = 60_000;
@@ -151,6 +162,17 @@ describe("moveEntry", () => {
     expect(moveEntry(abc, 0, 3)).toEqual(["b", "c", "a"]);
     expect(moveEntry(abc, 0, 2)).toEqual(["b", "a", "c"]);
     expect(moveEntry(abc, 1, 1)).toEqual(abc);
+  });
+});
+
+describe("fitRows with the user's Recent rows", () => {
+  it("uses the dragged row count while there is room, and still shrinks Recent first in a short column", () => {
+    expect(fitRows(900, 2, 1800, true, 10)).toEqual({ live: 2, recent: 10 });
+    expect(fitRows(900, 2, 3, true, 10)).toEqual({ live: 2, recent: 3 });
+    // 2 Live (34 + 56) + Recent chrome 37 + the Project list's 155 leave 318 px: 11 rows.
+    expect(recentRoom(600, 2)).toBe(Math.floor((600 - 90 - 37 - 155) / 28));
+    expect(fitRows(600, 2, 1800, true, 30)).toEqual({ live: 2, recent: recentRoom(600, 2) });
+    expect(recentRoom(100, 5)).toBe(1);
   });
 });
 

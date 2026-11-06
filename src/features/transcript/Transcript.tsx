@@ -11,7 +11,7 @@ import { useFollowBottom, usePublishTurns, useRows, useScrollRequestConsumer } f
 import { isContinuation, RowView } from "./nodes";
 import { scrollToNode, TranscriptContext, type TranscriptCtx } from "./nodes/scroll";
 import { peerNames } from "./teammate";
-import { WidthHandles } from "./WidthHandles";
+import { ColumnBox } from "./ColumnBox";
 import { errorText } from "@/lib/errors";
 
 /**
@@ -276,7 +276,7 @@ export function TranscriptList({
           )}
         </div>
         <OverlayScrollbar scrollRef={scrollRef} onUserScroll={unlockTurn} testId={testId && `${testId}-scrollbar`} />
-        {isMain && <WidthHandles />}
+        {isMain && <ColumnBox />}
         {unread && (
           // Centered by flex, not translate(-50%): an odd width would put the text on a half pixel, which blurs it.
           <div

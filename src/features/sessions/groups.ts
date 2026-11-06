@@ -194,7 +194,6 @@ export function moveEntry<T>(entries: T[], from: number, to: number): T[] {
 
 export const ROW_PX = 28;
 export const LIVE_ROWS = 5;
-export const RECENT_ROWS = 6;
 /** 「Live」's heading and padding; 「Recent」's heading, padding and top border. */
 export const LIVE_CHROME = 34;
 export const RECENT_CHROME = 37;
@@ -203,23 +202,30 @@ const MIDDLE_MIN = 32 + 4 * ROW_PX + 10 + 1;
 
 /**
  * Rows shown by 「Live」 and 「Recent」 in a column `height` px tall (between 「新建 Session」 and the foot): up to 5
- * and 6, then fewer — 「Recent」 first, down to one each — while the Project list would get less than its heading
- * and 4 rows. A list with nothing in it is not shown.
+ * and `recentRows` (the user's, 6 at first), then fewer — 「Recent」 first, down to one each — while the Project
+ * list would get less than its heading and 4 rows. A list with nothing in it is not shown.
  */
 export function fitRows(
   height: number,
   live: number,
   recent: number,
   recentOpen: boolean,
+  recentRows = 6,
 ): { live: number; recent: number } {
   let l = Math.min(live, LIVE_ROWS);
-  let r = recentOpen ? Math.min(recent, RECENT_ROWS) : 0;
+  let r = recentOpen ? Math.min(recent, recentRows) : 0;
   // Collapsed, 「Recent」 is its heading and border alone (no list padding).
   const recentH = () => (!recent ? 0 : recentOpen ? RECENT_CHROME + r * ROW_PX : RECENT_CHROME - 4);
   const used = () => (live ? LIVE_CHROME + l * ROW_PX : 0) + recentH() + MIDDLE_MIN;
   while (used() > height && r > 1) r--;
   while (used() > height && l > 1) l--;
   return { live: l, recent: r };
+}
+
+/** The most rows 「Recent」 can be dragged to: what leaves the Project list its heading and 4 rows. */
+export function recentRoom(height: number, liveShown: number): number {
+  const live = liveShown ? LIVE_CHROME + liveShown * ROW_PX : 0;
+  return Math.max(1, Math.floor((height - live - RECENT_CHROME - MIDDLE_MIN) / ROW_PX));
 }
 
 /** Rows a list shows before 「显示更多」, and how many more each click adds. */

@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSyncExternalStore } from "react";
 import { useHotkey } from "@/lib/hotkeys";
 import { cn } from "@/lib/cn";
-import { useUi, type CollapsiblePane } from "@/state/ui";
+import { SIDEBAR_WIDTH, useUi, type CollapsiblePane } from "@/state/ui";
 
 let fullScreen = false;
 const fullScreenListeners = new Set<() => void>();
@@ -133,6 +133,55 @@ export function Toolbar({ children }: { children?: React.ReactNode }) {
         <Search size={16} strokeWidth={1.6} aria-hidden />
       </button>
       {children}
+    </div>
+  );
+}
+
+/**
+ * The sidebar's right edge: dragged, its width (`SIDEBAR_WIDTH`); double-click goes back to the default; ← / →
+ * when focused. Inside the sidebar, clear of the conversation.
+ */
+export function SidebarResizer() {
+  const setWidth = useUi((s) => s.setSidebarWidth);
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const w0 = useUi.getState().sidebarWidth;
+    const move = (m: PointerEvent) => setWidth(w0 + m.clientX - x0);
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+  const keys = (e: React.KeyboardEvent) => {
+    const d = e.key === "ArrowRight" ? 20 : e.key === "ArrowLeft" ? -20 : 0;
+    if (!d) return;
+    e.preventDefault();
+    setWidth(useUi.getState().sidebarWidth + d);
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="拖动调节侧栏宽度，双击恢复默认"
+      title="拖动调节侧栏宽度，双击恢复默认"
+      tabIndex={0}
+      data-testid="sidebar-resize"
+      onPointerDown={drag}
+      onDoubleClick={() => setWidth(SIDEBAR_WIDTH.default)}
+      onKeyDown={keys}
+      className="group/s absolute inset-y-0 right-0 z-10 w-[5px] cursor-col-resize outline-none"
+    >
+      <span className="absolute inset-y-0 right-0 w-px bg-transparent transition-colors group-hover/s:bg-accent group-focus-visible/s:bg-accent" />
     </div>
   );
 }

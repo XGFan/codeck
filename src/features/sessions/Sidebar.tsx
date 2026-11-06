@@ -30,6 +30,7 @@ import {
   moveEntry,
   RECENT_CHROME,
   RECENT_KEY,
+  recentRoom,
   reveal,
   ROW_PX,
   type Group,
@@ -158,18 +159,20 @@ export function SidebarColumn({ data, middle }: { data: SidebarData; middle?: (s
   const live = sidebar?.live ?? [];
   const recent = sidebar?.recent ?? [];
   const recentOpen = isOpen(expanded, RECENT_KEY);
-  const rows = fitRows(height, live.length, recent.length, recentOpen);
+  const recentRows = useUi((s) => s.recentRows);
+  const setRecentRows = useUi((s) => s.setRecentRows);
+  const rows = fitRows(height, live.length, recent.length, recentOpen, recentRows);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* The toolbar (list toggle, search) floats in this strip, right after the traffic lights. */}
       <div data-tauri-drag-region="deep" className="h-10 shrink-0" />
-      <div className="shrink-0 px-1.5 pb-0.5">
+      <div className="shrink-0 px-[6px] pb-[2px]">
         <button
           type="button"
           data-testid="new-session"
           onClick={() => setNewSessionOpen(true)}
-          className={cn(ROW, "h-[30px] gap-2 pl-2.5")}
+          className={cn(ROW, "h-[30px] gap-[8px] pl-[10px]")}
         >
           <SquarePen size={15} strokeWidth={1.6} className="shrink-0 text-secondary" aria-hidden />
           <span className="flex-1">新建 Session</span>
@@ -186,6 +189,8 @@ export function SidebarColumn({ data, middle }: { data: SidebarData; middle?: (s
           <RecentPanel
             sessions={recent}
             rows={rows.recent}
+            room={recentRoom(height, live.length ? rows.live : 0)}
+            onResize={setRecentRows}
             open={recentOpen}
             onToggle={() => setExpanded({ [RECENT_KEY]: !recentOpen })}
             names={names}
@@ -229,7 +234,7 @@ function LivePanel({
     <section
       aria-label="Live"
       data-testid="live"
-      className="flex shrink-0 flex-col pb-1.5"
+      className="flex shrink-0 flex-col pb-[6px]"
       style={{ height: LIVE_CHROME + rows * ROW_PX }}
     >
       <div className={SECTION}>
@@ -243,7 +248,7 @@ function LivePanel({
           (listEl.current?.children[i] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest" }),
         )}
         ref={listEl}
-        className="min-h-0 flex-1 overflow-y-auto px-1.5 outline-none"
+        className="min-h-0 flex-1 overflow-y-auto px-[6px] outline-none"
       >
         {sessions.map((s) => (
           <Row
@@ -267,6 +272,8 @@ function LivePanel({
 function RecentPanel({
   sessions,
   rows,
+  room,
+  onResize,
   open,
   onToggle,
   names,
@@ -274,6 +281,10 @@ function RecentPanel({
 }: {
   sessions: SideSession[];
   rows: number;
+  /** The most rows there is room for. */
+  room: number;
+  /** Dragged (or ↑↓ on) its top edge: the rows it is to have. */
+  onResize: (rows: number) => void;
   open: boolean;
   onToggle: () => void;
   names: Map<string, string>;
@@ -292,10 +303,11 @@ function RecentPanel({
     <section
       aria-label="Recent"
       data-testid="recent"
-      className="flex shrink-0 flex-col border-t border-border"
+      className="relative flex shrink-0 flex-col border-t border-border"
       // Collapsed: the heading and the border, without the list's bottom padding.
       style={{ height: open ? RECENT_CHROME + rows * ROW_PX : RECENT_CHROME - 4 }}
     >
+      {open && <RowsHandle rows={rows} room={room} onResize={onResize} />}
       <button
         type="button"
         data-testid="recent-toggle"
@@ -303,7 +315,7 @@ function RecentPanel({
         onClick={onToggle}
         className={cn(
           SECTION,
-          "h-8 w-full cursor-default text-left outline-none focus-visible:outline-2 focus-visible:outline-accent",
+          "h-[32px] w-full cursor-default text-left outline-none focus-visible:outline-2 focus-visible:outline-accent",
         )}
       >
         <Chevron open={open} />
@@ -316,7 +328,7 @@ function RecentPanel({
           role="listbox"
           aria-label="Recent Session"
           onKeyDown={arrowKeys(ids, sel, (i) => virtualizer.scrollToIndex(i, { align: "auto" }))}
-          className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1 outline-none"
+          className="min-h-0 flex-1 overflow-y-auto px-[6px] pb-[4px] outline-none"
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((v) => {
@@ -343,6 +355,56 @@ function RecentPanel({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * 「Recent」's top edge: dragged, its height in whole rows (at least one, at most `room`); ↑ / ↓ when focused.
+ * Inside the panel, clear of the Project list's last row.
+ */
+function RowsHandle({ rows, room, onResize }: { rows: number; room: number; onResize: (rows: number) => void }) {
+  const fit = (n: number) => Math.max(1, Math.min(room, n));
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const y0 = e.clientY;
+    const move = (m: PointerEvent) => onResize(fit(rows + Math.round((y0 - m.clientY) / ROW_PX)));
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "row-resize";
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+  const keys = (e: React.KeyboardEvent) => {
+    const d = e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    onResize(fit(rows + d));
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="拖动调节 Recent 的高度"
+      aria-valuenow={rows}
+      aria-valuemin={1}
+      aria-valuemax={room}
+      title="拖动调节 Recent 的高度"
+      tabIndex={0}
+      data-testid="recent-resize"
+      onPointerDown={drag}
+      onKeyDown={keys}
+      className="group/h absolute inset-x-0 -top-px z-10 h-[6px] cursor-row-resize outline-none"
+    >
+      <span className="absolute inset-x-0 top-0 h-px bg-transparent transition-colors group-hover/h:bg-accent group-focus-visible/h:bg-accent" />
+    </div>
   );
 }
 
@@ -614,7 +676,10 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
       role="listbox"
       aria-label="Session 列表"
       onKeyDown={onKeyDown}
-      className={cn("min-h-0 flex-1 overflow-y-auto px-1.5 pb-2.5 outline-none", drag && "cursor-grabbing select-none")}
+      className={cn(
+        "min-h-0 flex-1 overflow-y-auto px-[6px] pb-[10px] outline-none",
+        drag && "cursor-grabbing select-none",
+      )}
     >
       <div
         className="relative w-full"
@@ -661,10 +726,11 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
 }
 
 export const ROW =
-  "flex h-7 w-full cursor-default items-center gap-[7px] rounded-md pr-2 text-left text-[13px] text-text outline-none hover:bg-black/[0.04] focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-white/[0.05]";
+  "flex h-[28px] w-full cursor-default items-center gap-[7px] rounded-md pr-[8px] text-left text-[13px] text-text outline-none hover:bg-black/[0.04] focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-white/[0.05]";
 const ICON =
-  "flex size-6 shrink-0 items-center justify-center rounded-[5px] text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent";
-export const SECTION = "flex shrink-0 items-center gap-1.5 pr-1.5 pl-4 text-[11px] font-semibold text-secondary h-7";
+  "flex size-[24px] shrink-0 items-center justify-center rounded-[5px] text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent";
+export const SECTION =
+  "flex h-[28px] shrink-0 items-center gap-[6px] pr-[6px] pl-[16px] text-[11px] font-semibold text-secondary";
 
 function liveOf(sessions: SideSession[]): LiveDotState | null {
   const order: LiveDotState[] = ["waiting", "busy", "idle"];
@@ -713,7 +779,7 @@ function GroupHeader({
       data-testid="sidebar-group"
       data-path={g.path}
       className={cn(
-        "group/g flex h-full items-center rounded-md pr-1 hover:bg-black/[0.04] has-[[data-state=open]]:bg-black/[0.04] dark:hover:bg-white/[0.05]",
+        "group/g flex h-full items-center rounded-md pr-[4px] hover:bg-black/[0.04] has-[[data-state=open]]:bg-black/[0.04] dark:hover:bg-white/[0.05]",
         dimmed && "opacity-35",
       )}
     >
@@ -723,9 +789,9 @@ function GroupHeader({
         onPointerDown={onPointerDown}
         onClick={onToggle}
         title={g.path}
-        className="flex h-full min-w-0 flex-1 cursor-default items-center gap-1.5 rounded-md pr-1 pl-2.5 text-left font-semibold outline-none focus-visible:outline-2 focus-visible:outline-accent"
+        className="flex h-full min-w-0 flex-1 cursor-default items-center gap-[6px] rounded-md pr-[4px] pl-[10px] text-left font-semibold outline-none focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <span className="flex w-3 shrink-0 justify-center">
+        <span className="flex w-[12px] shrink-0 justify-center">
           <span className="group-hover/g:hidden">
             <Chevron open={open} />
           </span>
@@ -825,7 +891,7 @@ export function Row({
       title={s.pending ? (s.cwd ?? undefined) : undefined}
       className={cn(
         ROW,
-        depth === 2 ? "pl-[46px]" : depth === 1 ? "pl-[30px]" : "pl-2.5",
+        depth === 2 ? "pl-[46px]" : depth === 1 ? "pl-[30px]" : "pl-[10px]",
         selected && "bg-selection hover:bg-selection",
       )}
     >

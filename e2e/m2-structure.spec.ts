@@ -248,7 +248,7 @@ test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点
   }
 });
 
-test("对话宽度：拖动列的边缘调节（两侧对称、居中），重开后保持；双击恢复 720px；键盘 ← / → 也可调", async ({
+test("对话宽度在「设置 › 通用」里调（居中），重开后保持；「恢复默认」回到 720px；对话列没有拖动的边缘", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
@@ -261,11 +261,13 @@ test("对话宽度：拖动列的边缘调节（两侧对称、居中），重�
     return Math.round(b.x + b.width / 2);
   };
   const c0 = await center();
-  const h = (await page.getByTestId("width-handle-right").boundingBox())!;
-  await page.mouse.move(h.x + h.width / 2, h.y + 200);
-  await page.mouse.down();
-  await page.mouse.move(h.x + h.width / 2 + 100, h.y + 200, { steps: 5 });
-  await page.mouse.up();
+  await expect(page.getByRole("separator", { name: /对话宽度/ })).toHaveCount(0);
+
+  await page.getByTestId("settings-button").click();
+  await page.getByRole("tab", { name: "通用" }).click();
+  await page.getByRole("slider", { name: "对话宽度" }).fill("920");
+  await expect(page.getByTestId("conv-width-value")).toHaveText("920 px");
+  await page.keyboard.press("Escape");
   expect(await width()).toBe(920);
   expect(await center()).toBe(c0);
   // The rows follow (the column's content is this wide).
@@ -275,11 +277,11 @@ test("对话宽度：拖动列的边缘调节（两侧对称、居中），重�
   await openSession(page, RICH_TITLE, { folded: true });
   expect(await width()).toBe(920);
 
-  await page.getByTestId("width-handle-left").dblclick();
+  await page.getByTestId("settings-button").click();
+  await page.getByRole("tab", { name: "通用" }).click();
+  await page.getByRole("button", { name: "恢复默认" }).click();
+  await page.keyboard.press("Escape");
   expect(await width()).toBe(720);
-  await page.getByTestId("width-handle-left").focus();
-  await page.keyboard.press("ArrowLeft");
-  expect(await width()).toBe(760);
 });
 
 test("显示系统消息开关控制隐藏条目", async ({ page }) => {
