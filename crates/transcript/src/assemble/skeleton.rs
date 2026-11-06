@@ -10,7 +10,8 @@ use crate::raw::RawEntry;
 /// Per-file facts collected during the merge, resolved after all files are read.
 #[derive(Default)]
 struct FileFacts {
-    last_leaves: Vec<String>,
+    /// `leafUuid` of each `last-prompt`, with the record index of that line.
+    last_leaves: Vec<(String, usize)>,
     custom_title: Option<String>,
     ai_title: Option<String>,
     continued_in: Option<String>,
@@ -93,6 +94,8 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
     let mut s = SessionSkeleton::default();
     let mut refs: Vec<ParentRefs> = Vec::new();
     let mut facts: Vec<FileFacts> = Vec::with_capacity(files.len());
+    // Per node: written by a Subagent into the main file (older Claude Code versions).
+    let mut sidechain: Vec<bool> = Vec::new();
     let mut versions = BTreeSet::new();
 
     for (rank, &fi) in ranked.iter().enumerate() {
@@ -108,7 +111,7 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
             match e.entry_type() {
                 "last-prompt" => {
                     if let Some(l) = &e.leaf_uuid {
-                        f.last_leaves.push(l.clone());
+                        f.last_leaves.push((l.clone(), ri));
                     }
                 }
                 "custom-title" => {
@@ -145,6 +148,7 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
             let idx = s.nodes.len();
             s.nodes
                 .push(node_of(e, uuid, fi, ri, rank as u32, rec.offset));
+            sidechain.push(e.is_sidechain == Some(true));
             s.by_uuid.insert(uuid.to_owned(), idx);
             refs.push(ParentRefs {
                 parent_uuid: e.parent_uuid.clone(),
@@ -184,7 +188,7 @@ pub fn build(files: &[LoadedFile]) -> SessionSkeleton {
     index_messages(&mut s);
     tree::derive(&mut s);
 
-    let leaf = choose_leaf(&s, &facts);
+    let leaf = choose_leaf(&s, &facts, &sidechain);
     if let Some(leaf) = leaf {
         let leaf = tree::descend(&s, leaf);
         s.main_path = tree::root_path(&s, leaf);
@@ -373,11 +377,42 @@ fn index_messages(s: &mut SessionSkeleton) {
 
 /// Main Line leaf: the leaf of the last `last-prompt` (of the largest file that has a valid one)
 /// whose leaf is in the map; else the newest node by timestamp (ties: later merged order).
-fn choose_leaf(s: &SessionSkeleton, facts: &[FileFacts]) -> Option<usize> {
-    for f in facts {
-        if let Some(i) = f.last_leaves.iter().rev().find_map(|l| s.by_uuid.get(l)) {
-            return Some(*i);
+///
+/// Claude Code writes `last-prompt` with its other metadata, mid-turn too, so it can be stale. That
+/// matters when the file went on beside it rather than below it: with parallel tool calls each
+/// result hangs under its own tool_use, and the leaf may be the end of the result written first
+/// while the conversation goes on below the other. When a user / assistant entry of the main thread
+/// written after that `last-prompt` is not below its leaf, the leaf is the last such entry written
+/// (as `claude --resume` and ccrpc take it).
+fn choose_leaf(s: &SessionSkeleton, facts: &[FileFacts], sidechain: &[bool]) -> Option<usize> {
+    for (rank, f) in facts.iter().enumerate() {
+        let Some((leaf, at)) = f
+            .last_leaves
+            .iter()
+            .rev()
+            .find_map(|(l, at)| s.by_uuid.get(l).map(|&i| (i, *at)))
+        else {
+            continue;
+        };
+        let mut below = vec![false; s.nodes.len()];
+        let mut stack = vec![leaf];
+        while let Some(v) = stack.pop() {
+            below[v] = true;
+            stack.extend(&s.children[v]);
         }
+        let later: Vec<usize> = (0..s.nodes.len())
+            .filter(|&i| {
+                let n = &s.nodes[i];
+                n.order.0 == rank as u32
+                    && n.record as usize > at
+                    && !sidechain[i]
+                    && matches!(n.entry_type, EntryKind::User | EntryKind::Assistant)
+            })
+            .collect();
+        if later.iter().any(|&i| !below[i]) {
+            return later.iter().copied().max_by_key(|&i| s.nodes[i].record);
+        }
+        return Some(leaf);
     }
     let mut best: Option<(f64, usize)> = None;
     for (i, n) in s.nodes.iter().enumerate() {

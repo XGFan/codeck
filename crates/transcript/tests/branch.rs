@@ -236,6 +236,40 @@ fn leaf_uuid_descends_to_the_newest_leaf() {
     );
 }
 
+#[test]
+fn stale_leaf_beside_the_conversation_gives_way_to_the_last_entry_written() {
+    // Two parallel tool calls: each result hangs under its own tool_use. last-prompt was written
+    // after the first result; the conversation went on below the second.
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":"start"}}"#,
+        r#"{"type":"assistant","uuid":"t1","parentUuid":"u1","timestamp":"2026-01-01T00:00:02Z","message":{"id":"m1","content":[{"type":"tool_use","id":"c1","name":"Bash","input":{}}]}}"#,
+        r#"{"type":"assistant","uuid":"t2","parentUuid":"t1","timestamp":"2026-01-01T00:00:03Z","message":{"id":"m1","content":[{"type":"tool_use","id":"c2","name":"Bash","input":{}}]}}"#,
+        r#"{"type":"user","uuid":"r1","parentUuid":"t1","timestamp":"2026-01-01T00:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"one"}]}}"#,
+        r#"{"type":"attachment","uuid":"x1","parentUuid":"r1","timestamp":"2026-01-01T00:00:04Z","attachment":{"type":"hook_success"}}"#,
+        r#"{"type":"last-prompt","leafUuid":"x1"}"#,
+        r#"{"type":"attachment","uuid":"x2","parentUuid":"x1","timestamp":"2026-01-01T00:00:09Z","attachment":{"type":"hook_success"}}"#,
+        r#"{"type":"user","uuid":"r2","parentUuid":"t2","timestamp":"2026-01-01T00:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c2","content":"two"}]}}"#,
+        r#"{"type":"assistant","uuid":"a2","parentUuid":"r2","timestamp":"2026-01-01T00:00:06Z","message":{"id":"m2","content":[{"type":"tool_use","id":"c3","name":"AskUserQuestion","input":{}}]}}"#,
+    ]);
+    let sk = build_skeleton(&[f]);
+    assert_eq!(
+        path_prefixes(&sk, &sk.main_path),
+        ["u1", "t1", "t2", "r2", "a2"]
+    );
+
+    // Until the conversation goes on beside it, the leaf of last-prompt holds (an attachment
+    // written below it, or none at all, changes nothing).
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":"start"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:02Z","message":{"id":"m1","content":[{"type":"text","text":"one"}]}}"#,
+        r#"{"type":"user","uuid":"u2","parentUuid":"u1","timestamp":"2026-01-01T00:00:03Z","message":{"role":"user","content":"again"}}"#,
+        r#"{"type":"last-prompt","leafUuid":"a1"}"#,
+        r#"{"type":"attachment","uuid":"x1","parentUuid":"u2","timestamp":"2026-01-01T00:00:04Z","attachment":{"type":"hook_success"}}"#,
+    ]);
+    let sk = build_skeleton(&[f]);
+    assert_eq!(path_prefixes(&sk, &sk.main_path), ["u1", "a1"]);
+}
+
 // ---- branch ----
 
 fn branch_session() -> AssembledSession {
