@@ -153,7 +153,8 @@ const liveOverrides = new Map<string, LiveState | null>();
  * The sidebar's Projects: every mock Project, so each Session has a row; none yet with `?firstRun` in the URL (the
  * app then opens 「添加 Project」 by itself).
  */
-let sidebarProjects: SidebarProject[] | null = new URLSearchParams(location.search).has("firstRun")
+// Unit tests import this module under Node, where there is no `location`.
+let sidebarProjects: SidebarProject[] | null = new URLSearchParams(globalThis.location?.search ?? "").has("firstRun")
   ? null
   : projectBase.map((p) => ({ path: p.path, nest: false }));
 
