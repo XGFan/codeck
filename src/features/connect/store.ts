@@ -83,8 +83,11 @@ interface ConnectStore {
   /** Sends a command and waits for its response (never rejects: failures are responses). */
   command(conn: string, msg: Record<string, unknown>): Promise<ResponseMsg>;
   disconnect(conn: string): Promise<void>;
-  /** 「关闭」: aborts a running turn, ends claude (stopping background tasks) and its Pane, then disconnects. */
-  close(conn: string): Promise<void>;
+  /**
+   * 「关闭」: aborts a running turn, ends claude and its Pane, then disconnects. Background tasks are stopped only with
+   * `stopTasks`; without it, Claude Code saying some still run ends nothing and resolves to `"tasks_running"`.
+   */
+  close(conn: string, stopTasks: boolean): Promise<"tasks_running" | void>;
   reconnect(conn: string): Promise<void>;
   refreshTasks(conn: string): Promise<void>;
   dropRequest(conn: string, requestId: string): void;
@@ -605,7 +608,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
       await api.ccrpcDisconnect(conn).catch(() => removeConn(conn));
     },
 
-    async close(conn) {
+    async close(conn, stopTasks) {
       const c = get().conns[conn];
       if (!c || !isLive(c)) return;
       void api.ccrpcGuiLog(conn, "close");
@@ -619,7 +622,11 @@ export const useConnect = create<ConnectStore>((set, get) => {
       }
       // Its ccrpc may exit once the Pane is gone: that exit is not a failure.
       closing.add(conn);
-      const r = await get().command(conn, { type: "exit", close_pane: true, stop_tasks: true });
+      const r = await get().command(conn, { type: "exit", close_pane: true, stop_tasks: stopTasks });
+      if (r.error?.code === "tasks_running") {
+        closing.delete(conn);
+        return "tasks_running";
+      }
       if (!r.success) return fail(r);
       await get().disconnect(conn);
     },

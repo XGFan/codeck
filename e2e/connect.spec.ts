@@ -893,11 +893,34 @@ test("关闭：空闲且没有后台任务时直接结束 Session 与 Pane，并
   await page.getByTestId("connect-close").click();
   await expect(page.getByTestId("connect-close-confirm")).toHaveCount(0);
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
-  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true, stop_tasks: true });
+  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true, stop_tasks: false });
   expect((await probe(page)).sent.some((s) => s.msg.type === "abort")).toBe(false);
   // The Pane is gone from `ccrpc ls`: nothing to connect.
   await inMenu(page, "connect-button", (b) => expect(b).toHaveCount(0));
   await inMenu(page, "connect-disconnect", (b) => expect(b).toHaveCount(0));
+});
+
+test("关闭：Claude Code 退出时说还有后台任务（CoDeck 不知道的，如它自己的 monitor），先确认再停掉", async ({
+  page,
+}) => {
+  await connectTo(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  await page.evaluate(() => ((window.__cvCcrpc as unknown as { monitorRunning: boolean }).monitorRunning = true));
+  await page.getByTestId("connect-close").click();
+  const confirm = page.getByTestId("connect-close-confirm");
+  await expect(confirm).toContainText("将停掉后台任务，结束 Session 并关闭它的 Pane。");
+  expect(await lastSent(page, "exit")).toMatchObject({ stop_tasks: false });
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  await expect(page.getByTestId("connect-error")).toHaveCount(0);
+  // Cancelled: nothing more is sent, and closing again asks again.
+  await confirm.getByRole("button", { name: "取消" }).click();
+  await expect(confirm).toHaveCount(0);
+  await page.getByTestId("connect-close").click();
+  await expect(confirm).toBeVisible();
+  expect((await probe(page)).sent.filter((s) => s.msg.type === "exit")).toHaveLength(2);
+  await page.getByTestId("connect-close-ok").click();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true, stop_tasks: true });
 });
 
 test("关闭：还有后台任务时先确认，取消则什么也不发", async ({ page }) => {

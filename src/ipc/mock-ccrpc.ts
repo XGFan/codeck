@@ -163,6 +163,8 @@ export interface CcrpcProbe {
   emit: (msg: Record<string, unknown>) => void;
   /** The next command of this type is refused (after a moment, as ccrpc would answer). */
   failNext?: string;
+  /** Set by a test: Claude Code runs a monitor of its own (not in `get_tasks`), so `exit` asks about it. */
+  monitorRunning?: boolean;
 }
 const probe: CcrpcProbe = {
   sent: [],
@@ -253,13 +255,19 @@ function replay(id: string, rewrite?: { from: unknown; to: unknown }) {
   later(step);
 }
 
-function respond(id: string, msg: Record<string, unknown>, data: Record<string, unknown> | null, error?: string) {
+function respond(
+  id: string,
+  msg: Record<string, unknown>,
+  data: Record<string, unknown> | null,
+  error?: string,
+  code = "mock",
+) {
   const r: InMsg = {
     type: "response",
     id: msg.id as string,
     command: String(msg.type),
     success: error === undefined,
-    ...(error === undefined ? { data: data ?? {} } : { error: { code: "mock", message: error } }),
+    ...(error === undefined ? { data: data ?? {} } : { error: { code, message: error } }),
   };
   later(() => emit(id, r));
 }
@@ -306,9 +314,13 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
     case "abort":
       later(() => emit(id, { type: "state", state: "idle" } as InMsg));
       return respond(id, msg, { state: "idle" });
-    // `/exit`; with `close_pane` the Pane ends too and leaves `ccrpc ls`.
-    case "exit":
+    // `/exit`; with `close_pane` the Pane ends too and leaves `ccrpc ls`. Background work still running makes Claude
+    // Code ask first: without `stop_tasks` nothing ends.
+    case "exit": {
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
+      const running = probe.monitorRunning || c.fx.tasks.some((t) => t.status === "running" && !c.stopped.has(t.id));
+      if (running && !msg.stop_tasks)
+        return respond(id, msg, null, "还有后台任务在运行：加 stop_tasks 退出并停掉它们", "tasks_running");
       if (msg.close_pane) {
         closedPanes.add(c.fx.ls.holder_id);
         later(pushLs);
@@ -317,6 +329,7 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       later(() => emit(id, { type: "state", state: "exited" } as InMsg));
       later(() => emit(id, { type: "session_exit" } as InMsg));
       return;
+    }
     // Typed into the TUI; what it does shows on the screen, not in a reply. `/exit` ends claude (the Pane stays).
     case "slash":
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");

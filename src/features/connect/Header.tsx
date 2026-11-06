@@ -206,28 +206,37 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
 
 /**
  * 「关闭」: disconnects and ends the Session with its Pane (ccrpc `exit`, aborting a running turn first). A running
- * turn or background task is ended only after a confirmation.
+ * turn or background task is ended only after a confirmation: asked first for the tasks CoDeck knows of, and when
+ * Claude Code says on exit that some still run (its own monitors are not in `get_tasks`).
  */
 function ConnectClose({ c }: { c: ConnState }) {
   const close = useConnect((s) => s.close);
   const [confirming, setConfirming] = useState(false);
   const [closing, setClosing] = useState(false);
+  // Claude Code said on exit that background work still runs.
+  const [tasksRan, setTasksRan] = useState(false);
   const busy = c.state === "busy" || c.state === "waiting";
   const running = c.tasks.filter((t) => t.status === "running").length;
-  const go = async () => {
+  const go = async (stopTasks: boolean) => {
     setConfirming(false);
     setClosing(true);
-    await close(c.conn);
+    const r = await close(c.conn, stopTasks);
     setClosing(false);
+    if (r === "tasks_running") {
+      setTasksRan(true);
+      setConfirming(true);
+    }
   };
-  const ends = [busy && "中止本轮", running > 0 && `停掉 ${running} 个后台任务`].filter(Boolean).join("、");
+  const ends = [busy && "中止本轮", running > 0 ? `停掉 ${running} 个后台任务` : tasksRan && "停掉后台任务"]
+    .filter(Boolean)
+    .join("、");
   return (
     <>
       <button
         type="button"
         data-testid="connect-close"
         disabled={closing || !(busy || c.state === "idle")}
-        onClick={() => (busy || running > 0 ? setConfirming(true) : void go())}
+        onClick={() => (busy || running > 0 ? setConfirming(true) : void go(false))}
         className={pill}
         title="Disconnect，并结束 Session、关闭它的 Pane"
       >
@@ -244,7 +253,7 @@ function ConnectClose({ c }: { c: ConnState }) {
             <Button variant="outline" onClick={() => setConfirming(false)}>
               取消
             </Button>
-            <Button data-testid="connect-close-ok" onClick={() => void go()}>
+            <Button data-testid="connect-close-ok" onClick={() => void go(running > 0 || tasksRan)}>
               关闭
             </Button>
           </div>
