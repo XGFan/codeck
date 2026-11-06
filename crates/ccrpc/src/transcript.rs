@@ -308,6 +308,8 @@ pub struct Tailer {
     usage_seen: HashSet<String>,
     /// Background tasks, in start order.
     tasks: Vec<BgTask>,
+    /// Tasks whose notifications are a Monitor's ([`monitor_notice`]).
+    monitors: HashSet<String>,
     /// Byte offset of every main-file entry, kept when `main_only` or `keep_offsets`.
     offsets: HashMap<String, u64>,
     keep_offsets: bool,
@@ -352,6 +354,7 @@ impl Tailer {
             keep_offsets: false,
             usage_seen: HashSet::new(),
             tasks: Vec::new(),
+            monitors: HashSet::new(),
             queue: Vec::new(),
             last_feedback: None,
             copied: HashSet::new(),
@@ -403,6 +406,18 @@ impl Tailer {
     /// Background tasks seen so far.
     pub fn tasks(&self) -> &[BgTask] {
         &self.tasks
+    }
+
+    /// Tasks a Monitor's notification named: how one a plugin started (no tool call of its own,
+    /// listed as `shell` in Stop's `background_tasks`) is told from a shell.
+    pub fn monitors(&self) -> &HashSet<String> {
+        &self.monitors
+    }
+
+    fn note_monitor(&mut self, text: &str) {
+        if let Some(id) = monitor_notice(text) {
+            self.monitors.insert(id);
+        }
     }
 
     /// A task ccrpc stopped: `stopped` until Claude Code's own notice says otherwise.
@@ -937,6 +952,7 @@ impl Tailer {
                 if q.command_mode.as_deref() == Some("task-notification")
                     || kind == Some("task-notification")
                 {
+                    self.note_monitor(&text);
                     if let Some((id, status)) = task_notification(&text)
                         && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
                     {
@@ -1021,6 +1037,9 @@ impl Tailer {
                             return;
                         }
                         let s = &prompt::unwrap_pasted(s);
+                        if agent.is_none() {
+                            self.note_monitor(s);
+                        }
                         if agent.is_none()
                             && let Some((id, status)) = task_notification(s)
                             && let Some(t) = self.tasks.iter_mut().find(|t| t.id == id)
@@ -1472,6 +1491,17 @@ pub fn entry_uuids(path: &Path) -> HashSet<String> {
         from = c.consumed_to;
     }
     uuids
+}
+
+/// The task a Monitor's `<task-notification>` is about: one of its events (`Monitor event: "…"`)
+/// or the end of its stream (`Monitor "…" stream ended`).
+pub fn monitor_notice(text: &str) -> Option<String> {
+    let n = prompt::task_notification(text)?;
+    let s = n.summary?;
+    (s.starts_with("Monitor event: ")
+        || (s.starts_with("Monitor \"") && s.ends_with(" stream ended")))
+    .then_some(n.task_id)
+    .flatten()
 }
 
 /// A `<task-notification>` that ended a task: `(task id, status)`.
@@ -2306,6 +2336,60 @@ mod tests {
         write_lines(&main, &lines);
         t.poll();
         assert_eq!(t.tasks()[0].status, "completed");
+    }
+
+    /// A plugin's monitor has no tool call: its notifications (an event, queued while busy or
+    /// sent as a prompt, or the end of its stream) name it a Monitor; a shell's do not.
+    #[test]
+    fn a_monitor_is_known_by_its_notifications() {
+        let note = |id: &str, inner: &str| {
+            format!("<task-notification>\n<task-id>{id}</task-id>\n{inner}\n</task-notification>")
+        };
+        assert_eq!(
+            monitor_notice(&note(
+                "b1",
+                "<summary>Monitor event: \"paaa Worker 事件\"</summary>\n<event>w1 DONE done</event>"
+            )),
+            Some("b1".into())
+        );
+        assert_eq!(
+            monitor_notice(&note(
+                "b2",
+                "<status>completed</status>\n<summary>Monitor \"x\" stream ended</summary>"
+            )),
+            Some("b2".into())
+        );
+        assert_eq!(
+            monitor_notice(&note(
+                "b3",
+                "<status>completed</status>\n<summary>Background command \"Monitor x\" completed (exit code 0)</summary>"
+            )),
+            None
+        );
+        assert_eq!(monitor_notice("Monitor event: \"x\""), None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let event = note(
+            "bq",
+            "<summary>Monitor event: \"q\"</summary>\n<event>e</event>",
+        );
+        write_lines(
+            &main,
+            &[
+                json!({"type": "attachment", "uuid": "a1", "attachment": {"type": "queued_command",
+                    "commandMode": "task-notification", "prompt": event}}),
+                json!({"type": "user", "uuid": "u1", "message": {"role": "user",
+                    "content": note("bp", "<summary>Monitor event: \"p\"</summary>\n<event>e</event>")}}),
+                json!({"type": "user", "uuid": "u2", "message": {"role": "user",
+                    "content": note("bs", "<status>completed</status>\n<summary>Background command \"s\" completed (exit code 0)</summary>")}}),
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        t.poll();
+        let mut ids: Vec<&String> = t.monitors().iter().collect();
+        ids.sort();
+        assert_eq!(ids, ["bp", "bq"]);
     }
 
     /// A foreground command moved to the background on its timeout is a task too, and TaskStop

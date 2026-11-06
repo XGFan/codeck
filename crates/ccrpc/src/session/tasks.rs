@@ -151,6 +151,15 @@ impl Engine {
                 None => out.push(h.clone()),
             }
         }
+        // Known only from Stop (a plugin's monitor is listed as a shell there): its notifications
+        // say it is a Monitor.
+        if let Some(tl) = self.tailer.as_ref() {
+            for t in &mut out {
+                if t.kind == TaskKind::Shell && tl.monitors().contains(&t.id) {
+                    t.kind = TaskKind::Monitor;
+                }
+            }
+        }
         out
     }
 

@@ -1185,6 +1185,47 @@ fn mock_model_plugin_command_by_bare_name() {
     rpc.event("turn_end", Duration::from_secs(30));
 }
 
+/// A plugin's monitor has no tool call, and Stop's `background_tasks` lists it as a shell: once its
+/// event's notification is in, `get_tasks` reports it as a Monitor, and `stop_task` stops it (on the
+/// scripted model).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_plugin_monitor() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let dir = env.plugin_dir.join("monitors");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("monitors.json"),
+        json!([{"name": "probe", "command": "sleep 3; echo ping; sleep 300", "description": "probe events"}])
+            .to_string(),
+    )
+    .unwrap();
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    // The event runs as a turn of its own; its Stop lists the monitor.
+    let end = rpc.until("监视器事件的一轮", Duration::from_secs(60), |v| {
+        v["type"] == "turn_end"
+            && v["background_tasks"]
+                .as_array()
+                .is_some_and(|b| b.iter().any(|t| t["description"] == "probe events"))
+    });
+    let tasks = rpc.call("t1", json!({"type": "get_tasks"}));
+    let t = tasks["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["description"] == "probe events")
+        .unwrap_or_else(|| panic!("get_tasks 里没有这个监视器：{tasks}；{end}"));
+    assert_eq!(
+        (&t["kind"], &t["status"]),
+        (&json!("monitor"), &json!("running")),
+        "{t}"
+    );
+    // `/tasks` lists it by its description, as a Monitor: it can be stopped there.
+    let id = t["id"].as_str().unwrap().to_string();
+    rpc.call("t2", json!({"type": "stop_task", "task_id": id}));
+}
+
 /// A hidden Pane (`new --hidden`, ToH ADR-0050), as CoDeck starts it: nobody shows it, so its PTY keeps the size
 /// it starts with, ccrpc's 120×40, and an approval dialog is recognized there; `ls --json` reports `hidden`, which
 /// `hide` / `show` toggle (on the scripted model, no credits).
