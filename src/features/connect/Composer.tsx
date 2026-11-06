@@ -182,9 +182,14 @@ export function Composer({ c }: { c: ConnState }) {
   const matches = typed != null && live && commands && hiddenFor !== text ? matchCommands(commands, typed) : [];
   const picked = matches[Math.min(pick, matches.length - 1)];
   // How much of the text is a known command's `/name`.
-  // Not while an input method composes: the textarea's own text carries the marked-text underline.
-  const [composing, setComposing] = useState(false);
-  const named = live && !composing ? commandOf(text, commands) : null;
+  const named = live ? commandOf(text, commands) : null;
+  // While an input method composes: where its text starts, and how long the text is besides it.
+  const [composing, setComposing] = useState<{ start: number; rest: number } | null>(null);
+  const markedEnd = composing ? text.length - composing.rest + composing.start : 0;
+  const marked =
+    composing && markedEnd > composing.start && markedEnd <= text.length
+      ? ([composing.start, markedEnd] as const)
+      : null;
   const highlight = named ? typedName(text).length + 1 : 0;
   const mirror = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -590,12 +595,9 @@ export function Composer({ c }: { c: ConnState }) {
               ref={mirror}
               aria-hidden
               data-testid={highlight > 0 ? "command-highlight" : "composer-mirror"}
-              className={cn(
-                "pointer-events-none absolute inset-0 overflow-hidden pr-1.5 text-[14px] leading-[1.5] break-words whitespace-pre-wrap",
-                composing && "text-transparent",
-              )}
+              className="pointer-events-none absolute inset-0 overflow-hidden pr-1.5 text-[14px] leading-[1.5] break-words whitespace-pre-wrap"
             >
-              <MirrorText text={text} highlight={highlight} selected={selectedToken} ghost={composing} />
+              <MirrorText text={text} highlight={highlight} selected={selectedToken} marked={marked} />
               {/* A last empty line still takes its height, as in the textarea. */}
               {"\u200b"}
             </div>
@@ -621,11 +623,18 @@ export function Composer({ c }: { c: ConnState }) {
             }}
             onCopy={(e) => onCopy(e, false)}
             onCut={(e) => onCopy(e, true)}
-            onCompositionStart={() => setComposing(true)}
-            onCompositionEnd={() => setComposing(false)}
+            onCompositionStart={(e) => {
+              // The composed text replaces the selection and grows from its start.
+              const el = e.currentTarget;
+              setComposing({ start: el.selectionStart, rest: el.value.length - (el.selectionEnd - el.selectionStart) });
+            }}
+            onCompositionEnd={() => setComposing(null)}
+            // A composition whose end never came (the box disabled mid-way): over once focus leaves or plain typing resumes.
+            onBlur={() => setComposing(null)}
             rows={Math.min(10, Math.max(2, text.split("\n").length))}
             disabled={!live}
             onChange={(e) => {
+              if (composing && !(e.nativeEvent as InputEvent).isComposing) setComposing(null);
               setText(e.target.value);
               setCaret(e.target.selectionStart);
               setPick(0);
@@ -718,8 +727,8 @@ export function Composer({ c }: { c: ConnState }) {
             }}
             className={cn(
               "relative block w-full resize-none bg-transparent pr-1.5 text-[14px] leading-[1.5] outline-none placeholder:text-secondary",
-              // While an input method composes, the textarea's own text (it draws the marked-text underline).
-              mirrored && !composing && "text-transparent caret-text",
+              // The copy draws the text, the marked text of an input method underlined there too.
+              mirrored && "text-transparent caret-text",
             )}
             data-testid="connect-input"
           />

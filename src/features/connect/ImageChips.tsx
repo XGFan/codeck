@@ -14,27 +14,40 @@ export function MirrorText({
   text,
   highlight,
   selected,
-  ghost = false,
+  marked = null,
 }: {
   text: string;
   /** Characters at the start shown as a command. */
   highlight: number;
   /** The token the selection covers exactly (drawn selected). */
   selected: number | null;
-  /** The blocks alone, the letters clear (an input method composes: the textarea shows its own text then). */
-  ghost?: boolean;
+  /** The text an input method is composing, `[start, end)`: underlined, as the textarea would mark it. */
+  marked?: readonly [number, number] | null;
 }) {
   const out: React.ReactNode[] = [];
   let at = 0;
+  // A run of letters, cut where the command ends and where the marked text starts and ends.
   const words = (s: string, from: number) => {
-    const cut = Math.max(0, Math.min(s.length, highlight - from));
-    if (cut > 0)
-      out.push(
-        <span key={`h${from}`} className={ghost ? undefined : "text-accent"}>
-          {s.slice(0, cut)}
-        </span>,
-      );
-    if (cut < s.length) out.push(s.slice(cut));
+    const to = from + s.length;
+    const cuts = [from, to, highlight, ...(marked ?? [])].filter((c) => c >= from && c <= to);
+    const points = [...new Set(cuts)].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < points.length; i++) {
+      const [a, b] = [points[i]!, points[i + 1]!];
+      const part = text.slice(a, b);
+      const command = a < highlight;
+      const underlined = marked != null && a >= marked[0] && b <= marked[1];
+      if (!command && !underlined) out.push(part);
+      else
+        out.push(
+          <span
+            key={`w${a}`}
+            data-marked={underlined || undefined}
+            className={cn(command && "text-accent", underlined && "underline underline-offset-[3px]")}
+          >
+            {part}
+          </span>,
+        );
+    }
   };
   for (const t of tokensIn(text)) {
     words(text.slice(at, t.start), at);
@@ -49,7 +62,6 @@ export function MirrorText({
           // padding reaches into the gaps around the block).
           "relative -mx-[3px] rounded-[5px] bg-code px-[3px] text-text shadow-[0_0_0_1px_var(--color-border)]",
           selected === t.n && "bg-selection text-accent shadow-[0_0_0_1.5px_var(--color-accent)]",
-          ghost && "text-transparent",
         )}
       >
         {"\u3000"}

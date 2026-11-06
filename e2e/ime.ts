@@ -4,7 +4,7 @@ import type { Locator, Page } from "@playwright/test";
 export async function composeStart(input: Locator, steps: string[]) {
   await input.evaluate((el, steps) => {
     const field = el as HTMLInputElement;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    const setValue = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!;
     field.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
     for (const s of steps) {
       setValue.call(field, s);
@@ -20,7 +20,7 @@ export async function composeStart(input: Locator, steps: string[]) {
 export async function composeEnd(input: Locator, text: string) {
   await input.evaluate((el, text) => {
     const field = el as HTMLInputElement;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    const setValue = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!;
     setValue.call(field, text);
     field.dispatchEvent(
       new InputEvent("input", { bubbles: true, isComposing: true, inputType: "insertFromComposition", data: text }),

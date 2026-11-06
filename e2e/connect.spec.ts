@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { composeEnd, composeStart } from "./ime";
 
 /** The `turn_end` prompt ids of a recorded fixture, in order (they change when it is re-recorded). */
 function recordedTurns(name: string): string[] {
@@ -610,6 +611,22 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件
   // A plugin's command by its name alone (`kit:review` here) is one too.
   await input.fill("/review 这次的改动");
   await expect(highlight.locator("span.text-accent")).toHaveText("/review");
+  // Composing with an input method (pinyin) after it: the command keeps its color, the marked text underlined.
+  await input.fill("/review ");
+  await composeStart(input, ["/review z", "/review zhe'ci"]);
+  await expect(highlight.locator("span.text-accent")).toHaveText("/review");
+  await expect(highlight.locator("[data-marked]")).toHaveText("zhe'ci");
+  await expect(input).toHaveClass(/text-transparent/);
+  await composeEnd(input, "/review 这次");
+  await expect(highlight.locator("span.text-accent")).toHaveText("/review");
+  await expect(highlight.locator("[data-marked]")).toHaveCount(0);
+  // In the middle, over a selection: only what is composed is underlined.
+  await input.fill("/review 甲乙");
+  await input.evaluate((t: HTMLTextAreaElement) => t.setSelectionRange(8, 9));
+  await composeStart(input, ["/review z乙", "/review zhe乙"]);
+  await expect(highlight.locator("[data-marked]")).toHaveText("zhe");
+  await composeEnd(input, "/review 这乙");
+  await expect(highlight.locator("[data-marked]")).toHaveCount(0);
 
   // The Session's cwd is /work/demo: its directories, hidden ones only after a `.`.
   const menu = page.getByTestId("path-menu");
