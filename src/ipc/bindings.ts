@@ -666,9 +666,17 @@ export type SubagentRun = {
 	promptPreview: string | null,
 	/**
 	 *  Agent tool_result text, else the task-notification summary; for a background run, the
-	 *  task-notification's result, else its summary (`None` until it arrives).
+	 *  task-notification's result, else its summary (`None` until it arrives); for a teammate, its
+	 *  latest result or report on the Main Line.
 	 */
 	finalText: string | null,
+	/**
+	 *  A teammate (an Agent call with `name` that joined the agent team): it goes idle between
+	 *  messages instead of ending; `status` is `running`, `idle` or `exited`.
+	 */
+	teammate: boolean,
+	/**  A teammate's color (as Claude Code names it, e.g. `blue`). */
+	color: string | null,
 };
 
 /**  Inclusive range of unix-epoch milliseconds; either bound may be open. */

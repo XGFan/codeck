@@ -255,8 +255,14 @@ pub struct SubagentRun {
     pub ended_ms: Option<f64>,
     pub prompt_preview: Option<String>,
     /// Agent tool_result text, else the task-notification summary; for a background run, the
-    /// task-notification's result, else its summary (`None` until it arrives).
+    /// task-notification's result, else its summary (`None` until it arrives); for a teammate, its
+    /// latest result or report on the Main Line.
     pub final_text: Option<String>,
+    /// A teammate (an Agent call with `name` that joined the agent team): it goes idle between
+    /// messages instead of ending; `status` is `running`, `idle` or `exited`.
+    pub teammate: bool,
+    /// A teammate's color (as Claude Code names it, e.g. `blue`).
+    pub color: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]

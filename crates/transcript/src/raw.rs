@@ -443,6 +443,9 @@ pub struct RawToolUseResult {
     pub status: Option<String>,
     #[serde(default, deserialize_with = "lenient::string")]
     pub name: Option<String>,
+    /// Teammate results: the teammate's color.
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub color: Option<String>,
     #[serde(default, deserialize_with = "lenient::string")]
     pub persisted_output_path: Option<String>,
     #[serde(default, deserialize_with = "lenient::number")]

@@ -251,6 +251,38 @@ pub fn truncate_chars(s: &str, n: usize) -> String {
 }
 
 /// Value of `name="…"` in the opening tag at the start of `s`; `None` when absent or empty.
+/// One `<teammate-message>` of a relayed message (a message may hold several).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TeammateMessage {
+    pub teammate_id: Option<String>,
+    pub color: Option<String>,
+    pub body: String,
+}
+
+/// The `<teammate-message>` blocks of a relayed message, in order.
+pub fn teammate_messages(text: &str) -> Vec<TeammateMessage> {
+    const OPEN: &str = "<teammate-message";
+    const CLOSE: &str = "</teammate-message>";
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(OPEN) {
+        let block = &rest[at..];
+        let (Some(gt), Some(end)) = (block.find('>'), block.find(CLOSE)) else {
+            break;
+        };
+        if gt > end {
+            break;
+        }
+        out.push(TeammateMessage {
+            teammate_id: attr(block, "teammate_id"),
+            color: attr(block, "color"),
+            body: block[gt + 1..end].trim().to_owned(),
+        });
+        rest = &block[end + CLOSE.len()..];
+    }
+    out
+}
+
 fn attr(s: &str, name: &str) -> Option<String> {
     let open = &s[..s.find('>')?];
     let key = format!(" {name}=\"");
@@ -361,6 +393,24 @@ mod tests {
         assert_eq!(classify(&meta, "hi"), PromptOrigin::Meta);
         let peer = entry(r#"{"type":"user","origin":{"kind":"peer"}}"#);
         assert!(!is_human(&peer, &classify(&peer, "hi")));
+    }
+
+    #[test]
+    fn splits_a_relayed_message_into_its_teammate_messages() {
+        let text = "Another Claude session sent a message:\n<teammate-message teammate_id=\"a\" color=\"blue\" summary=\"s\">\nreport\n</teammate-message>\n\n<teammate-message teammate_id=\"system\">\n{\"type\":\"teammate_terminated\"}\n</teammate-message>\n\nThis came from another Claude session";
+        let m = teammate_messages(text);
+        assert_eq!(m.len(), 2);
+        assert_eq!(
+            m[0],
+            TeammateMessage {
+                teammate_id: Some("a".into()),
+                color: Some("blue".into()),
+                body: "report".into(),
+            }
+        );
+        assert_eq!(m[1].teammate_id.as_deref(), Some("system"));
+        assert_eq!(m[1].body, "{\"type\":\"teammate_terminated\"}");
+        assert!(teammate_messages("no tags").is_empty());
     }
 
     #[test]

@@ -172,6 +172,8 @@ struct AgentResults {
     by_name: HashMap<String, String>,
     /// tool_use id → `toolUseResult.status`.
     status: HashMap<String, String>,
+    /// tool_use id → `toolUseResult.color` (teammates).
+    color: HashMap<String, String>,
 }
 
 fn agent_results(s: &SessionSkeleton, files: &[LoadedFile]) -> AgentResults {
@@ -198,6 +200,149 @@ fn agent_results(s: &SessionSkeleton, files: &[LoadedFile]) -> AgentResults {
         }
         if let Some(st) = r.status {
             out.status.insert(id.clone(), st);
+        }
+        if let Some(c) = r.color {
+            out.color.insert(id.clone(), c);
+        }
+    }
+    out
+}
+
+/// A teammate as the Main Line tells it: the messages relayed from it and the lead's to it.
+#[derive(Debug, Clone, PartialEq)]
+struct Teammate {
+    /// `running`, `idle` (its round ended; a message from the lead wakes it) or `exited`.
+    state: &'static str,
+    /// Its latest report, or the result of its latest round.
+    last_text: Option<String>,
+    color: Option<String>,
+}
+
+impl Default for Teammate {
+    fn default() -> Self {
+        Teammate {
+            state: "running",
+            last_text: None,
+            color: None,
+        }
+    }
+}
+
+/// Teammates by the Agent call that spawned them; a name reused after a shutdown is a new one.
+#[derive(Debug, Default)]
+struct Teammates {
+    by_tool: HashMap<String, Teammate>,
+    /// Name → tool_use id of its latest spawn.
+    current: HashMap<String, String>,
+}
+
+impl Teammates {
+    fn spawned(&mut self, name: &str, tool_use_id: &str) {
+        self.current.insert(name.to_owned(), tool_use_id.to_owned());
+        self.by_tool
+            .insert(tool_use_id.to_owned(), Teammate::default());
+    }
+
+    fn get_mut(&mut self, name: &str) -> Option<&mut Teammate> {
+        let tool = self.current.get(name)?;
+        self.by_tool.get_mut(tool)
+    }
+
+    /// The lead sent `to` (a name, or `*` for all) a message: it works on it.
+    fn sent(&mut self, to: &str) {
+        let tools: Vec<String> = self
+            .current
+            .iter()
+            .filter(|(n, _)| to == "*" || n.as_str() == to)
+            .map(|(_, t)| t.clone())
+            .collect();
+        for t in tools {
+            if let Some(m) = self.by_tool.get_mut(&t).filter(|m| m.state != "exited") {
+                m.state = "running";
+            }
+        }
+    }
+
+    /// One `<teammate-message>` relayed to the lead: a report (plain text), the end of a round
+    /// (`idle_notification`, with the round's `result` since 2.1.251), or a shutdown
+    /// (`shutdown_approved` from it, `teammate_terminated` from `system`: "X has shut down.").
+    fn message(&mut self, m: &prompt::TeammateMessage) {
+        let json = serde_json::from_str::<serde_json::Value>(&m.body).ok();
+        let field = |k: &str| {
+            json.as_ref()
+                .and_then(|v| v.get(k))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_owned)
+        };
+        let from = || field("from").or_else(|| m.teammate_id.clone());
+        let (name, state, text) = match json
+            .as_ref()
+            .map(|v| v.get("type").and_then(|t| t.as_str()))
+        {
+            None => (m.teammate_id.clone(), "running", Some(m.body.clone())),
+            Some(Some("idle_notification")) => (from(), "idle", field("result")),
+            Some(Some("shutdown_approved")) => (from(), "exited", None),
+            Some(Some("teammate_terminated")) => (
+                field("message").and_then(|t| {
+                    t.trim_end_matches('.')
+                        .strip_suffix(" has shut down")
+                        .map(str::to_owned)
+                }),
+                "exited",
+                None,
+            ),
+            Some(_) => return,
+        };
+        let system = m.teammate_id.as_deref() == Some("system");
+        let Some(t) = name.and_then(|n| self.get_mut(&n)) else {
+            return;
+        };
+        if t.state != "exited" {
+            t.state = state;
+        }
+        if text.is_some() {
+            t.last_text = text;
+        }
+        if t.color.is_none() && !system {
+            t.color = m.color.clone();
+        }
+    }
+}
+
+/// The Session's teammates, read along the Main Line in order.
+fn teammates(s: &SessionSkeleton, files: &[LoadedFile]) -> Teammates {
+    let mut out = Teammates::default();
+    let input_field = |id: &str, k: &str| -> Option<String> {
+        let (_, b) = s.tool_use_block(files, id)?;
+        let v: serde_json::Value = serde_json::from_str(b.input.as_deref()?.get()).ok()?;
+        v.get(k)?.as_str().map(str::to_owned)
+    };
+    for (i, n) in s.nodes.iter().enumerate() {
+        match n.entry_type {
+            EntryKind::Assistant => {
+                for (id, tool) in &n.tool_uses {
+                    if AGENT_TOOLS.contains(&tool.as_str()) {
+                        if let Some(name) = input_field(id, "name") {
+                            out.spawned(&name, id);
+                        }
+                    } else if tool == "SendMessage"
+                        && let Some(to) = input_field(id, "to")
+                    {
+                        out.sent(&to);
+                    }
+                }
+            }
+            EntryKind::User if !n.is_tool_result && !n.is_human => {
+                let text = prompt::user_text(s.entry(files, i));
+                if text.contains("<teammate-message") {
+                    for m in prompt::teammate_messages(&text) {
+                        out.message(&m);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     out
@@ -298,6 +443,7 @@ pub fn nested_outcomes(
 pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar) -> Links {
     let results = agent_results(s, files);
     let notes = notification_facts(s, files);
+    let mates = teammates(s, files);
     let known: HashSet<&str> = sidecar
         .subagent_metas
         .iter()
@@ -350,10 +496,24 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
         let tool_use_id = main_tool
             .clone()
             .or_else(|| meta.tool_use_id.clone().filter(|_| nested));
-        let (is_async, status, final_text) = match main_tool.as_deref() {
+        let (is_async, mut status, mut final_text) = match main_tool.as_deref() {
             Some(t) => outcome(s, files, &results, &notes, t, &m.agent_id),
             None => (false, None, None),
         };
+        // A teammate's tool_result only says it was spawned: how it is doing is in the
+        // messages it relays to the lead.
+        let teammate = main_tool
+            .as_deref()
+            .filter(|t| results.status.get(*t).map(String::as_str) == Some("teammate_spawned"));
+        let mut color = None;
+        if let Some(t) = teammate {
+            let mate = mates.by_tool.get(t).cloned().unwrap_or_default();
+            status = Some(mate.state.to_owned());
+            final_text = mate
+                .last_text
+                .map(|t| nodes::cap_text(t.trim(), RESULT_BYTES, RESULT_LINES).0);
+            color = mate.color.or_else(|| results.color.get(t).cloned());
+        }
         if let (Some(t), Some(n)) = (&main_tool, notes.by_task.get(&m.agent_id)) {
             // A notification carrying only the task id still links to the card.
             links
@@ -391,6 +551,8 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
                 .prompt
                 .map(|p| nodes::cap_text(p.trim(), PREVIEW_BYTES, usize::MAX).0),
             final_text,
+            teammate: teammate.is_some(),
+            color,
         });
     }
     links
@@ -454,5 +616,69 @@ mod tests {
             Some(("monitor", "b6wmxusge".into()))
         );
         assert_eq!(background_launch("done"), None);
+    }
+
+    fn msg(id: &str, color: Option<&str>, body: &str) -> prompt::TeammateMessage {
+        prompt::TeammateMessage {
+            teammate_id: Some(id.into()),
+            color: color.map(Into::into),
+            body: body.into(),
+        }
+    }
+
+    #[test]
+    fn a_teammate_goes_idle_wakes_and_exits() {
+        let mut t = Teammates::default();
+        t.spawned("line-a", "toolu_a");
+        let now = |t: &Teammates| t.by_tool["toolu_a"].clone();
+        assert_eq!(now(&t).state, "running");
+        t.message(&msg("line-a", Some("blue"), "Stage one done."));
+        assert_eq!(now(&t).last_text.as_deref(), Some("Stage one done."));
+        assert_eq!(now(&t).color.as_deref(), Some("blue"));
+        // Before 2.1.251 an idle notification has no result: the report stays the latest text.
+        t.message(&msg(
+            "line-a",
+            None,
+            r#"{"type":"idle_notification","from":"line-a","idleReason":"available"}"#,
+        ));
+        assert_eq!(now(&t).state, "idle");
+        assert_eq!(now(&t).last_text.as_deref(), Some("Stage one done."));
+        t.sent("line-a");
+        assert_eq!(now(&t).state, "running");
+        t.message(&msg(
+            "line-a",
+            Some("blue"),
+            r#"{"type":"idle_notification","from":"line-a","result":"Sidecars now follow."}"#,
+        ));
+        assert_eq!(
+            (now(&t).state, now(&t).last_text.as_deref()),
+            ("idle", Some("Sidecars now follow."))
+        );
+        t.message(&msg(
+            "system",
+            None,
+            r#"{"type":"teammate_terminated","message":"line-a has shut down."}"#,
+        ));
+        assert_eq!(now(&t).state, "exited");
+        // Exited stays exited; a message to everyone does not wake it.
+        t.sent("*");
+        t.message(&msg(
+            "line-a",
+            None,
+            r#"{"type":"shutdown_approved","from":"line-a"}"#,
+        ));
+        assert_eq!(now(&t).state, "exited");
+        // A name spawned again is a new teammate.
+        t.spawned("line-a", "toolu_b");
+        assert_eq!(t.by_tool["toolu_b"].state, "running");
+        assert_eq!(now(&t).state, "exited");
+        // Unknown names and message types change nothing.
+        t.message(&msg("ghost", None, "hi"));
+        t.message(&msg(
+            "line-a",
+            None,
+            r#"{"type":"task_assignment","taskId":"6"}"#,
+        ));
+        assert_eq!(t.by_tool["toolu_b"], Teammate::default());
     }
 }

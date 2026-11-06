@@ -556,6 +556,16 @@ fn subagents_link_by_tool_use_id_name_and_parent() {
         run(TEAMMATE).tool_use_id.as_deref(),
         Some("toolu_01TdePUUDtAB6J6JGdhnLudR")
     );
+    // A teammate: how it is doing comes from what it relays to the lead, not its spawn result.
+    let mate = run(TEAMMATE);
+    assert!(mate.teammate && !run(ASYNC).teammate);
+    assert_eq!(mate.status.as_deref(), Some("running"));
+    assert_eq!(mate.color.as_deref(), Some("red"));
+    assert!(
+        mate.final_text
+            .as_deref()
+            .is_some_and(|t| t.starts_with("The GUI shell builds"))
+    );
 
     // nested: parentAgentId, toolUseId resolves inside the parent's file
     let nested = run(NESTED);
