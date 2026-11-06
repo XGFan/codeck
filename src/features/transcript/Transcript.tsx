@@ -265,16 +265,21 @@ export function TranscriptList({
         <OverlayScrollbar scrollRef={scrollRef} onUserScroll={unlockTurn} testId={testId && `${testId}-scrollbar`} />
         {isMain && <WidthHandles />}
         {unread && (
-          <button
-            type="button"
-            data-testid="new-messages"
-            onClick={jumpToBottom}
+          // Centered by flex, not translate(-50%): an odd width would put the text on a half pixel, which blurs it.
+          <div
             style={{ bottom: "calc(var(--connect-h, 0px) + 16px)" }}
-            className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full bg-accent px-3 py-1 text-[12px] text-white shadow-lg"
+            className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
           >
-            有新消息
-            <ArrowDown size={12} strokeWidth={2} />
-          </button>
+            <button
+              type="button"
+              data-testid="new-messages"
+              onClick={jumpToBottom}
+              className="pointer-events-auto flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-[12px] text-white shadow-lg"
+            >
+              有新消息
+              <ArrowDown size={12} strokeWidth={2} />
+            </button>
+          </div>
         )}
       </div>
     </TranscriptContext.Provider>

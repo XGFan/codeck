@@ -98,6 +98,13 @@ test("离开底部时出现新消息提示", async ({ page }) => {
     window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
   }, id);
   await expect(page.getByTestId("new-messages")).toBeVisible();
+  // Not placed by a transform: a half-pixel translate blurs its text.
+  expect(
+    await page.getByTestId("new-messages").evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return [cs.transform, cs.translate];
+    }),
+  ).toEqual(["none", "none"]);
   await page.getByTestId("new-messages").click();
   await expect(page.getByText("另一条新消息")).toBeVisible();
 });
