@@ -1,23 +1,50 @@
 // Pasted images sit in the prompt where they were pasted, as tokens: in the textarea a short run of text — an
-// invisible start mark, an ideographic space (room for the icon the mirror draws), 「图片 n」, a narrow space, an
-// invisible end mark — that the copy of the text under the (then clear) textarea draws as one block. Its spaces do not
-// break and word joiners hold its letters together, so a line never wraps inside it. The tokens are numbered in text
-// order, and the images list follows them: token n is images[n - 1].
+// invisible start mark, a gap, an ideographic space (room for the icon the mirror draws), 「图片 n」, a narrow space, a
+// gap, an invisible end mark — that the copy of the text under the (then clear) textarea draws as one block, the gaps
+// outside it (the room between the block and the words around it). Its spaces do not break and word joiners hold its
+// pieces together, so a line never wraps inside it. The tokens are numbered in text order, and the images list follows
+// them: token n is images[n - 1].
 
 import type { DraftImage } from "./drafts";
 
 /** INVISIBLE TIMES / INVISIBLE SEPARATOR: zero-width, not typed by hand, so they mark a token's ends. */
 export const OPEN = "\u2062";
 export const CLOSE = "\u2063";
-/** Ideographic space, WORD JOINER, 图, WORD JOINER, 片, NO-BREAK SPACE. */
-const LABEL = "\u3000\u2060图\u2060片\u00a0";
 
-export const token = (n: number) => `${OPEN}${LABEL}${n}\u202f${CLOSE}`;
+/**
+ * What is between the marks, piece by piece (as regular expressions): a THREE-PER-EM SPACE (the gap), WORD JOINER,
+ * ideographic space, WORD JOINER, 图, WORD JOINER, 片, NO-BREAK SPACE, the number, NARROW NO-BREAK SPACE, WORD
+ * JOINER, the gap again.
+ */
+const PIECES = [
+  "\u2004",
+  "\u2060",
+  "\u3000",
+  "\u2060",
+  "图",
+  "\u2060",
+  "片",
+  "\u00a0",
+  String.raw`(\d+)`,
+  "\u202f",
+  "\u2060",
+  "\u2004",
+];
+/** Characters before the block (the start mark, the gap, a joiner) and after it (a joiner, the gap, the end mark). */
+export const LEAD = 3;
+export const TRAIL = 3;
 
-const TOKEN_RE = /\u2062\u3000\u2060图\u2060片\u00a0(\d+)\u202f\u2063/g;
+export const token = (n: number) => `${OPEN}\u2004\u2060\u3000\u2060图\u2060片\u00a0${n}\u202f\u2060\u2004${CLOSE}`;
+
+const TOKEN_RE = new RegExp(`${OPEN}${PIECES.join("")}${CLOSE}`, "g");
 /** What is left of a token that lost its end (any start of it) or its start (any end of it). */
-const HEAD_RE = /\u2062(?:\u3000(?:\u2060(?:图(?:\u2060(?:片(?:\u00a0(?:\d+\u202f?)?)?)?)?)?)?)?/g;
-const TAIL_RE = /(?:(?:(?:(?:(?:(?:(?:\u3000?\u2060)?图)?\u2060)?片)?\u00a0)?\d+)?\u202f)?\u2063/g;
+const loose = PIECES.map((p) => (p.startsWith("(") ? String.raw`\d+` : p));
+const HEAD_RE = new RegExp(OPEN + loose.reduceRight((acc, p) => `(?:${p}${acc})?`, ""), "g");
+const TAIL_RE = new RegExp(loose.reduce((acc, p) => `(?:${acc}${p})?`, "") + CLOSE, "g");
+
+/** The token as saved before it had gaps: drafts from then read as today's. */
+const GAPLESS_RE = /\u2062\u3000\u2060图\u2060片\u00a0(\d+)\u202f\u2063/g;
+export const upgradeTokens = (text: string) => text.replace(GAPLESS_RE, (_, n: string) => token(Number(n)));
 
 export interface Tok {
   start: number;

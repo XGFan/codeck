@@ -2,7 +2,7 @@ import { ImageIcon } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { cn } from "@/lib/cn";
 import type { DraftImage } from "./drafts";
-import { CLOSE, OPEN, snap, tokensIn, type Tok } from "./imageTokens";
+import { LEAD, snap, tokensIn, TRAIL, type Tok } from "./imageTokens";
 
 /**
  * The textarea's text drawn under it (the textarea's own text is clear meanwhile): the command named at the start
@@ -37,6 +37,8 @@ export function MirrorText({
   };
   for (const t of tokensIn(text)) {
     words(text.slice(at, t.start), at);
+    // The start mark and the gap before the block, outside it.
+    out.push(text.slice(t.start, t.start + LEAD));
     out.push(
       <span
         key={`t${t.start}`}
@@ -47,7 +49,6 @@ export function MirrorText({
           ghost && "text-transparent",
         )}
       >
-        {OPEN}
         {"\u3000"}
         <ImageIcon
           size={12}
@@ -55,10 +56,11 @@ export function MirrorText({
           className="pointer-events-none absolute top-1/2 left-[1px] -translate-y-1/2 text-secondary"
           aria-hidden
         />
-        {text.slice(t.start + 2, t.end - 1)}
-        {CLOSE}
+        {text.slice(t.start + LEAD + 1, t.end - TRAIL)}
       </span>,
     );
+    // The gap after the block, the end mark.
+    out.push(text.slice(t.end - TRAIL, t.end));
     at = t.end;
   }
   words(text.slice(at), at);

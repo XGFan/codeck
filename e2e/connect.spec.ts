@@ -1107,6 +1107,17 @@ test("图片标记是一整块：光标跳过、⌫ 整块删掉，拖到别处�
   const chips = page.getByTestId("image-chip");
   await expect(chips).toHaveCount(2);
   expect(await words(page)).toBe("甲|乙|");
+  // A gap between the block and the word before it.
+  const gap = await page.evaluate(() => {
+    const mirror = document.querySelector("[data-testid=composer-mirror]")!;
+    const chip = mirror.querySelector("[data-chip]")!.getBoundingClientRect();
+    const r = document.createRange();
+    const first = mirror.firstChild!;
+    r.setStart(first, 0);
+    r.setEnd(first, 1);
+    return chip.left - r.getBoundingClientRect().right;
+  });
+  expect(gap).toBeGreaterThanOrEqual(3);
   // ← from the end steps over the second token at once; ⌫ there takes the first whole.
   await input.press("Meta+ArrowRight");
   await input.press("ArrowLeft");
@@ -1131,7 +1142,7 @@ test("图片标记是一整块：光标跳过、⌫ 整块删掉，拖到别处�
   const first = (await chips.first().boundingBox())!;
   await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
   await page.mouse.down();
-  await page.mouse.move(first.x + 30, first.y + first.height / 2, { steps: 3 });
+  await page.mouse.move(first.x + first.width + 8, first.y + first.height / 2, { steps: 3 });
   await expect(page.getByTestId("image-drop")).toBeVisible();
   // Between 「甲」 and 「乙」.
   const second = (await chips.nth(1).boundingBox())!;

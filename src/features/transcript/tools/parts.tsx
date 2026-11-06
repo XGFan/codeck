@@ -395,7 +395,7 @@ export function ImageMarker({
         onPointerEnter={() => setHover(true)}
         onPointerLeave={() => setHover(false)}
         onClick={() => src && setOpen(true)}
-        className="mx-0.5 inline-flex items-center gap-1 rounded-[5px] border border-border bg-ground px-1.5 align-[1px] text-[12.5px] leading-[20px] text-text hover:border-accent-border hover:text-accent"
+        className="mx-[5px] inline-flex items-center gap-1 rounded-[5px] border border-border bg-ground px-1.5 align-[1px] text-[12.5px] leading-[20px] text-text hover:border-accent-border hover:text-accent"
       >
         <ImageIcon size={13} strokeWidth={1.8} className="text-secondary" aria-hidden />
         {label}

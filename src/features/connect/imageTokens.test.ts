@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dropImages,
   moveToken,
+  upgradeTokens,
   normalize,
   plain,
   shiftTokens,
@@ -52,6 +53,11 @@ describe("图片标记", () => {
   it("takes out the sent images by image: one pasted meanwhile keeps its place", () => {
     const s = `${token(1)} 再看 ${token(2)}`;
     expect(dropImages(s, [A, B], new Set([A.path]))).toEqual({ text: ` 再看 ${token(1)}`, images: [B] });
+  });
+
+  it("reads a draft saved before tokens had gaps as today's", () => {
+    const gapless = "前\u2062\u3000\u2060图\u2060片\u00a03\u202f\u2063后";
+    expect(upgradeTokens(gapless)).toBe(`前${token(3)}后`);
   });
 
   it("a token has no place to break a line", () => {

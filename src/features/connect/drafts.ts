@@ -1,6 +1,6 @@
 // Unsent input in a Session's input box, kept in localStorage across restarts.
 
-import { normalize, withoutTokens, withTokens } from "./imageTokens";
+import { normalize, upgradeTokens, withoutTokens, withTokens } from "./imageTokens";
 
 /** A pasted image waiting to be sent: its saved path and a preview `data:` URL. */
 export interface DraftImage {
@@ -39,7 +39,7 @@ export function loadDrafts(): Record<string, Draft> {
         // not kept (over the storage quota) goes.
         .map(([k, d]) => {
           const { text, images } = d as Draft;
-          return [k, normalize(withTokens(text, images), images)];
+          return [k, normalize(withTokens(upgradeTokens(text), images), images)];
         }),
     );
   } catch {
