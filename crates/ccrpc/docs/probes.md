@@ -44,6 +44,8 @@
 - bracketed paste 一个图片路径时，`[Image #n]` 插在**光标处**；按顺序逐项粘贴文字与图片，输入框是 `AAA [Image #1] BBB [Image #2] CCC`。transcript 的 `user` 条目记一个文字块 `"AAA [Image #1] BBB [Image #2] CCC"`，后面是各张图片（按粘贴编号从小到大，按顺序粘贴时即文字里的顺序），另有 `imagePasteIds`。忙时插话相同：队列里显示穿插的文字，`queued_command` 附件带着文字与图片。
 - **必须一项一项粘贴**：几次粘贴连着写，图片落到了最后（路径是异步解析的）。每段文字要等输入框显示出来、每张图片要等多一个 `[Image #n]` 且路径离开输入框，再写下一项。
 - `n` 不可预料：整个 Session 共用一个计数，`[Pasted text #n]` 也占号，清掉的占位符也用掉号。Claude Code 不在占位符前后加空格。
+- 输入框以 `/` 开头时按斜杠命令处理，后面的图片随之变化：项目命令（`/greet world [Image #1] tail`）照常运行，`<command-args>` 里带着 `[Image #1]`，图片在展开后的 isMeta 条目里；不是命令的（`/tmp/foo 看这个 [Image #3]`）作为字符串提示词记下，**没有图片块**（图片丢了，只剩 `[Image: source: …]` 记录）。图片在前（`[Image #2]/greet bob`）则是普通的带图提示词。
+- 同一个图片路径粘贴两次得到两张图片（`imagePasteIds: [6, 7]`），不去重。
 - 长的文字段在输入框里折叠成 `[Pasted text #k +N lines]`，记录的是全文；部分账号的 `<pasted_content id=…>` 包裹出现在图片之间时是什么样子没有实测。
 
 ## 审批框（2.1.316）

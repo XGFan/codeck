@@ -70,6 +70,21 @@ impl Input {
                 .collect(),
         }
     }
+
+    /// The text for showing (queued follow-ups): `text`, or the parts' text joined with an
+    /// `[Image]` where each image goes.
+    pub fn display_text(&self) -> String {
+        match self {
+            Input::Text { text, .. } => text.clone(),
+            Input::Parts(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    Part::Text(t) => t.as_str(),
+                    Part::Image(_) => "[Image]",
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -781,6 +796,7 @@ mod tests {
             }
         );
         assert_eq!(want.typed_text(), "AAA ");
+        assert_eq!(want.display_text(), "AAA [Image][Image]");
         for kind in ["steer", "follow_up"] {
             let r = parse(&format!(
                 r#"{{"type":"{kind}","parts":[{{"image":"a.png"}},{{"text":" look"}}],"text":null}}"#

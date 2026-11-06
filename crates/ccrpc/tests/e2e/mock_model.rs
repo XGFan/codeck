@@ -482,16 +482,51 @@ fn mock_model_interleaved_parts() {
         "MOCK-STEERED see # and # now",
         "{q}"
     );
+    // A follow-up with parts shows `[Image]` where its image goes while it waits.
+    let f = rpc.call(
+        "f1",
+        json!({"type": "follow_up", "parts": [{"text": "later "}, {"image": a}]}),
+    );
+    assert_eq!(f["queued"], 1, "{f}");
+    let g = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(g["follow_ups"], json!(["later [Image]"]), "{g}");
     rpc.event("turn_end", Duration::from_secs(30));
     let t2 = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
-
-    // A `!` command cannot go with an image: refused before anything is typed.
-    rpc.send(json!({"id": "b1", "type": "prompt", "parts": [{"text": "!ls "}, {"image": a}]}));
-    let r = rpc.until("响应 b1", Duration::from_secs(10), |v| {
-        v["type"] == "response" && v["id"] == "b1"
+    let u = rpc.until("follow-up", Duration::from_secs(30), |v| {
+        v["type"] == "follow_up_failed"
+            || (v["type"] == "block"
+                && v["kind"] == "user"
+                && v["text"].as_str().is_some_and(|t| t.starts_with("later")))
     });
-    assert_eq!(r["error"]["code"], "bad_request", "{r}");
+    assert_eq!(
+        image_tags_as_hash(u["text"].as_str().unwrap_or_default()),
+        "later #",
+        "{u}"
+    );
+    rpc.event("turn_end", Duration::from_secs(30));
+    settle_idle(&mut rpc);
+
+    // After an image the box is a prompt, whatever the text starts with.
+    let d = rpc.call(
+        "p2",
+        json!({"type": "prompt", "parts": [{"image": a}, {"text": "!!! 为什么"}]}),
+    );
+    assert!(d["uuid"].is_string(), "{d}");
+    rpc.event("turn_end", Duration::from_secs(30));
+    settle_idle(&mut rpc);
+
+    // `!` or `/` first cannot go with an image (a `!` command; a slash command, or a prompt
+    // Claude Code would send without the image): refused before anything is typed.
+    for (id, first) in [("b1", "!ls "), ("b2", "/review 看这个截图 ")] {
+        rpc.send(json!({"id": id, "type": "prompt", "parts": [{"text": first}, {"image": a}]}));
+        let r = rpc.until(&format!("响应 {id}"), Duration::from_secs(10), |v| {
+            v["type"] == "response" && v["id"] == id
+        });
+        assert_eq!(r["error"]["code"], "bad_request", "{r}");
+    }
+    let box_text = rpc.call("g2", json!({"type": "get_state"}));
+    assert_eq!(box_text["state"], "idle", "{box_text}");
 }
 
 /// Model and effort from here: `set_effort` / `set_model` mid-conversation ask first (built-in

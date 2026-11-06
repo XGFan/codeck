@@ -268,8 +268,8 @@ impl Engine {
 
     /// `input` checked as when it is sent (follow-ups are checked as they are queued): image
     /// paths made absolute; of `parts`, control characters left out of the text and empty text
-    /// items dropped, and without any image they become one `text`. A `!` first (a `!` command)
-    /// cannot go with images.
+    /// items dropped, and without any image they become one `text`. With images, the first item
+    /// cannot be text starting with `!` (a `!` command) or `/` (a slash command).
     pub(super) fn checked_input(input: &rpc::Input) -> std::result::Result<rpc::Input, CmdErr> {
         use rpc::{Input, Part};
         let parts = match input {
@@ -298,18 +298,27 @@ impl Engine {
             }
         }
         let has_image = out.iter().any(|p| matches!(p, Part::Image(_)));
-        let first_bang = out.iter().find_map(|p| match p {
-            Part::Text(t) => Some(t.starts_with('!')),
-            Part::Image(_) => None,
-        });
+        // What the input box starts with decides how Claude Code takes it (an image first: a
+        // prompt, whatever the text after it).
+        let lead: String = out
+            .iter()
+            .map_while(|p| match p {
+                Part::Text(t) => Some(t.as_str()),
+                Part::Image(_) => None,
+            })
+            .collect();
         let input = Input::Parts(out);
         if !has_image {
             let text = input.typed_text();
             Self::clean_text(&text)?;
             return Ok(Input::text(text));
         }
-        if first_bang == Some(true) {
+        if lead.starts_with('!') {
             return err("bad_request", "! 命令不能带图片");
+        }
+        // Run as a slash command, or (not a command) sent without its images (2.1.318).
+        if lead.trim_start().starts_with('/') {
+            return err("bad_request", "以 / 开头的提示词不能带图片");
         }
         Ok(input)
     }
@@ -486,7 +495,17 @@ impl Engine {
     /// Pastes checked `parts` one by one, each once the input box shows it: Claude Code resolves
     /// a pasted image path asynchronously, so pastes written back to back put the images last.
     /// Each `[Image #n]` lands at the cursor, with no space around it.
+    /// On failure the box is emptied again: what was pasted must not wait there for someone's
+    /// Enter.
     fn paste_parts(&mut self, parts: &[rpc::Part]) -> std::result::Result<(), CmdErr> {
+        let r = self.paste_parts_in_order(parts);
+        if r.is_err() {
+            let _ = self.clear_input();
+        }
+        r
+    }
+
+    fn paste_parts_in_order(&mut self, parts: &[rpc::Part]) -> std::result::Result<(), CmdErr> {
         for p in parts {
             match p {
                 rpc::Part::Image(path) => self.paste_images(std::slice::from_ref(path))?,
@@ -625,7 +644,10 @@ impl Engine {
     }
 
     pub(super) fn follow_up_texts(&self) -> Vec<String> {
-        self.follow_ups.iter().map(rpc::Input::typed_text).collect()
+        self.follow_ups
+            .iter()
+            .map(rpc::Input::display_text)
+            .collect()
     }
 
     pub(super) fn cancel_follow_up(&mut self, index: Option<usize>) -> CmdResult {
@@ -762,7 +784,7 @@ impl Engine {
             return;
         };
         if let Err((code, msg)) = self.send_input(&input) {
-            self.emit(json!({"type": "follow_up_failed", "text": input.typed_text(), "error": {"code": code, "message": msg}}));
+            self.emit(json!({"type": "follow_up_failed", "text": input.display_text(), "error": {"code": code, "message": msg}}));
         }
     }
 }
@@ -809,16 +831,27 @@ mod tests {
         );
         // A `!` command cannot go with images (without, it runs as one).
         assert_eq!(
-            check(vec![text("!ls"), Part::Image(img.clone())])
+            check(vec![text("!"), text("ls"), Part::Image(img.clone())])
                 .unwrap_err()
                 .0,
             "bad_request"
         );
+        // Only text at the very start counts: after an image the box is a prompt.
+        let after_image = vec![Part::Image(img.clone()), text("!!! 为什么"), text(" /tmp")];
+        assert_eq!(check(after_image.clone()), Ok(Input::Parts(after_image)));
+        // `/` first with images: a slash command, or a prompt Claude Code sends without them.
+        for first in ["/review 看这个截图 ", " /tmp/foo "] {
+            assert_eq!(
+                check(vec![text(" "), text(first), Part::Image(img.clone())])
+                    .unwrap_err()
+                    .0,
+                "bad_request",
+                "{first:?}"
+            );
+        }
         assert_eq!(
-            check(vec![Part::Image(img.clone()), text("!ls")])
-                .unwrap_err()
-                .0,
-            "bad_request"
+            check(vec![text("/review"), text(" x")]),
+            Ok(Input::text("/review x"))
         );
         assert_eq!(check(vec![text("!"), text("ls")]), Ok(Input::text("!ls")));
         // The old form: its text kept as given, its paths made absolute.
