@@ -4,6 +4,15 @@
 
 use super::*;
 
+/// The input box shows `prompt`: whole, or (a long one) at least its first 20 characters;
+/// whitespace aside (the box wraps).
+fn shows_prompt(shown: &str, prompt: &str) -> bool {
+    let squeeze = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let (shown, whole) = (squeeze(shown), squeeze(prompt));
+    !shown.is_empty()
+        && (shown == whole || (shown.chars().count() >= 20 && whole.starts_with(&shown)))
+}
+
 /// What one turn did, reported with its `turn_end`.
 #[derive(Default)]
 pub(super) struct TurnStats {
@@ -19,6 +28,8 @@ pub(super) struct TurnStats {
     pub(super) aborted: bool,
     /// Claude Code's id of the prompt (`None`: a turn already running when ccrpc connected).
     pub(super) prompt_id: Option<String>,
+    /// The prompt's text, from UserPromptSubmit.
+    pub(super) prompt_text: Option<String>,
     /// `prompt`, or `task_notification` for a background task's result.
     pub(super) trigger: &'static str,
     /// The transcript wrote the turn's `turn_duration` marker.
@@ -252,8 +263,8 @@ pub(super) enum TurnOut {
     Opened,
     /// A Stop was taken as the running turn's: the background tasks it lists.
     Stopped(Value),
-    /// A `turn_end` event to emit.
-    End(Value),
+    /// A `turn_end` event to emit, with the turn's prompt (as the plugin reported it).
+    End(Value, Option<String>),
 }
 
 /// How soon a `!` command ccrpc ran shows in the transcript (it is written as the command starts).
@@ -406,9 +417,11 @@ impl TurnTracker {
                     }
                     return out;
                 }
-                // The previous turn never got its Stop.
+                // The previous turn never got its Stop. What the input box shows now is not
+                // what that turn left there (the new prompt may be the same words sent again).
                 Some(_) => {
                     self.stats.aborted = true;
+                    self.stats.prompt_text = None;
                     out.push(self.end(None, Value::Null));
                 }
             }
@@ -420,6 +433,7 @@ impl TurnTracker {
         };
         self.pending_steers.clear();
         self.stats = TurnStats::start(Some(pid), trigger);
+        self.stats.prompt_text = (!notice).then_some(text);
         self.active = true;
         self.last_text = None;
         out.push(TurnOut::Opened);
@@ -648,8 +662,9 @@ impl TurnTracker {
             Value::Array(a) => Value::Array(a),
             _ => json!([]),
         };
+        let prompt = self.stats.prompt_text.take();
         self.stats = TurnStats::default();
-        TurnOut::End(v)
+        TurnOut::End(v, prompt)
     }
 }
 
@@ -709,9 +724,21 @@ impl Engine {
                     }
                 }
                 TurnOut::Stopped(bg) => self.note_running_tasks(&bg),
-                TurnOut::End(v) => self.emit(v),
+                TurnOut::End(mut v, prompt) => {
+                    v["restored_text"] = json!(self.restored(&v, prompt));
+                    self.emit(v)
+                }
             }
         }
+    }
+
+    /// An aborted turn's prompt when Claude Code put it back in its input box (Esc before any
+    /// reply takes it out of the conversation): the input box shows it, whole or (a long one) at
+    /// least its first 20 characters.
+    fn restored(&self, v: &Value, prompt: Option<String>) -> Option<String> {
+        let prompt = prompt.filter(|_| v["aborted"] == true)?;
+        let shown = self.screen().ok().and_then(|s| recognize::input_text(&s))?;
+        shows_prompt(&shown, &prompt).then_some(prompt)
     }
 
     pub(super) fn on_hook(&mut self, m: HookMsg) {
@@ -907,7 +934,7 @@ mod tests {
     fn ends(out: &[TurnOut]) -> Vec<&Value> {
         out.iter()
             .filter_map(|o| match o {
-                TurnOut::End(v) => Some(v),
+                TurnOut::End(v, _) => Some(v),
                 _ => None,
             })
             .collect()
@@ -1186,6 +1213,16 @@ mod tests {
         stop(&mut t, now, "p2", "x");
         let out = marker(&mut t, now, 1);
         assert_eq!(ends(&out)[0]["error"]["message"], "first");
+    }
+
+    #[test]
+    fn the_input_box_shows_the_prompt_whole_or_a_long_ones_start() {
+        assert!(shows_prompt("改成两行 的那个", "改成两行\n的那个"));
+        let long = "a".repeat(30);
+        assert!(shows_prompt(&long[..20], &long));
+        assert!(!shows_prompt(&long[..10], &long));
+        assert!(!shows_prompt("", "x"));
+        assert!(!shows_prompt("something else", "the prompt"));
     }
 
     #[test]

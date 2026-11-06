@@ -1295,6 +1295,37 @@ fn mock_model_ask_chat() {
     );
 }
 
+/// Esc before any reply: Claude Code takes the prompt out of the conversation and puts it back in
+/// its input box; the aborted `turn_end` says so (`restored_text`). Once the reply has started the
+/// prompt stays (`Interrupted`), the box is empty: null.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_abort_restores_the_prompt() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.call(
+        "p1",
+        json!({"type": "prompt", "text": "MOCK-SLOW taken back"}),
+    );
+    rpc.call("a1", json!({"type": "abort"}));
+    let t = rpc.event("turn_end", Duration::from_secs(15));
+    assert_eq!(t["aborted"], true, "{t}");
+    assert_eq!(t["restored_text"], "MOCK-SLOW taken back", "{t}");
+
+    // The next prompt clears the box first.
+    rpc.forget();
+    rpc.call("p2", json!({"type": "prompt", "text": "MOCK-SLOW kept"}));
+    // MOCK-SLOW streams for ~8 s (its block comes once written): well into it.
+    std::thread::sleep(Duration::from_secs(3));
+    rpc.call("a2", json!({"type": "abort"}));
+    let t = rpc.event("turn_end", Duration::from_secs(15));
+    assert_eq!(t["aborted"], true, "{t}");
+    assert_eq!(t["restored_text"], Value::Null, "{t}");
+}
+
 /// A follow-up queued while a background task ends during the turn's last answer: right after
 /// Stop, Claude Code runs the task's notification as a turn of its own; the follow-up goes out
 /// after that turn instead of racing it into Claude Code's queue (and being reported failed).

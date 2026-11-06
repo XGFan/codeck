@@ -34,6 +34,7 @@
 - bracketed paste 正文 + 单独的 `\r` 即提交；多行不会提前提交。输入框把长文本折叠成 `[Pasted text #1 +3 lines]`，提交后记录的是全文。部分账号（服务端开关 `tengu_virtual_pancake`，隔离的配置目录下没有）会把折叠的粘贴包成 `<pasted_content id="1b44">\n全文\n</pasted_content id="1b44">`（id 为 4 位十六进制，开头与结尾的标签都带），带图时在 `[Image #n]\n\n` 之后（2.1.317 实测；102 字符 3 行没折叠的没包）。
 - 输入框为空时可能显示暗色（SGR 2）的占位提示，如 `❯ Try "edit <filepath> to..."`：新 Session 还没发过消息、且提示词建议开着时出现（真实账号默认开着；`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1` 强制打开，`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 下没有）。Claude Code 自己画的光标是反显格，落在占位提示第一个字上（那一格不是暗色）；`ctrl+u` 清不掉它，读输入框内容时要跳过（2.1.317）。
 - `ctrl+u` 清空单行输入框。`Esc` 中止忙状态约 400ms 后回 `idle`，**被中止的提示词会放回输入框**——下一次 `prompt` 前要先清空。
+- Esc 中止（2.1.318，`mock_model_abort_restores_the_prompt`）：回复开始前按，提示词离开对话、回到输入框，Rewind 选择器里也没有它；transcript 里却留着这条提示词和它的 attachment，没有回复，也没有 `[Request interrupted by user]`，下一条提示词的 parentUuid 接在它的最后一个 attachment 上。回复开始后按，屏幕显示 `⎿  Interrupted · What should Claude do instead?`，提示词留在对话里，输入框为空，transcript 写出已收到的那部分回复和 `[Request interrupted by user]`。
 - 斜杠命令：直接写 `/clear`、`/model X` 文本再回车即可执行（`/model` 会先发一次请求校验模型，失败时屏幕显示 `model not changed`）。
 - shift+tab 依次切换权限模式：manual → accept edits → plan → auto → manual。2.1.316 新配置目录的默认是 auto（分类器自动审批，不弹审批框）。
 
