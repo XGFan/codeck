@@ -53,8 +53,8 @@ Session 中由另一个 Claude Session（agent team 的成员）发来的消息�
 _Avoid_: 用户消息, peer message, 队友输入
 
 **Fork**:
-从另一个 Session 复制了部分历史后继续进行的新 Session；被复制的那个称为它的 **Origin Session**。
-_Avoid_: 分支, 副本, Resume（Resume 不产生新 Session，不算 Fork）
+从另一个 Session 复制了部分历史后继续进行的新 Session；被复制的那个称为它的 **Origin Session**。Claude Code 的 `/branch` 命令与 `--fork-session` 产生的都是 Fork。
+_Avoid_: 分支, Branch（虽然 `/branch` 这样叫）, 副本, Resume（Resume 不产生新 Session，不算 Fork）
 
 **Continued Session**:
 Session 在 agents 页面转入后台（Move to Background）时 Claude Code 新起的 Session：它复制了原 Session 的全部对话并接着进行，原 Session 由此**被接替**（superseded）。两者是同一个对话，只显示 Continued Session，打开原 Session 时转到它；它不是 Fork，也不标 Origin Session。
