@@ -14,7 +14,7 @@ use super::session_cache::CachedSession;
 use super::{ChangeSet, Engine};
 use crate::error::CoreResult;
 use crate::index::{reader, writer};
-use crate::model::{IndexPhase, IndexStatus};
+use crate::model::{FileRole, IndexPhase, IndexStatus};
 use crate::{project, scan};
 use compute::{SessionWork, compute_session};
 use plan::{SessionPlan, batches, diff_sidecars, plan_sync};
@@ -34,7 +34,23 @@ impl Engine {
         let scope = scope.filter(|_| {
             self.sidecar_state.lock().is_some() && !self.full_scan_next.load(Ordering::Relaxed)
         });
-        let r = self.sync_locked(p, keep_cache, scope);
+        // A session that became superseded (or stopped being) hands its agent files over (or gets
+        // them back) only on a scan made after the flag changed: one more pass over those sessions.
+        let r = self
+            .sync_locked(p, keep_cache, scope)
+            .and_then(|(mut cs, flipped)| {
+                if !flipped.is_empty() {
+                    let (more, _) = self.sync_locked(p, keep_cache, Some(&flipped))?;
+                    cs.changed.extend(more.changed);
+                    cs.removed.extend(more.removed);
+                    cs.projects_changed |= more.projects_changed;
+                    cs.changed.sort();
+                    cs.changed.dedup();
+                    cs.removed.sort();
+                    cs.removed.dedup();
+                }
+                Ok(cs)
+            });
         if r.is_err() {
             self.full_scan_next.store(true, Ordering::Relaxed);
         } else if scope.is_none() {
@@ -43,14 +59,21 @@ impl Engine {
         r
     }
 
+    /// Also returns the sessions whose superseded flag changed.
     fn sync_locked(
         &self,
         p: Option<&dyn Fn(&IndexStatus)>,
         keep_cache: bool,
         scope: Option<&BTreeSet<String>>,
-    ) -> CoreResult<ChangeSet> {
+    ) -> CoreResult<(ChangeSet, BTreeSet<String>)> {
         let p: &dyn Fn(&IndexStatus) = p.unwrap_or(&|_| {});
-        let (scan, db_files) = match scope {
+        // Sessions linked by `continued-in` are synced together: agent files move between them.
+        let scope = match scope {
+            Some(s) => Some(self.index.read(|c| reader::with_continued(c, s))?),
+            None => None,
+        };
+        let scope = scope.as_ref();
+        let (mut scan, db_files) = match scope {
             Some(s) => (
                 scan::scan_sessions(&self.cfg.data_root, s),
                 self.index.read(|c| reader::files_of_sessions(c, s))?,
@@ -60,6 +83,15 @@ impl Engine {
                 self.index.read(reader::all_files)?,
             ),
         };
+        let mut adopt = self.index.read(reader::adoptions)?;
+        let mains: HashSet<&String> = scan
+            .files
+            .iter()
+            .filter(|f| f.role == FileRole::Main)
+            .map(|f| &f.session_id)
+            .collect();
+        adopt.retain(|_, to| mains.contains(to));
+        scan::adopt(&mut scan.files, &mut scan.sidecars, &adopt);
         let (sidecar_dirty, sidecar_now) = {
             let prev = self.sidecar_state.lock();
             match (scope, prev.as_ref()) {
@@ -74,7 +106,7 @@ impl Engine {
                 _ => diff_sidecars(prev.as_ref(), &scan, &db_files),
             }
         };
-        let (plans, removed) = plan_sync(&scan, db_files, &sidecar_dirty);
+        let (plans, removed, moved) = plan_sync(&scan, db_files, &sidecar_dirty);
         let with_text = self.index.read(|c| {
             reader::sessions_with_text(c, plans.iter().filter(|p| !p.reparse).map(|p| &p.sid))
         })?;
@@ -100,12 +132,16 @@ impl Engine {
         // Session rows are committed batch by batch, billing only at the end: a sync that stops in
         // between leaves the flag set, and the next one re-bills everything.
         let mut rebill_all = false;
+        let mut flipped = Vec::new();
         let result = (|| -> CoreResult<()> {
             self.index.write(|conn| {
                 let tx = conn.transaction()?;
                 rebill_all = writer::rebill_pending(&tx)?;
                 if !removed.is_empty() || !plans.is_empty() {
                     writer::set_rebill_pending(&tx, true)?;
+                }
+                for row in &moved {
+                    writer::delete_file(&tx, row.id)?;
                 }
                 for sid in &removed {
                     self.sessions.lock().take(sid);
@@ -174,7 +210,7 @@ impl Engine {
             }
             self.index.write(|conn| {
                 let tx = conn.transaction()?;
-                update_superseded(&tx, &mut cs, rebill_all)?;
+                flipped = update_superseded(&tx, &mut cs, rebill_all)?;
                 if rebill_all {
                     writer::rebill(&tx, None)?;
                 } else {
@@ -221,6 +257,6 @@ impl Engine {
         cs.changed.sort();
         cs.changed.dedup();
         cs.removed.sort();
-        Ok(cs)
+        Ok((cs, flipped.into_iter().collect()))
     }
 }

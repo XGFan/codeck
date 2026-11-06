@@ -41,6 +41,11 @@ const FILES: &[(&str, usize, usize)] = &[
         0,
     ),
     (
+        "continued/projects/-Users-dev-code-heron-bot/7c1e5a42-93b0-5d8e-a6f1-2b4c8d0e9f13/subagents/agent-a5e1c0d7f2b9a4e36.jsonl",
+        2,
+        0,
+    ),
+    (
         "continued/projects/-Users-dev-code-heron-bot/9a3f6d18-2e7c-5b40-8d95-c1e0f7a2b364.jsonl",
         269,
         0,
@@ -896,6 +901,32 @@ fn continued_pair() {
         .collect();
     assert_eq!(own.len(), 114);
     assert!(own.iter().all(|v| s(v, "sessionKind") == "bg"));
+    // the copied Agent call and saved output refer to files only the old one's directory holds
+    for (_, entries) in [("old", &old), ("new", &new)] {
+        let text = entries
+            .iter()
+            .map(|(_, v)| v.to_string())
+            .collect::<String>();
+        assert!(text.contains(r#""agentId":"a5e1c0d7f2b9a4e36""#));
+        assert!(text.contains("tool-results/b7q2m9x4k.txt"));
+    }
+    let dir = |sid: &str| {
+        Path::new(FIXTURES)
+            .join("continued/projects")
+            .join(ids::CONTINUED_DIR)
+            .join(sid)
+    };
+    assert!(
+        dir(ids::CONTINUED_OLD)
+            .join("subagents/agent-a5e1c0d7f2b9a4e36.meta.json")
+            .is_file()
+    );
+    assert!(
+        dir(ids::CONTINUED_OLD)
+            .join("tool-results/b7q2m9x4k.txt")
+            .is_file()
+    );
+    assert!(!dir(ids::CONTINUED_NEW).exists());
 }
 
 #[test]

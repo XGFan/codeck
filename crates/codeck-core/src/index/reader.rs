@@ -1,6 +1,6 @@
 //! `list_projects`, `list_sessions` (sorts, drill filters) and session detail rows.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use chrono::{Local, NaiveDate, TimeZone};
 use rusqlite::types::Value;
@@ -408,6 +408,65 @@ pub fn superseded_by(conn: &Connection, id: &str) -> CoreResult<Option<String>> 
         cur = next;
     }
     Ok((cur != id).then_some(cur))
+}
+
+/// The sessions `id` carries on: superseded by it directly or through others, nearest first.
+pub fn superseded_into(conn: &Connection, id: &str) -> CoreResult<Vec<String>> {
+    let mut st = conn
+        .prepare_cached("SELECT id FROM sessions WHERE continued_in_id = ?1 AND superseded = 1")?;
+    let mut out: Vec<String> = Vec::new();
+    let mut next = 0;
+    let mut cur = id.to_owned();
+    loop {
+        for r in st.query_map([&cur], |r| r.get::<_, String>(0))? {
+            let r = r?;
+            if r != id && !out.contains(&r) {
+                out.push(r);
+            }
+        }
+        let Some(n) = out.get(next) else {
+            return Ok(out);
+        };
+        cur = n.clone();
+        next += 1;
+    }
+}
+
+/// Every superseded session → the listed session carrying it on (as [`superseded_by`]).
+pub fn adoptions(conn: &Connection) -> CoreResult<HashMap<String, String>> {
+    let mut st = conn.prepare_cached("SELECT id FROM sessions WHERE superseded = 1")?;
+    let ids: Vec<String> = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    let mut out = HashMap::new();
+    for id in ids {
+        if let Some(to) = superseded_by(conn, &id)? {
+            out.insert(id, to);
+        }
+    }
+    Ok(out)
+}
+
+/// `sids` and every session linked to one of them by `continued-in`, either way and through
+/// chains (superseded or not): their agent files may move between them.
+pub fn with_continued(conn: &Connection, sids: &BTreeSet<String>) -> CoreResult<BTreeSet<String>> {
+    let mut st = conn.prepare_cached(
+        "SELECT id, continued_in_id FROM sessions WHERE continued_in_id IS NOT NULL",
+    )?;
+    let edges: Vec<(String, String)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut out = sids.clone();
+    loop {
+        let before = out.len();
+        for (a, b) in &edges {
+            if out.contains(a) || out.contains(b) {
+                out.insert(a.clone());
+                out.insert(b.clone());
+            }
+        }
+        if out.len() == before {
+            return Ok(out);
+        }
+    }
 }
 
 /// Those of `ids` that are superseded.

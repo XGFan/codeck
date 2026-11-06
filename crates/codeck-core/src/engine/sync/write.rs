@@ -26,12 +26,13 @@ pub(super) const REBILL_ALL_ABOVE: usize = 200;
 
 /// Re-derives which sessions are superseded among the changed and removed ones and those continued
 /// in them (all of them when `all` or after a full scan); a session whose flag changed is reported
-/// as changed (and billed again by [`rebill_changed`]), and the Project counts as changed.
+/// as changed (and billed again by [`rebill_changed`]), and the Project counts as changed. Returns
+/// those sessions.
 pub(super) fn update_superseded(
     conn: &Connection,
     cs: &mut ChangeSet,
     all: bool,
-) -> CoreResult<()> {
+) -> CoreResult<Vec<String>> {
     let flipped = if all || cs.changed.len() > REBILL_ALL_ABOVE {
         writer::update_superseded(conn, None)?
     } else {
@@ -40,9 +41,9 @@ pub(super) fn update_superseded(
     };
     if !flipped.is_empty() {
         cs.projects_changed = true;
-        cs.changed.extend(flipped);
+        cs.changed.extend(flipped.iter().cloned());
     }
-    Ok(())
+    Ok(flipped)
 }
 
 /// Re-bills the changed sessions and every session sharing a message with them; those whose

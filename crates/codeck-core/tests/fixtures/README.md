@@ -105,10 +105,12 @@ its tool_result must not produce a BranchPoint. Choosing the "Now add unit tests
 |---|---|---|---|---|---|---|---|---|---|---|
 | old | `-Users-dev-code-heron-bot/7c1e5a42….jsonl` | 149 | 0 | 94 | 0 | 2 | 10 | 11 | 3 | 20 / 2941 / 588946 / 44668 |
 | continued | `-Users-dev-code-heron-bot/9a3f6d18….jsonl` | 269 | 0 | 208 | 0 | 5 | 22 | 21 | 3 | 46 / 8765 / 1542693 / 56935 |
+| old's Subagent | `-Users-dev-code-heron-bot/7c1e5a42…/subagents/agent-a5e1c0d7f2b9a4e36.jsonl` | 2 | 0 | 2 | 0 | 1 | 1 | 0 | 0 | 3 / 120 / 1000 / 50 |
 
 - Old: its conversation ends with a `session_cron_carry` attachment, `cost-state` and `{"type":"continued-in","continuedInSessionId":"9a3f6d18…"}`; only a `last-prompt` and another `cost-state` (no uuids) follow.
 - Continued: all 94 uuid-bearing old entries again (same uuids and `message.id`s; three `parentUuid`s differ, no `forkedFrom`), then 114 entries of its own, every uuid-bearing entry with `sessionKind:"bg"`, plus `agent-name` lines. Both share the first uuid and the first timestamp, so their `created_ms` is equal.
-- Expect: the old Session is superseded (hidden from lists, counts, search and stats; opening it gives the continued one), the continued one is not a Fork and bills every copied message; without the continued file (or once the old one has a prompt the continued one lacks) both are listed and billed normally.
+- Hand-written, in both files alike (the copy keeps them equal): the Bash call `toolu_01CZ4fy7…` is an `Agent` call whose result names `agentId` `a5e1c0d7f2b9a4e36`, and the result of `toolu_01KjgPwR…` is a `<persisted-output>` preview of `tool-results/b7q2m9x4k.txt`. As in real parked Sessions, only the old Session's directory holds `subagents/agent-a5e1c0d7f2b9a4e36.jsonl` (+ `.meta.json`, hand-written: a prompt and one reply) and `tool-results/b7q2m9x4k.txt`; the continued Session has no directory.
+- Expect: the old Session is superseded (hidden from lists, counts, search and stats; opening it gives the continued one), the continued one is not a Fork, bills every copied message and takes the old one's Subagent Run and saved output; without the continued file (or once the old one has a prompt the continued one lacks) both are listed and billed normally.
 
 ## copies
 

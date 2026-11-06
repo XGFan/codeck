@@ -7,7 +7,7 @@
 //! Everything else (`tool-results/`, `memory/`, …) is ignored. Directories and files are visited
 //! once per realpath and (dev, ino), so a symlinked project dir or a hard link adds nothing.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, Metadata};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -222,6 +222,75 @@ pub fn list_session_dir(
     out
 }
 
+/// Gives a session the agent transcripts and sidecars of the sessions it supersedes that it lacks
+/// (`adopt`: superseded session → the session carrying it on). Parking a Session copies its
+/// conversation into the new one but leaves `subagents/`, `workflows/` and `tool-results/` behind,
+/// so the copied Agent and Workflow calls are linked, indexed and billed through the new session.
+/// A Subagent Run or Workflow Run the new session has itself keeps its own files; among several
+/// superseded sessions the first listed wins.
+pub fn adopt(
+    files: &mut [ScannedFile],
+    sidecars: &mut [SidecarFile],
+    adopt: &HashMap<String, String>,
+) {
+    if adopt.is_empty() {
+        return;
+    }
+    fn file_key(f: &ScannedFile) -> Option<String> {
+        (f.role != FileRole::Main)
+            .then(|| f.agent_id.as_ref().map(|a| format!("agent:{a}")))
+            .flatten()
+    }
+    fn sidecar_key(s: &SidecarFile) -> String {
+        match &s.kind {
+            SidecarKind::AgentMeta { agent_id, .. } => format!("agent:{agent_id}"),
+            SidecarKind::WorkflowJson { run_id } | SidecarKind::Journal { run_id } => {
+                format!("run:{run_id}")
+            }
+        }
+    }
+    let targets: HashSet<&String> = adopt.values().collect();
+    // (target, key) → the session whose files provide it: the target's own first.
+    let mut owner: HashMap<(String, String), String> = HashMap::new();
+    let keyed = files
+        .iter()
+        .filter_map(|f| Some((f.session_id.clone(), file_key(f)?)))
+        .chain(
+            sidecars
+                .iter()
+                .map(|s| (s.session_id.clone(), sidecar_key(s))),
+        )
+        .collect::<Vec<_>>();
+    for (sid, key) in &keyed {
+        if targets.contains(sid) {
+            owner.insert((sid.clone(), key.clone()), sid.clone());
+        }
+    }
+    for (sid, key) in &keyed {
+        if let Some(to) = adopt.get(sid) {
+            owner
+                .entry((to.clone(), key.clone()))
+                .or_insert_with(|| sid.clone());
+        }
+    }
+    let take = |sid: &mut String, key: String| {
+        if let Some(to) = adopt.get(sid)
+            && owner.get(&(to.clone(), key)) == Some(sid)
+        {
+            *sid = to.clone();
+        }
+    };
+    for f in files.iter_mut() {
+        if let Some(key) = file_key(f) {
+            take(&mut f.session_id, key);
+        }
+    }
+    for s in sidecars.iter_mut() {
+        let key = sidecar_key(s);
+        take(&mut s.session_id, key);
+    }
+}
+
 fn collect_agents(
     dir: &Path,
     session_id: &str,
@@ -360,5 +429,75 @@ mod tests {
         );
         assert!(r.files.iter().all(|f| f.session_id == "s1"));
         assert_eq!(r.sidecars.len(), 3);
+    }
+
+    #[test]
+    fn adopt_takes_only_what_the_carrying_session_lacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("projects/-p");
+        for (sid, agents) in [
+            ("new", &["x"][..]),
+            ("old", &["x", "y"]),
+            ("older", &["y", "z"]),
+        ] {
+            fs::create_dir_all(proj.join(sid).join("subagents")).unwrap();
+            fs::write(proj.join(format!("{sid}.jsonl")), "{}\n").unwrap();
+            for a in agents {
+                let dir = proj.join(sid).join("subagents");
+                fs::write(dir.join(format!("agent-{a}.jsonl")), format!("{sid}{a}\n")).unwrap();
+                fs::write(dir.join(format!("agent-{a}.meta.json")), sid).unwrap();
+            }
+        }
+        let mut r = scan_root(tmp.path());
+        let to_new = |s: &str| (s.to_owned(), "new".to_owned());
+        adopt(
+            &mut r.files,
+            &mut r.sidecars,
+            &HashMap::from([to_new("old"), to_new("older")]),
+        );
+        let owner = |agent: &str| {
+            let f = r
+                .files
+                .iter()
+                .filter(|f| f.agent_id.as_deref() == Some(agent));
+            let s = r.sidecars.iter().filter(
+                |s| matches!(&s.kind, SidecarKind::AgentMeta { agent_id, .. } if agent_id == agent),
+            );
+            let mut v: Vec<(String, String)> = f
+                .map(|f| (f.path.to_string_lossy().into_owned(), f.session_id.clone()))
+                .chain(s.map(|s| (s.path.to_string_lossy().into_owned(), s.session_id.clone())))
+                .map(|(p, sid)| (p.split("/-p/").nth(1).unwrap().to_owned(), sid))
+                .collect();
+            v.sort();
+            v
+        };
+        let pair = |p: &str, s: &str| (p.to_owned(), s.to_owned());
+        // The carrying session's own run stays its own; the old copy of it is left alone.
+        assert_eq!(
+            owner("x"),
+            vec![
+                pair("new/subagents/agent-x.jsonl", "new"),
+                pair("new/subagents/agent-x.meta.json", "new"),
+                pair("old/subagents/agent-x.jsonl", "old"),
+                pair("old/subagents/agent-x.meta.json", "old"),
+            ]
+        );
+        // Transcript and meta move together; of two superseded sessions the first listed wins.
+        assert_eq!(
+            owner("y"),
+            vec![
+                pair("old/subagents/agent-y.jsonl", "new"),
+                pair("old/subagents/agent-y.meta.json", "new"),
+                pair("older/subagents/agent-y.jsonl", "older"),
+                pair("older/subagents/agent-y.meta.json", "older"),
+            ]
+        );
+        assert_eq!(
+            owner("z"),
+            vec![
+                pair("older/subagents/agent-z.jsonl", "new"),
+                pair("older/subagents/agent-z.meta.json", "new"),
+            ]
+        );
     }
 }

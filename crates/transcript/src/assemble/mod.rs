@@ -364,6 +364,9 @@ pub struct AssembledSession {
     pub session_id: String,
     /// `<project dir>/<session id>/` (holds `subagents/`, `tool-results/`, `workflows/`).
     pub session_dir: PathBuf,
+    /// Directories of the Sessions this one carries on (set by the engine): their `tool-results/`
+    /// hold the outputs of the copied history, which the copy does not bring along.
+    pub inherited_dirs: Vec<PathBuf>,
     /// Set by the engine: Σ(size, mtime) of the source and sidecar files.
     pub revision: f64,
     /// Built from `main_files` in the order given (node `file` indexes refer to it).
@@ -379,6 +382,22 @@ pub struct AssembledSession {
     pub workflow_by_tool: HashMap<String, String>,
     /// tool_use id → uuid of the task-notification prompt that reports it.
     pub notification_by_tool: HashMap<String, NodeId>,
+}
+
+impl AssembledSession {
+    /// `tool-results/<name>` of this Session, else of the first Session it carries on that has
+    /// it (see [`content::persisted_path`] for the names refused).
+    pub fn persisted_file(&self, name: &str) -> Option<PathBuf> {
+        let own = content::persisted_path(&self.session_dir, name)?;
+        if own.exists() {
+            return Some(own);
+        }
+        self.inherited_dirs
+            .iter()
+            .filter_map(|d| content::persisted_path(d, name))
+            .find(|p| p.exists())
+            .or(Some(own))
+    }
 }
 
 /// Builds the skeleton of the main file(s).
@@ -404,6 +423,7 @@ pub fn assemble(
     AssembledSession {
         session_id: session_id.to_owned(),
         session_dir: session_dir.to_path_buf(),
+        inherited_dirs: Vec::new(),
         revision: 0.0,
         skeleton,
         main_files,

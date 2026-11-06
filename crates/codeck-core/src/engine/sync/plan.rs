@@ -82,13 +82,15 @@ pub(super) fn classify(f: &ScannedFile, row: &FileRecord) -> FileAction {
     }
 }
 
-/// Diffs the scan against the `files` rows: dirty session plans (sorted by id) and the sessions
-/// whose last file disappeared.
+/// Diffs the scan against the `files` rows: dirty session plans (sorted by id), the sessions
+/// whose last file disappeared, and the rows of files that now belong to another session (an
+/// agent file adopted from a superseded session, or given back; see [`crate::scan::adopt`]): the
+/// caller deletes those rows, the new owner ingests the file afresh and the old one is re-parsed.
 pub(super) fn plan_sync(
     scan: &ScanResult,
     db: Vec<FileRecord>,
     sidecar_dirty: &HashSet<String>,
-) -> (Vec<SessionPlan>, Vec<String>) {
+) -> (Vec<SessionPlan>, Vec<String>, Vec<FileRecord>) {
     let mut db_by_path: HashMap<String, FileRecord> =
         db.into_iter().map(|r| (r.path.clone(), r)).collect();
     let mut current: BTreeMap<String, Vec<ScannedFile>> = BTreeMap::new();
@@ -114,10 +116,20 @@ pub(super) fn plan_sync(
         stat_only: Vec<(i64, u64, i64)>,
     }
     let mut acc: BTreeMap<String, Acc> = BTreeMap::new();
+    let mut moved = Vec::new();
     for f in &scan.files {
         let key = f.path.to_string_lossy().into_owned();
         let a = acc.entry(f.session_id.clone()).or_default();
         match db_by_path.remove(&key) {
+            Some(row) if row.session_id != f.session_id => {
+                a.recompute = true;
+                a.ingest.push(Ingest {
+                    file: f.clone(),
+                    from: 0,
+                    existing: None,
+                });
+                moved.push(row);
+            }
             None => {
                 a.recompute = true;
                 a.ingest.push(Ingest {
@@ -141,9 +153,9 @@ pub(super) fn plan_sync(
             },
         }
     }
-    // Rows whose file is gone: reparse the session if other files survive, else remove it.
+    // Rows whose file is gone or moved: reparse the session if other files survive, else remove it.
     let mut removed = Vec::new();
-    for row in db_by_path.into_values() {
+    for row in db_by_path.into_values().chain(moved.iter().cloned()) {
         if current.contains_key(&row.session_id) {
             acc.entry(row.session_id).or_default().reparse = true;
         } else if !removed.contains(&row.session_id) {
@@ -185,7 +197,7 @@ pub(super) fn plan_sync(
             sid,
         });
     }
-    (plans, removed)
+    (plans, removed, moved)
 }
 
 /// Splits plans into batches of about [`BATCH_BYTES`] parse cost.
@@ -332,7 +344,8 @@ mod tests {
         ];
         // `zz` has no files any more: a dirty sidecar alone does not bring it back.
         let dirty: HashSet<String> = ["f".to_owned(), "zz".to_owned()].into();
-        let (plans, removed) = plan_sync(&scan, db, &dirty);
+        let (plans, removed, moved) = plan_sync(&scan, db, &dirty);
+        assert!(moved.is_empty());
         assert_eq!(removed, vec!["e".to_owned()]);
         let summary: Vec<(&str, bool, bool, Vec<u64>)> = plans
             .iter()

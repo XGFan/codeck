@@ -167,7 +167,7 @@ fn tool_output(
     };
     let (inline, _) = result_content(block.content.as_deref());
     persisted_ref(e, &inline)
-        .and_then(|p| content::persisted_path(&s.session_dir, &p.file_name))
+        .and_then(|p| s.persisted_file(&p.file_name))
         .and_then(|path| content::read_capped(&path).ok())
         .map(|(text, _, _)| text)
         .unwrap_or(inline)

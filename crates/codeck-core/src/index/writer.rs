@@ -625,6 +625,16 @@ pub fn write_rows(
 }
 
 /// Deletes every row of a session (session-level reparse or removal).
+/// Removes a `files` row with its text and diagnostics rows (the file moved to another session;
+/// the session it leaves is re-parsed, which drops the rest of its rows).
+pub fn delete_file(conn: &Connection, file_id: i64) -> CoreResult<()> {
+    for table in ["diag_counts", "msg_text"] {
+        conn.execute(&format!("DELETE FROM {table} WHERE file_id=?1"), [file_id])?;
+    }
+    conn.execute("DELETE FROM files WHERE id=?1", [file_id])?;
+    Ok(())
+}
+
 pub fn delete_session(conn: &Connection, session_id: &str) -> CoreResult<()> {
     conn.execute(
         "DELETE FROM diag_counts WHERE file_id IN (SELECT id FROM files WHERE session_id=?1)",

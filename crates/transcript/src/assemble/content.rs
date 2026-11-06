@@ -145,7 +145,7 @@ pub fn tool_detail(
             };
             let (inline, _) = result_content(block.content.as_deref());
             if let Some(p) = persisted_ref(e, &inline)
-                && let Some(path) = persisted_path(&s.session_dir, &p.file_name)
+                && let Some(path) = s.persisted_file(&p.file_name)
             {
                 if let Ok((text, truncated, size)) = read_capped(&path) {
                     return Ok(ToolDetail {

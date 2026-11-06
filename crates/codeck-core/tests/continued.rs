@@ -1,5 +1,7 @@
 //! A Session parked in the background (`continued-in`): the Session carrying it on copies its whole
 //! conversation, so only that one is listed, counted, searched and billed; the old one opens as it.
+//! The copy leaves the old Session's Subagent Runs and `tool-results/` behind: the new one takes
+//! them from the old one's directory.
 mod common;
 
 use std::fs::OpenOptions;
@@ -7,10 +9,28 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use codeck_core::model::{
-    SearchRequest, SessionQuery, StatsRequest, TranscriptRequest, TranscriptScope,
+    DetailSource, SearchRequest, SessionQuery, StatsRequest, ToolDetailRequest, ToolPart,
+    TranscriptRequest, TranscriptScope,
 };
 use common::engine::{Env, data_root};
 use common::ids::{CONTINUED_DIR, CONTINUED_NEW as NEW, CONTINUED_OLD as OLD};
+
+/// The Subagent Run of the copied Agent call; its files are only in the old Session's directory.
+const AGENT: &str = "a5e1c0d7f2b9a4e36";
+const AGENT_CALL: &str = "toolu_01CZ4fy78CDdkmtVqGSSatxR";
+/// A copied tool call whose output was saved to the old Session's `tool-results/`.
+const PERSISTED_CALL: &str = "toolu_01KjgPwRANne8voYmPHMpAuf";
+
+fn transcript(env: &Env, sid: &str, scope: TranscriptScope) -> codeck_core::model::Transcript {
+    env.engine
+        .get_transcript(&TranscriptRequest {
+            session_id: sid.into(),
+            scope,
+            branch_choices: Default::default(),
+            include_hidden: false,
+        })
+        .unwrap()
+}
 
 fn file(env: &Env, sid: &str) -> PathBuf {
     env.root
@@ -68,17 +88,37 @@ fn only_the_continued_session_is_listed_and_the_old_one_opens_as_it() {
     // The same conversation carried on, not a Fork: no Origin Session, no Fork child, nothing folded.
     assert!(new.summary.fork_origin.is_none());
     assert!(old.forks.is_empty() && new.forks.is_empty());
-    let t = env
-        .engine
-        .get_transcript(&TranscriptRequest {
-            session_id: NEW.into(),
-            scope: TranscriptScope::Main,
-            branch_choices: Default::default(),
-            include_hidden: false,
-        })
-        .unwrap();
+    let t = transcript(&env, NEW, TranscriptScope::Main);
     assert!(t.inherited.is_none());
     assert!(t.nodes.iter().all(|n| !n.inherited));
+
+    // The copied Agent call links the old Session's Subagent Run, which counts under the new one.
+    let run = t.subagents.iter().find(|r| r.agent_id == AGENT).unwrap();
+    assert_eq!(run.tool_use_id.as_deref(), Some(AGENT_CALL));
+    assert_eq!(run.message_count, 2);
+    let sub = transcript(
+        &env,
+        NEW,
+        TranscriptScope::Subagent {
+            agent_id: AGENT.into(),
+        },
+    );
+    assert!(!sub.nodes.is_empty());
+    assert_eq!(new.summary.subagent_count, 1);
+    assert_eq!(new.tokens_subagents.output, 120.0);
+    let path = env.engine.session_file_path(NEW, Some(AGENT)).unwrap();
+    assert!(path.to_string_lossy().contains(OLD), "{path:?}");
+    // A copied tool call reads its saved output from the old Session's `tool-results/`.
+    let out = env
+        .engine
+        .get_tool_detail(&ToolDetailRequest {
+            session_id: NEW.into(),
+            scope: TranscriptScope::Main,
+            tool_use_id: PERSISTED_CALL.into(),
+            part: ToolPart::Output,
+        })
+        .unwrap();
+    assert_eq!(out.source, DetailSource::PersistedFile);
 
     // A term of the copied conversation hits the continued session only.
     assert_eq!(search_groups(&env, "lorem"), vec![NEW]);
@@ -86,17 +126,18 @@ fn only_the_continued_session_is_listed_and_the_old_one_opens_as_it() {
 
 #[test]
 fn the_continued_session_bills_the_copy_and_totals_do_not_change() {
-    // Billed alone, the continued session holds every message of the conversation.
+    // Billed alone, with the old one's Subagent Runs in its own directory, the continued session
+    // holds every message of the conversation.
     let alone = {
         let root = data_root(&["continued"]);
-        std::fs::remove_file(
-            root.path()
-                .join("projects")
-                .join(CONTINUED_DIR)
-                .join(format!("{OLD}.jsonl")),
-        )
-        .unwrap();
+        let dir = root.path().join("projects").join(CONTINUED_DIR);
+        std::fs::remove_file(dir.join(format!("{OLD}.jsonl"))).unwrap();
+        std::fs::rename(dir.join(OLD), dir.join(NEW)).unwrap();
         let env = Env::scanned(root);
+        assert_eq!(
+            env.engine.get_session(NEW).unwrap().summary.subagent_count,
+            1
+        );
         billed(&env, NEW)
     };
     assert!(alone.0 > 0.0 && alone.1 > 0.0);
@@ -144,7 +185,10 @@ fn without_a_full_copy_in_the_index_both_sessions_are_shown() {
         "{cs:?}"
     );
     assert_eq!(listed(&env), vec![OLD]);
-    assert_eq!(env.engine.get_session(OLD).unwrap().superseded_by, None);
+    let old = env.engine.get_session(OLD).unwrap();
+    assert_eq!(old.superseded_by, None);
+    // It has its Subagent Run back.
+    assert_eq!(old.summary.subagent_count, 1);
     assert_eq!(billed(&env, OLD), old_alone);
 
     // Back again: the old one is superseded once more.
@@ -153,6 +197,10 @@ fn without_a_full_copy_in_the_index_both_sessions_are_shown() {
     assert!(cs.changed.contains(&OLD.to_owned()), "{cs:?}");
     assert_eq!(listed(&env), vec![NEW]);
     assert_eq!(billed(&env, OLD), (0.0, 0.0));
+    assert_eq!(
+        env.engine.get_session(NEW).unwrap().summary.subagent_count,
+        1
+    );
 
     let old_file = file(&env, OLD);
     let append = |line: String| {
