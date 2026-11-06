@@ -466,6 +466,9 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件
   ).toEqual([]);
   await input.fill("/nope x");
   await expect(highlight).toHaveCount(0);
+  // A plugin's command by its name alone (`kit:review` here) is one too.
+  await input.fill("/review 这次的改动");
+  await expect(highlight.locator("span.text-accent")).toHaveText("/review");
 
   // The Session's cwd is /work/demo: its directories, hidden ones only after a `.`.
   const menu = page.getByTestId("path-menu");

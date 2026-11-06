@@ -8,7 +8,7 @@ import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, usePathCompletions, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
 import type { FeedbackDraft } from "./protocol";
-import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
+import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand, typedName } from "./slash";
 import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, isDraft, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
@@ -183,7 +183,7 @@ export function Composer({ c }: { c: ConnState }) {
   // Not while an input method composes: the textarea's own text carries the marked-text underline.
   const [composing, setComposing] = useState(false);
   const named = live && !composing ? commandOf(text, commands) : null;
-  const highlight = named ? named.name.length + 1 : 0;
+  const highlight = named ? typedName(text).length + 1 : 0;
   const mirror = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const box = useRef<HTMLDivElement>(null);

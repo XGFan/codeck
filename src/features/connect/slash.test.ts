@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "@/ipc/bindings";
-import { applyPath, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
+import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
 
 const cmd = (name: string, source: SlashCommand["source"] = "builtin"): SlashCommand => ({
   name,
@@ -16,6 +16,10 @@ const LIST = [
   cmd("release", "project"),
   cmd("kit:review", "plugin"),
   cmd("review"),
+  cmd("omc:autopilot", "plugin"),
+  cmd("omc:plan", "plugin"),
+  cmd("other:plan", "plugin"),
+  cmd("web:test", "project"),
 ];
 
 describe("typedCommand", () => {
@@ -40,6 +44,21 @@ describe("matchCommands", () => {
   });
 });
 
+describe("commandOf", () => {
+  it("is a command by its full name, or a plugin's by the name after its `:` when no other has it", () => {
+    expect(commandOf("/review the PR", LIST)?.name).toBe("review");
+    expect(commandOf("/kit:review", LIST)?.name).toBe("kit:review");
+    expect(commandOf("/autopilot build it", LIST)?.name).toBe("omc:autopilot");
+    // Two plugins have `plan`: neither.
+    expect(commandOf("/plan", LIST)).toBeNull();
+    expect(commandOf("/kit:autopilot", LIST)).toBeNull();
+    expect(commandOf("/auto", LIST)).toBeNull();
+    // Only a plugin's: a project command in a folder keeps its full name.
+    expect(commandOf("/test", LIST)).toBeNull();
+    expect(commandOf("autopilot", LIST)).toBeNull();
+  });
+});
+
 describe("slashCommand", () => {
   it("sends built-in and unknown commands as `slash`, custom ones and the rest as `prompt`", () => {
     expect(slashCommand("/compact keep the API notes", false, LIST)).toBe("compact keep the API notes");
@@ -48,6 +67,8 @@ describe("slashCommand", () => {
     expect(slashCommand("/Users/me/shot.png 这是什么", false, LIST)).toBeNull();
     expect(slashCommand("/release v1", false, LIST)).toBeNull();
     expect(slashCommand("/kit:review", false, LIST)).toBeNull();
+    // A plugin's skill by its short name is a prompt too.
+    expect(slashCommand("/autopilot go", false, LIST)).toBeNull();
     expect(slashCommand("/compact\nmore", false, LIST)).toBeNull();
     expect(slashCommand("/cost", true, LIST)).toBeNull();
     expect(slashCommand("/", false, LIST)).toBeNull();

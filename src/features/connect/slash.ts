@@ -27,11 +27,21 @@ export function matchCommands(list: SlashCommand[], prefix: string, limit = Infi
     .map((x) => x.c);
 }
 
-/** The command named at the start of `body` (`/name args`), when it is one in `list`. */
+/** The name typed at the start of `body` (`/name args`), without the slash; empty when `body` is no `/name`. */
+export const typedName = (body: string) => (body.startsWith("/") ? body.slice(1).split(/\s/, 1)[0]! : "");
+
+/**
+ * The command named at the start of `body` (`/name args`), when it is one in `list`. As in Claude Code, a plugin's
+ * command may be named without its plugin (`/autopilot` for `oh-my-claudecode:autopilot`) when no other has that name.
+ */
 export function commandOf(body: string, list: SlashCommand[] | undefined): SlashCommand | null {
-  if (!body.startsWith("/")) return null;
-  const name = body.slice(1).split(/\s/, 1)[0];
-  return (name && list?.find((c) => c.name === name)) || null;
+  const name = typedName(body);
+  if (!name || !list) return null;
+  const exact = list.find((c) => c.name === name);
+  if (exact) return exact;
+  if (name.includes(":")) return null;
+  const short = list.filter((c) => c.source === "plugin" && c.name.split(":").pop() === name);
+  return short.length === 1 ? short[0]! : null;
 }
 
 /**
