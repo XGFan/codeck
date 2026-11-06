@@ -195,7 +195,13 @@ fn mock_model() -> String {
                 };
                 let model = req["model"].as_str().unwrap_or("mock").to_string();
                 let usage = json!({"input_tokens": 10, "output_tokens": 3});
-                let msg = json!({"id": "msg_mock", "type": "message", "role": "assistant", "model": model,
+                // Each reply its own id, as from the API (usage is counted once per id).
+                static MSG_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                let id = format!(
+                    "msg_mock{:04}",
+                    MSG_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                );
+                let msg = json!({"id": id, "type": "message", "role": "assistant", "model": model,
                     "content": [], "stop_reason": null, "stop_sequence": null, "usage": usage});
                 let tool = tool.map(|(name, input)| {
                     let n = TOOL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -472,7 +478,8 @@ fn mock_model_model_and_effort() {
     }
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["state"], "idle", "{st}");
-    assert_eq!(st["model"], "Fable 5.1", "{st}");
+    // The reply on Fable named its model by id.
+    assert_eq!(st["model"], "claude-fable-5-1", "{st}");
 }
 
 /// `/add-dir` asks before adding a directory: a choice from the built-in layout (no tool call is
@@ -1486,7 +1493,7 @@ fn mock_model_follows_the_background_session() {
     let ready = start_session(&mut rpc, &env);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.call("p1", json!({"type": "prompt", "text": "hello one"}));
-    rpc.event("turn_end", Duration::from_secs(30));
+    let t1 = rpc.event("turn_end", Duration::from_secs(30));
     let old = rpc.call("g1", json!({"type": "get_state"}))["session_id"].clone();
     assert!(old.is_string(), "{old}");
     let ls = || -> Value {
@@ -1531,6 +1538,19 @@ fn mock_model_follows_the_background_session() {
     assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
     assert_eq!(t["aborted"], false, "{t}");
     assert_eq!(t["last_text"], "ok", "{t}");
+    // The new transcript only appeared with this prompt, starting with a copy of the old one:
+    // none of the copy comes again, nor counts in this turn.
+    let blocks: Vec<&Value> = rpc.seen.iter().filter(|v| v["type"] == "block").collect();
+    let users: Vec<&Value> = blocks
+        .iter()
+        .filter(|b| b["kind"] == "user")
+        .map(|b| &b["text"])
+        .collect();
+    assert_eq!(users, [&json!("hello two")], "{blocks:#?}");
+    let texts = blocks.iter().filter(|b| b["kind"] == "text").count();
+    assert_eq!(texts, 1, "{blocks:#?}");
+    assert_eq!(t["usage"], t1["usage"], "{t} / {t1}");
+    assert_eq!(t["api_cost"], t1["api_cost"], "{t} / {t1}");
     let st = rpc.call("g2", json!({"type": "get_state"}));
     assert_eq!(st["session_id"], new, "{st}");
     assert_eq!(st["state"], "idle", "{st}");
@@ -1538,17 +1558,21 @@ fn mock_model_follows_the_background_session() {
     let row = ls();
     assert_eq!(row["session_id"], new, "{row}");
     assert_eq!(row["plugin"], true, "{row}");
-    let out = ccrpc_cmd(&env)
-        .args(["attach", &holder])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("已有 ccrpc 连着"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    // By Holder or by the background Session's id (found through the Pane whose claude moved
+    // it): either way already connected.
+    for target in [holder.as_str(), new.as_str().unwrap()] {
+        let out = ccrpc_cmd(&env)
+            .args(["attach", target])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("已有 ccrpc 连着"),
+            "{target}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 /// Moved to the background while a reply streams: the background claude finishes the reply
@@ -1583,4 +1607,56 @@ fn mock_model_follows_a_running_turn_into_the_background() {
         t["last_text"].as_str().unwrap_or("").contains("slow"),
         "{t}"
     );
+}
+
+/// The claude in Pane `holder`, as `ccrpc ls --json` lists it.
+fn pane_claude(env: &Env, holder: &str) -> Option<u32> {
+    let out = ccrpc_cmd(env)
+        .args(["ls", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    rows.as_array()?.iter().find(|r| r["holder_id"] == holder)?["claude_pid"]
+        .as_u64()
+        .map(|p| p as u32)
+}
+
+/// One daemon per config dir, started by the first Pane that moved a conversation to the
+/// background: its background claude processes carry that Pane's Holder. A second Pane's
+/// conversation moved there is still followed.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_follows_the_background_session_of_a_second_pane() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut daemons = Daemons { pane_claude: None };
+    let mut first = Rpc::start(&env);
+    let r1 = start_session(&mut first, &env);
+    daemons.pane_claude = pane_claude(&env, r1["holder_id"].as_str().unwrap());
+    first.call("p1", json!({"type": "prompt", "text": "hello one"}));
+    first.event("turn_end", Duration::from_secs(30));
+    first.call("k1", json!({"type": "send_keys", "keys": ["left"]}));
+    first.event("session_changed", Duration::from_secs(20));
+
+    let mut second = Rpc::start(&env);
+    start_session(&mut second, &env);
+    second.call("p2", json!({"type": "prompt", "text": "hello two"}));
+    second.event("turn_end", Duration::from_secs(30));
+    let old = second.call("g1", json!({"type": "get_state"}))["session_id"].clone();
+    second.forget();
+    second.call("k2", json!({"type": "send_keys", "keys": ["left"]}));
+    let ch = second.until("session_changed", Duration::from_secs(20), |v| {
+        v["type"] == "session_changed"
+    });
+    assert_eq!(ch["previous"], old, "{ch}");
+    second.call("k3", json!({"type": "send_keys", "keys": ["esc"]}));
+    wait_screen(&mut second, "w1", |l| {
+        l.iter().any(|l| l.contains("← for agents"))
+    });
+    second.forget();
+    let d = second.call("p3", json!({"type": "prompt", "text": "hello three"}));
+    let t = second.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
+    let st = second.call("g2", json!({"type": "get_state"}));
+    assert_eq!(st["session_id"], ch["session_id"], "{st}");
 }

@@ -309,6 +309,12 @@ pub struct Tailer {
     /// The main line's last `SendFeedback` call `(tool_use id, input)`: the draft behind the card
     /// Claude Code shows above the input box.
     last_feedback: Option<(String, Value)>,
+    /// Entries copied from the Session this one continues (moved to the background): read for
+    /// what they leave behind (pending tools, the tree, usage already counted), but they produce
+    /// no events.
+    copied: HashSet<String>,
+    /// Still in the copied part at the start of the file: entries without a uuid count as copied.
+    in_copy: bool,
 }
 
 /// Directory holding the Subagent Run files of `main` (`<main without .jsonl>/subagents`).
@@ -341,6 +347,28 @@ impl Tailer {
             tasks: Vec::new(),
             queue: Vec::new(),
             last_feedback: None,
+            copied: HashSet::new(),
+            in_copy: false,
+        }
+    }
+
+    /// This transcript starts with a copy of another Session's entries (`uuids`: that Session's;
+    /// a conversation moved to the background): they were reported there and produce no events
+    /// here, however late they are written.
+    pub fn copied_from(&mut self, uuids: HashSet<String>) {
+        self.in_copy = !uuids.is_empty();
+        self.copied = uuids;
+    }
+
+    /// `entry` is one of the copied ones (see [`Tailer::copied_from`]).
+    fn is_copied(&mut self, entry: &RawEntry) -> bool {
+        match &entry.uuid {
+            Some(u) if self.copied.contains(u) => true,
+            Some(_) => {
+                self.in_copy = false;
+                false
+            }
+            None => self.in_copy,
         }
     }
 
@@ -441,6 +469,7 @@ impl Tailer {
         // reported carry over, so none of it is reported twice.
         if std::fs::metadata(&self.main).map(|m| m.len()).unwrap_or(0) < self.offset {
             let old = std::mem::replace(self, Tailer::new(&self.main));
+            self.copied_from(old.copied);
             self.main_only = old.main_only;
             self.keep_offsets = old.keep_offsets;
             self.subs = old.subs;
@@ -457,8 +486,10 @@ impl Tailer {
                 {
                     self.offsets.entry(u.clone()).or_insert(l.offset);
                 }
+                let copied = self.is_copied(&l.entry);
                 // A Branch is reported before the blocks of its first entry.
-                if self.is_fork(l)
+                if !copied
+                    && self.is_fork(l)
                     && let Some(at) = self.branch_moved(l)
                 {
                     out.push(TxEvent::Branch { at_uuid: at });
@@ -466,6 +497,9 @@ impl Tailer {
                 let before = out.len();
                 self.on_entry(l, None, None, None, &mut out);
                 self.note_emitted(l, &out[before..]);
+                if copied {
+                    out.truncate(before);
+                }
             }
         }
         if self.main_only {
@@ -1391,6 +1425,20 @@ fn read_lines(path: &Path, from: u64) -> std::io::Result<Chunk> {
     })
 }
 
+/// The uuids of every entry in the transcript `path` (the main file only).
+pub fn entry_uuids(path: &Path) -> HashSet<String> {
+    let mut uuids = HashSet::new();
+    let mut from = 0;
+    while let Ok(c) = read_lines(path, from) {
+        uuids.extend(c.lines.into_iter().filter_map(|l| l.entry.uuid));
+        if !c.capped || c.consumed_to <= from {
+            break;
+        }
+        from = c.consumed_to;
+    }
+    uuids
+}
+
 /// A `<task-notification>` that ended a task: `(task id, status)`.
 pub fn task_notification(text: &str) -> Option<(String, String)> {
     let n = prompt::task_notification(text)?;
@@ -1876,6 +1924,65 @@ mod tests {
             reply("a2", "u2", "two", 4),
             last_prompt("a2"),
         ]
+    }
+
+    /// Moved to the background: the new transcript starts with a copy of the old one, written
+    /// after ccrpc switched to it (and possibly in several appends). The copy gives no blocks,
+    /// usage, turn ends or prompts; what follows it does.
+    #[test]
+    fn copied_entries_of_a_continued_session_produce_no_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let (old, new) = (dir.path().join("old.jsonl"), dir.path().join("new.jsonl"));
+        let usage = json!({"input_tokens": 10, "output_tokens": 5});
+        let replied = |uuid: &str, parent: &str, id: &str| {
+            json!({"type": "assistant", "uuid": uuid, "parentUuid": parent,
+                "message": {"id": id, "model": "claude-sonnet-4-5", "role": "assistant", "usage": usage,
+                    "content": [{"type": "text", "text": "old"}]}})
+        };
+        let copy = vec![
+            prompt("u1", None, "first", 1),
+            replied("a1", "u1", "m1"),
+            json!({"type": "system", "subtype": "turn_duration", "uuid": "d1", "parentUuid": "a1", "durationMs": 10}),
+            interruption("i1", "d1"),
+            json!({"type": "cost-state", "totalCostUSD": 1.0}),
+        ];
+        write_lines(&old, &copy);
+        let mut t = Tailer::new(&new);
+        t.copied_from(entry_uuids(&old));
+        assert!(t.poll().is_empty(), "no file yet");
+        // The copy arrives in two appends, a line without uuid among it.
+        write_lines(&new, &copy[..2]);
+        assert!(t.poll().is_empty());
+        write_lines(&new, &copy);
+        assert!(t.poll().is_empty());
+        let mut all = copy.clone();
+        all.extend([
+            prompt("u2", Some("i1"), "second", 5),
+            replied("a2", "u2", "m2"),
+            json!({"type": "system", "subtype": "turn_duration", "uuid": "d2", "parentUuid": "a2", "durationMs": 20}),
+        ]);
+        write_lines(&new, &all);
+        let evs = t.poll();
+        assert_eq!(kinds(&evs), ["block:u2", "block:a2"]);
+        let usages = evs
+            .iter()
+            .filter(|e| matches!(e, TxEvent::Usage { .. }))
+            .count();
+        assert_eq!(usages, 1);
+        assert!(evs.iter().any(|e| matches!(
+            e,
+            TxEvent::TurnEnd {
+                duration_ms: Some(20)
+            }
+        )));
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, TxEvent::UserPrompt { text, .. } if text == "second"))
+        );
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e, TxEvent::UserPrompt { text, .. } if text == "first"))
+        );
     }
 
     #[test]

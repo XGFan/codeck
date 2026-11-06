@@ -155,7 +155,7 @@ fn ls_rows(roots: &Roots, panes: &[Pane], st: &mut LsState) -> Result<Vec<Value>
             pf = Some(p);
             // Its conversation moved to the background: the Session is the one running there.
             if let locate::Moved::In { pf: b, checkin: c } =
-                locate::moved(roots, &state, &pane.id, job.parked_job_id.as_deref())
+                locate::moved(roots, &state, job.parked_job_id.as_deref())
             {
                 (pf, checkin) = (Some(b), Some(c));
             }

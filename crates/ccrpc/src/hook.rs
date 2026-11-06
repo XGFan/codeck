@@ -345,12 +345,25 @@ pub fn deny_output(message: Option<&str>) -> Value {
     json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": d}})
 }
 
+/// Another ccrpc holds `claude_pid`'s lock (it is connected to that claude, or followed its
+/// conversation into the background and still holds it).
+pub fn session_locked(state: &Path, claude_pid: u32) -> bool {
+    use std::os::fd::AsRawFd;
+    let Ok(f) = std::fs::File::open(socket_path(state, claude_pid).with_extension("lock")) else {
+        return false;
+    };
+    // SAFETY: flock on an fd this function owns; closing it releases a lock taken here.
+    unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
+}
+
 /// Listens on the Session's hook socket for as long as it lives.
 pub struct HookServer {
     path: PathBuf,
     rx: Receiver<HookMsg>,
     /// `<pid>.lock`, flocked while this ccrpc owns the socket.
-    _lock: std::fs::File,
+    lock: Option<std::fs::File>,
+    /// Tells the listener thread to end (it is woken by a connection).
+    stop: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl HookServer {
@@ -381,8 +394,13 @@ impl HookServer {
         let listener =
             UnixListener::bind(&path).with_context(|| format!("监听不了 {}", path.display()))?;
         let (tx, rx) = mpsc::channel();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
         std::thread::spawn(move || {
             for conn in listener.incoming() {
+                if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
                 let Ok(mut s) = conn else { continue };
                 let (tx, wake) = (tx.clone(), wake.clone());
                 // Each connection on its own: a slow one cannot hold up the others.
@@ -415,17 +433,26 @@ impl HookServer {
         Ok(HookServer {
             path,
             rx,
-            _lock: lock,
+            lock: Some(lock),
+            stop,
         })
     }
 
     pub fn try_recv(&self) -> Option<HookMsg> {
         self.rx.try_recv().ok()
     }
+
+    /// Stops listening but keeps the lock: no other ccrpc can take this claude meanwhile.
+    pub fn into_lock(mut self) -> Option<std::fs::File> {
+        self.lock.take()
+    }
 }
 
 impl Drop for HookServer {
     fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Wakes the listener thread, which then ends (and closes the socket).
+        let _ = UnixStream::connect(&self.path);
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -471,6 +498,26 @@ mod tests {
             deny_output(Some("用 cargo"))["hookSpecificOutput"]["decision"],
             json!({"behavior": "deny", "message": "用 cargo"})
         );
+    }
+
+    /// Following a conversation into the background keeps the Pane's claude's lock without its
+    /// socket: no other ccrpc takes that claude meanwhile.
+    #[test]
+    fn the_lock_outlives_the_socket_when_kept() {
+        let st = tempfile::tempdir().unwrap();
+        let (state, wake) = (st.path(), Wake::new());
+        let h = HookServer::bind(state, 4242, wake.clone()).unwrap();
+        assert!(socket_in_use(state, 4242));
+        assert!(session_locked(state, 4242));
+        let lock = h.into_lock();
+        assert!(!socket_path(state, 4242).exists());
+        assert!(!socket_in_use(state, 4242));
+        assert!(session_locked(state, 4242));
+        assert!(HookServer::bind(state, 4242, wake.clone()).is_err());
+        drop(lock);
+        assert!(!session_locked(state, 4242));
+        drop(HookServer::bind(state, 4242, wake).unwrap());
+        assert!(!socket_path(state, 4242).exists());
     }
 
     #[test]

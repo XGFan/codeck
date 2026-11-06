@@ -270,7 +270,8 @@ impl TurnTracker {
             match &self.stats.prompt_id {
                 // Input while busy is delivered within the same turn (steer), or after its Stop
                 // as a turn of its own.
-                Some(p) if *p == pid => {
+                // Moved to a background claude: its prompts carry its own prompt id.
+                Some(p) if *p == pid || self.stats.moved => {
                     if !notice {
                         self.pending_steers.push(text);
                     }
@@ -438,7 +439,14 @@ impl TurnTracker {
         // Stop comes before idle: a turn that went idle without one was interrupted.
         if self.active
             && self.stop_pending.is_none()
-            && idle_since.is_some_and(|t| now.duration_since(t) >= ABORT_GRACE)
+            && idle_since.is_some_and(|t| {
+                let grace = if self.stats.moved {
+                    MOVED_GRACE
+                } else {
+                    ABORT_GRACE
+                };
+                now.duration_since(t) >= grace
+            })
         {
             if self.stats.provisional {
                 // The steer had been delivered within the previous turn after all.
@@ -607,7 +615,7 @@ impl Engine {
                     let path = PathBuf::from(path);
                     if locate::is_transcript_path(&self.roots, &path) {
                         let history = path.exists();
-                        self.switch_to(sid, &path, history);
+                        self.switch_to(sid, &path, history, HashSet::new());
                     }
                 }
             }
@@ -857,12 +865,33 @@ mod tests {
         let (mut t, now) = (TurnTracker::new(), Instant::now());
         submit(&mut t, now, "p1", "hi");
         t.moved();
-        let out = t.poll(now + ABORT_GRACE, Some(now));
+        // A claimed spare reads idle for a while before it takes the reply up again.
+        assert!(t.poll(now + ABORT_GRACE, Some(now)).is_empty());
+        let out = t.poll(now + MOVED_GRACE, Some(now));
         assert_eq!(ends(&out)[0]["aborted"], true);
         assert_eq!(ends(&out)[0]["prompt_id"], "p1");
         // Idle at the move: nothing to carry.
         t.moved();
         assert!(!t.active);
+    }
+
+    /// Input typed into the background claude while it finishes the moved turn carries its own
+    /// prompt id: a steer of that turn, not a new prompt ending it as aborted.
+    #[test]
+    fn a_steer_during_a_moved_turn_keeps_it_open() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        submit(&mut t, now, "p1", "MOCK-SLOW please");
+        t.moved();
+        assert!(submit(&mut t, now, "bg-1", "and also this").is_empty());
+        assert!(t.active);
+        assert!(matches!(
+            stop(&mut t, now, "bg-1", "done")[..],
+            [TurnOut::Stopped(_)]
+        ));
+        let out = marker(&mut t, now, 100);
+        let e = ends(&out);
+        assert_eq!(e[0]["prompt_id"], "p1");
+        assert_eq!(e[0]["aborted"], false);
     }
 
     #[test]

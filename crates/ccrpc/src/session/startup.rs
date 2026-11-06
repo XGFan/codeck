@@ -65,29 +65,31 @@ pub fn resolve_target(roots: &Roots, target: &str) -> Result<Pane> {
         return Ok(p.clone());
     }
     // A sessionId: find its process via the Process Files, then the Holder above it.
-    let rd =
-        std::fs::read_dir(roots.sessions_dir()).context("读不到 Claude Code 的 sessions 目录")?;
+    std::fs::metadata(roots.sessions_dir()).context("读不到 Claude Code 的 sessions 目录")?;
     let table = locate::process_table()?;
-    for e in rd.flatten() {
-        let p: PathBuf = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(bytes) = std::fs::read(&p) else {
-            continue;
-        };
-        let Ok(pf) = serde_json::from_slice::<ProcessFile>(&bytes) else {
-            continue;
-        };
+    let files = procfile::all_with_job(roots);
+    for (pf, job) in &files {
         if pf.session_id.as_deref() != Some(target) {
             continue;
         }
         let Some(pid) = pf.pid else { continue };
         // A pid reused by another process is not this Session (procStart check).
-        if !procfile::is_alive(&pf) {
+        if !procfile::is_alive(pf) {
             continue;
         }
-        if let Some(pane) = locate::holder_of_pid(&table, &panes, pid) {
+        // A conversation moved to the background runs under the daemon: its Pane is the one
+        // whose claude moved it there.
+        let front = job
+            .job_id
+            .as_deref()
+            .filter(|j| job.runs(pf, j))
+            .and_then(|j| {
+                files
+                    .iter()
+                    .find(|(p, f)| f.parked_job_id.as_deref() == Some(j) && procfile::is_alive(p))
+                    .and_then(|(p, _)| p.pid)
+            });
+        if let Some(pane) = locate::holder_of_pid(&table, &panes, front.unwrap_or(pid)) {
             return Ok(pane.clone());
         }
         bail!("Session {target} 不在 clay 的 Holder 里运行，无法控制");
@@ -124,11 +126,13 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     ) {
         bail!(problem);
     }
-    // A ccrpc connected to a conversation moved to the background listens on that claude's socket.
+    // A ccrpc connected to a conversation moved to the background listens on that claude's
+    // socket, and keeps holding the Pane's claude's lock.
     let job = pf.and_then(|(_, j)| j.parked_job_id);
     let in_use = |pid| hook::socket_in_use(&state, pid);
     if in_use(claude.pid)
-        || matches!(locate::moved(roots, &state, &pane.id, job.as_deref()),
+        || hook::session_locked(&state, claude.pid)
+        || matches!(locate::moved(roots, &state, job.as_deref()),
             locate::Moved::In { pf, .. } if pf.pid.is_some_and(in_use))
     {
         bail!("已有 ccrpc 连着这个 Session");

@@ -293,6 +293,9 @@ pub fn feedback_draft(lines: &[String]) -> Option<FeedbackCard> {
 /// `❯` (spaces or a line break typed there would make a key text), the cursor right after it.
 /// `None` when no input box shows below that row.
 pub fn input_empty_below(s: &crate::screen::Screen, below: usize) -> Option<bool> {
+    if agents_page(&s.lines) || (s.moved && !mode_line_under_box(&s.lines)) {
+        return None;
+    }
     let rules: Vec<usize> = (below + 1..s.lines.len())
         .filter(|&i| is_input_rule(&s.lines[i]))
         .collect();
@@ -456,15 +459,60 @@ pub fn is_input_rule(l: &str) -> bool {
 }
 
 /// The agents page (`←` on an empty input box, 2.1.318, `tests/fixtures/screens/agents_list.txt`):
-/// its box at the bottom looks like the input box but starts a new background Session; the key
-/// hints under it offer `ctrl+x to delete`.
+/// its box at the bottom looks like the input box but starts a new background Session. Known by
+/// its box's placeholder, the key hints under it (they change with the selection and once
+/// something is typed), the note at its top, or its section headings at the left edge (`Working`,
+/// `Working 2` when folded; the conversation's own lines are indented or start with a mark).
 pub fn agents_page(lines: &[String]) -> bool {
+    const HINTS: [&str; 4] = [
+        "ctrl+x to delete",
+        "ctrl+x to stop",
+        "ctrl+enter to start and open",
+        "space to reply",
+    ];
+    const HEADINGS: [&str; 3] = ["Needs input", "Working", "Completed"];
+    let heading = |l: &str| {
+        HEADINGS.iter().any(|h| {
+            l.strip_prefix(h).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest
+                        .strip_prefix(' ')
+                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            })
+        })
+    };
+    if let Some(bottom) = lines.iter().rposition(|l| is_input_rule(l))
+        && lines[bottom + 1..]
+            .iter()
+            .any(|l| HINTS.iter().any(|h| l.contains(h)))
+    {
+        return true;
+    }
+    lines.iter().any(|l| {
+        l.trim_start() == "❯ describe a task for a new session"
+            || l.starts_with("Your conversation moved to the background")
+            || heading(l.trim_end())
+    })
+}
+
+/// The line under the input box is the mode line (`⏸ manual mode on · ← for agents`): the box is
+/// the conversation's, not the agents page's.
+pub fn mode_line_under_box(lines: &[String]) -> bool {
+    const MARKS: [&str; 6] = [
+        "manual mode on",
+        "accept edits on",
+        "plan mode on",
+        "auto mode on",
+        "bypass permissions on",
+        "for agents",
+    ];
     let Some(bottom) = lines.iter().rposition(|l| is_input_rule(l)) else {
         return false;
     };
-    lines[bottom + 1..]
-        .iter()
-        .any(|l| l.contains("ctrl+x to delete"))
+    lines.get(bottom + 1).is_some_and(|l| {
+        let l = l.to_lowercase();
+        MARKS.iter().any(|m| l.contains(m))
+    })
 }
 
 /// The prompt input box: the text after `❯` between the two horizontal rules at the bottom; in
@@ -519,6 +567,11 @@ pub fn shell_input(s: &crate::screen::Screen) -> Option<String> {
 /// [`input_box`] without what Claude Code draws dim in it: an empty box shows a placeholder such
 /// as `Try "edit <filepath> to..."` that ctrl+u cannot clear. The box is found on the full text.
 pub fn input_text(s: &crate::screen::Screen) -> Option<String> {
+    // Moved to the background, the Pane may show the agents page with hints not seen yet: only
+    // a box with the mode line under it is the conversation's.
+    if s.moved && !mode_line_under_box(&s.lines) {
+        return None;
+    }
     let full = input_box(&s.lines)?;
     if s.undimmed.len() != s.lines.len() {
         return Some(full);
@@ -1186,6 +1239,69 @@ mod tests {
         assert!(!agents_page(&screen("idle_prompt.txt")));
     }
 
+    /// The agents page's hints change with the selection and once a task is typed into its box;
+    /// a person's draft there is never taken for the input box (ctrl+u would erase it).
+    #[test]
+    fn agents_page_with_other_hints_or_a_draft() {
+        let list = screen("agents_list.txt");
+        let with = |box_line: &str, hints: &str, keep_anchors: bool| -> Vec<String> {
+            let mut l = list.clone();
+            let n = l.len();
+            l[n - 3] = box_line.into();
+            l[n - 1] = hints.into();
+            if !keep_anchors {
+                for row in l.iter_mut().take(n - 4) {
+                    row.clear();
+                }
+                l[10] = "Working 1".into();
+            }
+            l
+        };
+        let stop = with(
+            "❯ describe a task for a new session",
+            "  enter to open · ctrl+x to stop · ? for shortcuts",
+            true,
+        );
+        let draft = with(
+            "❯ fix the flaky test",
+            "  ctrl+j for newline · ctrl+enter to start and open",
+            true,
+        );
+        // Hints not seen before, and only a folded section heading left on screen.
+        let unseen = with(
+            "❯ fix the flaky test",
+            "  enter to send · esc to clear",
+            false,
+        );
+        for l in [&stop, &draft, &unseen] {
+            assert!(agents_page(l), "{l:#?}");
+            assert_eq!(input_box(l), None);
+        }
+        // Moved to the background: only a box with the mode line under it is the conversation's.
+        let scr = |lines: Vec<String>| crate::screen::Screen {
+            lines,
+            moved: true,
+            ..Default::default()
+        };
+        let mut odd = screen("background_session.txt");
+        let n = odd.len();
+        odd[n - 1] = "  enter to send · esc to clear".into();
+        assert_eq!(input_text(&scr(odd)), None);
+        assert_eq!(
+            input_text(&scr(screen("background_session.txt"))).as_deref(),
+            Some("")
+        );
+        // Not moved: the usual input box.
+        assert_eq!(
+            input_text(&crate::screen::Screen {
+                lines: screen("idle_prompt.txt"),
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("")
+        );
+    }
+
     #[test]
     fn ask_in_a_quote_bar() {
         // Claude Code 2.1.318 draws the question in a `│ ` bar; CJK text wraps without a space.
@@ -1304,6 +1420,7 @@ mod tests {
             lines: lines(rows),
             undimmed: lines(rows),
             cursor,
+            ..Default::default()
         };
         let base = ["╰────╯", "", "─────", "❯", "─────"];
         assert_eq!(input_empty_below(&screen(&base, (3, 2)), 0), Some(true));
@@ -1522,6 +1639,7 @@ mod tests {
             lines: screen(row),
             undimmed: Vec::new(),
             cursor: (0, 0),
+            ..Default::default()
         };
         assert_eq!(
             shell_input(&scr("! echo bang")).as_deref(),

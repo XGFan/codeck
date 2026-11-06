@@ -51,6 +51,9 @@ const IDLE_TICK: Duration = Duration::from_millis(250);
 /// A turn whose Session went idle without a Stop (Escape, a deny that interrupts) ends as aborted
 /// after this long (Stop arrives before idle).
 const ABORT_GRACE: Duration = Duration::from_millis(1500);
+/// The same for a turn moved to a background claude (agents page): a claimed spare reads idle
+/// until it takes the interrupted reply up again.
+const MOVED_GRACE: Duration = Duration::from_secs(5);
 /// After Stop, how long to wait for the transcript to catch up (the turn's last message and its
 /// `turn_duration` marker are written around the same moment) before `turn_end`.
 const STOP_CATCH_UP: Duration = Duration::from_secs(2);
@@ -219,6 +222,9 @@ pub struct Engine {
     followed: Option<u32>,
     /// The Pane's claude's `parkedJobId`, as last read.
     parked_job: Option<String>,
+    /// The Pane's claude's lock, kept while its conversation is followed in the background: no
+    /// other ccrpc attaches meanwhile (even while the background claude is stopped).
+    pane_lock: Option<std::fs::File>,
     claude_seen_at: Option<Instant>,
     last_locate: Option<Instant>,
     pf: Option<ProcessFile>,
@@ -329,6 +335,7 @@ impl Engine {
             claude_pid: None,
             followed: None,
             parked_job: None,
+            pane_lock: None,
             claude_seen_at: None,
             last_locate: None,
             pf: None,
@@ -458,7 +465,7 @@ impl Engine {
             return;
         }
         let history = path.exists();
-        self.switch_to(c.session_id, &path, history);
+        self.switch_to(c.session_id, &path, history, HashSet::new());
     }
 
     /// The Pane's claude moved its conversation to the background (agents page, docs/probes.md):
@@ -470,34 +477,30 @@ impl Engine {
         let Some(pane_pid) = self.claude_pid else {
             return;
         };
-        let (pid, pf, sid, path) = match locate::moved(
-            &self.roots,
-            &self.state_dir,
-            &self.holder_id,
-            self.parked_job.as_deref(),
-        ) {
-            locate::Moved::In { pf, checkin } => {
-                let Some(pid) = pf.pid else { return };
-                if self.followed == Some(pid) {
-                    return;
+        let (pid, pf, sid, path) =
+            match locate::moved(&self.roots, &self.state_dir, self.parked_job.as_deref()) {
+                locate::Moved::In { pf, checkin } => {
+                    let Some(pid) = pf.pid else { return };
+                    if self.followed == Some(pid) {
+                        return;
+                    }
+                    (
+                        Some(pid),
+                        Some(pf),
+                        checkin.session_id,
+                        PathBuf::from(checkin.transcript_path),
+                    )
                 }
-                (
-                    Some(pid),
-                    Some(pf),
-                    checkin.session_id,
-                    PathBuf::from(checkin.transcript_path),
-                )
-            }
-            // Not seen so far: the conversation came back to the Pane's claude.
-            locate::Moved::No if self.followed.is_some() => {
-                let Some(c) = hook::read_checkin(&self.state_dir, pane_pid) else {
-                    return;
-                };
-                let pf = procfile::read(&self.roots, pane_pid);
-                (None, pf, c.session_id, PathBuf::from(c.transcript_path))
-            }
-            _ => return,
-        };
+                // Not seen so far: the conversation came back to the Pane's claude.
+                locate::Moved::No if self.followed.is_some() => {
+                    let Some(c) = hook::read_checkin(&self.state_dir, pane_pid) else {
+                        return;
+                    };
+                    let pf = procfile::read(&self.roots, pane_pid);
+                    (None, pf, c.session_id, PathBuf::from(c.transcript_path))
+                }
+                _ => return,
+            };
         if !locate::is_transcript_path(&self.roots, &path) {
             return;
         }
@@ -506,6 +509,38 @@ impl Engine {
             self.followed.unwrap_or(pane_pid),
             pid.unwrap_or(pane_pid)
         );
+        // What came before is reported first: the old transcript's last entries, the hook events
+        // still queued on the old socket.
+        loop {
+            let evs = self.tailer.as_mut().map(|t| t.poll()).unwrap_or_default();
+            for ev in evs {
+                self.on_tx(ev);
+            }
+            if !self.tailer.as_ref().is_some_and(Tailer::behind) {
+                break;
+            }
+        }
+        if let Some(old) = self.hooks.take() {
+            while let Some(m) = old.try_recv() {
+                self.on_hook(m);
+            }
+            if self.followed.is_none() {
+                self.pane_lock = old.into_lock();
+            }
+        }
+        // The new Session's transcript starts with a copy of the one the Pane's claude ran (the
+        // same job opened again is the same Session: nothing to switch).
+        let mut copied = HashSet::new();
+        if pid.is_none() {
+            self.pane_lock = None;
+        } else if self.followed.is_none()
+            && let Some(c) = hook::read_checkin(&self.state_dir, pane_pid)
+        {
+            let old = PathBuf::from(c.transcript_path);
+            if locate::is_transcript_path(&self.roots, &old) {
+                copied = transcript::entry_uuids(&old);
+            }
+        }
         match HookServer::bind(&self.state_dir, pid.unwrap_or(pane_pid), self.wake.clone()) {
             Ok(h) => self.hooks = Some(h),
             Err(e) => {
@@ -520,14 +555,16 @@ impl Engine {
         // A turn running when the conversation moved goes on there.
         self.turns.moved();
         let history = path.exists();
-        self.switch_to(sid, &path, history);
+        self.switch_to(sid, &path, history, copied);
     }
 
     /// Switches to the Session `sid` whose transcript is `path`. A transcript that already existed
     /// is read once as history: its blocks are not emitted, but prompts / enqueues still confirm
     /// commands and pending tools are known. One created afterwards (a new Session's first prompt,
     /// after /clear) is live and read by `tick`.
-    fn switch_to(&mut self, sid: String, path: &Path, history: bool) {
+    /// `copied`: the uuids of the entries it starts with, copied from the Session it continues;
+    /// they produce no events.
+    fn switch_to(&mut self, sid: String, path: &Path, history: bool, copied: HashSet<String>) {
         if self.session_id.as_deref() == Some(sid.as_str()) && self.tailer.is_some() {
             return;
         }
@@ -538,6 +575,7 @@ impl Engine {
             self.emit(json!({"type": "session_changed", "session_id": sid, "previous": prev}));
         }
         let mut t = Tailer::new(path);
+        t.copied_from(copied);
         if history {
             loop {
                 for ev in t.poll() {
@@ -594,7 +632,10 @@ impl Engine {
             }
             self.follow_moved();
             if let Some(b) = self.followed
-                && let Some(pf) = procfile::read(&self.roots, b)
+                && let Some(pf) = self
+                    .parked_job
+                    .as_deref()
+                    .and_then(|j| procfile::job_process_at(&self.roots, b, j))
             {
                 self.pf = Some(pf);
             }

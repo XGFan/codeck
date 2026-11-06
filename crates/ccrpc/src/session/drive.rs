@@ -5,14 +5,19 @@ use super::*;
 
 impl Engine {
     pub fn screen(&self) -> Result<Screen> {
-        Ok(self.conn.screen())
+        let mut s = self.conn.screen();
+        s.moved = self.parked_job.is_some();
+        Ok(s)
     }
 
     /// The screen from a Snapshot taken now (before a key whose meaning depends on the screen).
     pub(super) fn fresh_screen(&self) -> std::result::Result<Screen, CmdErr> {
-        self.conn
+        let mut s = self
+            .conn
             .resync(Duration::from_secs(3))
-            .map_err(|e| ("io", format!("{e:#}")))
+            .map_err(|e| ("io", format!("{e:#}")))?;
+        s.moved = self.parked_job.is_some();
+        Ok(s)
     }
 
     /// The screen could not be read at the size people's Clients set: switch the PTY to

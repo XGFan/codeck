@@ -24,6 +24,9 @@ pub struct Screen {
     pub undimmed: Vec<String>,
     /// 0-based (row, col).
     pub cursor: (u16, u16),
+    /// The Pane's conversation moved to the background (agents page): an input box counts only
+    /// with the mode line under it (see [`crate::recognize::input_text`]).
+    pub moved: bool,
 }
 
 /// A terminal kept up to date from a byte stream.
@@ -110,6 +113,7 @@ impl Vt {
             lines,
             undimmed,
             cursor: (p.line.0.max(0) as u16, p.column.0 as u16),
+            moved: false,
         }
     }
 }
