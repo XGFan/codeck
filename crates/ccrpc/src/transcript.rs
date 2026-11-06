@@ -874,10 +874,19 @@ impl Tailer {
                         self.queue.push(content.clone());
                         out.push(TxEvent::Enqueued { content });
                     }
-                    // Absorbed into the running turn (or dropped): by its text.
+                    // Absorbed into the running turn (or dropped): by its text; failing that, by
+                    // its text with the opening tag's attributes left out (a relayed message is
+                    // enqueued with a `hop-chain` attribute that its `remove` does not carry).
                     Some("remove") => {
-                        if let Some(i) = self.queue.iter().position(|q| q.trim() == content.trim())
-                        {
+                        let i = self
+                            .queue
+                            .iter()
+                            .position(|q| q.trim() == content.trim())
+                            .or_else(|| {
+                                let key = queue_key(&content);
+                                self.queue.iter().position(|q| queue_key(q) == key)
+                            });
+                        if let Some(i) = i {
                             self.queue.remove(i);
                         }
                     }
@@ -1457,6 +1466,25 @@ fn cap(mut s: String) -> String {
     s
 }
 
+/// A queued item's text with the attributes of a leading tag on its own line left out:
+/// `<cross-session-message from="…" hop-chain="…">` → `<cross-session-message>`.
+fn queue_key(text: &str) -> String {
+    let t = text.trim();
+    if let Some((first, rest)) = t.split_once('\n')
+        && let Some(open) = first.strip_prefix('<')
+        && first.ends_with('>')
+    {
+        let name: String = open
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+            .collect();
+        if !name.is_empty() {
+            return format!("<{name}>\n{rest}");
+        }
+    }
+    t.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1729,6 +1757,19 @@ mod tests {
         let q = queues(t.poll());
         assert_eq!(q, vec![vec!["a", "c"], vec!["c"], vec![]]);
         assert!(t.queue().is_empty());
+        // A relayed message is enqueued with a `hop-chain` attribute its `remove` lacks.
+        let relayed = |attrs: &str| {
+            format!(
+                "<cross-session-message from=\"uds:/tmp/a.sock\"{attrs} from-name=\"c6\">\nhello\n</cross-session-message>"
+            )
+        };
+        let more = [
+            op("enqueue", Some(&relayed(" hop-chain=\"8a7e\""))),
+            op("remove", Some(&relayed(""))),
+        ];
+        let text: String = more.iter().map(|v| format!("{v}\n")).collect();
+        std::io::Write::write_all(&mut f, text.as_bytes()).unwrap();
+        assert_eq!(queues(t.poll()).last().unwrap(), &Vec::<String>::new());
     }
 
     /// A main file that shrank was replaced: nothing read from the old one is kept (queue,
