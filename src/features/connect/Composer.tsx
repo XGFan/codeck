@@ -19,6 +19,7 @@ import { RewindPickNotice } from "./RewindViews";
 import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
+import { queueText } from "./queue";
 
 const SOURCE_LABEL: Record<SlashSource, string> = { builtin: "内置", user: "用户", project: "项目", plugin: "插件" };
 
@@ -333,9 +334,9 @@ export function Composer({ c }: { c: ConnState }) {
             icon={<Clock size={18} strokeWidth={1.7} />}
             title={`排队 ${c.queue.length} 条`}
             desc={c.queue.map((q, i) => (
-              <span key={`${i}:${q}`} data-testid="queue-item" title={q}>
+              <span key={`${i}:${q}`} data-testid="queue-item" title={queueText(q)}>
                 {i > 0 && "；"}
-                {q}
+                {queueText(q)}
               </span>
             ))}
             action={{
