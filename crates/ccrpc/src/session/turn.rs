@@ -228,7 +228,8 @@ impl TurnTracker {
                     failure: m.event == "StopFailure",
                     error: s("error"),
                     last_message: s("last_assistant_message"),
-                    background_tasks: i.get("background_tasks").cloned().unwrap_or(json!([])),
+                    // Null when missing: does not end the tasks known only from Stop.
+                    background_tasks: i.get("background_tasks").cloned().unwrap_or(Value::Null),
                 },
                 now,
             ),
