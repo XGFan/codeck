@@ -7,9 +7,10 @@ import {
   ShieldQuestionMark,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { anchorKey } from "@/features/transcript/grouping";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import { toolKey } from "@/features/transcript/keys";
 import { PendingText, ToolCallView } from "@/features/transcript/tools";
@@ -349,9 +350,59 @@ function PermissionCard({ r, c, focus }: { r: PermissionRequestEvent; c: ConnSta
   );
 }
 
+/** This much of a card in view counts as seen (or all of it, if smaller): its title and the first question. */
+const SEEN_PX = 48;
+
 /**
- * A main-line AskUserQuestion is answered on its 「向你提问」 card in the transcript ([`QuestionForm`]); the
- * input area only says so, with a jump to it (the card may still be on its way while the transcript updates).
+ * Whether the main transcript's element at `anchor` is in view: between the top of the transcript and the top of the
+ * input area floating over its foot. Checked before the first paint (no flash of the hint while the card is in view),
+ * then once a frame at most on scrolling, resizing, DOM changes (the list is virtual: rows mount as they scroll in) and
+ * the input area changing height (its notices, lines typed).
+ */
+function useOnScreen(anchor: string | null): boolean {
+  const [on, setOn] = useState(false);
+  useLayoutEffect(() => {
+    if (!anchor) return setOn(false);
+    const sel = `[data-anchor="${CSS.escape(anchor)}"]`;
+    let raf = 0;
+    const check = () => {
+      raf = 0;
+      const scroller = document.querySelector("[data-testid=transcript]");
+      const el = scroller?.querySelector(sel);
+      if (!scroller || !el) return setOn(false);
+      const r = el.getBoundingClientRect();
+      const view = scroller.getBoundingClientRect();
+      const panel = document.querySelector("[data-connect-panel] > div")?.getBoundingClientRect();
+      const top = Math.max(r.top, view.top);
+      const bottom = Math.min(r.bottom, view.bottom, panel ? panel.top : Infinity);
+      setOn(bottom - top >= Math.min(SEEN_PX, r.height));
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(check);
+    };
+    check();
+    document.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    const mo = new MutationObserver(schedule);
+    mo.observe(document.body, { childList: true, subtree: true });
+    const ro = new ResizeObserver(schedule);
+    const panel = document.querySelector("[data-connect-panel] > div");
+    if (panel) ro.observe(panel);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+      mo.disconnect();
+      ro.disconnect();
+    };
+  }, [anchor]);
+  return on;
+}
+
+/**
+ * A main-line AskUserQuestion is answered on its 「向你提问」 card in the transcript ([`QuestionForm`]); while the card
+ * is out of view the input area says so, with a jump to it (the card may still be on its way while the transcript
+ * updates).
  */
 function QuestionHint({ r }: { r: QuestionEvent }) {
   const { data } = useCurrentTranscript();
@@ -363,7 +414,9 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
             n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.request_id),
         )
       : undefined;
+  const seen = useOnScreen(node ? anchorKey(node.id, r.request_id) : null);
   const qs = Array.isArray(r.questions) ? r.questions : [];
+  if (seen) return null;
   return (
     <NoticeCard
       testId="question-hint"

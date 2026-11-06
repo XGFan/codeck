@@ -232,9 +232,17 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
     });
     window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
   });
-  await page.getByTestId("question-jump").click();
   const q = page.locator("[data-testid=ask][data-answering]");
   await expect(q).toContainText("Which color?");
+  // The card in view (the transcript follows its end): no hint below; scrolled out of view, the hint is back.
+  await expect(page.getByTestId("question-hint")).toHaveCount(0);
+  // A short window, scrolled to the top: the card is under the input area.
+  await page.setViewportSize({ width: 1280, height: 340 });
+  await page.getByTestId("transcript").evaluate((e) => (e.scrollTop = 0));
+  await expect(page.getByTestId("question-hint")).toBeVisible();
+  await page.getByTestId("question-jump").click();
+  await expect(page.getByTestId("question-hint")).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await expect(q.getByTestId("ask-status")).toHaveText("等待回答");
   // One answer: an option or the written one, never both.
   const blue = q.getByTestId("question-option").filter({ hasText: "Blue" });
