@@ -452,6 +452,23 @@ export const richMain: Node[] = [
       origin: { kind: "teammate", teammateId: "docs-writer", color: "green", summary: null },
     },
   ),
+  // Messages from other agents (SendMessage): another Session, an agent of this one.
+  userNode(
+    "n-peer-session",
+    t + 19_000,
+    'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/cc-socks/37039.sock" from-name="codeck-99" from-mode="bypass">\n限流文档我这边也改了一处，合并前先拉一下。\n\n- docs/rate-limit.md 第 12 行\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.',
+    {
+      origin: { kind: "peer", source: "session", from: "codeck-99" },
+    },
+  ),
+  userNode(
+    "n-peer-agent",
+    t + 21_000,
+    'Another Claude session sent a message while you were working:\n<agent-message from="ag-async1">\n集成测试还差窗口恢复的用例，正在补。\n</agent-message>',
+    {
+      origin: { kind: "peer", source: "agent", from: "ag-async1" },
+    },
+  ),
   asstNode("n14", ts(), [
     text("对照一下监控面板的截图，确认限流指标已出现。"),
     call(

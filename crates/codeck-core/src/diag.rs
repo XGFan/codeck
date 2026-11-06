@@ -16,7 +16,7 @@ use std::collections::{BTreeSet, HashMap};
 use rusqlite::Connection;
 
 use crate::error::CoreResult;
-use crate::index::schema::{DIAG_BLOCK, DIAG_ENTRY, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL};
+use crate::index::schema::{DIAG_BLOCK, DIAG_ENTRY, DIAG_MESSAGE, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL};
 use crate::model::{Diagnostics, FileFailure, NameCount, VersionStat};
 use transcript::known;
 
@@ -126,6 +126,7 @@ pub fn compute(conn: &Connection) -> CoreResult<Diagnostics> {
     d.unknown_block_types = take(DIAG_BLOCK);
     d.unknown_system_subtypes = take(DIAG_SYSTEM_SUBTYPE);
     d.unknown_tools = take(DIAG_TOOL);
+    d.unrecognized_messages = take(DIAG_MESSAGE);
 
     d.versions = versions.into_values().collect();
     d.versions

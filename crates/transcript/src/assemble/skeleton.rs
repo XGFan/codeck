@@ -216,8 +216,12 @@ fn node_of(
         // An empty command output has nothing to show; treat it like meta.
         is_meta |= origin == PromptOrigin::Meta
             || (origin == PromptOrigin::CommandOutput && prompt::is_empty_output(&text));
-        // Claude Code marks it meta, but it is shown (and anchors replies) like a prompt.
-        is_meta &= origin != PromptOrigin::Coordinator;
+        // Claude Code marks it meta, but it is shown (and anchors replies) like a prompt; a message
+        // from another agent that arrived while the Session was idle is meta too, and shown.
+        is_meta &= !matches!(
+            origin,
+            PromptOrigin::Coordinator | PromptOrigin::Peer { .. }
+        );
         is_human = prompt::is_human(e, &origin);
     }
     let mut tool_uses = Vec::new();

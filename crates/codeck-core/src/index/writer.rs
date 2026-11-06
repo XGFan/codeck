@@ -13,8 +13,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 
 use super::schema::{
-    DIAG_BLOCK, DIAG_ENTRY, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL, MSG_ASSISTANT, MSG_PROMPT, ROLE_MAIN,
-    ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT,
+    DIAG_BLOCK, DIAG_ENTRY, DIAG_MESSAGE, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL, MSG_ASSISTANT,
+    MSG_PROMPT, ROLE_MAIN, ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT,
 };
 use crate::error::CoreResult;
 use crate::model::{FileRole, TitleSource, TokenTotals};
@@ -113,6 +113,12 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
             *rows
                 .diag
                 .entry((DIAG_ENTRY, ty.to_owned(), version.clone()))
+                .or_default() += 1;
+        }
+        if let Some(mark) = transcript::assemble::prompt::unrecognized_mark(e) {
+            *rows
+                .diag
+                .entry((DIAG_MESSAGE, mark, version.clone()))
                 .or_default() += 1;
         }
         if ty == "system"

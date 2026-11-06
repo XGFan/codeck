@@ -87,6 +87,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - 任务通知、Teammate Message 是没有边框的灰色细行（任务通知居中）。
   - 斜杠命令像终端一样高亮：命令名用等宽强调色，参数保持正文字体。`!` shell 命令（文件里是 `<bash-input>`）同样处理，显示为 `!git status`，标题也是这个样子；它的输出（`<bash-stdout>` / `<bash-stderr>`）按命令输出显示。
   - Teammate Message 不显示为用户气泡，一条里的几段（`<teammate-message>`）按种类显示：报告（普通文字，及认不出类型的 JSON）是可折叠的"Teammate · <id>"卡片，相邻的合成一张；一轮结束（`idle_notification`，claude 2.1.251 起带 `result`，即它这一轮最后的回答）是一张「<名字> 完成」卡片，正文按 Markdown 显示，过长时先截住、可展开全文；没有 `result` 的写「空闲」，`idleReason` 为 `failed` 的写「失败」与 `failureReason`；退出（它的 `shutdown_approved` 与 `system` 的 `teammate_terminated`，同一条里的合成一行）写「已退出」；分配任务（`task_assignment`）写「<分配者> 分配任务 · #编号 主题」。这四种都是居中的一行。
+  - 其他 Agent 经 SendMessage 发来的消息（`origin.kind` 为 `peer`）：另一个 claude 会话的 `<cross-session-message>`、本 Session 的 Subagent 或 Teammate 的 `<agent-message>`；插件的消息（`The <名字> plugin sent a message:`）同样处理。空闲时送达的被 claude 记为 meta、忙时送达的记为排队命令，都显示为可折叠的「会话 / Agent / 插件 · <发送方>」卡片，去掉外层标签与套话，不算"你"的消息。
   - 当前 Session 读取失败时显示一行错误；源文件被删除时回到空状态。
 - Subagent：主对话中显示为卡片（任务 + 结果 + 状态：运行中 / 已完成 / 失败 / 未收到完成通知），teammate（带 `name` 派出、加入 agent team 的，工具结果是 `teammate_spawned`）的卡片另标「Teammate · <名字>」与它的颜色，状态与结果取自它发回主线的消息：结果是它最近一次的报告或一轮结束的 `result`（派出时的工具结果不当作结果），状态为运行中 / 空闲 / 已退出（主线发给它 SendMessage 时转为运行中；Session 不再活跃、又没见到退出时不写状态）；右侧面板的头部也写状态；后台 agent 以结束通知为准，收到之前不算结束（Session 不再活跃时写「未收到完成通知」），结果取通知里的 `<result>`（没有时取 summary；resume 后再次结束会再通知，状态与结果取最后一次，再次运行期间仍显示上一次的结束），启动时的工具结果不当作结果；"查看完整过程"在右侧面板打开，嵌套时显示面包屑；Subagent Run 里派出方后来发来的消息（SendMessage，Claude Code 记为元数据，`origin.kind` 为 `coordinator`）去掉外层套话后显示为「主对话发来的消息」（嵌套时为「上级 Subagent 发来的消息」）卡片，开始新的一轮；后台 agent 的卡片、后台命令的工具调用和结束通知互相链接，被 SendMessage 续接过的 agent 再结束时通知指向那次 SendMessage，通知行的「查看派出位置」仍到最初的 Agent 调用，另有「查看续接位置」；后台任务结束的通知（`<task-notification>`）一行显示，按 summary 的前缀标明是后台 agent、后台命令、Monitor 还是 Workflow，写出描述（没有描述的后台命令写命令本身，过长截断）、状态，以及非 0 的退出码或失败原因，认不出的写「后台任务」加原文；summary 里的 XML 转义（`&gt;` 等）还原后显示；Workflow 显示为一张总卡片。
 - 阅读便利：⌘F（会自动展开折叠的内容，包括工具组内的思考块和截断的工具输出）、`j`/`k` 按轮次跳转（对话框打开时不响应）、轮次大纲、复制消息/代码块/Bash 命令、复制 Session ID 和 `claude --resume <id>`、在 Finder 中显示。
@@ -108,7 +109,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 ## 诊断
 
-在设置（⌘,）的"格式兼容性"页：解析失败的行（含文件与首个错误）、未知的条目类型 / 内容块 / 系统子类型 / 工具名及出现次数和涉及版本、各 Claude Code 版本汇总（标题下写共几个版本、从最低到最高版本；表里只列有失败行或未知项的版本，都没有时不显示表）、文件内重复 uuid 数、未关联的 Subagent 数；可复制报告、重建索引。
+在设置（⌘,）的"格式兼容性"页：解析失败的行（含文件与首个错误）、未知的条目类型 / 内容块 / 系统子类型 / 工具名及出现次数和涉及版本、认不出的消息（按"你"的消息处理却带结构标记的 user 条目：开头是认不出的标签，或 `origin.kind` 不是已知的几种，按标记汇总；新版 claude 加了消息类型时在这里出现）、各 Claude Code 版本汇总（标题下写共几个版本、从最低到最高版本；表里只列有失败行或未知项的版本，都没有时不显示表）、文件内重复 uuid 数、未关联的 Subagent 数；可复制报告、重建索引。
 
 ## 设置
 

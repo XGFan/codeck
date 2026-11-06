@@ -42,6 +42,7 @@ export function diagnosticsReport(d: Diagnostics): string {
     ...nameCountRows("未知内容块类型", d.unknownBlockTypes),
     ...nameCountRows("未知系统子类型", d.unknownSystemSubtypes),
     ...nameCountRows("未知工具", d.unknownTools),
+    ...nameCountRows("认不出的消息", d.unrecognizedMessages),
     "## 版本",
     ...d.versions.map(
       (v) => `- ${v.version}：${v.sessions} 个 Session，失败 ${v.failedLines} 行，未知项 ${v.unknownItems}`,
@@ -150,7 +151,11 @@ export function DiagnosticsContent() {
   const flagged = d.versions
     .filter((v) => v.failedLines > 0 || v.unknownItems > 0)
     .sort((a, b) => cmpVersion(b.version, a.version));
-  const unknownTypes = d.unknownEntryTypes.length + d.unknownBlockTypes.length + d.unknownSystemSubtypes.length;
+  const unknownTypes =
+    d.unknownEntryTypes.length +
+    d.unknownBlockTypes.length +
+    d.unknownSystemSubtypes.length +
+    d.unrecognizedMessages.length;
 
   return (
     <div data-testid="diagnostics" className="flex flex-col gap-5">
@@ -201,6 +206,11 @@ export function DiagnosticsContent() {
       <NameCountSection testId="diag-block-types" title="未知内容块类型" rows={d.unknownBlockTypes} />
       <NameCountSection testId="diag-subtypes" title="未知系统子类型" rows={d.unknownSystemSubtypes} />
       <NameCountSection testId="diag-tools" title="未知工具 · 以通用视图显示" rows={d.unknownTools} />
+      <NameCountSection
+        testId="diag-messages"
+        title="认不出的消息 · 显示为你的消息或隐藏"
+        rows={d.unrecognizedMessages}
+      />
 
       <section data-testid="diag-versions" className="flex flex-col gap-1.5">
         <h3 className="m-0 text-[13px] font-semibold">Claude Code 版本</h3>

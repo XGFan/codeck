@@ -235,6 +235,11 @@ export type Diagnostics = {
 	unknownBlockTypes: NameCount[],
 	unknownSystemSubtypes: NameCount[],
 	unknownTools: NameCount[],
+	/**
+	 *  `user` entries that would show as typed by the user but carry a structure mark (a leading
+	 *  tag, an `origin.kind`), or are hidden for an `origin.kind` not classified: by the mark.
+	 */
+	unrecognizedMessages: NameCount[],
 	versions: VersionStat[],
 	duplicateUuids: number,
 	orphanSubagents: number,
@@ -421,6 +426,15 @@ text: string } |
 /**  A tool result not absorbed into its call (the call is not on the shown path). */
 { kind: "toolResult"; text: string } | { kind: "attachment"; attachmentType: string; text: string } | { kind: "unknown"; entryType: string; rawJson: string };
 
+/**  Where a [`PromptOrigin::Peer`] message came from. */
+export type PeerSource = 
+/**  Another claude Session (`<cross-session-message from-name="…">`). */
+"session" | 
+/**  A Subagent or Teammate of this Session (`<agent-message from="…">`). */
+"agent" | 
+/**  A plugin (`The <name> plugin sent a message:`). */
+"plugin";
+
 /**  Output offloaded to `<session dir>/tool-results/<file_name>`. */
 export type PersistedRef = {
 	fileName: string,
@@ -458,7 +472,15 @@ export type PromptOrigin = { kind: "human" } |
  *  stopped (`origin.kind` `coordinator`); not typed by the user. The text has Claude Code's
  *  wrapper sentences removed.
  */
-{ kind: "coordinator" } | { kind: "meta" };
+{ kind: "coordinator" } | 
+/**
+ *  A message another agent sent with SendMessage, or a plugin's; not typed by the user.
+ *  Claude Code marks one that arrives while the Session is idle as meta and records one that
+ *  arrives while it works as a queued command; both are shown.
+ */
+{ kind: "peer"; source: PeerSource; 
+/**  The sender: the other Session's name, the agent's, the plugin's. */
+from: string | null } | { kind: "meta" };
 
 export type SearchGroup = {
 	session: SessionSummary,

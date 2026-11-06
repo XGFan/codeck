@@ -42,6 +42,9 @@ pub struct Diagnostics {
     pub unknown_block_types: Vec<NameCount>,
     pub unknown_system_subtypes: Vec<NameCount>,
     pub unknown_tools: Vec<NameCount>,
+    /// `user` entries that would show as typed by the user but carry a structure mark (a leading
+    /// tag, an `origin.kind`), or are hidden for an `origin.kind` not classified: by the mark.
+    pub unrecognized_messages: Vec<NameCount>,
     pub versions: Vec<VersionStat>,
     pub duplicate_uuids: u32,
     pub orphan_subagents: u32,

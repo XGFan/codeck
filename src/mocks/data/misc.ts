@@ -37,6 +37,7 @@ export const diagnostics = {
   unknownBlockTypes: [{ name: "server_tool_use", count: 5, versions: ["2.1.91"] }],
   unknownSystemSubtypes: [{ name: "memory_saved", count: 2, versions: ["2.1.91"] }],
   unknownTools: [{ name: "ScheduleWakeup", count: 9, versions: ["2.1.90", "2.1.91"] }],
+  unrecognizedMessages: [{ name: "<handoff-message>", count: 4, versions: ["2.1.91"] }],
   versions: [
     { version: "2.1.91", sessions: 6, failedLines: 0, unknownItems: 12, lastSeenMs: NOW - 120_000 },
     { version: "2.1.88", sessions: 3, failedLines: 3, unknownItems: 9, lastSeenMs: NOW - 5 * DAY },

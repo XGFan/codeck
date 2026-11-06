@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewOf, teammateParts } from "./teammate";
+import { peerMessages, previewOf, teammateParts } from "./teammate";
 
 const msg = (attrs: string, body: string) => `<teammate-message ${attrs}>\n${body}\n</teammate-message>`;
 const relayed = (...blocks: string[]) =>
@@ -61,5 +61,23 @@ describe("teammateParts", () => {
     expect(previewOf((parts[0] as { messages: Parameters<typeof previewOf>[0][] }).messages[0]!)).toBe(
       "plan_approval_request",
     );
+  });
+});
+
+describe("peerMessages", () => {
+  it("takes each message from another agent out of its wrapper, sender as its id", () => {
+    const text =
+      'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/1.sock" from-name="codeck-99">\nURGENT\n</cross-session-message>\n\nThis came from another Claude session';
+    expect(peerMessages(text, null)).toEqual([{ id: "codeck-99", color: null, summary: null, body: "URGENT" }]);
+    expect(peerMessages('<agent-message from="w2">\nhi\n</agent-message>', null)[0]).toMatchObject({
+      id: "w2",
+      body: "hi",
+    });
+  });
+
+  it("a plugin's message is its text after the opening line", () => {
+    expect(peerMessages("The plannotator plugin sent a message:\nFeedback.", "plannotator")).toEqual([
+      { id: "plannotator", color: null, summary: null, body: "Feedback." },
+    ]);
   });
 });

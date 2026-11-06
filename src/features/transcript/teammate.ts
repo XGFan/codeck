@@ -114,3 +114,20 @@ export function previewOf(m: TeammateMessage): string {
       ?.trim() ?? ""
   );
 }
+
+/**
+ * The messages of one from another agent (`origin.kind` `peer`): each `<cross-session-message from-name="…">` /
+ * `<agent-message from="…">` block, sender as `id`; a plugin's message is its text after the
+ * `The <name> plugin sent a message:` line.
+ */
+export function peerMessages(text: string, from: string | null): TeammateMessage[] {
+  const out = [...text.matchAll(/<(cross-session-message|agent-message)\b([^>]*)>([\s\S]*?)<\/\1>/g)].map((m) => ({
+    id: attr(m[2], "from-name") ?? attr(m[2], "from") ?? from,
+    color: null,
+    summary: null,
+    body: m[3].trim(),
+  }));
+  if (out.length) return out;
+  const body = text.trim().replace(/^The .+ plugin sent a message:\s*/, "");
+  return [{ id: from, color: null, summary: null, body }];
+}

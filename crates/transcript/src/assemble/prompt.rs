@@ -1,11 +1,15 @@
-//! `PromptOrigin` classification; `<command-name>`, `<task-notification>` and
-//! `<teammate-message>` parsing.
+//! `PromptOrigin` classification; `<command-name>`, `<task-notification>`,
+//! `<teammate-message>` and agent-to-agent message parsing.
 
-use crate::model::PromptOrigin;
+use crate::model::{PeerSource, PromptOrigin};
 use crate::raw::RawEntry;
 
-/// Line Claude Code puts before a `<teammate-message>` it relays to the lead session.
-const TEAMMATE_PREAMBLE: &str = "Another Claude session sent a message:";
+/// Start of the line Claude Code puts before a message relayed from another agent
+/// (`<teammate-message>`, `<cross-session-message>`, `<agent-message>`): "…sent a message:" or
+/// "…sent a message while you were working:".
+const RELAY_PREAMBLE: &str = "Another Claude session sent a message";
+/// What a plugin's message starts with: `The <name> plugin sent a message:`.
+const PLUGIN_PREAMBLE: (&str, &str) = ("The ", " plugin sent a message:");
 /// What Claude Code wraps a coordinator message in (agent file, `origin.kind` `coordinator`).
 const COORDINATOR_PREAMBLE: &str = "The coordinator sent a message while you were working:";
 const COORDINATOR_SUFFIX: &str = "Address this before completing your current task.";
@@ -139,6 +143,10 @@ pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
     if origin_kind == Some("coordinator") {
         return PromptOrigin::Coordinator;
     }
+    // Marked meta when it arrives while the Session is idle, but it is a message to read.
+    if let Some(peer) = peer_origin(e, text) {
+        return peer;
+    }
     if e.is_meta == Some(true) {
         return PromptOrigin::Meta;
     }
@@ -152,7 +160,7 @@ pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
             summary: n.summary,
         };
     }
-    let teammate = t.strip_prefix(TEAMMATE_PREAMBLE).map_or(t, str::trim_start);
+    let teammate = strip_relay_preamble(t);
     if teammate.starts_with("<teammate-message") {
         return PromptOrigin::Teammate {
             teammate_id: attr(teammate, "teammate_id"),
@@ -251,6 +259,89 @@ pub fn truncate_chars(s: &str, n: usize) -> String {
 }
 
 /// Value of `name="…"` in the opening tag at the start of `s`; `None` when absent or empty.
+/// `text` without the line Claude Code puts before a message relayed from another agent.
+fn strip_relay_preamble(text: &str) -> &str {
+    let t = text.trim_start();
+    if t.starts_with(RELAY_PREAMBLE)
+        && let Some((line, rest)) = t.split_once('\n')
+        && line.trim_end().ends_with(':')
+    {
+        return rest.trim_start();
+    }
+    t
+}
+
+/// A message another agent sent with SendMessage (`<cross-session-message>` from another
+/// Session, `<agent-message>` from a Subagent or Teammate of this one), or a plugin's.
+fn peer_origin(e: &RawEntry, text: &str) -> Option<PromptOrigin> {
+    let t = strip_relay_preamble(text);
+    if t.starts_with("<cross-session-message") {
+        return Some(PromptOrigin::Peer {
+            source: PeerSource::Session,
+            from: attr(t, "from-name").or_else(|| attr(t, "from")),
+        });
+    }
+    if t.starts_with("<agent-message") {
+        return Some(PromptOrigin::Peer {
+            source: PeerSource::Agent,
+            from: attr(t, "from"),
+        });
+    }
+    let (open, close) = PLUGIN_PREAMBLE;
+    let named = text
+        .trim_start()
+        .strip_prefix(open)
+        .and_then(|rest| rest.split_once(close))
+        .map(|(name, _)| name.trim())
+        .filter(|name| !name.is_empty() && !name.contains('\n'));
+    let plugin = e.origin.as_ref().and_then(|o| o.kind.as_deref()) == Some("plugin");
+    (named.is_some() || plugin).then(|| PromptOrigin::Peer {
+        source: PeerSource::Plugin,
+        from: named.map(str::to_owned),
+    })
+}
+
+/// `origin.kind` values classified here; any other is reported by [`unrecognized_mark`].
+const KNOWN_ORIGIN_KINDS: &[&str] = &[
+    "human",
+    "task-notification",
+    "coordinator",
+    "peer",
+    "plugin",
+];
+
+/// Why a `user` entry looks machine-made although it would show as typed by the user, or is
+/// hidden for an origin not classified here: an unrecognized leading tag (`<name>`) or
+/// `origin.kind`. For the diagnostics, so new kinds of messages surface there.
+pub fn unrecognized_mark(e: &RawEntry) -> Option<String> {
+    if e.entry_type() != "user" || e.is_tool_result() || e.is_compact_summary == Some(true) {
+        return None;
+    }
+    let kind = e.origin.as_ref().and_then(|o| o.kind.as_deref());
+    let unknown_kind = kind
+        .filter(|k| !KNOWN_ORIGIN_KINDS.contains(k))
+        .map(|k| format!("origin.kind: {k}"));
+    let text = user_text(e);
+    match classify(e, &text) {
+        PromptOrigin::Human => {
+            let t = strip_relay_preamble(&text);
+            let tag: String = t
+                .strip_prefix('<')
+                .map(|rest| {
+                    rest.chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let tag = (tag.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
+                .then(|| format!("<{tag}>"));
+            tag.or(unknown_kind)
+        }
+        PromptOrigin::Meta => unknown_kind,
+        _ => None,
+    }
+}
+
 /// One `<teammate-message>` of a relayed message (a message may hold several).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TeammateMessage {
@@ -411,6 +502,89 @@ mod tests {
         assert_eq!(m[1].teammate_id.as_deref(), Some("system"));
         assert_eq!(m[1].body, "{\"type\":\"teammate_terminated\"}");
         assert!(teammate_messages("no tags").is_empty());
+    }
+
+    #[test]
+    fn classifies_messages_from_other_agents_even_when_marked_meta() {
+        let meta = entry(
+            r#"{"type":"user","isMeta":true,"origin":{"kind":"peer"},"message":{"content":"x"}}"#,
+        );
+        let session = "Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/cc-socks/1.sock\" from-name=\"codeck-99\" from-mode=\"bypass\">\nURGENT\n</cross-session-message>";
+        let o = classify(&meta, session);
+        assert_eq!(
+            o,
+            PromptOrigin::Peer {
+                source: PeerSource::Session,
+                from: Some("codeck-99".into()),
+            }
+        );
+        assert!(!is_human(&meta, &o));
+        // Delivered while the Session worked: a queued command, no preamble, no origin.
+        let queued = entry(r#"{"type":"user","message":{"content":"x"}}"#);
+        let agent = "Another Claude session sent a message while you were working:\n<agent-message from=\"line-a\">\nDone.\n</agent-message>";
+        assert_eq!(
+            classify(&queued, agent),
+            PromptOrigin::Peer {
+                source: PeerSource::Agent,
+                from: Some("line-a".into()),
+            }
+        );
+        assert_eq!(
+            classify(&queued, "<agent-message from=\"w2\">\nhi\n</agent-message>"),
+            PromptOrigin::Peer {
+                source: PeerSource::Agent,
+                from: Some("w2".into()),
+            }
+        );
+        let plugin =
+            entry(r#"{"type":"user","origin":{"kind":"plugin"},"message":{"content":"x"}}"#);
+        assert_eq!(
+            classify(&plugin, "The plannotator plugin sent a message:\nFeedback."),
+            PromptOrigin::Peer {
+                source: PeerSource::Plugin,
+                from: Some("plannotator".into()),
+            }
+        );
+        // The teammate preamble's other wording.
+        let tm = "Another Claude session sent a message while you were working:\n<teammate-message teammate_id=\"a\">\nhi\n</teammate-message>";
+        assert!(matches!(
+            classify(&queued, tm),
+            PromptOrigin::Teammate { .. }
+        ));
+    }
+
+    #[test]
+    fn reports_messages_that_would_pass_as_typed() {
+        let mark = |line: &str| unrecognized_mark(&entry(line));
+        assert_eq!(
+            mark(
+                r#"{"type":"user","message":{"content":"<new-kind-message from=\"x\">\nhi\n</new-kind-message>"}}"#
+            ),
+            Some("<new-kind-message>".into())
+        );
+        assert_eq!(
+            mark(
+                r#"{"type":"user","message":{"content":"Another Claude session sent a message:\n<future-tag>\nhi"}}"#
+            ),
+            Some("<future-tag>".into())
+        );
+        // Hidden as meta, with an origin not classified here.
+        assert_eq!(
+            mark(
+                r#"{"type":"user","isMeta":true,"origin":{"kind":"channel"},"message":{"content":"<channel source=\"t\">\nhi\n</channel>"}}"#
+            ),
+            Some("origin.kind: channel".into())
+        );
+        // Recognized or plainly typed: nothing to report.
+        for line in [
+            r#"{"type":"user","message":{"content":"fix the bug"}}"#,
+            r#"{"type":"user","message":{"content":"<command-name>/model</command-name>"}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"<system-reminder>x</system-reminder>"}}"#,
+            r#"{"type":"user","isMeta":true,"origin":{"kind":"peer"},"message":{"content":"<agent-message from=\"a\">x</agent-message>"}}"#,
+            r#"{"type":"user","message":{"content":"<pasted_content id=\"a1b2\">\nlog\n</pasted_content id=\"a1b2\"> why?"}}"#,
+        ] {
+            assert_eq!(mark(line), None, "{line}");
+        }
     }
 
     #[test]

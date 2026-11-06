@@ -9,7 +9,7 @@ import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
 import { ImageRefs } from "../tools";
-import { type TeammateMessage, type TeammatePart, previewOf, teammateParts } from "../teammate";
+import { type TeammateMessage, type TeammatePart, peerMessages, previewOf, teammateParts } from "../teammate";
 import { clock, commandLine, prettyJson } from "../util";
 import { TaskPromptCard } from "./Agents";
 import { Anchor } from "./Anchor";
@@ -22,6 +22,7 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
   const { rewindable } = useTranscriptCtx();
   const o = body.origin;
   if (o.kind === "teammate") return <TeammateCard node={node} body={body} />;
+  if (o.kind === "peer") return <PeerCard node={node} body={body} />;
   if (o.kind === "coordinator") return <CoordinatorCard node={node} body={body} />;
   if (o.kind !== "human" && o.kind !== "command") {
     return (
@@ -185,12 +186,25 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
   );
 }
 
-function TeammateReport({ node, messages, stateKey }: { node: Node; messages: TeammateMessage[]; stateKey: string }) {
+function TeammateReport({
+  node,
+  messages,
+  stateKey,
+  label = "Teammate",
+  testId = "teammate-message",
+}: {
+  node: Node;
+  messages: TeammateMessage[];
+  stateKey: string;
+  /** What the sender is: `Teammate`, or for a message from another agent its source. */
+  label?: string;
+  testId?: string;
+}) {
   const open = useUi((s) => s.expanded[stateKey] ?? false);
   const toggle = useUi((s) => s.toggleExpanded);
   const first = messages[0];
   return (
-    <div data-testid="teammate-message" className="flex flex-col gap-1.5">
+    <div data-testid={testId} className="flex flex-col gap-1.5">
       <button
         type="button"
         aria-expanded={open}
@@ -203,7 +217,9 @@ function TeammateReport({ node, messages, stateKey }: { node: Node; messages: Te
           <ChevronRight size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
         )}
         <Dot color={first.color} />
-        <span className="shrink-0 font-medium text-text/80">Teammate · {first.id ?? "未知"}</span>
+        <span className="shrink-0 font-medium text-text/80">
+          {label} · {first.id ?? "未知"}
+        </span>
         {messages.length > 1 && <span className="shrink-0 text-secondary">{messages.length} 条</span>}
         <span data-testid="teammate-preview" className="min-w-0 flex-1 truncate text-secondary">
           {previewOf(first)}
@@ -230,6 +246,22 @@ function TeammateReport({ node, messages, stateKey }: { node: Node; messages: Te
         </div>
       )}
     </div>
+  );
+}
+
+const PEER_LABEL = { session: "会话", agent: "Agent", plugin: "插件" } as const;
+
+/** A message another agent sent with SendMessage (another Session, a Subagent or Teammate), or a plugin's. */
+function PeerCard({ node, body }: { node: Node; body: UserBody }) {
+  const o = body.origin as Extract<UserBody["origin"], { kind: "peer" }>;
+  return (
+    <TeammateReport
+      node={node}
+      messages={peerMessages(body.text, o.from)}
+      stateKey={`peer:${node.id}`}
+      label={PEER_LABEL[o.source]}
+      testId="peer-message"
+    />
   );
 }
 

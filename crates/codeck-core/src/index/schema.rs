@@ -1,7 +1,7 @@
 //! DDL and schema version.
 
 /// `PRAGMA user_version`; any mismatch deletes and recreates the index.
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 
 /// `files.role`.
 pub const ROLE_MAIN: i64 = 0;
@@ -17,6 +17,9 @@ pub const DIAG_ENTRY: i64 = 0;
 pub const DIAG_BLOCK: i64 = 1;
 pub const DIAG_TOOL: i64 = 2;
 pub const DIAG_SYSTEM_SUBTYPE: i64 = 3;
+/// A `user` entry that would pass as typed by the user but carries a structure mark (or is hidden
+/// for an unclassified `origin.kind`): name is the mark (`<tag>`, `origin.kind: …`).
+pub const DIAG_MESSAGE: i64 = 4;
 
 /// Bytes of a file's start kept in `files.head` for rewrite detection.
 pub const HEAD_LEN: usize = 256;

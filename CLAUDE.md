@@ -45,7 +45,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 pnpm tauri build --bundles app --target aarch64-apple-darwin
 ```
 
-真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CODECK_REAL_ROOT=~/.claude cargo test -p transcript --release --test assemble -- --ignored --nocapture`、`CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`。
+真实数据探针（`#[ignore]`，只读，索引写临时目录）：`CODECK_REAL_ROOT=~/.claude cargo test -p transcript --release --test assemble -- --ignored --nocapture`、`CODECK_BENCH_ROOT=~/.claude cargo test -p codeck-core --release --test search -- --ignored --nocapture`、`CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test diag -- --ignored --nocapture`（格式兼容性诊断，含认不出的消息）。
 
 ## 设计稿
 

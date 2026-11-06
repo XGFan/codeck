@@ -114,6 +114,12 @@ fn reports_corrupt_line_and_unknown_names_with_versions() {
     });
     assert!(mcp > 0);
     assert!(d.unknown_tools.is_empty(), "{:?}", d.unknown_tools);
+    // Every user message in the fixtures is typed or of a recognized kind.
+    assert!(
+        d.unrecognized_messages.is_empty(),
+        "{:?}",
+        d.unrecognized_messages
+    );
 }
 
 #[test]
@@ -175,4 +181,86 @@ fn names_known_since_indexing_are_dropped() {
 fn empty_index_is_all_zero() {
     let env = scanned(&[]);
     assert_eq!(diagnostics(&env), Diagnostics::default());
+}
+
+#[test]
+fn reports_messages_that_would_pass_as_typed() {
+    let root = data_root(&["basic"]);
+    let file = root
+        .path()
+        .join("projects")
+        .join(ids::BASIC_DIR)
+        .join(format!("{}.jsonl", ids::BASIC));
+    let line = |uuid: &str, extra: &str, content: &str| {
+        format!(
+            r#"{{"type":"user","uuid":"{uuid}","parentUuid":null,"sessionId":"{}","version":"2.1.400","timestamp":"2026-11-06T02:00:00.000Z",{extra}"message":{{"role":"user","content":{}}}}}"#,
+            ids::BASIC,
+            serde_json::to_string(content).unwrap()
+        )
+    };
+    let added = [
+        // A kind of message this version does not know: it would show as the user's bubble.
+        line(
+            "m1",
+            "",
+            "<new-kind-message from=\"x\">\nhi\n</new-kind-message>",
+        ),
+        // A message from another agent, delivered while idle: recognized.
+        line(
+            "m2",
+            r#""isMeta":true,"origin":{"kind":"peer"},"#,
+            "Another Claude session sent a message:\n<agent-message from=\"w2\">\nhi\n</agent-message>",
+        ),
+    ];
+    // The copy's last line is cut mid-write: start the additions on a line of their own.
+    let mut text = fs::read_to_string(&file).unwrap();
+    text.push('\n');
+    text.push_str(&added.join("\n"));
+    text.push('\n');
+    fs::write(&file, text).unwrap();
+
+    let d = diagnostics(&Env::scanned(root));
+    let m = find(&d.unrecognized_messages, "<new-kind-message>");
+    assert_eq!(
+        (m.count, m.versions.clone()),
+        (1, vec!["2.1.400".to_owned()])
+    );
+    assert_eq!(
+        d.unrecognized_messages.len(),
+        1,
+        "{:?}",
+        d.unrecognized_messages
+    );
+}
+
+/// Diagnostics of a real data root (read-only, index in a temp dir): unknown names and the
+/// messages that would pass as typed by the user.
+/// `CODECK_REAL_ROOT=~/.claude cargo test -p codeck-core --release --test diag -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn real_root_diagnostics() {
+    let Ok(root) = std::env::var("CODECK_REAL_ROOT") else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = codeck_core::Engine::open(codeck_core::EngineConfig {
+        data_root: PathBuf::from(root),
+        data_root_source: codeck_core::model::DataRootSource::Settings,
+        cache_dir: tmp.path().to_path_buf(),
+    })
+    .unwrap();
+    engine.scan_all(&|_| {}).unwrap();
+    let d = engine.diagnostics().unwrap();
+    for (title, list) in [
+        ("unknown entry types", &d.unknown_entry_types),
+        ("unknown block types", &d.unknown_block_types),
+        ("unknown system subtypes", &d.unknown_system_subtypes),
+        ("unknown tools", &d.unknown_tools),
+        ("unrecognized messages", &d.unrecognized_messages),
+    ] {
+        println!("{title}:");
+        for n in list {
+            println!("  {} × {} ({})", n.name, n.count, n.versions.join(", "));
+        }
+    }
 }

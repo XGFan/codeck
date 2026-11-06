@@ -429,6 +429,24 @@ test("Teammate：一轮的结果是一张卡片，空闲、失败、分配任务
   await expect(card).not.toContainText("Spawned successfully");
 });
 
+test("其他 Agent 经 SendMessage 发来的消息显示为可折叠卡片，写明来源，不当作你的消息", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const transcript = page.getByTestId("transcript");
+  const peer = page.getByTestId("peer-message");
+  await reveal(transcript, peer.first());
+  const session = peer.filter({ hasText: "会话 · codeck-99" });
+  await expect(session.getByTestId("teammate-preview")).toHaveText("限流文档我这边也改了一处，合并前先拉一下。");
+  await expect(session).not.toContainText("你 ·");
+  await session.getByRole("button", { expanded: false }).click();
+  const body = session.getByTestId("teammate-body");
+  await expect(body.locator("li")).toHaveCount(1);
+  await expect(body).not.toContainText("cross-session-message");
+  await expect(body).not.toContainText("This came from another Claude session");
+  await expect(peer.filter({ hasText: "Agent · ag-async1" }).getByTestId("teammate-preview")).toHaveText(
+    "集成测试还差窗口恢复的用例，正在补。",
+  );
+});
+
 test("当前 Session 被移除后会话区回到空状态", async ({ page }) => {
   const sid = await openSession(page, RICH_TITLE);
   await expect(page.getByTestId("transcript").locator("[data-row]").first()).toBeVisible();

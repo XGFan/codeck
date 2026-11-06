@@ -153,7 +153,27 @@ pub enum PromptOrigin {
     /// stopped (`origin.kind` `coordinator`); not typed by the user. The text has Claude Code's
     /// wrapper sentences removed.
     Coordinator,
+    /// A message another agent sent with SendMessage, or a plugin's; not typed by the user.
+    /// Claude Code marks one that arrives while the Session is idle as meta and records one that
+    /// arrives while it works as a queued command; both are shown.
+    Peer {
+        source: PeerSource,
+        /// The sender: the other Session's name, the agent's, the plugin's.
+        from: Option<String>,
+    },
     Meta,
+}
+
+/// Where a [`PromptOrigin::Peer`] message came from.
+#[derive(Serialize, Deserialize, Type, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PeerSource {
+    /// Another claude Session (`<cross-session-message from-name="…">`).
+    Session,
+    /// A Subagent or Teammate of this Session (`<agent-message from="…">`).
+    Agent,
+    /// A plugin (`The <name> plugin sent a message:`).
+    Plugin,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
