@@ -46,6 +46,8 @@ const KEEP_KEYS: &[&str] = &[
     "isCompactSummary",
     "leafUuid",
     "forkedFrom",
+    "continuedInSessionId",
+    "sessionKind",
     "messageUuid",
     "messageId",
     "runId",

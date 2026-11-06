@@ -36,6 +36,16 @@ const FILES: &[(&str, usize, usize)] = &[
         0,
     ),
     (
+        "continued/projects/-Users-dev-code-heron-bot/7c1e5a42-93b0-5d8e-a6f1-2b4c8d0e9f13.jsonl",
+        149,
+        0,
+    ),
+    (
+        "continued/projects/-Users-dev-code-heron-bot/9a3f6d18-2e7c-5b40-8d95-c1e0f7a2b364.jsonl",
+        269,
+        0,
+    ),
+    (
         "copies/projects/-Users-dev-code-kestrel-cli-old/2000072b-1616-53ff-b8dd-0b509f44339e.jsonl",
         5,
         0,
@@ -214,6 +224,26 @@ const FACTS: &[FactRow] = &[
         0,
         0,
         [20, 480, 80000, 4000],
+    ),
+    (
+        "continued/projects/-Users-dev-code-heron-bot/7c1e5a42-93b0-5d8e-a6f1-2b4c8d0e9f13.jsonl",
+        94,
+        0,
+        2,
+        10,
+        11,
+        3,
+        [20, 2941, 588946, 44668],
+    ),
+    (
+        "continued/projects/-Users-dev-code-heron-bot/9a3f6d18-2e7c-5b40-8d95-c1e0f7a2b364.jsonl",
+        208,
+        0,
+        5,
+        22,
+        21,
+        3,
+        [46, 8765, 1542693, 56935],
     ),
     (
         "copies/projects/-Users-dev-code-kestrel-cli-old/2000072b-1616-53ff-b8dd-0b509f44339e.jsonl",
@@ -831,6 +861,41 @@ fn fork_pair() {
             .iter()
             .any(|(_, v)| s(v, "customTitle").ends_with("(Branch)"))
     );
+}
+
+#[test]
+fn continued_pair() {
+    let path = |sid| session_file("continued", ids::CONTINUED_DIR, sid);
+    let (old, _) = read_jsonl(&path(ids::CONTINUED_OLD));
+    let (new, _) = read_jsonl(&path(ids::CONTINUED_NEW));
+    // the old one ends its conversation with `continued-in`, followed only by uuid-less lines
+    let at = old
+        .iter()
+        .position(|(_, v)| s(v, "type") == "continued-in")
+        .unwrap();
+    assert_eq!(s(&old[at].1, "continuedInSessionId"), ids::CONTINUED_NEW);
+    assert!(old[at..].iter().all(|(_, v)| v.get("uuid").is_none()));
+    // every uuid-bearing entry is copied (same uuid and message id; a few parents differ), no `forkedFrom`
+    let nu = by_uuid(&new);
+    let copied: Vec<&Value> = old
+        .iter()
+        .map(|(_, v)| v)
+        .filter(|v| v.get("uuid").is_some())
+        .collect();
+    assert_eq!(copied.len(), 94);
+    for v in &copied {
+        let c = nu[s(v, "uuid")];
+        assert_eq!(c["message"]["id"], v["message"]["id"]);
+    }
+    assert!(new.iter().all(|(_, v)| v.get("forkedFrom").is_none()));
+    // its own entries come after the copy, marked as a background Session
+    let own: Vec<&Value> = new
+        .iter()
+        .map(|(_, v)| v)
+        .filter(|v| v.get("uuid").is_some() && !copied.iter().any(|c| c["uuid"] == v["uuid"]))
+        .collect();
+    assert_eq!(own.len(), 114);
+    assert!(own.iter().all(|v| s(v, "sessionKind") == "bg"));
 }
 
 #[test]

@@ -21,6 +21,7 @@ pub const SCENARIOS: &[&str] = &[
     "branch",
     "compact",
     "fork",
+    "continued",
     "copies",
     "subagents",
     "workflow",

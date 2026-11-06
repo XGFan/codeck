@@ -97,6 +97,19 @@ its tool_result must not produce a BranchPoint. Choosing the "Now add unit tests
 - Origin continues independently from the same entry with "Which of the three options is the simplest to ship?", `ai-title` "Mac GUI architecture".
 - Both share the same `root_uuid` (first uuid-bearing line); origin `created_ms` is not later than the child's. The inherited part has 1 human prompt, Agent tool calls (async, no sidecar files in this scenario) and a task-notification.
 
+## continued
+
+`continued/projects/-Users-dev-code-heron-bot/`: old `7c1e5a42…` and continued `9a3f6d18…` (real Claude Code 2.1.318 pair: a Session parked in the background from the agents page; `api-request*` lines dropped before sanitizing with `--cap 40`, session ids replaced).
+
+| file | path under `projects/<dir>/` | lines | failed | uuids | dup uuids | human prompts | assistant msg ids | tool_use | tool errors | tokens in/out/cr/cc |
+|---|---|---|---|---|---|---|---|---|---|---|
+| old | `-Users-dev-code-heron-bot/7c1e5a42….jsonl` | 149 | 0 | 94 | 0 | 2 | 10 | 11 | 3 | 20 / 2941 / 588946 / 44668 |
+| continued | `-Users-dev-code-heron-bot/9a3f6d18….jsonl` | 269 | 0 | 208 | 0 | 5 | 22 | 21 | 3 | 46 / 8765 / 1542693 / 56935 |
+
+- Old: its conversation ends with a `session_cron_carry` attachment, `cost-state` and `{"type":"continued-in","continuedInSessionId":"9a3f6d18…"}`; only a `last-prompt` and another `cost-state` (no uuids) follow.
+- Continued: all 94 uuid-bearing old entries again (same uuids and `message.id`s; three `parentUuid`s differ, no `forkedFrom`), then 114 entries of its own, every uuid-bearing entry with `sessionKind:"bg"`, plus `agent-name` lines. Both share the first uuid and the first timestamp, so their `created_ms` is equal.
+- Expect: the old Session is superseded (hidden from lists, counts, search and stats; opening it gives the continued one), the continued one is not a Fork and bills every copied message; without the continued file (or once the old one has a prompt the continued one lacks) both are listed and billed normally.
+
 ## copies
 
 `copies/projects/`: the same session ids in two project dirs, plus (added by the helper) a symlinked project dir.
