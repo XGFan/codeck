@@ -229,6 +229,8 @@ pub struct Engine {
     pane_lock: Option<std::fs::File>,
     claude_seen_at: Option<Instant>,
     last_locate: Option<Instant>,
+    /// Check-ins from this Holder already looked for in the process table.
+    checkins_seen: HashSet<u32>,
     pf: Option<ProcessFile>,
     session_id: Option<String>,
     /// `ready` went out: a sessionId learned from now on is announced (`session_changed`).
@@ -342,6 +344,7 @@ impl Engine {
             pane_lock: None,
             claude_seen_at: None,
             last_locate: None,
+            checkins_seen: HashSet::new(),
             pf: None,
             session_id: None,
             ready_sent: false,
@@ -399,9 +402,14 @@ impl Engine {
         if self.claude_pid.is_some() {
             return;
         }
-        if self
-            .last_locate
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(400))
+        // A check-in from this Holder (its SessionStart ran): look now, not at the next scan.
+        let checked_in = hook::checkin_pids(&self.state_dir, &self.holder_id)
+            .into_iter()
+            .fold(false, |new, pid| self.checkins_seen.insert(pid) || new);
+        if !checked_in
+            && self
+                .last_locate
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(400))
         {
             return;
         }
@@ -900,8 +908,13 @@ impl Engine {
     fn update_watches(&mut self) {
         use notify::RecursiveMode::{NonRecursive, Recursive};
         let sessions = self.roots.sessions_dir();
+        let checkins = self.state_dir.join("sessions");
         let main = self.tailer.as_ref().map(|t| t.main_path().to_path_buf());
         let mut paths = vec![(sessions.as_path(), NonRecursive)];
+        // Until claude is found: its check-in wakes the loop (`locate_claude`).
+        if self.claude_pid.is_none() {
+            paths.push((checkins.as_path(), NonRecursive));
+        }
         let (dir, sdir);
         if let Some(m) = &main {
             dir = m.parent().map(|p| p.to_path_buf());

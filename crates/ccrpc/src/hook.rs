@@ -80,6 +80,20 @@ pub fn read_checkin(state: &Path, claude_pid: u32) -> Option<CheckIn> {
     serde_json::from_slice(&bytes).ok()
 }
 
+/// The claude processes that checked in from Holder `holder_id` (stale ones included).
+pub fn checkin_pids(state: &Path, holder_id: &str) -> Vec<u32> {
+    let Ok(rd) = std::fs::read_dir(state.join("sessions")) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.ends_with(".json")))
+        .filter_map(|e| std::fs::read(e.path()).ok())
+        .filter_map(|b| serde_json::from_slice::<CheckIn>(&b).ok())
+        .filter(|c| c.holder_id == holder_id)
+        .map(|c| c.claude_pid)
+        .collect()
+}
+
 /// Why a Session cannot be controlled through its check-in, or `None` when it can.
 pub fn checkin_problem(c: Option<&CheckIn>, process_session: Option<&str>) -> Option<String> {
     let Some(c) = c else {
@@ -498,6 +512,35 @@ mod tests {
             deny_output(Some("用 cargo"))["hookSpecificOutput"]["decision"],
             json!({"behavior": "deny", "message": "用 cargo"})
         );
+    }
+
+    /// Only check-ins written from this Holder name its claude.
+    #[test]
+    fn checkin_pids_are_the_holders() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |pid: u32, holder: &str| {
+            let c = CheckIn {
+                hook_protocol: HOOK_PROTOCOL,
+                plugin_version: "0".into(),
+                claude_pid: pid,
+                holder_id: holder.into(),
+                session_id: "s".into(),
+                transcript_path: "t".into(),
+                source: "startup".into(),
+                cwd: String::new(),
+                at: 0,
+            };
+            write_private(
+                &checkin_path(dir.path(), pid),
+                &serde_json::to_vec(&c).unwrap(),
+            )
+            .unwrap();
+        };
+        assert!(checkin_pids(dir.path(), "m1").is_empty());
+        write(10, "m1");
+        write(11, "m2");
+        std::fs::write(dir.path().join("sessions/bad.json"), "{").unwrap();
+        assert_eq!(checkin_pids(dir.path(), "m1"), vec![10]);
     }
 
     /// Following a conversation into the background keeps the Pane's claude's lock without its
