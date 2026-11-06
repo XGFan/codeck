@@ -1,6 +1,7 @@
 import { Check, MessageCircleQuestionMark } from "lucide-react";
 import type { Node } from "@/ipc/bindings";
-import { QuestionForm, useQuestionRequest } from "@/features/connect";
+import { useState } from "react";
+import { hasPreview, OptionPreview, QuestionForm, useQuestionRequest } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import type { RoleInfo, ToolCallBlock } from "../grouping";
 import { clock, parseJson } from "../util";
@@ -113,6 +114,15 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
   // Multi-select answers join the picked labels with ", "; whatever is not a label was typed in "Other".
   const picked = !answer ? [] : q.multiSelect && !labels.has(answer) ? answer.split(/,\s*/).filter(Boolean) : [answer];
   const custom = picked.filter((p) => !labels.has(p)).join(", ");
+  // The preview shown: of the option under the pointer, else of the (first) picked one, else of the first.
+  const previews = hasPreview(options);
+  const [hover, setHover] = useState<number | null>(null);
+  const shown =
+    hover ??
+    Math.max(
+      0,
+      options.findIndex((o) => picked.includes(o.label)),
+    );
   return (
     <div data-testid="ask-question" className="flex flex-col gap-1.5">
       {/* One paragraph: a long question wraps back to the left edge, under the tag. */}
@@ -125,40 +135,41 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
         <span className="font-medium">{q.question}</span>
         {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
       </div>
-      {options.map((o, i) => {
-        const on = picked.includes(o.label);
-        return (
-          <div
-            key={`${i}|${o.label}`}
-            data-chosen={on || undefined}
-            className={cn(
-              "flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-[12px]",
-              on ? "border-accent/50 bg-selection" : "border-border",
-            )}
-          >
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">
-                {on && <Check size={13} strokeWidth={2.2} />}
-              </span>
-              <span className={cn(answer && !on && "text-secondary")}>
-                <span className="font-medium">{o.label}</span>
-                {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
-              </span>
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="flex min-w-0 flex-[1_1_240px] flex-col gap-1.5">
+          {options.map((o, i) => {
+            const on = picked.includes(o.label);
+            return (
+              <div
+                key={`${i}|${o.label}`}
+                data-chosen={on || undefined}
+                onPointerEnter={previews ? () => setHover(i) : undefined}
+                onPointerLeave={previews ? () => setHover(null) : undefined}
+                className={cn(
+                  "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[12px]",
+                  on ? "border-accent/50 bg-selection" : "border-border",
+                  previews && !on && "hover:bg-selection/60",
+                )}
+              >
+                <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-accent">
+                  {on && <Check size={13} strokeWidth={2.2} />}
+                </span>
+                <span className={cn(answer && !on && "text-secondary")}>
+                  <span className="font-medium">{o.label}</span>
+                  {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
+                </span>
+              </div>
+            );
+          })}
+          {custom && (
+            <div data-chosen className="rounded-md border border-accent/50 bg-selection px-2.5 py-1.5 text-[12px]">
+              <span className="text-secondary">其他：</span>
+              {custom}
             </div>
-            {on && o.preview && (
-              <pre className="m-0 ml-5.5 overflow-x-auto font-mono text-[11.5px] leading-snug text-text/80">
-                {o.preview}
-              </pre>
-            )}
-          </div>
-        );
-      })}
-      {custom && (
-        <div data-chosen className="rounded-md border border-accent/50 bg-selection px-2.5 py-1.5 text-[12px]">
-          <span className="text-secondary">其他：</span>
-          {custom}
+          )}
         </div>
-      )}
+        {previews && <OptionPreview options={options} active={shown} />}
+      </div>
       {note && <div className="text-[12px] whitespace-pre-wrap text-secondary">备注：{note}</div>}
     </div>
   );

@@ -5,6 +5,7 @@ import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import { otherChosen, questionAnswers, togglePick } from "./answers";
 import type { ConnState } from "./conn";
+import { hasPreview, OptionPreview } from "./OptionPreview";
 import type { AskQuestion, QuestionEvent } from "./protocol";
 import { useAnswer } from "./useAnswer";
 
@@ -19,6 +20,10 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
   // picking an option sets the written text aside (kept, greyed). Several (multi-select): 其他 is one more check box,
   // the written text goes with the options picked.
   const [useOther, setUseOther] = useState<boolean[]>(() => qs.map(() => false));
+  // The option (question, option) under the pointer and the one with keyboard focus: whose preview is shown, the
+  // pointer's first, else the last picked, else the first.
+  const [hover, setHover] = useState<[number, number] | null>(null);
+  const [focus, setFocus] = useState<[number, number] | null>(null);
   const otherOn = (i: number) => otherChosen(other, useOther, i);
   const ready = qs.every((_, i) => picked[i]?.length || otherOn(i));
   const submit = () =>
@@ -28,6 +33,18 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
       answers: questionAnswers(qs, picked, other, useOther),
     });
   const at = <T,>(xs: T[], i: number, v: T) => xs.map((x, j) => (j === i ? v : x));
+  const shown = (i: number, q: AskQuestion) => {
+    const last = picked[i]?.at(-1);
+    const on = (p: [number, number] | null) => (p?.[0] === i ? p[1] : null);
+    return (
+      on(hover) ??
+      on(focus) ??
+      Math.max(
+        0,
+        q.options.findIndex((o) => o.label === last),
+      )
+    );
+  };
   const toggle = (i: number, q: AskQuestion, label: string) => {
     if (!q.multiSelect) setUseOther((u) => at(u, i, false));
     setPicked((p) => p.map((x, j) => (j === i ? togglePick(x, label, !!q.multiSelect) : x)));
@@ -50,79 +67,88 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
             <span className="font-medium">{q.question}</span>
             {q.multiSelect && <span className="ml-2 text-[11px] whitespace-nowrap text-secondary">多选</span>}
           </legend>
-          {q.options.map((o) => {
-            const on = !!picked[i]?.includes(o.label);
-            return (
-              <button
-                type="button"
-                key={o.label}
-                aria-pressed={on}
-                data-testid="question-option"
-                data-card-answer
-                onClick={() => toggle(i, q, o.label)}
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="flex min-w-0 flex-[1_1_240px] flex-col gap-1.5">
+              {q.options.map((o, k) => {
+                const on = !!picked[i]?.includes(o.label);
+                return (
+                  <button
+                    type="button"
+                    key={o.label}
+                    aria-pressed={on}
+                    data-testid="question-option"
+                    data-card-answer
+                    onClick={() => toggle(i, q, o.label)}
+                    onPointerEnter={() => setHover([i, k])}
+                    onPointerLeave={() => setHover(null)}
+                    onFocus={() => setFocus([i, k])}
+                    onBlur={() => setFocus(null)}
+                    className={cn(
+                      "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent",
+                      on ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
+                    )}
+                  >
+                    <Mark on={on} multi={!!q.multiSelect} className="mt-0.5" />
+                    <span>
+                      <span className="font-medium">{o.label}</span>
+                      {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+              <label
+                // Clicking the row writes in it (not the multi-select check box, the label's first control).
+                htmlFor={`${uid}-other-${i}`}
+                data-testid="question-other-row"
+                data-on={otherOn(i) || undefined}
                 className={cn(
-                  "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-left text-[12px] outline-none focus-visible:border-accent",
-                  on ? "border-accent/50 bg-selection" : "border-border hover:bg-selection/60",
+                  "flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px] focus-within:border-accent",
+                  otherOn(i) ? "border-accent/50 bg-selection" : "border-border",
                 )}
               >
-                <Mark on={on} multi={!!q.multiSelect} className="mt-0.5" />
-                <span>
-                  <span className="font-medium">{o.label}</span>
-                  {o.description && <span className="ml-2 text-secondary">{o.description}</span>}
-                </span>
-              </button>
-            );
-          })}
-          <label
-            // Clicking the row writes in it (not the multi-select check box, the label's first control).
-            htmlFor={`${uid}-other-${i}`}
-            data-testid="question-other-row"
-            data-on={otherOn(i) || undefined}
-            className={cn(
-              "flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px] focus-within:border-accent",
-              otherOn(i) ? "border-accent/50 bg-selection" : "border-border",
-            )}
-          >
-            {q.multiSelect ? (
-              // A check box of its own: off sets the text aside; on picks up what is written (focus to write it).
-              <button
-                type="button"
-                aria-pressed={otherOn(i)}
-                aria-label="其他"
-                data-testid="question-other-toggle"
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (otherOn(i)) setUseOther((u) => at(u, i, false));
-                  else e.currentTarget.parentElement?.querySelector("input")?.focus();
-                }}
-                className="flex outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              >
-                <Mark on={otherOn(i)} multi />
-              </button>
-            ) : (
-              <Mark on={otherOn(i)} multi={false} />
-            )}
-            <span className="shrink-0 text-secondary">其他：</span>
-            <input
-              id={`${uid}-other-${i}`}
-              value={other[i] ?? ""}
-              onChange={(e) => {
-                setOther((p) => at(p, i, e.target.value));
-                chooseOther(i, q);
-              }}
-              // Back to the written answer by clicking into it.
-              onFocus={() => other[i]?.trim() && chooseOther(i, q)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
-              }}
-              placeholder="自己写答案"
-              className={cn(
-                "h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary",
-                !otherOn(i) && other[i]?.trim() && "text-secondary line-through decoration-secondary/60",
-              )}
-              data-testid="question-other"
-            />
-          </label>
+                {q.multiSelect ? (
+                  // A check box of its own: off sets the text aside; on picks up what is written (focus to write it).
+                  <button
+                    type="button"
+                    aria-pressed={otherOn(i)}
+                    aria-label="其他"
+                    data-testid="question-other-toggle"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (otherOn(i)) setUseOther((u) => at(u, i, false));
+                      else e.currentTarget.parentElement?.querySelector("input")?.focus();
+                    }}
+                    className="flex outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  >
+                    <Mark on={otherOn(i)} multi />
+                  </button>
+                ) : (
+                  <Mark on={otherOn(i)} multi={false} />
+                )}
+                <span className="shrink-0 text-secondary">其他：</span>
+                <input
+                  id={`${uid}-other-${i}`}
+                  value={other[i] ?? ""}
+                  onChange={(e) => {
+                    setOther((p) => at(p, i, e.target.value));
+                    chooseOther(i, q);
+                  }}
+                  // Back to the written answer by clicking into it.
+                  onFocus={() => other[i]?.trim() && chooseOther(i, q)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
+                  }}
+                  placeholder="自己写答案"
+                  className={cn(
+                    "h-6 min-w-0 flex-1 bg-transparent outline-none placeholder:text-secondary",
+                    !otherOn(i) && other[i]?.trim() && "text-secondary line-through decoration-secondary/60",
+                  )}
+                  data-testid="question-other"
+                />
+              </label>
+            </div>
+            {hasPreview(q.options) && <OptionPreview options={q.options} active={shown(i, q)} />}
+          </div>
         </fieldset>
       ))}
       <div className="flex items-center gap-2">

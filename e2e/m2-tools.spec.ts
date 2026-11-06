@@ -86,13 +86,41 @@ test("AskUserQuestion 单独显示问题并标出你的回答，任务清单显�
   await reveal(page, ask);
   // Shown expanded, outside any tool group.
   await expect(page.locator('[data-testid="tool-group"] [data-testid="ask"]')).toHaveCount(0);
-  await expect(ask.getByTestId("ask-question")).toHaveCount(2);
+  await expect(ask.getByTestId("ask-question")).toHaveCount(3);
   await expect(ask.locator("[data-chosen]").first()).toContainText("429 + Retry-After");
   await expect(ask.locator("[data-chosen]").nth(1)).toContainText("其他：先放内存，留好换 Redis 的接口");
   await expect(ask.getByTestId("ask-status")).toContainText(/你 · \d\d:\d\d 已回答/);
   await expect(ask.getByTestId("ask-question").first()).toContainText("备注：Retry-After 用秒数");
   // The answer is marked in the card only, not repeated elsewhere.
   await expect(page.getByTestId("transcript").getByText("先放内存，留好换 Redis 的接口")).toHaveCount(1);
+  // Options with previews: the picked one's beside the options, another's while the pointer is on it.
+  const layer = ask.getByTestId("ask-question").nth(2);
+  const preview = layer.getByTestId("option-preview");
+  await expect(preview).toHaveAttribute("data-option", "0");
+  await expect(preview.locator("pre:not([aria-hidden])")).toContainText("auth");
+  await layer.getByText("最外层").hover();
+  await expect(preview).toHaveAttribute("data-option", "1");
+  await expect(preview.locator("pre:not([aria-hidden])")).toContainText("按 IP 计数");
+  // On the terminal's grid: a CJK character two columns, a box-drawing one and an ASCII one one each.
+  const width = (text: string) =>
+    preview
+      .locator("pre:not([aria-hidden]) span")
+      .filter({ hasText: new RegExp(`^${text}$`) })
+      .first()
+      .evaluate((e) => e.getBoundingClientRect().width);
+  const col = await preview
+    .locator("pre")
+    .first()
+    .evaluate((e) => {
+      const probe = document.createElement("span");
+      probe.textContent = "0".repeat(10);
+      e.append(probe);
+      const w = probe.getBoundingClientRect().width / 10;
+      probe.remove();
+      return w;
+    });
+  expect(await width("限")).toBeCloseTo(2 * col, 1);
+  expect(await width("│")).toBeCloseTo(col, 1);
   const todo = page.locator('[data-tool="TodoWrite"]');
   await reveal(page, todo);
   await todo.getByRole("button").first().click();

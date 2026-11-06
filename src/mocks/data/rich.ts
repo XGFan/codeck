@@ -74,6 +74,25 @@ const askQuestions = [
       { label: "Redis", description: "多实例共享计数" },
     ],
   },
+  {
+    question: "限流挂在中间件栈的哪一层？",
+    header: "位置",
+    multiSelect: false,
+    options: [
+      {
+        label: "鉴权之后",
+        description: "按 API key 计数，未鉴权的请求不占额度",
+        preview:
+          "请求 ──▶ trace\n         │\n         ▼\n        auth   (取出 API key)\n         │\n         ▼\n      限流 ●   按 key 计数\n         │\n         ▼\n      handler",
+      },
+      {
+        label: "最外层",
+        description: "先于一切处理，也挡住未鉴权的洪峰",
+        preview:
+          "请求 ──▶ 限流 ●  按 IP 计数\n           │\n           ▼\n          trace\n           │\n           ▼\n          auth\n           │\n           ▼\n        handler",
+      },
+    ],
+  },
 ];
 
 const clarifyQuestions = [
@@ -84,6 +103,7 @@ const clarifyQuestions = [
 const askAnswers = {
   "限流超限时应返回什么？": "429 + Retry-After",
   "限流计数存在哪里？": "先放内存，留好换 Redis 的接口",
+  "限流挂在中间件栈的哪一层？": "鉴权之后",
 };
 
 export const richMain: Node[] = [
@@ -273,7 +293,7 @@ export const richMain: Node[] = [
       "AskUserQuestion",
       { questions: askQuestions },
       {
-        text: 'User has answered your questions: "限流超限时应返回什么？"="429 + Retry-After", "限流计数存在哪里？"="先放内存，留好换 Redis 的接口".',
+        text: 'User has answered your questions: "限流超限时应返回什么？"="429 + Retry-After", "限流计数存在哪里？"="先放内存，留好换 Redis 的接口", "限流挂在中间件栈的哪一层？"="鉴权之后".',
         timestampMs: t + 90_000,
         extraJson: JSON.stringify({
           questions: askQuestions,

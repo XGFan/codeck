@@ -35,6 +35,8 @@ export interface PermissionRequestEvent {
 export interface QuestionOption {
   label: string;
   description?: string;
+  /** What the option looks like (an ASCII mockup, code); Claude Code shows it beside the options. */
+  preview?: string;
 }
 export interface AskQuestion {
   question: string;

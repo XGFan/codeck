@@ -16,6 +16,7 @@ import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } 
 
 export { ConnectButton, ConnectMenuItems, STATE_WORD, useConnectDebugInfo } from "./Header";
 export { arrived, isFresh } from "./pending";
+export { hasPreview, OptionPreview } from "./OptionPreview";
 export { QuestionForm } from "./QuestionForm";
 export { RewindButton, RewoundDivider, useRewindView, type RewindView } from "./RewindViews";
 export { CcrpcSettings } from "./Settings";

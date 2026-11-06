@@ -437,6 +437,57 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     });
 });
 
+test("作答时选项旁显示 preview：先是第一项的，悬停、键盘焦点所在或选中的那项的", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "question",
+      request_id: "toolu_e2e_preview",
+      agent_id: "a1b2c3d4e5f6",
+      questions: [
+        {
+          question: "侧栏的整体结构选哪种？",
+          header: "侧栏结构",
+          multiSelect: false,
+          options: [
+            {
+              label: "单栏分组",
+              description: "可折叠的 Project 组",
+              preview: "▾ codeck      +\n   ● 重新设计  2分\n▸ infra (217) +",
+            },
+            {
+              label: "三栏",
+              description: "Project 栏 + Session 栏",
+              preview: "│全部    │● 重新设计│\n│● codeck│  修复诊断│",
+            },
+            { label: "保持平铺", description: "改动最小" },
+          ],
+        },
+      ],
+    }),
+  );
+  const q = page.getByTestId("question-card");
+  const option = (label: string) => q.getByTestId("question-option").filter({ hasText: label });
+  const shown = q.getByTestId("option-preview").locator("pre:not([aria-hidden])");
+  await expect(shown).toContainText("▾ codeck");
+  await option("三栏").hover();
+  await expect(shown).toContainText("│● codeck│");
+  await option("保持平铺").hover();
+  await expect(shown).toHaveText("此项没有预览");
+  // Picked: its preview stays once the pointer leaves.
+  await option("三栏").click();
+  await q.getByTestId("question-other").hover();
+  await expect(shown).toContainText("│● codeck│");
+  // Keyboard focus shows the focused option's; the pointer passing over another and off leaves it.
+  await option("单栏分组").focus();
+  await expect(shown).toContainText("▾ codeck");
+  await option("三栏").hover();
+  await expect(shown).toContainText("│● codeck│");
+  await q.getByTestId("question-other").hover();
+  await expect(shown).toContainText("▾ codeck");
+});
+
 test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件，支持 ../", async ({ page }) => {
   await connectTo(page, RICH);
   await expect(state(page)).toContainText("空闲");
