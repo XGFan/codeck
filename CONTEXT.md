@@ -48,6 +48,10 @@ _Avoid_: Fork（Fork 是跨 Session 的）, 版本, 分叉会话
 Session 中从第一条消息走到最新叶子消息的那条 Branch，即用户在终端里最终看到的对话。
 _Avoid_: 主分支, 当前分支, trunk
 
+**撤回的提示词**（Withdrawn Prompt）:
+发出后、回复开始前按 Esc 被 Claude Code 拿出对话、放回输入框的提示词；它仍留在 transcript 里，但不属于对话。CoDeck 只认 Connect 时 ccrpc 看到的那些（ADR-0010）。
+_Avoid_: 删除的消息, 取消的提示词, 被中断的提示词（被中断的指回复开始后按 Esc，提示词留在对话里）
+
 **Teammate Message**:
 Session 中由另一个 Claude Session（agent team 的成员）发来的消息；它以用户消息的形式记录，但不是用户输入。
 _Avoid_: 用户消息, peer message, 队友输入
