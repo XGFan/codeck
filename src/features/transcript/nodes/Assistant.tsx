@@ -1,12 +1,14 @@
 import { ChevronDown, ChevronRight, CircleX, Lightbulb } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Markdown } from "@/lib/markdown";
 import { useUi } from "@/state/ui";
 import { BranchSwitcher } from "../BranchSwitcher";
 import { describeCalls, type GroupItem, isGroupOpen, type RoleInfo, type Row, type ToolCallBlock } from "../grouping";
 import { thinkingKey } from "../keys";
-import { ToolCallView } from "../tools";
+import { ToolCallView, verbOf } from "../tools";
+import { connFor, useConnect } from "@/features/connect";
+import { formatDuration } from "@/lib/format";
 import { clock } from "../util";
 import { Anchor } from "./Anchor";
 import { UnknownJson } from "./Misc";
@@ -107,6 +109,15 @@ function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
     () => describeCalls(row.items.flatMap((it) => (it.type === "call" ? [it.call] : []))),
     [row.items],
   );
+  // In the running turn: the call still without a result (the last such), said after the summary.
+  const current = useMemo(() => {
+    if (!row.live) return null;
+    for (let i = row.items.length - 1; i >= 0; i--) {
+      const it = row.items[i]!;
+      if (it.type === "call" && it.call.result == null) return it;
+    }
+    return null;
+  }, [row]);
   return (
     <div data-testid="tool-group" data-open={open || undefined} className="flex w-full flex-col items-start gap-1.5">
       <button
@@ -121,7 +132,11 @@ function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
           <ChevronRight size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
         )}
         <span className="shrink-0 text-text/90">{text}</span>
-        <span className="min-w-0 truncate font-mono text-[12px] text-secondary">{targets.join(" · ")}</span>
+        {current ? (
+          <CurrentCall node={current.node} call={current.call} />
+        ) : (
+          <span className="min-w-0 truncate font-mono text-[12px] text-secondary">{targets.join(" · ")}</span>
+        )}
         {failed && (
           <span className="flex shrink-0 items-center gap-1 text-error">
             <CircleX size={12} strokeWidth={1.8} aria-hidden />
@@ -138,6 +153,38 @@ function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
       )}
     </div>
   );
+}
+
+/**
+ * What a running group does now: 「· 正在运行 pnpm test… 12 秒」, or 「· 等待审批：运行 pnpm test」 while a
+ * permission card waits on it.
+ */
+function CurrentCall({ node, call }: { node: Node; call: ToolCallBlock }) {
+  const { sessionId } = useTranscriptCtx();
+  const waiting = useConnect(
+    (s) => connFor(s, sessionId)?.requests.some((r) => "tool_use_id" in r && r.tool_use_id === call.toolUseId) ?? false,
+  );
+  const ms = useElapsed(node.timestampMs, !waiting);
+  const target = describeCalls([call]).targets[0];
+  const what = `${verbOf(call.name)}${target ? ` ${target}` : ""}`;
+  return (
+    <span data-testid="group-current" className="flex min-w-0 items-center gap-1.5 text-[12px]">
+      <span aria-hidden>·</span>
+      <span className="min-w-0 truncate text-live-waiting">{waiting ? `等待审批：${what}` : `正在${what}…`}</span>
+      {ms != null && <span className="shrink-0 text-secondary/80">{formatDuration(ms, "detail")}</span>}
+    </span>
+  );
+}
+
+/** Time since `startMs`, ticking every second while `on`. */
+function useElapsed(startMs: number | null, on: boolean): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [on]);
+  return on && startMs != null ? Math.max(0, now - startMs) : null;
 }
 
 const itemKey = (it: GroupItem) => (it.type === "call" ? `c:${it.call.toolUseId}` : `t:${it.node.id}:${it.blockIndex}`);

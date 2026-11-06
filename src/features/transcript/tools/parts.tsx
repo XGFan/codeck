@@ -37,6 +37,9 @@ const VERB: Record<string, string> = {
   TaskList: "任务列表",
 };
 
+/** A call's verb (「运行」「读取」), or its name for a tool without one. */
+export const verbOf = (name: string) => VERB[name] ?? name;
+
 /**
  * A tool call as one quiet line — icon, what it did, on what, and only a failure or what it waits for at the
  * right — that opens its details (output, diff) in a box below. Failed calls are red.

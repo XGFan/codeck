@@ -12,7 +12,7 @@ import {
 import { parseJson } from "../util";
 import { useToolCtx } from "./data";
 
-export { ImageRefs, ImageThumb, PendingText } from "./parts";
+export { ImageRefs, ImageThumb, PendingText, verbOf } from "./parts";
 export { requestFullOutput } from "./data";
 
 const SUMMARY_KEYS = ["command", "file_path", "path", "pattern", "url", "query", "description", "prompt"];

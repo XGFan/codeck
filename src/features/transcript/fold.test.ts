@@ -30,6 +30,31 @@ const nodes = [
   asstNode("a4", 131_000, [text("在跑"), call("t3", "Bash", { command: "cargo test" }, null)]),
 ];
 
+describe("进行中的一轮", () => {
+  const running = [
+    userNode("u1", 1_000, "go"),
+    asstNode("a1", 2_000, [
+      text("先看看"),
+      call("t1", "Read", { file_path: "/r/a.rs" }, ok),
+      call("t2", "Bash", { command: "cargo test" }, null),
+    ]),
+  ];
+  const built = buildRows(input(running));
+
+  it("keeps its runs of calls as groups, marked live; a jump to a call lands on its group", () => {
+    const g = foldTurns(built, {});
+    expect(g.rows.map((r) => r.kind)).toEqual(["prompt", "fold", "text", "group"]);
+    expect(g.rows[3]).toMatchObject({ kind: "group", live: true, callCount: 2 });
+    expect(rowIndexOf(g, "a1", "t2")).toBe(3);
+  });
+
+  it("once it has an answer, an opened process lists the calls one by one again", () => {
+    const done = buildRows(input([...running, asstNode("a2", 9_000, [text("好了")])]));
+    const g = foldTurns(done, { "fold:u1": true });
+    expect(g.rows.map((r) => r.kind)).toEqual(["prompt", "fold", "text", "tool", "tool", "text"]);
+  });
+});
+
 describe("按轮折叠", () => {
   const built = buildRows(input(nodes));
 

@@ -579,6 +579,68 @@ test("按轮折叠：每轮的过程收成「已处理 … · N 段说明、N �
   await expect(t.getByText(/^Claude · \d/)).toHaveCount(0);
 });
 
+test("进行中的一轮：连续的工具调用合成一组，组头写汇总与正在跑的那次；结束后点开仍一行一行", async ({ page }) => {
+  // A Session whose last turn is the end of the list (the rich one has an orphan Subagent section after it).
+  const sid = await openSession(page, "排查 Redis 连接池泄漏", { folded: true });
+  const transcript = page.getByTestId("transcript");
+  // At the bottom, so the rows appended next are rendered (the list follows them).
+  await expect.poll(() => transcript.evaluate((e) => e.scrollHeight - e.scrollTop - e.clientHeight)).toBeLessThan(60);
+  const call = (id: string, command: string, done: boolean) => ({
+    kind: "toolCall",
+    toolUseId: id,
+    name: "Bash",
+    inputJson: JSON.stringify({ command }),
+    inputTruncated: false,
+    result: done
+      ? {
+          isError: false,
+          timestampMs: Date.now(),
+          text: "ok",
+          images: [],
+          totalBytes: 2,
+          truncated: false,
+          persisted: null,
+          extraJson: null,
+        }
+      : null,
+    subagentId: null,
+    workflowRunId: null,
+    notificationNodeId: null,
+  });
+  const append = (id: string, blocks: unknown[]) =>
+    page.evaluate(
+      ([sid, id, blocks]) => {
+        window.__cvMock!.appendNode(
+          sid as string,
+          {
+            id: id as string,
+            timestampMs: Date.now() - 12_000,
+            hidden: false,
+            inherited: false,
+            body: { kind: "assistant", messageId: `m-${id}`, model: null, usage: null, isApiError: false, blocks },
+          } as never,
+        );
+        window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
+      },
+      [sid, id, blocks] as const,
+    );
+  await append("e2e-run", [
+    { kind: "text", text: "再扫一遍。" },
+    call("toolu_e2e_r1", "git fetch -q origin", true),
+    call("toolu_e2e_r2", "ls -d */", true),
+    call("toolu_e2e_r3", "python3 scan.py", false),
+  ]);
+  const group = transcript.getByTestId("tool-group").last();
+  await expect(group).toContainText("运行 3 条命令");
+  await expect(group.getByTestId("group-current")).toContainText("正在运行 python3 scan.py…");
+  await expect(group.getByTestId("group-current")).toContainText("秒");
+  await expect(transcript.getByTestId("tool-call").filter({ hasText: "python3 scan.py" })).toHaveCount(0);
+
+  // The turn ends with an answer: its process folds; opened, the calls are one per line again.
+  await append("e2e-done", [{ kind: "text", text: "扫完了。" }]);
+  await expect(transcript.getByTestId("group-current")).toHaveCount(0);
+});
+
 test("搜索命中折叠里的内容：自动展开那一轮并定位", async ({ page }) => {
   await openSession(page, RICH_TITLE, { folded: true });
   await page.keyboard.press("Meta+f");

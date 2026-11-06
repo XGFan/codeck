@@ -1,7 +1,8 @@
 // Folding by turn (Codex style): each turn's process — the rows before its answer that `buildRows` gave a `fold`
 // key — shows as one line, 「已处理 1 分 50 秒 · 4 段说明、5 次工具调用」, opened by a click; the answer stays out.
 // Opened, the process lists every call on its own line: the fold already hides it, so runs of calls are not
-// grouped again (they still are where nothing folds, as in a Subagent's panel).
+// grouped again (they still are where nothing folds, as in a Subagent's panel). The running turn is the exception:
+// its process is open while it grows, so its runs of calls stay groups (`live`, saying what runs now).
 
 import { anchorKey, type Grouping, type Row } from "./grouping";
 
@@ -79,6 +80,10 @@ export function foldTurns(g: Grouping, expanded: Record<string, boolean>): Group
       const r = rows[j]!;
       if (r.kind !== "group") {
         out.push(r);
+        continue;
+      }
+      if (key === g.liveFold) {
+        out.push({ ...r, live: true });
         continue;
       }
       for (const row of ungroup(r)) {

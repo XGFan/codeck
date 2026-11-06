@@ -64,6 +64,8 @@ export type Row = RowBase &
         callCount: number;
         failedCount: number;
         role: RoleInfo | null;
+        /** In the running turn's open process (kept as a group there): its header also says what runs now. */
+        live?: boolean;
       }
     | ({ kind: "subagent"; role: RoleInfo | null } & AgentCardData)
     | { kind: "parallel"; node: Node; cards: AgentCardData[]; role: RoleInfo | null }
