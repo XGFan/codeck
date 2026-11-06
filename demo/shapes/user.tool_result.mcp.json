@@ -1,0 +1,42 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": [
+     {
+      "text": "ullamco aliqua minim adipiscing amet et eiusmod ut nostrud ipsum m\n\nut do ipsum",
+      "type": "text"
+     }
+    ],
+    "tool_use_id": "toolu_010000000000000000000132",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000133",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000134",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000133",
+ "timestamp": "2026-11-06T04:13:36.179Z",
+ "toolUseResult": [
+  {
+   "text": "ullamco aliqua minim adipiscing amet et eiusmod ut nostrud ipsum m\n\nut do ipsum",
+   "type": "text"
+  }
+ ],
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000135",
+ "version": "2.1.318"
+}

@@ -1,0 +1,44 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "imagePasteIds": [
+  5
+ ],
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "text": "ut dolore aliqua labore ipsum adipis",
+    "type": "text"
+   },
+   {
+    "source": {
+     "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+     "media_type": "image/png",
+     "type": "base64"
+    },
+    "type": "image"
+   }
+  ],
+  "role": "user"
+ },
+ "origin": {
+  "kind": "human"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000051",
+ "permissionMode": "bypassPermissions",
+ "promptId": "00000000-0000-4000-8000-000000000052",
+ "promptSource": "typed",
+ "sessionId": "00000000-0000-4000-8000-000000000053",
+ "timestamp": "2026-11-05T01:56:53.838Z",
+ "turnOrigin": "labor",
+ "turnPosition": {
+  "promptIndex": 3,
+  "turnIndex": 3
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000054",
+ "version": "2.1.318"
+}

@@ -1,0 +1,8 @@
+{"agentId":"a88b915888ed87136","key":"review:bugs","type":"started"}
+{"agentId":"a88b915888ed87136","key":"review:bugs","type":"completed","result":"1 处：check() 在时钟回拨时 elapsed 会 panic。"}
+{"agentId":"a18df22a4adfdbdff","key":"review:perf","type":"started"}
+{"agentId":"a18df22a4adfdbdff","key":"review:perf","type":"completed","result":"整张表一把锁，1k QPS 下争用可接受；建议换 DashMap。"}
+{"agentId":"a000d18cd3942d90a","key":"verify:ratelimit.rs","type":"started"}
+{"agentId":"a000d18cd3942d90a","key":"verify:ratelimit.rs","type":"completed","result":"属实：Instant 单调，不会回拨，但 elapsed 在 last 未来时会饱和为 0，不会 panic；降级为提示。"}
+{"agentId":"accb5eed247bc64dc","key":"verify:main.rs","type":"started"}
+{"agentId":"accb5eed247bc64dc","key":"verify:main.rs","type":"failed","error":"API Error: Connection dropped (ECONNRESET)"}

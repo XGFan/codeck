@@ -1,0 +1,23 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": "<bash-stdout>labore minim magna ut consectet</bash-stdout><bash-stderr></bash-stderr>",
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000042",
+ "promptId": "00000000-0000-4000-8000-000000000040",
+ "sessionId": "00000000-0000-4000-8000-000000000041",
+ "timestamp": "2026-10-30T03:24:29.348Z",
+ "turnOrigin": "labor",
+ "turnPosition": {
+  "promptIndex": 2,
+  "turnIndex": 2
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000043",
+ "version": "2.1.312"
+}

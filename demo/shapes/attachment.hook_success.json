@@ -1,0 +1,25 @@
+{
+ "attachment": {
+  "command": "nisi nostrud eiusmod eiusmod dolore tempor labore quis sit dolore nisi veniam veniam veniam consect",
+  "content": "",
+  "durationMs": 524,
+  "exitCode": 0,
+  "hookEvent": "SessionStart",
+  "hookName": "ullamco incididunt u",
+  "stderr": "",
+  "stdout": "elit amet labore labore labore enim inc\n",
+  "toolUseID": "00000000-0000-4000-8000-000000000019",
+  "type": "hook_success"
+ },
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "parentUuid": null,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "timestamp": "2026-11-06T03:46:22.690Z",
+ "type": "attachment",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000020",
+ "version": "2.1.318"
+}

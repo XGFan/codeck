@@ -1,0 +1,92 @@
+{
+ "compactMetadata": {
+  "cumulativeDroppedTokens": 201243,
+  "durationMs": 52434,
+  "postTokens": 29818,
+  "preCompactArtifactReadVersions": [
+   {
+    "slug": "laboris aliqua incididunt dolor inci",
+    "ver": "elit et nisi no"
+   }
+  ],
+  "preCompactDiscoveredTools": [
+   "elit nisi ",
+   "ipsum ut elit enim aliquip labore",
+   "magna sit consectetur elit ut exer",
+   "nostrud dolor nisi aliquip amet",
+   "aliqua enim eiusmod dolore ",
+   "adipiscing aliquip lab",
+   "adipiscing lorem labore minim",
+   "dolore incididunt ut laboris incid",
+   "minim veniam tempor nisi veniam qu",
+   "labore laboris ullamco dolor mag",
+   "amet minim enim tempor exercitation labore d",
+   "quis labore exercitation labori",
+   "do minim ut labore enim dolor",
+   "nostrud enim sed do aliqua dolor ni",
+   "aliqua incididunt sit amet eiusmo",
+   "nisi labore enim dolor ipsum quis",
+   "ullamco dolore ut quis elit en",
+   "veniam quis quis ullamco ipsu",
+   "laboris lorem sed lorem i",
+   "et exercitation dolore tempor eiu",
+   "et minim ullamco laboris incidi",
+   "veniam adipiscing dolor",
+   "quis tempor minim elit ",
+   "aliqua ipsum magna minim laboris m",
+   "ipsum lorem aliquip sed",
+   "nostrud magna dolor dolore amet exercitatio",
+   "sit enim sed ullamco et nisi exercitation lorem ",
+   "amet incididunt nisi elit ullamco aliquip lorem u",
+   "ut enim ut ut lorem aliquip exercitation d",
+   "sit minim tempor minim ut consectetur quis "
+  ],
+  "preTokens": 231061,
+  "preservedMessages": {
+   "allUuids": [
+    "nisi nostrud ipsum ipsum sit adipisc",
+    "quis lorem incididunt ut exercitatio",
+    "ipsum nostrud enim incididunt lorem ",
+    "dolor incididunt tempor incididunt s",
+    "veniam eiusmod exercitation nostrud ",
+    "exercitation enim nisi aliqua eiusmo",
+    "aliqua ut nisi labore do magna ut do",
+    "aliqua consectetur exercitation adip",
+    "eiusmod tempor nisi dolore eiusmod d"
+   ],
+   "anchorUuid": "quis aliqua enim consectetur nisi ul",
+   "uuids": [
+    "nisi nostrud ipsum ipsum sit adipisc",
+    "dolor incididunt tempor incididunt s",
+    "veniam eiusmod exercitation nostrud ",
+    "exercitation enim nisi aliqua eiusmo",
+    "aliqua ut nisi labore do magna ut do",
+    "aliqua consectetur exercitation adip",
+    "eiusmod tempor nisi dolore eiusmod d"
+   ]
+  },
+  "preservedSegment": {
+   "anchorUuid": "quis aliqua enim consectetur nisi ul",
+   "headUuid": "nisi nostrud ipsum ipsum sit adipisc",
+   "tailUuid": "eiusmod tempor nisi dolore eiusmod d"
+  },
+  "trigger": "aliq"
+ },
+ "content": "ipsum dolore ut exerci",
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isMeta": false,
+ "isSidechain": false,
+ "level": "info",
+ "logicalParentUuid": "00000000-0000-4000-8000-000000000026",
+ "parentUuid": null,
+ "sessionId": "00000000-0000-4000-8000-000000000027",
+ "slug": "consectetur aliquip do",
+ "subtype": "compact_boundary",
+ "timestamp": "2026-11-04T18:25:58.256Z",
+ "type": "system",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000028",
+ "version": "2.1.318"
+}

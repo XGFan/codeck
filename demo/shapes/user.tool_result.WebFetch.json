@@ -1,0 +1,39 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "enim dolor aliqua do ullamco sed do amet elit aliqua incididunt minim ullamco aliqua amet sed magna adipiscing consectetur dolor nostrud sit ut et elit incididu\n\nlorem veniam laboris ipsum nostrud sed sit laboris dolor nostrud et labore sed dolore eiusmod magna dolore l",
+    "tool_use_id": "toolu_010000000000000000000113",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000114",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000115",
+ "sessionId": "00000000-0000-4000-8000-000000000116",
+ "session_id": "00000000-0000-4000-8000-000000000116",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000114",
+ "timestamp": "2026-11-04T06:36:57.701Z",
+ "toolUseResult": {
+  "bytes": 20137,
+  "code": 200,
+  "codeText": "ei",
+  "durationMs": 4288,
+  "result": "enim dolor aliqua do ullamco sed do amet elit aliqua incididunt minim ullamco aliqua amet sed magna adipiscing consectetur dolor nostrud sit ut et elit incididu\n\nlorem veniam laboris ipsum nostrud sed sit laboris dolor nostrud et labore sed dolore eiusmod magna dolore l",
+  "url": "do nisi veniam quis lorem ullamco do incididunt tempor veniam et ut consectetur ullamco"
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000117",
+ "version": "2.1.318"
+}

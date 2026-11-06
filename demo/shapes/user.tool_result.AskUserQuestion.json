@@ -1,0 +1,58 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "consectetur aliqua ut incididunt adipiscing elit ullamco labore nisi consectetur adipiscing ipsum laboris labore enim nisi magna do lorem elit dolor dolore eius",
+    "tool_use_id": "toolu_010000000000000000000083",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000084",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonCode": "aliquip",
+  "reasonType": "sed ",
+  "source": "sed "
+ },
+ "promptId": "00000000-0000-4000-8000-000000000085",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000084",
+ "timestamp": "2026-11-06T06:07:03.735Z",
+ "toolUseResult": {
+  "answers": {
+   "key_024c5028": "nisi sed in"
+  },
+  "questions": [
+   {
+    "header": "ip",
+    "multiSelect": true,
+    "options": [
+     {
+      "description": "minim veniam adipiscing laboris quis sed enim aliqua sit lore",
+      "label": "真实应用里演示（推荐）"
+     },
+     {
+      "description": "sed et nisi lorem sit elit labore adipiscing labore aliqua sit ",
+      "label": "minim magna adi"
+     },
+     {
+      "description": "ullamco magna nisi sed eiusmod elit amet magna sit tempo",
+      "label": "aliqua do qu"
+     }
+    ],
+    "question": "enim et et incididunt ipsum quis ipsum nisi dolor nostrud incididunt do labore dolore eiusmod laboris"
+   }
+  ]
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000086",
+ "version": "2.1.318"
+}

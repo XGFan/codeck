@@ -1,0 +1,47 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": [
+     {
+      "text": "adipiscing incididunt nisi laboris laboris ipsum exercitation enim dolor exercitation veniam ipsum sed amet incididunt minim enim ullamco exercitation nisi dolo",
+      "type": "text"
+     }
+    ],
+    "tool_use_id": "toolu_010000000000000000000102",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000103",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000067",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000103",
+ "timestamp": "2026-11-06T04:12:49.107Z",
+ "toolUseResult": {
+  "message": "ut aliquip dolore aliq",
+  "pin": {
+   "id": "a5fc27ae29883a539",
+   "name": "a5fc27ae29883a539",
+   "ref": "sit te"
+  },
+  "resumedAgentId": "eiusmod nisi quis",
+  "revivedAgentId": "eiusmod nisi quis",
+  "success": true
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000104",
+ "version": "2.1.318"
+}

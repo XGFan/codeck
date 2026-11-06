@@ -1,0 +1,37 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "lorem ut amet adipiscing minim adipiscing nostrud e\nconsectetur lorem elit eiusmod ipsum lorem amet ipsum dolor magna laboris adipiscing magna amet ipsum et elit labore ut nostrud et enim magna\nullamco eiusmod adipiscing exercitation consectetur sit incididunt lorem lorem nostrud et laboris sit et eiusmod amet consectetur laboris dolor lorem labore el\ndolor consectetur minim adipiscing exercitation nostrud ut do adipiscing et aliqua aliqua adipiscing dolor exercitation enim incididunt ipsum veniam aliquip eli\nenim ut minim veniam adipiscing ullamco exercitation adipiscing ullamco dolore sit nostrud ullamco aliquip consectetur incididunt aliquip adipiscing elit dolore\nipsum lorem incididunt ",
+    "is_error": false,
+    "tool_use_id": "toolu_010000000000000000000124",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000125",
+ "promptId": "00000000-0000-4000-8000-000000000126",
+ "sessionId": "00000000-0000-4000-8000-000000000127",
+ "session_id": "00000000-0000-4000-8000-000000000127",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000125",
+ "timestamp": "2026-09-04T06:09:39.940Z",
+ "toolUseResult": {
+  "runId": "wf_04a35e64-f05",
+  "scriptPath": "tempor lorem lorem do ullamco incididunt et exercitation aliqua amet adipiscing adipiscing veniam sed ut enim tempor dolore ut sit ut aliquip dolor eiusmod aliq",
+  "status": "async_launched",
+  "summary": "dolore incididunt nisi exercitation amet sit consectetur lorem aliqua consectetur aliqua quis labore sit adipiscing incididunt sit d",
+  "taskId": "werhhep33",
+  "taskType": "local_workflow",
+  "transcriptDir": "/Users/dev/.claude/tool-results/wf_04a35e64-f05",
+  "workflowName": "wmc-memory-leak-hunt"
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000128",
+ "version": "2.1.259"
+}

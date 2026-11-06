@@ -1,0 +1,47 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": [
+     {
+      "text": "dolore veniam consectetur quis et et nisi ut magna do aliqua amet magna do aliquip sit do elit et nisi ullamco do amet eiusmod ullamco ipsum nostrud quis amet a\net aliquip incididunt adipiscing enim ut aliqua exercitation laboris incididunt consectetur ullamco dolor dolore aliqua eiusmod sit aliqua exercitation nisi eni\nsed aliquip eiusmod aliquip labore nostrud incididunt elit sed ipsum adipiscing et ullamco aliqua elit veniam aliquip dolor dolore aliquip aliqua nostrud aliqua\ntempor minim elit minim minim ullamco sit ipsum dolor labore laboris aliquip laboris do venia\nminim nisi incididunt do eiusmod dolor labore dolore consectetur eiusmod consectetur ullamco nisi tempor laboris veniam ullamco adipiscing \naliquip elit minim aliqua labore minim ullamco ut sed eiusmod aliqua lorem aliquip laboris sit veniam exercitation exercitation et ipsum aliquip exercitation co",
+      "type": "text"
+     }
+    ],
+    "tool_use_id": "toolu_010000000000000000000066",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000073",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000048",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000073",
+ "timestamp": "2026-11-06T04:10:53.194Z",
+ "toolUseResult": {
+  "agentId": "a5fc27ae29883a539",
+  "canContinueAgent": true,
+  "canReadOutputFile": true,
+  "description": "lorem quis do ut adipisci",
+  "isAsync": true,
+  "outputFile": "/Users/dev/.claude/tool-results/a5fc27ae29883a539.output",
+  "prompt": "nisi nisi do labore labore do quis veniam do exercitation consectetur magna magna dolore magna ullamco ut tempor do quis incididunt adipiscing ipsum et eiusmod \n\nlaboris adipiscing am\nconsectetur quis veniam dolor sed ullamco magna sit sed nisi adipiscing elit sit lorem labo\nadipiscing adipiscing dolore eiusmod ipsum magna magna laboris ullamco tempor nisi nostrud exercitation ullamco nostrud eiusmod sit minim adipiscing minim dolor<helmet><style>elit nostrud enim aliquip nisi enim incididunt veniam magna ipsum amet lorem eiusmod magna eiusmod consectetur magna ipsum minim tempor nostrud ipsum aliquip et\n\namet ame\ndolore tempor aliquip labore et tempor ullamco dolore minim consectetur nostrud magna dolore enim veniam nostrud laboris sit consectetur eiusmod aliqua eiusmod \nipsum adipiscing sed tempor veniam eiusmod ut elit quis adipiscing labore sit lorem quis tempor aliqua consectetur nostrud consectetur laboris sit quis ullamco \nelit eiusmod laboris minim aliquip laboris quis aliquip ipsum amet incididunt sed dolor do exercitation laboris aliqua sed sit labore quis tempor nostrud consec<img> do dolor magna aliqua nostrud labore eiusmod et nostrud magna adipiscing nostrud adipiscing nostrud magna sit quis minim dolore dolore elit dolor do enim do sit\ndo enim ipsum minim sed magna amet nisi ipsum quis tempor amet amet incididunt exercitation lorem consectetur laboris amet ipsum do aliquip et veniam et nostrud\nlabore aliqua exercitation lorem aliqua sit veniam lorem consectetur consectetur lorem magna exercitation incididunt sit minim exercitation minim amet amet lore\n\nut veniam lorem et ut nisi tempor labore incididunt sit nostrud enim aliquip ipsum labore aliquip aliqua minim aliquip exercitation labore enim ipsum eiusmod et",
+  "resolvedModel": "et ipsum adipisci",
+  "status": "async_launched"
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000074",
+ "version": "2.1.318"
+}

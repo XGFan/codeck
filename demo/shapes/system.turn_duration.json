@@ -1,0 +1,18 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "durationMs": 1302633,
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isMeta": false,
+ "isSidechain": false,
+ "messageCount": 643,
+ "parentUuid": "00000000-0000-4000-8000-000000000037",
+ "pendingBackgroundAgentCount": 1,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "subtype": "turn_duration",
+ "timestamp": "2026-11-06T04:10:59.566Z",
+ "type": "system",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000038",
+ "version": "2.1.318"
+}

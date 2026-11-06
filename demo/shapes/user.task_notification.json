@@ -1,0 +1,31 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": "<task-notification>\n<task-id>a5fc27ae29883a539</task-id>\n<tool-use-id>toolu_010000000000000000000066</tool-use-id>\n<output-file>laboris amet amet nisi do labore tempor dolor incididunt do nisi eiusmod quis eiusmod eiusmod consectetur consectetur quis qui</output-file>\n<status>completed</status>\n<summary>enim sit dolor aliqua ipsum ullamco tempor</summary>\n<note>eiusmod amet tempor quis elit dolore aliquip eiusmod elit eiusmod veniam et aliqua aliquip elit laboris sed sit exercitation aliquip adipiscing labore et exerci</note>\n<result>nostrud adipiscing ut nostrud do adipiscing sed amet do magna ipsum veniam aliqua aliqua labore tempor adipiscing magna minim ipsum et ut en\n\ndolor aliqui\n\nlorem minim minim magna lorem aliqua nisi tempor nostrud enim adipiscing tempor aliqua ipsum sit ut nostrud nostrud laboris nostrud aliquip veniam elit aliqua l\n</result>\n<usage><subagent_tokens>minim </subagent_tokens><tool_uses>et</tool_uses><duration_ms>adipi</duration_ms></usage>\n</task-notification>",
+  "role": "user"
+ },
+ "origin": {
+  "kind": "task-notification",
+  "producer": "session-task",
+  "runId": "0mw4gin16-7d8f74c7"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000038",
+ "permissionMode": "bypassPermissions",
+ "promptId": "00000000-0000-4000-8000-000000000067",
+ "promptSource": "system",
+ "queueSkipAttachments": true,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "timestamp": "2026-11-06T04:12:19.730Z",
+ "turnOrigin": "sed consectetur u",
+ "turnPosition": {
+  "promptIndex": 1,
+  "turnIndex": 2
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000068",
+ "version": "2.1.318"
+}

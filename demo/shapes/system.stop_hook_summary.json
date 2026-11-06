@@ -1,0 +1,53 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "hasOutput": true,
+ "hookAdditionalContext": [],
+ "hookCount": 7,
+ "hookErrors": [
+  "eiusmod incididunt enim consectetur labore nostrud consectetur ven\nmagna laboris exercitation incididunt et sed nisi dolor ullamco ut sed exercitation ut ullamco sit exercitation incididunt sed aliqua labore adipiscing do labor\ndolore do do aliquip laboris aliquip eiusmod minim incididunt magna labore lorem sit et enim do\nquis sit exercitation lo"
+ ],
+ "hookInfos": [
+  {
+   "command": "ut adipiscing labore aliquip u"
+  },
+  {
+   "command": "labore quis do ut exercitation nostrud labore adipiscing laboris incididunt do dolor aliqua sed do ",
+   "durationMs": 233
+  },
+  {
+   "command": "do nostrud minim enim et do veniam aliqua dolor consectetur sit nostrud ullamco veniam dolore laboris",
+   "durationMs": 210
+  },
+  {
+   "command": "consectetur aliqua et nisi nostrud laboris sit ullamco tempor nisi sed exercitation ipsum amet e"
+  },
+  {
+   "command": "nostrud nostrud eiusmod dolore magna sed adipiscing aliqua magna aliquip elit tempor laboris ",
+   "durationMs": 211
+  },
+  {
+   "command": "sit eiusmod aliquip consectetur incididunt nisi aliqua incididunt sit ipsum elit lorem lorem ull",
+   "durationMs": 228
+  },
+  {
+   "command": "ullamco tempor ipsum ipsum tempor eiusmod do sit a",
+   "durationMs": 19
+  }
+ ],
+ "isSidechain": false,
+ "level": "suggestion",
+ "parentUuid": "00000000-0000-4000-8000-000000000034",
+ "preventedContinuation": false,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "stopReason": "",
+ "subtype": "stop_hook_summary",
+ "timestamp": "2026-11-06T04:10:57.213Z",
+ "toolUseID": "00000000-0000-4000-8000-000000000035",
+ "type": "system",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000036",
+ "version": "2.1.318"
+}

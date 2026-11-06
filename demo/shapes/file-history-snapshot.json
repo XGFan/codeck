@@ -1,0 +1,10 @@
+{
+ "isSnapshotUpdate": false,
+ "messageId": "00000000-0000-4000-8000-000000000021",
+ "snapshot": {
+  "messageId": "00000000-0000-4000-8000-000000000021",
+  "timestamp": "2026-11-06T03:49:17.137Z",
+  "trackedFileBackups": {}
+ },
+ "type": "file-history-snapshot"
+}

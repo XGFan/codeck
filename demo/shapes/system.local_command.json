@@ -1,0 +1,17 @@
+{
+ "content": "<command-name>/artifacts</command-name>\n        <command-message>tempor ad</command-message>\n        <command-args></command-args>",
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isMeta": false,
+ "isSidechain": false,
+ "level": "info",
+ "parentUuid": "00000000-0000-4000-8000-000000000031",
+ "sessionId": "00000000-0000-4000-8000-000000000032",
+ "subtype": "local_command",
+ "timestamp": "2026-11-05T14:23:29.942Z",
+ "type": "system",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000033",
+ "version": "2.1.318"
+}

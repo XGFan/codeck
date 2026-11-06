@@ -1,0 +1,29 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "error": {
+  "connection": {
+   "code": "aliqua ullamco enim nostrud aliquip do",
+   "isSSLError": false,
+   "message": "adipiscing aliquip ut nostrud sit inci"
+  },
+  "formatted": "magna nisi veniam exercitation aliqua incididunt sed magna eiusmo",
+  "isNetworkDown": false,
+  "message": "lorem veniam et e",
+  "rateLimits": null
+ },
+ "gitBranch": "main",
+ "isSidechain": false,
+ "level": "error",
+ "maxRetries": 10,
+ "parentUuid": "00000000-0000-4000-8000-000000000023",
+ "retryAttempt": 1,
+ "retryInMs": 595.9878777171912,
+ "sessionId": "00000000-0000-4000-8000-000000000024",
+ "subtype": "api_error",
+ "timestamp": "2026-06-15T11:28:15.872Z",
+ "type": "system",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000025",
+ "version": "2.1.177"
+}

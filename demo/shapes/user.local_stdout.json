@@ -1,0 +1,18 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": "<local-command-stdout>sed dolor nisi nisi consectetur et minim aliqua tempor ullamco m</local-command-stdout>",
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000055",
+ "promptId": "00000000-0000-4000-8000-000000000045",
+ "sessionId": "00000000-0000-4000-8000-000000000046",
+ "timestamp": "2026-11-05T15:07:34.382Z",
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000056",
+ "version": "2.1.318"
+}

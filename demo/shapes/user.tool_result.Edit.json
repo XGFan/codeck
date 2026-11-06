@@ -1,0 +1,57 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "incididunt magna ullamco adipiscing sed nostrud do minim nostrud aliquip dolor lorem labore laboris aliquip sed ullamco sed et laboris nisi et ut sed veniam et ",
+    "tool_use_id": "toolu_010000000000000000000091",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000092",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000085",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000092",
+ "timestamp": "2026-11-06T06:16:45.680Z",
+ "toolUseResult": {
+  "filePath": "nostrud aliqua exercitation amet ut dolore et ipsum do",
+  "newString": "      aliquip dolor laboris magna exercitation exercitat\n      aliquip ut enim ",
+  "oldString": "      dolor incididunt veniam elit nostrud ipsum incididunt amet dolor enim ut magna \n      aliquip ut enim ",
+  "originalFile": null,
+  "replaceAll": false,
+  "structuredPatch": [
+   {
+    "lines": [
+     "   elit lorem dolore adipiscing elit magna lorem lorem magna nisi minim ullamco dolor quis eiusmod ",
+     "   dolor et ut incididunt tempor sit ipsum aliquip elit consectetur veniam ullamco sit aliqua enim nostrud aliqu",
+     "     adipiscing dolor ",
+     "dolore sit consectetur minim exercitation eiusmod amet minim tempor dolore tempor eius",
+     "enim elit laboris magna aliquip et adipiscing dolor dolor",
+     "       aliquip ut enim ",
+     "       nisi et eiusm",
+     "        do nostrud eiusmod se"
+    ],
+    "newLines": 7,
+    "newStart": 129,
+    "oldLines": 7,
+    "oldStart": 129
+   }
+  ],
+  "userModified": false
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000093",
+ "version": "2.1.318"
+}

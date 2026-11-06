@@ -1,0 +1,39 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "minim tempor ipsum dolore ut minim ut consectetur do ullamco incididunt amet quis eiusmod tempor quis sed labore et consectetur nostrud ipsum aliqua magna quis ",
+    "tool_use_id": "toolu_010000000000000000000129",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000130",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000048",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000130",
+ "timestamp": "2026-11-06T03:56:45.761Z",
+ "toolUseResult": {
+  "content": "ut consectetur \nconsectetur quis do\n<head>\neiusmod lorem lorem ni\n<title>eius</title>\nnisi aliqua ut sit adipisci</script>\n</head>\n<body>\n<x-dc>\n<helmet>\n<style>\nenim consectet\naliqua magna minim quis sed incididunt\nlabore ipsum dolor quis ullamco amet dolor ipsum nisi lorem dolor ut lorem quis nostrud sed minim aliquip laboris et consectetur do consectetur amet quis veniam\nquis dolor sit et elit aliquip magna lorem do tempor veniam dolor magna do aliquip enim lorem elit aliquip sit nisi do l\ntempor veniam tempor veniam adipiscing veniam qu</style>\n</helmet>\naliqua sit exercita\nullamco consectetur labore do tempor aliquip dolor dolore sed ut ullamco ipsum enim amet incididunt nostrud aliqua ullamco e</div>\ndo et nostrud sed\n\naliquip laboris ut eiusmod </div>\nconsectetur nis\naliqua dolore magn\nexercitation aliqua do et laboris adipiscing aliquip d</div>\nlabore aliqua tempo\nenim lorem magna enim dolore lorem minim do consectetur laboris ipsum minim dolor dolor incididunt elit consectetur nostrud eiusmod ut enim veniam aliquip nisi </svg>ul</button>\ndolor consectetur elit adipiscing adipiscing nostrud ullamco magna dolore labore exercitation tempor labore et sit tempor do ipsum ut nostrud incididunt labore </svg>am</button>\n<span>sed u</span>\n</div>\n</div>\n</div>\n\naliquip aliquip incididunt enim quis quis al</div>\nconsectetur nis\naliqua dolore magn\nquis eiusmod enim laboris exercitation quis tempor et qui</code> ipsum do dolore minim tempor</code>consectetur sed quis aliquip dolor dolor sit ex</span> enim exercitation labore incid</span>minim amet e\n    tempor lorem tempor</span>aliqua sed aliqua sit eiusmod exerci</span>do quis minim sed adipiscing</span>a\n    incididunt dolor ali</span>enim ipsum enim ipsum et nisi lorem la</span>veniam \nm</code>exercitation sit labore lab</code>a</div>\nlabore aliqua tempo<span>sit e</span></div>\n</div>\n</div>\n\nenim sed ullamco nisi minim amet lorem eiusmod </div>\nconsectetur nis\naliqua dolore magn\nlaboris quis laboris ut amet aliqua enim elit</code> dolore aliq</div>\nlabore aliqua tempo<span>aliqu</span></div>\n</div>\naliqua dolore magn\ntempor laboris amet tempor aliqua et si</code>labore eli</div>\nlabore aliqua tempo<span>dolor</span></div>\n</div>\n</div>\n\nminim tempor nisi exercitation sit nisi min</div>\nconsectetur nis\naliqua dolore magn\nsit nostrud sed incididunt ullamco do </div>\nipsum ut amet ipsum \ntempor labore minim do amet minim consectetur laboris dolore incididunt dolore dolore ullamco adipiscing ipsum veniam laboris dolor quis dolore eiusmod quis sed</svg>te</button>\naliqua do magna nostrud aliqua nostrud amet sit labore aliqua incididunt magna laboris nostrud eiusmod elit ipsum dolore nisi amet et consectetur do consectetur</svg>mag</button>\n</div>\nlabore aliqua tempo<span>et si</span></div>\n</div>\n</div>\n\nlaboris ut dolor exercitation sed aliqua elit ipsum dolore</div>\nconsectetur nis\naliqua dolore magn\nsit minim dolore consectetur laboris</div>\nlabore aliqua tempo\ndolor consectetur elit adipiscing adipiscing nostrud ullamco magna dolore labore exercitation tempor labore et sit tempor do ipsum ut nostrud incididunt labore </svg>am</button>\nlorem ullamco elit elit tempor laboris quis laboris aliqua quis minim adipiscing eiusmod do ut nisi dolore incididunt enim exercitation do sit aliqua ut ipsum i</svg></button>lorem magna veniam ve</span>nostrud sed nostrud quis et magna veniam lorem do ullamco exercitation dolore enim ipsum adipiscing amet nisi amet laboris exercitation ipsum ipsum sit lorem in</svg></button></span>\n<span>magna</span>\n</div>\n</div>\n</div>\n\nquis exercitation exercitation do amet amet adipiscing consectetur incididunt lo</div>\nullamco aliquip lorem elit sed d\nullamco amet magna dolore tempor elit a</span>amet laboris nostrud adipiscing ipsum enim dolore min</span></div>\nnostrud magna aliquip consectetur minim ei</span>do nisi lorem ut dolore ut quis veniam minim aliquip exercitation elit elit amet et incididunt labore amet sed minim quis dolore temp</span></div>\nexercitation et laboris tempor sed aliquip </span>sit incididunt dolore quis nisi amet aliquip nisi ullamco exercitation nostrud do amet d</span></div>\n</div>\n\n</div>\n</div>\n</x-dc>\ndo consectetur dolore enim consectetur amet sed do laboris exercitation dolor minim elit conse\naliquip aliquip magna nisi ut eli\n  tempor magna c\n    consectetu\n  m</script>\n</body>\n</html>\n",
+  "filePath": "dolore adipiscing tempor dolor laboris enim veniam tempor aliquip aliquip consectetur consectetur nostrud ut eiusmod et labore elit consectet",
+  "originalFile": null,
+  "structuredPatch": [],
+  "type": "create",
+  "userModified": false
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000131",
+ "version": "2.1.318"
+}

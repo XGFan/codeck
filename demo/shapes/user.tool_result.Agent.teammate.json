@@ -1,0 +1,54 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": [
+     {
+      "text": "aliqua exercitation consectetur ipsum minim enim elit labore sed laboris exercitation sed aliquip do magna ut et eiusmod aliqua lorem sed tempor sed u\nmagna et aliquip sed consectetur tempor e\nexercitation elit a\nveniam enim veniam exercitation laboris dolor magna labore tempor a",
+      "type": "text"
+     }
+    ],
+    "tool_use_id": "toolu_010000000000000000000080",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000081",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000070",
+ "sessionId": "00000000-0000-4000-8000-000000000071",
+ "session_id": "00000000-0000-4000-8000-000000000071",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000081",
+ "timestamp": "2026-11-06T01:44:29.786Z",
+ "toolUseResult": {
+  "agentId": "aline-a-codeck-0a197d3b04495e7d",
+  "agent_id": "aline-a-codeck-0a197d3b04495e7d",
+  "agent_type": "nisi adipiscing aliquip e",
+  "color": "amet",
+  "is_splitpane": false,
+  "model": "opus",
+  "name": "line-a-codeck",
+  "plan_mode_required": false,
+  "prompt": "adipiscing eiusmod adipiscing aliquip veniam laboris sit enim laboris minim exercitation elit magna labore laboris eiusmod sit dolor dolor elit minim consectetu\n\nsit consectetur laboris do nostrud aliquip laboris amet incididunt nisi nostrud nostrud dolore do aliqua labore amet dolor tempor ipsum exercitation dolor elit \n\nnostrud dolor aliquip elit eiusmod laboris enim \ntempor ipsum nisi tempor quis nisi adipiscing aliquip do ut eiusmod labore sed eiusmod amet sed exercitation quis et quis magna quis tempor adipiscing eiusmod d",
+  "resolvedModel": "minim tempor qu",
+  "status": "teammate_spawned",
+  "team_name": "enim labore eius",
+  "teammate_id": "incididunt minim nostrud sed t",
+  "tmux_pane_id": "enim venia",
+  "tmux_session_name": "enim venia",
+  "tmux_window_name": "enim venia"
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000082",
+ "version": "2.1.318"
+}

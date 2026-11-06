@@ -1,0 +1,40 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "consectetur eni\nipsum incididunt eiusmod sed laboris\nmagna ipsum lorem et veniam tempor d\nadipiscing et ipsum veniam sit amet \nlabore nisi amet enim dolore enim mi\nmagna sed eiusmod ut dolor nostrud n<hex>incididunt elit sit dolore dolore aliqua labore incididunt",
+    "is_error": false,
+    "tool_use_id": "toolu_010000000000000000000014",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000018",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000048",
+ "sandboxed": false,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000018",
+ "timestamp": "2026-11-06T03:49:24.256Z",
+ "toolUseResult": {
+  "interrupted": false,
+  "isImage": false,
+  "noOutputExpected": false,
+  "stderr": "",
+  "stdout": "consectetur eni\nipsum incididunt eiusmod sed laboris\nmagna ipsum lorem et veniam tempor d\nadipiscing et ipsum veniam sit amet \nlabore nisi amet enim dolore enim mi\nmagna sed eiusmod ut dolor nostrud n<hex>incididunt elit sit dolore dolore aliqua labore incididunt"
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000087",
+ "version": "2.1.318"
+}

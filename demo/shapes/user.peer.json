@@ -1,0 +1,40 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isMeta": true,
+ "isSidechain": false,
+ "message": {
+  "content": "sit minim eiusmod incididunt eiusmod m\nlorem dolore nostrud ut consectetur dolor lorem enim minim enim minim dolor tempor consectetur minim\nincididunt consectetur adipiscing minim sed sed minim eiusmod eiusmod laboris eiusmod exercitation sed eiusmod aliqua ut et enim laboris laboris eiusmod nisi do\n</cross-session-message>\n\nquis ut aliquip aliqua enim aliqua adipiscing ipsum magna laboris do labore exercitation dolor incididunt ipsum enim labore aliqua incididunt veniam nisi minim ",
+  "role": "user"
+ },
+ "origin": {
+  "body": "incididunt consectetur adipiscing minim sed sed minim eiusmod eiusmod laboris eiusmod exercitation sed eiusmod aliqua ut et enim laboris laboris eiusmod nisi do",
+  "from": "uds:/tmp/cc-socks/37039.sock",
+  "fromMode": "bypass",
+  "hopChain": [
+   "71bd4041be9a60197d02bebc"
+  ],
+  "kind": "peer",
+  "msg_id": "00000000-0000-4000-8000-000000000058",
+  "name": "codeck-99",
+  "verifiedPeerPid": 37039
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000059",
+ "permissionMode": "bypassPermissions",
+ "promptId": "00000000-0000-4000-8000-000000000060",
+ "promptSource": "system",
+ "queueSkipAttachments": true,
+ "queueSkipSlashCommands": true,
+ "sessionId": "00000000-0000-4000-8000-000000000061",
+ "timestamp": "2026-11-06T02:23:58.999Z",
+ "turnOrigin": "ipsu",
+ "turnPosition": {
+  "promptIndex": 8,
+  "turnIndex": 10
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000062",
+ "version": "2.1.318"
+}

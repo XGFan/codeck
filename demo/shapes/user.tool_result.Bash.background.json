@@ -1,0 +1,42 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "et lorem et sit do amet ullamco consectetur exercitation sed enim et veniam aliqua adipiscing veniam ullamco adipiscing veniam dolore elit magna magna nisi aliq\nipsum do consectetur lorem veniam incididunt dolore minim ipsum minim labore aliqua veniam nisi ipsum aliqua dolor ipsum eiusmod lorem magna nisi sit elit ipsum",
+    "is_error": false,
+    "tool_use_id": "toolu_010000000000000000000088",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000089",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000048",
+ "sandboxed": false,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "session_id": "00000000-0000-4000-8000-000000000001",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000089",
+ "timestamp": "2026-11-06T03:51:06.275Z",
+ "toolUseResult": {
+  "backgroundCwdHint": "ipsum do consectetur lorem veniam incididunt dolore minim ipsum minim labore aliqua veniam nisi ipsum aliqua dolor ipsum eiusmod lorem magna nisi sit elit ipsum",
+  "backgroundTaskId": "tempor el",
+  "interrupted": false,
+  "isImage": false,
+  "noOutputExpected": false,
+  "stderr": "",
+  "stdout": ""
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000090",
+ "version": "2.1.318"
+}

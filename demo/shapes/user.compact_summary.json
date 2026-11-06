@@ -1,0 +1,25 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isCompactSummary": true,
+ "isSidechain": false,
+ "isVisibleInTranscriptOnly": true,
+ "message": {
+  "content": "magna enim laboris quis adipiscing lab\nsit nostrud et consectetur veniam amet dolor veniam nostrud ullamco dolor magna do adipiscing do minim do amet ipsum consectetur aliquip amet dolor eiusmod sit \naliquip enim enim aliquip lorem et sed enim enim quis tempor adipiscing aliquip laboris minim lorem et consectetur nisi sit labore dolore magna aliquip\n\n<system-reminder>\n<tools-used-before-summary>labore ut magna consectetur elit eiusmod consectetur adipiscing veniam aliquip minim aliquip dolore ut consectetur aliqua incididunt et quis nisi tempor veniam </tools-used-before-summary>\n</system-reminder>\nipsum in\nquis incididunt eiusmod labori\n   laboris dolor ut sed aliqua ut elit exercitation labore ut aliquip ut incididunt nostrud eiusmod labore ut veniam dolor ipsum aliqua consectetur aliqua exercita\n   aliquip enim adipiscing consectetur lorem et aliquip ipsum aliquip laboris ipsum quis tempor minim labore magna do ipsum veniam ame\n   incididunt sed dolore consectetur ipsum nisi exercitation incididunt dolor consectet",
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000028",
+ "promptId": "00000000-0000-4000-8000-000000000049",
+ "sessionId": "00000000-0000-4000-8000-000000000027",
+ "slug": "consectetur aliquip do",
+ "timestamp": "2026-11-04T18:25:58.255Z",
+ "turnPosition": {
+  "promptIndex": 1,
+  "turnIndex": 4
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000050",
+ "version": "2.1.318"
+}

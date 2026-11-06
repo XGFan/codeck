@@ -40,6 +40,7 @@ pnpm test:e2e e2e/m3-search.spec.ts -g "<title>"   # 单个 E2E
 E2E_PORT=1431 pnpm test:e2e                        # 并行跑多份时各用一个端口（默认 1421）
 
 pnpm bindings                  # 改了 IPC 类型/命令后重新生成 src/ipc/bindings.ts
+node scripts/demo/build.ts     # 重新生成演示数据根 demo/root（故事在 demo/story，见 demo/README.md）
 curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
   | cargo run -p transcript --example update_pricing   # 刷新内置价格快照
 pnpm tauri build --bundles app --target aarch64-apple-darwin

@@ -1,0 +1,25 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isMeta": true,
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "text": "enim et aliquip sed adipiscing do minim elit enim dolor dolor incididunt enim lorem aliquip nisi nisi ullam\n\naliqua enim aliqua sit dolore quis elit l\n\namet amet sit ipsum tempor sit minim adipiscing veniam exercitation tempor incididunt amet\n<name>consectetur dolore adipiscing eiusmod adipiscing incididunt lorem sed aliqua veniam ipsum sed laboris nostrud exercitation minim dolore incididunt minim et dolo\n  veniam tempor\n\ntempor inc\nnisi s\nexercitation consectetur <ralph-session-id>co\n      laboris quis lorem et tempor aliquip al\n    m\n  m\null\naliqua incididunt aliqua exercitation do ipsum ipsum dolor dolor dolor nostrud aliquip amet lorem elit et consectetur minim laboris veniam lorem dolore exercita",
+    "type": "text"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000021",
+ "promptId": "00000000-0000-4000-8000-000000000048",
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "timestamp": "2026-11-06T03:49:17.136Z",
+ "turnCompanion": true,
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000057",
+ "version": "2.1.318"
+}

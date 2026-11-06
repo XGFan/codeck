@@ -1,0 +1,72 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "minim aliquip adipiscing minim nostrud dolore dolore exercitation tempor elit ipsum minim sed et elit qu\n\nminim adipiscing labore ipsum nostrud lorem exercitation tempor ullamco nostrud lorem eiusmod tempor ipsum dolore labore et lorem veniam ut aliqua veniam dolor <pid>minim exercitation tempor nisi laboris aliqua minim tempor magna magna adipiscing adipiscing sit do lorem et laboris sit veniam amet laboris quis veniam dolore \n\nlorem aliquip consectetur magna quis ut nisi sed eiusmod elit ullamco eiusmod nisi minim sit nisi ipsum exercitation magna qu<pid>do minim venia\n\ntempor lorem sed veniam eiusmod ut dolore aliquip amet ut ut lorem amet incididunt quis elit labore ipsum incididunt ullamco laboris lorem amet sit ut tempor el<pid>magna \naliquip adipiscing tempor labore ut consectetur aliquip et sit laboris magna eiusmod magna ipsum magna ullamco veniam nostrud lorem nisi incididunt amet consect<pid>sed eiusmod magna labore magna lorem veniam minim\neiusmod et exercitation lorem tempor et nisi labore enim labore enim dolor enim et dolor dolore ipsum ullamco eiusmod eiusmod eiusmod laboris incididunt do labo\ndolore nisi elit aliquip ipsum adipiscing dolore dolor elit quis laboris quis aliquip magna nisi ut ut ipsum ullamco veniam aliqua minim dolor elit eiusmod elit\n\n\nenim tempor enim eiusmod do ut veniam aliqua eiusmod laboris incididunt enim veniam exercitation tem",
+    "tool_use_id": "toolu_010000000000000000000118",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000119",
+ "permissionDecision": {
+  "decision": "ullamc",
+  "reasonType": "dolo",
+  "source": "eiusmo"
+ },
+ "promptId": "00000000-0000-4000-8000-000000000120",
+ "sessionId": "00000000-0000-4000-8000-000000000121",
+ "session_id": "00000000-0000-4000-8000-000000000121",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000119",
+ "timestamp": "2026-11-04T16:05:49.239Z",
+ "toolUseResult": {
+  "durationSeconds": 4.138783457999991,
+  "query": "minim amet incididunt amet eiusmod amet elit exercitation tempor nisi en",
+  "results": [
+   {
+    "content": [
+     {
+      "title": "sit nos",
+      "url": "incididunt ullamco labore et exercitation aliqua consectetur e"
+     },
+     {
+      "title": "amet consectetur dolor laboris dolore laboris consectetur labore magna con",
+      "url": "adipiscing eiusmod quis eiusmod nostrud laboris sed aliqua amet eiusmod n"
+     },
+     {
+      "title": "consectetur veniam d",
+      "url": "incididunt quis consectetur nostrud do veniam consectetur amet tempor et"
+     },
+     {
+      "title": "exercitation enim minim dolore elit elit ulla",
+      "url": "magna dolore do do dolore consectetur inci"
+     },
+     {
+      "title": "laboris incididunt ut sit tempor exercitation do ipsum dolore amet ullamco e<pid>amet elit tempor sit nisi do consecte",
+      "url": "nostrud ut elit tempor dolor labore ut sit et sit consectetur ipsum elit dolor nisi et ullamco elit nostrud elit labo"
+     },
+     {
+      "title": "sit exercitation inc",
+      "url": "exercitation sit et ut nisi ipsum et incididunt do do exercitation veniam incidid"
+     },
+     {
+      "title": "magna exercitation",
+      "url": "nostrud eiusmod sed eiusmod elit labore ullamco tempor veniam i"
+     }
+    ],
+    "tool_use_id": "srvtoolu_010000000000000000000122"
+   },
+   "lorem aliquip consectetur magna quis ut nisi sed eiusmod elit ullamco eiusmod nisi minim sit nisi ipsum exercitation magna qu<pid>do minim venia\n\ntempor lorem sed veniam eiusmod ut dolore aliquip amet ut ut lorem amet incididunt quis elit labore ipsum incididunt ullamco laboris lorem amet sit ut tempor el<pid>magna \naliquip adipiscing tempor labore ut consectetur aliquip et sit laboris magna eiusmod magna ipsum magna ullamco veniam nostrud lorem nisi incididunt amet consect<pid>sed eiusmod magna labore magna lorem veniam minim\neiusmod et exercitation lorem tempor et nisi labore enim labore enim dolor enim et dolor dolore ipsum ullamco eiusmod eiusmod eiusmod laboris incididunt do labo\ndolore nisi elit aliquip ipsum adipiscing dolore dolor elit quis laboris quis aliquip magna nisi ut ut ipsum ullamco veniam aliqua minim dolor elit eiusmod elit"
+  ],
+  "searchCount": 1
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000123",
+ "version": "2.1.318"
+}

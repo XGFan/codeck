@@ -1,0 +1,33 @@
+{
+ "cwd": "/Users/dev/code/lumen-api",
+ "entrypoint": "cli",
+ "gitBranch": "main",
+ "isSidechain": false,
+ "message": {
+  "content": [
+   {
+    "content": "dolor sed amet incididunt nostrud ut exercitation incididunt sed ut sit tempor elit tempor amet eiusmod ullamco quis do consectetur sed magna enim ullamco quis \nipsum enim aliqua aliqua magna dolore exercitation magna nisi consectetur aliqua enim amet minim et enim magna elit sit minim ullamco aliqua exercitation quis e\nveniam eiusmod sed consectetur ut sed amet laboris sit quis ullamco incididunt quis dolore eiusmod ut exercitation nisi et quis tempor eiusmod veniam nostrud co\nipsum tempor incididunt eiusmod laboris laboris quis eiusmod dolore nisi sed adipiscing tempor laboris labore magna dolore quis laboris sit ut ipsum do aliqua m\nexercitation consectetur eiusmod lorem incididunt magna ullamco laboris quis et ipsum sed laboris enim aliquip nostrud ipsum ut ut laboris eiusmod minim magna l\nexercitation dolore sed minim dolor ullamco ullamco do eiusmod sed dolore adipiscing incididunt ullamco magna ullamco sed dolor tempor elit incididunt ut lorem ",
+    "tool_use_id": "toolu_010000000000000000000094",
+    "type": "tool_result"
+   }
+  ],
+  "role": "user"
+ },
+ "parentUuid": "00000000-0000-4000-8000-000000000095",
+ "promptId": "00000000-0000-4000-8000-000000000096",
+ "sessionId": "00000000-0000-4000-8000-000000000097",
+ "slug": "amet enim elit consectet",
+ "sourceToolAssistantUUID": "00000000-0000-4000-8000-000000000095",
+ "timestamp": "2026-04-20T07:12:08.044Z",
+ "toolUseResult": {
+  "content": "dolor sed amet incididunt nostrud ut exercitation incididunt sed ut sit tempor elit tempor amet eiusmod ullamco quis do consectetur sed magna enim ullamco quis \nipsum enim aliqua aliqua magna dolore exercitation magna nisi consectetur aliqua enim amet minim et enim magna elit sit minim ullamco aliqua exercitation quis e\nveniam eiusmod sed consectetur ut sed amet laboris sit quis ullamco incididunt quis dolore eiusmod ut exercitation nisi et quis tempor eiusmod veniam nostrud co\nipsum tempor incididunt eiusmod laboris laboris quis eiusmod dolore nisi sed adipiscing tempor laboris labore magna dolore quis laboris sit ut ipsum do aliqua m\nexercitation consectetur eiusmod lorem incididunt magna ullamco laboris quis et ipsum sed laboris enim aliquip nostrud ipsum ut ut laboris eiusmod minim magna l\nexercitation dolore sed minim dolor ullamco ullamco do eiusmod sed dolore adipiscing incididunt ullamco magna ullamco sed dolor tempor elit incididunt ut lorem ",
+  "filenames": [],
+  "mode": "content",
+  "numFiles": 0,
+  "numLines": 17
+ },
+ "type": "user",
+ "userType": "external",
+ "uuid": "00000000-0000-4000-8000-000000000098",
+ "version": "2.1.114"
+}
