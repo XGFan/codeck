@@ -72,6 +72,11 @@ impl Analyzer {
 
     /// Asks the model; the layout still has to pass its structural checks on the screen.
     pub fn analyze(&self, req: &Request) -> Result<Layout> {
+        layout_from(req, &self.ask(req)?)
+    }
+
+    /// The model's text for `req`.
+    pub fn ask(&self, req: &Request) -> Result<String> {
         let body = json!({
             "model": self.model,
             "max_tokens": 2000,
@@ -115,16 +120,7 @@ impl Analyzer {
             .flatten()
             .filter_map(|b| b["text"].as_str())
             .collect();
-        let mut layout = parse_answer(&text)?;
-        // A tool approval needs a pending tool call: with none, the menu is a choice (a slash
-        // command's confirmation, such as /add-dir's, reads like a tool approval).
-        if req.pending.is_empty() && layout.kind == LayoutKind::Permission {
-            layout.kind = LayoutKind::Choice;
-        }
-        layout.claude_version = req.claude_version.clone();
-        layout.screen = req.lines.to_vec();
-        layout.id = layout.compute_id();
-        Ok(layout)
+        Ok(text)
     }
 
     /// `ccrpc analyzer test`: asks about a built-in dialog and accepts the answer only as a learned
@@ -155,15 +151,10 @@ that is stopped on a dialog waiting for the user, and describe the dialog so a p
 answer it: by pressing the option's number key, or, when the options have no numbers, by moving \
 the ❯ cursor onto the option and pressing Enter. Answer with one JSON object and nothing else.";
 
-fn prompt(req: &Request) -> String {
-    let screen: String = req
-        .lines
-        .iter()
-        .enumerate()
-        .map(|(i, l)| format!("{i:02}|{l}\n"))
-        .collect();
-    let pending: Vec<Value> = req
-        .pending
+/// The pending tool calls as the model is shown them: `{"tool", "input"}`, inputs as JSON text
+/// cut at 2000 bytes.
+pub fn pending_sent(req: &Request) -> Vec<Value> {
+    req.pending
         .iter()
         .map(|(n, i)| {
             let mut s = i.to_string();
@@ -172,7 +163,17 @@ fn prompt(req: &Request) -> String {
             }
             json!({"tool": n, "input": s})
         })
+        .collect()
+}
+
+fn prompt(req: &Request) -> String {
+    let screen: String = req
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{i:02}|{l}\n"))
         .collect();
+    let pending = pending_sent(req);
     format!(
         r#"Claude Code reports it is waiting for: {waiting:?}
 Pending tool calls (not yet answered): {pending}
@@ -196,6 +197,20 @@ Describe the dialog at the bottom of the screen as JSON:
         waiting = req.waiting_for,
         pending = Value::Array(pending),
     )
+}
+
+/// The model's answer `text` about `req` as a layout of that screen.
+pub fn layout_from(req: &Request, text: &str) -> Result<Layout> {
+    let mut layout = parse_answer(text)?;
+    // A tool approval needs a pending tool call: with none, the menu is a choice (a slash
+    // command's confirmation, such as /add-dir's, reads like a tool approval).
+    if req.pending.is_empty() && layout.kind == LayoutKind::Permission {
+        layout.kind = LayoutKind::Choice;
+    }
+    layout.claude_version = req.claude_version.clone();
+    layout.screen = req.lines.to_vec();
+    layout.id = layout.compute_id();
+    Ok(layout)
 }
 
 /// The model's JSON (possibly wrapped in prose or a code fence) as a layout.
@@ -260,7 +275,7 @@ pub fn parse_answer(text: &str) -> Result<Layout> {
     })
 }
 
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

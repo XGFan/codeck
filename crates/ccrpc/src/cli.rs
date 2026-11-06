@@ -21,7 +21,7 @@ const USAGE: &str = "用法：ccrpc [--toh-state-dir DIR] [--claude-config-dir D
   ccrpc hide | show <Holder ID>
   ccrpc plugin install | uninstall | generate <目录>
   ccrpc doctor
-  ccrpc analyzer test
+  ccrpc analyzer test | records
   ccrpc layouts list
   ccrpc layouts export <仓库目录>
   ccrpc debug replay <transcript.jsonl>…
@@ -454,10 +454,14 @@ fn cmd_doctor(roots: &Roots) -> Result<()> {
 }
 
 /// `analyzer test`: one analysis of a built-in dialog with the analyzer the environment sets; prints
-/// `{"model", "elapsed_ms", "kind", "options"}` on success.
+/// `{"model", "elapsed_ms", "kind", "options"}` on success. `analyzer records`: the analysis
+/// records, see [`print_records`].
 fn cmd_analyzer(args: &[String]) -> Result<()> {
+    if matches!(args, [a] if a == "records") {
+        return print_records();
+    }
     if !matches!(args, [a] if a == "test") {
-        bail!("用法：ccrpc analyzer test");
+        bail!("用法：ccrpc analyzer test | ccrpc analyzer records");
     }
     let a = crate::analyze::Analyzer::from_env().context("没设 CCRPC_ANALYZER_API_KEY")?;
     let (layout, elapsed) = a.test()?;
@@ -469,6 +473,41 @@ fn cmd_analyzer(args: &[String]) -> Result<()> {
             "kind": layout.kind,
             "options": layout.options.len(),
         })
+    );
+    Ok(())
+}
+
+/// Prints `{"dir", "records": [...]}`: the records directory (created if missing, so it can be
+/// opened) and each record without its screen, inputs and reply, newest first.
+fn print_records() -> Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = crate::analysis_records::dir();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| format!("建不了分析记录目录 {}", dir.display()))?;
+    let records: Vec<_> = crate::analysis_records::list(&dir)
+        .into_iter()
+        .map(|(path, r)| {
+            serde_json::json!({
+                "file": path.display().to_string(),
+                "at": r.at,
+                "outcome": r.outcome,
+                "kind": r.kind,
+                "title": r.title,
+                "error": r.error,
+                "layout": r.layout,
+                "waiting_for": r.waiting_for,
+                "model": r.model,
+                "elapsed_ms": r.elapsed_ms,
+                "claude_version": r.claude_version,
+            })
+        })
+        .collect();
+    println!(
+        "{}",
+        serde_json::json!({"dir": dir.display().to_string(), "records": records})
     );
     Ok(())
 }

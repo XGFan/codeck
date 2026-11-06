@@ -698,6 +698,16 @@ fn learns_an_unknown_dialog() {
         .flatten()
         .collect();
     assert!(!learned.is_empty());
+    // Its analysis is on record with what was sent and answered.
+    let records = ccrpc::analysis_records::list(&env.state_dir.join("analyses"));
+    assert!(
+        records.iter().any(
+            |(_, r)| r.outcome == ccrpc::analysis_records::Outcome::Learned
+                && r.reply.is_some()
+                && !r.screen.is_empty()
+        ),
+        "没有学会的分析记录：{records:?}"
+    );
     if let Ok(out) = std::env::var("CCRPC_E2E_KEEP_LAYOUTS") {
         std::fs::create_dir_all(&out).unwrap();
         for e in learned {

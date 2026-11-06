@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
+use crate::analysis_records::{self, Outcome, Record};
 use crate::analyze::{self, Analyzer};
 use crate::history::{self, HistoryWorker};
 use crate::hook::{self, HookMsg, HookServer};
@@ -159,6 +160,8 @@ impl State {
 
 /// Failure of a command: `(code, message)`.
 type CmdErr = (&'static str, String);
+/// An analysis's layout (or why there is none) and its record.
+type AnalysisDone = (std::result::Result<Layout, String>, Record);
 type CmdResult = std::result::Result<Value, CmdErr>;
 
 fn err<T>(code: &'static str, msg: impl Into<String>) -> std::result::Result<T, CmdErr> {
@@ -244,7 +247,7 @@ pub struct Engine {
     library: Library,
     analyzer: Option<Analyzer>,
     /// The analysis in flight: dialog signature and where its result arrives.
-    analysis: Option<(String, Receiver<std::result::Result<Layout, String>>)>,
+    analysis: Option<(String, Receiver<AnalysisDone>)>,
     /// Dialog signatures already analyzed (never twice).
     analyzed: HashSet<String>,
     analyses: VecDeque<Instant>,

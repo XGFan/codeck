@@ -1,3 +1,4 @@
+pub mod analysis_records;
 pub mod analyze;
 pub mod cli;
 pub mod history;

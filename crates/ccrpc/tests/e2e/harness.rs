@@ -175,6 +175,7 @@ pub(crate) fn ccrpc_cmd(env: &Env) -> Command {
         .env("CLAUDE_CONFIG_DIR", &env.cc_dir)
         .env("CCRPC_STATE_DIR", &env.state_dir)
         .env("CCRPC_LAYOUT_DIR", &env.layout_dir)
+        .env("CCRPC_ANALYSIS_DIR", env.state_dir.join("analyses"))
         .env_remove("CCRPC_ANALYZER_API_KEY");
     if env.analyzer {
         // Learning is what is tested: start from no built-in layouts.

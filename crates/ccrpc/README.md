@@ -69,7 +69,7 @@ ccrpc hide | show <Holder ID>   # 在 Mac 上隐藏 / 显示这个 Pane（toh hi
 ccrpc doctor
 ```
 
-认不出的对话框可以交给分析器：设置 `CCRPC_ANALYZER_API_KEY`（Messages 兼容接口的 key），可选 `CCRPC_ANALYZER_BASE_URL`（缺省 `https://api.deepseek.com/anthropic`）、`CCRPC_ANALYZER_MODEL`（缺省 `deepseek-flash`）。分析得出的布局存进本机布局库（`CCRPC_LAYOUT_DIR`，缺省 `~/.local/share/ccrpc/layouts`）并立即使用；`ccrpc layouts list` 列出，`ccrpc layouts export <仓库目录>` 导出成内置布局。分析器会收到整屏文字与挂起工具的输入。`ccrpc analyzer test` 让分析器识别一个内置对话框，检验 key、接口与模型能不能用（成功时输出模型与用时，不存布局）。
+认不出的对话框可以交给分析器：设置 `CCRPC_ANALYZER_API_KEY`（Messages 兼容接口的 key），可选 `CCRPC_ANALYZER_BASE_URL`（缺省 `https://api.deepseek.com/anthropic`）、`CCRPC_ANALYZER_MODEL`（缺省 `deepseek-flash`）。分析得出的布局存进本机布局库（`CCRPC_LAYOUT_DIR`，缺省 `~/.local/share/ccrpc/layouts`）并立即使用；`ccrpc layouts list` 列出，`ccrpc layouts export <仓库目录>` 导出成内置布局。分析器会收到整屏文字与挂起工具的输入。每次分析（学会的与失败的）都在本机留一条记录（`CCRPC_ANALYSIS_DIR`，缺省 `~/.local/share/ccrpc/analyses`，只留最近 200 条）：当时的屏幕、送出的挂起工具输入、模型的回复与结果；`ccrpc analyzer records` 列出。`ccrpc analyzer test` 让分析器识别一个内置对话框，检验 key、接口与模型能不能用（成功时输出模型与用时，不存布局）。
 
 Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`），可以在子命令前用 `--claude-config-dir DIR` 指定；`--toh-state-dir DIR`（或 `TOH_STATE_DIR`）只原样交给 `toh`。ccrpc 不读 ToH 状态目录里的文件：Holder 经 `toh ls --json` / `toh new --json` 得到，再按其中的 socket 连上。
 

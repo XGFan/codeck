@@ -38,7 +38,7 @@ cargo test --test e2e mock_ -- --ignored --test-threads=1                 # 端�
 - `pty`：Holder unix socket 连接（toh-proto 帧）、常驻 VT（跟随 Size 帧报来的 PTY 尺寸）、写入（bracketed paste、按键、调尺寸）。
 - `screen`：alacritty_terminal 维护屏幕文本；`recognize`：审批框、AskUserQuestion、输入框、模式行、后台任务面板、目录信任框、进度行的识别。
 - `wake`：事件驱动的唤醒（stdin、Holder 帧、notify 文件监听）。
-- `layout`：布局库（内置 `layouts/*.json` 由 build.rs 嵌入，学到的在本机），结构检查；`analyze`：分析器，认不出的对话框交给模型得出布局。
+- `layout`：布局库（内置 `layouts/*.json` 由 build.rs 嵌入，学到的在本机），结构检查；`analyze`：分析器，认不出的对话框交给模型得出布局；`analysis_records`：每次分析的记录。
 - `procfile`：进程文件轮询与状态映射。
 - `transcript`：主线、Subagent Run 与 Workflow Run 的增量尾随（同仓库 `crates/transcript` 的 `raw`、`assemble`；本 crate 有同名模块，引用库时写 `::transcript::`），产出内容块、Branch 与 Workflow 事件。
 - `session`：把以上合成状态机，执行命令、发事件；轮次以插件的 UserPromptSubmit / Stop / StopFailure 为准，审批与提问经 PermissionRequest 代答。`session/mod.rs` 是 Engine 与观察循环（tick、状态、`get_state`、命令分发），其余按职责分文件：`turn`（轮次记账 `TurnTracker`：不碰 IO，吃 hook 与 transcript 事件、吐 `turn_end` 等，单测用伪造的事件序列；另有确认命令用的标记）、`requests`（审批与提问的配对、作答）、`announce`（选择、对话框、分析器与信任框的上报）、`tasks`（后台任务）、`drive`（按键、粘贴与往 TUI 里输入的命令）、`startup`（`attach` / `new` 的参数与启动）。

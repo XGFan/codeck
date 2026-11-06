@@ -437,6 +437,7 @@ impl Engine {
         let lines = s.lines.clone();
         let waiting_for = waiting_for.to_string();
         let version = self.pf.as_ref().and_then(|p| p.version.clone());
+        let session_id = self.session_id.clone();
         let (tx, rx) = mpsc::channel();
         let wake = self.wake.clone();
         std::thread::spawn(move || {
@@ -446,7 +447,33 @@ impl Engine {
                 pending,
                 claude_version: version,
             };
-            let _ = tx.send(analyzer.analyze(&req).map_err(|e| format!("{e:#}")));
+            let started = Instant::now();
+            let reply = analyzer.ask(&req);
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let result = reply
+                .as_ref()
+                .map_err(|e| format!("{e:#}"))
+                .and_then(|t| analyze::layout_from(&req, t).map_err(|e| format!("{e:#}")));
+            let made = result.as_ref().ok();
+            let record = Record {
+                at: analyze::now_rfc3339(),
+                session_id,
+                claude_version: req.claude_version.clone(),
+                model: analyzer.model.clone(),
+                base_url: analyzer.base_url.clone(),
+                elapsed_ms,
+                waiting_for: waiting_for.clone(),
+                pending: analyze::pending_sent(&req),
+                screen: lines.clone(),
+                reply: reply.ok(),
+                outcome: Outcome::Failed,
+                layout: made.map(|l| l.id.clone()),
+                kind: made.map(|l| l.kind),
+                title: made.map(|l| l.title.clone()),
+                path: None,
+                error: None,
+            };
+            let _ = tx.send((result, record));
             wake.bump();
         });
         self.analysis = Some((sig, rx));
@@ -462,25 +489,43 @@ impl Engine {
         let res = match rx.try_recv() {
             Ok(r) => r,
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err("分析器线程意外结束".into()),
+            Err(TryRecvError::Disconnected) => {
+                self.analysis = None;
+                self.emit(json!({"type": "analysis_failed", "error": "分析器线程意外结束"}));
+                return;
+            }
         };
         self.analysis = None;
-        let layout = match res {
-            Ok(l) if l.match_screen(&l.screen).is_some() => l,
-            Ok(l) => {
-                self.emit(json!({"type": "analysis_failed", "error": "分析结果与屏幕对不上", "title": l.title}));
-                return;
+        let (res, mut record) = res;
+        let res = match res {
+            Ok(l) if l.match_screen(&l.screen).is_some() => {
+                let (id, kind, title) = (l.id.clone(), l.kind, l.title.clone());
+                self.library
+                    .save(l)
+                    .map(|path| (id, kind, title, path))
+                    .map_err(|e| (format!("{e:#}"), None))
             }
-            Err(e) => {
-                self.emit(json!({"type": "analysis_failed", "error": e}));
-                return;
-            }
+            Ok(l) => Err(("分析结果与屏幕对不上".to_string(), Some(l.title))),
+            Err(e) => Err((e, None)),
         };
-        let (id, kind, title) = (layout.id.clone(), layout.kind, layout.title.clone());
-        match self.library.save(layout) {
-            Ok(path) => self.emit(json!({"type": "layout_learned", "layout": id, "kind": kind,
-                "title": title, "path": path.display().to_string()})),
-            Err(e) => self.emit(json!({"type": "analysis_failed", "error": format!("{e:#}")})),
+        match &res {
+            Ok((_, _, _, path)) => {
+                record.outcome = Outcome::Learned;
+                record.path = Some(path.display().to_string());
+            }
+            Err((e, _)) => record.error = Some(e.clone()),
+        }
+        if let Err(e) = analysis_records::write(&analysis_records::dir(), &record) {
+            crate::clog!("analysis record: {e:#}");
+        }
+        match res {
+            Ok((id, kind, title, path)) => self
+                .emit(json!({"type": "layout_learned", "layout": id,
+                "kind": kind, "title": title, "path": path.display().to_string()})),
+            Err((e, Some(title))) => {
+                self.emit(json!({"type": "analysis_failed", "error": e, "title": title}))
+            }
+            Err((e, None)) => self.emit(json!({"type": "analysis_failed", "error": e})),
         }
     }
 
