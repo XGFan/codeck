@@ -78,6 +78,11 @@ export interface ConnState {
    * connection does not stand for that Session.
    */
   forkOf: string | null;
+  /**
+   * 「新建 Session」's directory: until ccrpc names the Session, the connection stands for the page opened for it at
+   * once (selected by the connection's id). Gone after a later `session_changed` (`/clear`).
+   */
+  newIn: string | null;
   /** The model drafted product feedback: Claude Code's card above the input box (sent only from the terminal). */
   feedbackDraft: FeedbackDraft | null;
   /** 「选回退点」 (`/rewind` typed): every prompt that can be rewound to shows its 「回退」. */
@@ -102,6 +107,7 @@ export function initial(
   holderId: string | null,
   resumeOf: string | null = null,
   forkOf: string | null = null,
+  newIn: string | null = null,
 ): ConnState {
   return {
     conn,
@@ -127,6 +133,7 @@ export function initial(
     notices: [],
     resumeOf,
     forkOf,
+    newIn,
     feedbackDraft: null,
     picking: false,
     rewinding: null,

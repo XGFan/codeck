@@ -97,6 +97,8 @@ interface Conn {
   closed: boolean;
   /** Tasks `stop_task` stopped on this connection: `get_tasks` reports them stopped. */
   stopped: Set<string>;
+  /** What follows `ready` waits this long (claude still starting). */
+  startMs?: number;
 }
 
 /** What `/model <alias>` sets in the mock: the display name ccrpc reports at once, and its effort mark. */
@@ -146,6 +148,8 @@ export interface CcrpcProbe {
   forks: { sessionId: string; cwd: string; at: string | null; restore: string | null; title: string }[];
   /** Set by a test: the next Fork fails (`fork-failed.jsonl`). */
   forkFails?: boolean;
+  /** Set by a test: 「新建 Session」's claude takes this long after `ready` to start and name the Session. */
+  newStartMs?: number;
   /** Recordings with `on_request` a test put into `ccrpc ls`, by name. */
   listed: string[];
   /** Puts a recording with `on_request` into `ccrpc ls` (pushed to the watch at once). */
@@ -236,7 +240,8 @@ function replay(id: string, rewrite?: { from: unknown; to: unknown }) {
     let msg = l.msg as unknown as InMsg;
     if (rewrite && msg.type === "response" && msg.id === rewrite.from) msg = { ...msg, id: rewrite.to as string };
     emit(id, msg);
-    later(step);
+    if (msg.type === "ready" && c.startMs) setTimeout(step, c.startMs);
+    else later(step);
   };
   later(step);
 }
@@ -313,9 +318,9 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
   }
 }
 
-function open(fx: Fixture): string {
+function open(fx: Fixture, startMs?: number): string {
   const id = `mock${++seq}`;
-  conns.set(id, { fx, cursor: 0, state: null, info: {}, closed: false, stopped: new Set() });
+  conns.set(id, { fx, cursor: 0, state: null, info: {}, closed: false, stopped: new Set(), startMs });
   replay(id);
   return id;
 }
@@ -469,7 +474,7 @@ export function createMockCcrpc(): CcrpcApi {
     ccrpcNew: async () => {
       const fx = fixtures.find((f) => f.name === "new-session");
       if (!fx) throw appError("internal", "没有 new-session 的录制");
-      return open(fx);
+      return open(fx, probe.newStartMs);
     },
     ccrpcSend: async (id, m) => {
       const msg = m as Record<string, unknown>;

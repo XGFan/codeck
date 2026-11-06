@@ -914,6 +914,45 @@ test("新建 Session：选目录后选中它，进索引前显示占位且可以
   expect((await probe(page)).guiLog).toContain("new /tmp/mock-new");
 });
 
+const NEW_ID = "0e5e0000-0000-4000-8000-0000000000ee";
+const openId = (page: Page) => page.evaluate(() => window.__cvStore!.getState().sessionId);
+
+test("新建 Session：点下即打开页面，启动中可以打字，claude 报到后草稿与焦点都还在", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => (window.__cvCcrpc!.newStartMs = 1500));
+  await page.getByTestId("new-session").click();
+  await page.getByTestId("new-session-other").click();
+  // Before claude names the Session: its page, on the connection's id.
+  await expect(page.getByTestId("transcript-new")).toHaveText("新 Session，发送第一条提示词后显示对话");
+  await expect(page.getByTestId("header")).toContainText("新 Session");
+  await expect(page.getByTestId("header")).toContainText("/tmp/mock-new");
+  await expect(state(page)).toHaveText("启动中");
+  expect(await openId(page)).toMatch(/^mock/);
+  const input = page.getByTestId("connect-input");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("先写一半");
+  // Named: the page is the Session's, nothing typed is lost and typing goes on.
+  await expect.poll(() => openId(page)).toBe(NEW_ID);
+  await expect(state(page)).toHaveText("空闲");
+  await expect(input).toHaveValue("先写一半");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("，再写完");
+  await expect(input).toHaveValue("先写一半，再写完");
+});
+
+test("新建 Session：启动中去看别的 Session，claude 报到后不会被切回去", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => (window.__cvCcrpc!.newStartMs = 1000));
+  await page.getByTestId("new-session").click();
+  await page.getByTestId("new-session-other").click();
+  await expect(state(page)).toHaveText("启动中");
+  await open(page, RICH);
+  const other = await openId(page);
+  await page.waitForTimeout(1500);
+  expect(await openId(page)).toBe(other);
+  await expect(page.getByTestId("header").getByRole("heading", { name: RICH })).toBeVisible();
+});
+
 test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，可选中、Connect，按 cwd 参与 Project 筛选", async ({
   page,
 }) => {

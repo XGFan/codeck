@@ -121,9 +121,14 @@ export function lsEntryFor(s: Pick<Lookup, "ls">, sessionId: string | null): LsE
   return s.ls.find((e) => e.session_id === sessionId) ?? null;
 }
 
-/** The connection to a CoDeck Session: a live one first, else the last that exited. */
+/** A 「新建 Session」 connection ccrpc has not named the Session of yet: its page is selected by the connection's id. */
+export const isNewPending = (c: ConnState) => c.newIn != null && c.sessionId == null;
+
+/** The connection to a CoDeck Session (or a new one's page): a live one first, else the last that exited. */
 export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
   if (!sessionId) return null;
+  const pending = s.conns[sessionId];
+  if (pending && isNewPending(pending)) return pending;
   const holder = lsEntryFor(s, sessionId)?.holder_id;
   const all = Object.values(s.conns).filter((c) =>
     c.forkOf === sessionId
@@ -157,8 +162,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
   const closing = new Set<string>();
   /** Resume connections being given up (one failure per connection). */
   const failingResumes = new Set<string>();
-  /** New Sessions to select once they have a session id. */
-  const selectOnReady = new Set<string>();
   const lsWatch = createLsWatch({
     watch: (on) => api.ccrpcWatchSessions(on),
     onLs: (ls) => set({ ls }),
@@ -178,6 +181,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
     if (!before) return client.hold(conn, { kind: "line", msg });
     update(conn, (c) => apply(c, msg));
     const after = get().conns[conn]!;
+    // A new Session is named: its page (open on the connection's id) and what was typed there carry on as it.
+    if (isNewPending(before) && after.sessionId) named(conn, after.sessionId);
     // A Resume is through once its Session is named: in `ready` (checked in already) or a later `session_changed`.
     if (before.resumeOf && !before.sessionId && after.sessionId) setResuming(before.resumeOf, false);
     if (before.forkOf) {
@@ -192,17 +197,15 @@ export const useConnect = create<ConnectStore>((set, get) => {
     }
     switch (msg.type) {
       case "ready":
-        if (selectOnReady.has(conn) && msg.session_id) {
-          selectOnReady.delete(conn);
-          select(msg.session_id);
-        }
+        // A new Session's input box takes typing from now on (its page was opened for that).
+        if (after.newIn != null && [conn, after.sessionId].includes(useUi.getState().sessionId))
+          window.setTimeout(() => focusInput(conn), 0);
         void get().refreshTasks(conn);
         break;
       case "session_changed": {
         // `/clear` and the like: follow the Pane to its new Session if the old one is on screen.
         const open = useUi.getState().sessionId;
-        if (selectOnReady.delete(conn) || (open != null && (open === msg.previous || open === before.sessionId)))
-          select(msg.session_id);
+        if (open != null && (open === msg.previous || open === before.sessionId)) select(msg.session_id);
         break;
       }
       case "session_exit":
@@ -227,7 +230,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
     if (!get().conns[conn]) return client.hold(conn, { kind: "exit", code, stderr });
     client.exited(conn);
     client.failPending(conn);
-    selectOnReady.delete(conn);
     const c = get().conns[conn];
     // ccrpc itself ended before naming the Session: that Resume is over (its card says why).
     if (c?.resumeOf && !c.sessionId && !failingResumes.has(conn)) setResuming(c.resumeOf, false);
@@ -255,14 +257,32 @@ export const useConnect = create<ConnectStore>((set, get) => {
     }));
   };
 
+  /**
+   * A new Session got its id: the draft typed on its page moves to the Session, and the page, if still open, is the
+   * Session's from now on (opened elsewhere meanwhile, the selection stays).
+   */
+  const named = (conn: string, sessionId: string) => {
+    const draft = get().drafts[conn];
+    if (draft) {
+      set((s) => {
+        const drafts = { ...s.drafts, [sessionId]: draft };
+        delete drafts[conn];
+        return { drafts };
+      });
+      saveDrafts(get().drafts);
+    }
+    if (useUi.getState().sessionId === conn) select(sessionId);
+  };
+
   /** Adds a connection, then replays what arrived for it before its id came back. */
   const addConn = (
     conn: string,
     holderId: string | null,
     resumeOf: string | null = null,
     forkOf: string | null = null,
+    newIn: string | null = null,
   ) => {
-    set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId, resumeOf, forkOf) } }));
+    set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId, resumeOf, forkOf, newIn) } }));
     for (const e of client.take(conn)) {
       if (e.kind === "line") onLine(conn, e.msg);
       else onExit(conn, e.code, e.stderr);
@@ -506,8 +526,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
       void api.ccrpcGuiLog(null, `new ${dir}`);
       try {
         const conn = await api.ccrpcNew(dir);
-        selectOnReady.add(conn);
-        addConn(conn, null);
+        // Its page opens now, on the connection's id; claude names the Session in a second or two.
+        select(conn);
+        addConn(conn, null, null, null, dir);
       } catch (e) {
         set({ newError: `新建 Session 失败：${errorText(e)}` });
       }

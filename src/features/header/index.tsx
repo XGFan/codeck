@@ -60,7 +60,7 @@ export function SessionHeader() {
   if (!sessionId) return null;
   if (!d) {
     if (!unindexed) return null;
-    const cwd = connected?.cwd ?? lsCwd;
+    const cwd = connected?.cwd ?? lsCwd ?? connected?.newIn ?? null;
     return (
       <header
         data-testid="header"
@@ -168,7 +168,8 @@ function StateWord({
   lastActiveMs: number | null;
 }) {
   const c = useConnect((st) => connFor(st, sessionId));
-  const connected = c && c.ready && !c.procExit && !c.sessionExited ? c : null;
+  // A new Session is starting from the click on (before ccrpc's `ready`).
+  const connected = c && (c.ready || c.newIn != null) && !c.procExit && !c.sessionExited ? c : null;
   const status = connected ? connected.state : (live?.status ?? null);
   if (!status) {
     return (

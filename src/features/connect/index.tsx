@@ -160,7 +160,13 @@ export function useUnread(sessionId: string): boolean {
 export function useUnindexed(error: unknown): boolean {
   const sessionId = useUi((s) => s.sessionId);
   const known = useConnect((s) => connFor(s, sessionId) != null || lsEntryFor(s, sessionId) != null);
-  return known && !!error && typeof error === "object" && (error as { code?: unknown }).code === "notFound";
+  // 「新建 Session」 before its first prompt has no transcript file: known without asking the index (no blank page
+  // while the page moves from the connection's id to the Session's).
+  const fresh = useConnect((s) => {
+    const c = connFor(s, sessionId);
+    return !!c && c.newIn != null && c.pending == null && c.lastTurn == null;
+  });
+  return fresh || (known && !!error && typeof error === "object" && (error as { code?: unknown }).code === "notFound");
 }
 
 /** Under the transcript while the open Session is connected: banners, cards, progress, queue, input box. */
@@ -168,7 +174,8 @@ export function ConnectPanel() {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
   if (!c) return null;
-  return <Panel key={draftKey(c)} c={c} />;
+  // A new Session's panel stays as its id comes (typing goes on); a later Session of the connection gets its own.
+  return <Panel key={c.newIn != null ? c.conn : draftKey(c)} c={c} />;
 }
 
 function Panel({ c }: { c: ConnState }) {
