@@ -474,6 +474,58 @@ test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点�
   await expect(page.getByTestId("connect-input")).toBeFocused();
 });
 
+test("回复前按 Esc 撤回的提示词：从对话里拿掉、文字回到输入框，显示系统消息时标「已撤回」，再发同样的话照常显示", async ({
+  page,
+}) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  const append = (id: string) =>
+    page.evaluate((id) => {
+      const sid = "a7c63e92-0008-4000-8000-000000000008";
+      window.__cvMock!.appendNode(sid, {
+        id,
+        timestampMs: Date.now(),
+        hidden: false,
+        inherited: false,
+        body: { kind: "userPrompt", text: "改成两行\n的那个", images: [], origin: { kind: "human" } },
+      });
+      window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
+    }, id);
+  const bubble = (id: string) => page.locator(`[data-node-id="${id}"]`);
+  await append("e2e-taken-back");
+  await expect(bubble("e2e-taken-back")).toBeVisible();
+  // Esc before any reply: Claude Code put it back in its input box.
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "turn_end",
+      prompt_id: null,
+      trigger: "prompt",
+      last_text: null,
+      error: null,
+      aborted: true,
+      restored_text: "改成两行\n的那个",
+      background_tasks: [],
+      duration_ms: 300,
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      api_cost: 0,
+    }),
+  );
+  await expect(bubble("e2e-taken-back")).toHaveCount(0);
+  await expect(page.getByTestId("connect-input")).toHaveValue("改成两行\n的那个");
+  // With the hidden entries: dimmed, marked, nothing to rewind to.
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
+  await expect(bubble("e2e-taken-back").getByTestId("prompt-withdrawn")).toHaveText("已撤回");
+  await expect(bubble("e2e-taken-back").getByTestId("rewind-button")).toHaveCount(0);
+  await page.getByTestId("header-more").click();
+  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
+  // The same words sent again (a new turn): shown.
+  await page.evaluate(() => window.__cvCcrpc!.emit({ type: "state", state: "busy" }));
+  await append("e2e-sent-again");
+  await expect(bubble("e2e-sent-again")).toBeVisible();
+  await expect(bubble("e2e-taken-back")).toHaveCount(0);
+});
+
 test("作答时选项旁显示 preview：先是第一项的，悬停、键盘焦点所在或选中的那项的", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");

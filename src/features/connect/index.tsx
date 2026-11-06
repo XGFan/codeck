@@ -18,7 +18,7 @@ export { ConnectButton, ConnectMenuItems, STATE_WORD, useConnectDebugInfo } from
 export { arrived, isFresh } from "./pending";
 export { hasPreview, OptionPreview } from "./OptionPreview";
 export { QuestionForm } from "./QuestionForm";
-export { RewindButton, RewoundDivider, useRewindView, type RewindView } from "./RewindViews";
+export { RewindButton, RewoundDivider, useRewindView, useShownTranscript, type RewindView } from "./RewindViews";
 export { ForkButton, ForkMenuItem, ForkPending } from "./ForkViews";
 export { CcrpcSettings } from "./Settings";
 export { connFor, lsEntryFor, useConnect } from "./store";

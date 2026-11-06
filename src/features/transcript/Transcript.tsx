@@ -3,7 +3,7 @@ import { ArrowDown } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
 import { OverlayScrollbar } from "@/components/OverlayScrollbar";
-import { ConnectTail, RewoundDivider, useRewindView, useUnindexed } from "@/features/connect";
+import { ConnectTail, RewoundDivider, useRewindView, useShownTranscript, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
 import { useCurrentTranscript } from "@/queries";
 import { MAIN_SCOPE, useUi } from "@/state/ui";
@@ -134,7 +134,7 @@ const NO_PROMPTS: ReadonlySet<string> = new Set();
 
 /** Virtualized row list shared by the main transcript and the Subagent panel. */
 export function TranscriptList({
-  transcript,
+  transcript: fetched,
   ready,
   scope,
   follow = false,
@@ -142,6 +142,7 @@ export function TranscriptList({
   extraRuns,
   testId,
 }: TranscriptListProps) {
+  const transcript = useShownTranscript(fetched, scope.kind === "main");
   const sessionId = transcript.sessionId;
   const panelStack = useUi((s) => s.panelStack);
   const setPanelStack = useUi((s) => s.setPanelStack);

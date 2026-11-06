@@ -5,6 +5,7 @@ import { useUi } from "@/state/ui";
 import { createCcrpcClient } from "./client";
 import { apply, initial, rewindAnswered, rewindShown, type ConnState, type PendingPrompt } from "./conn";
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
+import { addWithdrawn, loadWithdrawn, saveWithdrawn } from "./withdrawn";
 import { createLsWatch } from "./lsWatch";
 import { resumeFailure } from "./resume";
 import { forkTitle } from "./fork";
@@ -28,6 +29,8 @@ interface ConnectStore {
   live: LiveEntry[] | null;
   /** Unsent input by Session id (a connection id before it has one): kept across switches and reconnects. */
   drafts: Record<string, Draft>;
+  /** The prompts taken back (Esc before any reply), by Session: hidden in its transcript. */
+  withdrawn: Record<string, string[]>;
   /** Sessions a Resume is under way for, until ccrpc names the Session or the failure is dealt with. */
   resuming: Record<string, true>;
   /** Sessions a Connect is under way for (自动 or from the header's menu), until it is attached or failed. */
@@ -97,6 +100,8 @@ interface ConnectStore {
   clearRewound(conn: string): void;
   /** A prompt went out: the line about the kept draft goes (the marker stays until the new Branch is indexed). */
   rewoundSent(conn: string): void;
+  /** The prompt taken back (`withdrawnText`) is this one in the transcript. */
+  withdrawnFound(conn: string, id: string): void;
   /** The placeholder bubble of a prompt being sent (`uuid` once ccrpc answers), or none. */
   setPending(conn: string, p: PendingPrompt | null): void;
   dismissNotice(conn: string, id: number): void;
@@ -204,11 +209,17 @@ export const useConnect = create<ConnectStore>((set, get) => {
         // claude exited before naming the Session: a Resume that did not start (e.g. it cannot find the Session).
         if (before.resumeOf && !before.sessionId) void failResume(conn, null);
         break;
-      case "turn_end":
+      case "turn_end": {
         if (useUi.getState().sessionId !== after.sessionId || document.hidden)
           update(conn, (c) => ({ ...c, unread: true }));
+        // Taken back before any reply: as in the terminal, the prompt goes back into the input box (an empty one).
+        const back = msg.aborted ? msg.restored_text : null;
+        const dk = draftKey(after);
+        const draft = get().drafts[dk] ?? EMPTY_DRAFT;
+        if (back && !draft.text.trim() && draft.images.length === 0) get().setDraft(dk, (d) => ({ ...d, text: back }));
         void get().refreshTasks(conn);
         break;
+      }
     }
   };
 
@@ -393,6 +404,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
     newError: null,
     live: null,
     drafts: loadDrafts(),
+    withdrawn: loadWithdrawn(),
     resuming: {},
     connecting: {},
     forking: {},
@@ -667,6 +679,16 @@ export const useConnect = create<ConnectStore>((set, get) => {
 
     setPending(conn, p) {
       update(conn, (c) => (c.pending === p ? c : { ...c, pending: p }));
+    },
+
+    withdrawnFound(conn, id) {
+      const sid = get().conns[conn]?.sessionId;
+      update(conn, (c) => (c.withdrawnText ? { ...c, withdrawnText: null } : c));
+      if (!sid) return;
+      const all = addWithdrawn(get().withdrawn, sid, id);
+      if (all === get().withdrawn) return;
+      set({ withdrawn: all });
+      saveWithdrawn(all);
     },
 
     rewoundSent(conn) {

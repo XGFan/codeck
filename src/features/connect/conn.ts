@@ -90,6 +90,11 @@ export interface ConnState {
    */
   rewound: Rewound | null;
   pending: PendingPrompt | null;
+  /**
+   * The text of the prompt Claude Code just put back in its input box (Esc before any reply, `turn_end`'s
+   * `restored_text`), until the transcript's prompt is found for it (then kept by id) or a new turn starts.
+   */
+  withdrawnText: string | null;
 }
 
 export function initial(
@@ -127,6 +132,7 @@ export function initial(
     rewinding: null,
     rewound: null,
     pending: null,
+    withdrawnText: null,
   };
 }
 
@@ -202,6 +208,8 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         progress: m.state === "busy" ? s.progress : null,
         // Prompts are picked while idle.
         picking: s.picking && m.state === "idle",
+        // A new turn: the last prompt is no longer the one taken back.
+        withdrawnText: m.state === "busy" ? null : s.withdrawnText,
         rewinding: s.rewinding && m.state === "waiting" ? { ...s.rewinding, waited: true } : s.rewinding,
       };
     }
@@ -211,7 +219,12 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         return { ...s, requests: s.requests.filter((r) => r.request_id !== m.tool_use_id) };
       return s;
     case "turn_end":
-      return { ...s, progress: null, lastTurn: m };
+      return {
+        ...s,
+        progress: null,
+        lastTurn: m,
+        withdrawnText: m.aborted && m.restored_text ? m.restored_text : null,
+      };
     case "permission_request":
     case "question":
     case "choice":

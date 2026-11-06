@@ -52,6 +52,8 @@ export function mainLinePrompts(nodes: Node[], branchPoints: BranchPoint[]): { i
   const ids: string[] = [];
   for (const n of nodes) {
     if (offMain.has(n.id)) return { ids, wholeMain: false };
+    // Hidden (shown with the hidden entries): a prompt taken back is not in the terminal's picker.
+    if (n.hidden) continue;
     // Typed prompts and slash / `!` commands: the terminal's Rewind picker lists them all.
     if (n.body.kind === "userPrompt" && (n.body.origin.kind === "human" || n.body.origin.kind === "command"))
       ids.push(n.id);

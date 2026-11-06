@@ -88,6 +88,8 @@ export interface TurnEndEvent {
   last_text: string | null;
   error: { kind: string; message: string } | null;
   aborted: boolean;
+  /** Aborted before any reply: Claude Code put the prompt (this text) back in its input box. */
+  restored_text?: string | null;
   background_tasks: unknown[];
   duration_ms: number | null;
   usage: Usage;

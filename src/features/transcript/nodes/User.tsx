@@ -81,6 +81,12 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         {forkable.has(node.id) && <ForkButton sessionId={sessionId} nodeId={node.id} />}
         <CopyButton text={o.kind === "command" ? commandLine(o.name, o.args) : body.text} />
         {branch && <BranchSwitcher point={branch} />}
+        {/* A typed prompt is hidden only when taken back (Esc before any reply): shown with the hidden entries. */}
+        {node.hidden && (
+          <span data-testid="prompt-withdrawn" title="回复前按了 Esc，提示词退回了输入框">
+            已撤回
+          </span>
+        )}
         <span>{clock(node.timestampMs)}</span>
       </div>
     </Anchor>

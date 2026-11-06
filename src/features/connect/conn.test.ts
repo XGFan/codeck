@@ -26,6 +26,16 @@ const end: TurnEndEvent = {
 };
 
 describe("conn reducer", () => {
+  it("remembers the prompt Claude Code took back until a new turn starts", () => {
+    const back: TurnEndEvent = { ...end, aborted: true, last_text: null, restored_text: "再看看" };
+    expect(fold([back]).withdrawnText).toBe("再看看");
+    // Not when the turn ended otherwise.
+    expect(fold([back, end]).withdrawnText).toBeNull();
+    expect(fold([{ ...end, aborted: true, restored_text: null }]).withdrawnText).toBeNull();
+    expect(fold([back, { type: "state", state: "busy" }]).withdrawnText).toBeNull();
+    expect(fold([back, { type: "state", state: "idle" }]).withdrawnText).toBe("再看看");
+  });
+
   it("keeps the feedback draft card from ready or its event until it is gone or the Session ended", () => {
     const draft = { title: "T", tool_use_id: "toolu_1", input: { title: "T", details: "- d" } };
     const ready = {

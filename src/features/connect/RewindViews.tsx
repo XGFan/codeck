@@ -11,6 +11,7 @@ import { MAIN_SCOPE, selectOverlayOpen, useUi } from "@/state/ui";
 import type { ConnState } from "./conn";
 import { NoticeCard } from "./Notice";
 import { mainLinePrompts, rewindable, rewoundLabel } from "./rewind";
+import { hideNodes, withdrawnPrompt } from "./withdrawn";
 import { connFor, isLive, useConnect } from "./store";
 
 export interface RewindView {
@@ -68,6 +69,32 @@ export function useRewindView(transcript: Transcript | null, rows: Row[]): Rewin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picking]);
   return view;
+}
+
+const NO_IDS: string[] = [];
+
+/**
+ * The main transcript as shown: the prompts taken back (Esc before any reply) hidden. One just taken back is found by
+ * the text ccrpc reported, then kept by id for the Session (the same text sent again shows).
+ */
+export function useShownTranscript(transcript: Transcript, main: boolean): Transcript {
+  const sessionId = main ? transcript.sessionId : null;
+  const conn = useConnect((s) => connFor(s, sessionId)?.conn ?? null);
+  const text = useConnect((s) => connFor(s, sessionId)?.withdrawnText ?? null);
+  const ids = useConnect((s) => (sessionId ? s.withdrawn[sessionId] : undefined) ?? NO_IDS);
+  const found = useConnect((s) => s.withdrawnFound);
+  // Among the prompts not taken back already (the same words sent again and taken back again).
+  const id = useMemo(
+    () => (text ? withdrawnPrompt(hideNodes(transcript.nodes, ids), text) : null),
+    [text, transcript.nodes, ids],
+  );
+  useEffect(() => {
+    if (id && conn) found(conn, id);
+  }, [id, conn, found]);
+  return useMemo(() => {
+    const nodes = hideNodes(transcript.nodes, id && !ids.includes(id) ? [...ids, id] : ids);
+    return nodes === transcript.nodes ? transcript : { ...transcript, nodes };
+  }, [transcript, ids, id]);
 }
 
 /** 「回退」 under a Main Line prompt: on hover, always while picking; only while the Session is idle. */
