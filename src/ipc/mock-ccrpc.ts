@@ -297,6 +297,9 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
         later(() => emit(id, { type: "session_exit" } as InMsg));
       }
       return;
+    case "answer_question":
+      // Not in the recording (a question emitted by a test): answered.
+      return respond(id, msg, { state: "busy" });
     default:
       return respond(id, msg, null, `录制里没有 ${String(msg.type)}`);
   }

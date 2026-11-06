@@ -19,6 +19,7 @@ export function useAnswer(c: ConnState) {
     // Answered: off screen now, so the next card gets the keys (ccrpc ends it on the tool's result).
     if (r.success) dropRequest(c.conn, String(msg.request_id));
     else setError(answerError(r.error));
+    return r.success;
   };
   return { busy, error, send };
 }

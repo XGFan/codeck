@@ -25,13 +25,21 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const [hover, setHover] = useState<[number, number] | null>(null);
   const [focus, setFocus] = useState<[number, number] | null>(null);
   const otherOn = (i: number) => otherChosen(other, useOther, i);
-  const ready = qs.every((_, i) => picked[i]?.length || otherOn(i));
+  const answeredAt = (i: number) => !!picked[i]?.length || otherOn(i);
+  const ready = qs.every((_, i) => answeredAt(i));
   const submit = () =>
     void send({
       type: "answer_question",
       request_id: r.request_id,
       answers: questionAnswers(qs, picked, other, useOther),
     });
+  // Claude Code's 「Chat about this」: the answers given so far go along (null: not answered), the model asks what to
+  // clarify; the reply is written in the input box.
+  const chat = async () => {
+    const answers = questionAnswers(qs, picked, other, useOther).map((a, i) => (answeredAt(i) ? a : null));
+    if (await send({ type: "answer_question", request_id: r.request_id, chat: true, answers }))
+      document.querySelector<HTMLElement>("[data-testid=connect-input]")?.focus();
+  };
   const at = <T,>(xs: T[], i: number, v: T) => xs.map((x, j) => (j === i ? v : x));
   const shown = (i: number, q: AskQuestion) => {
     const last = picked[i]?.at(-1);
@@ -154,6 +162,17 @@ export function QuestionForm({ r, c }: { r: QuestionEvent; c: ConnState }) {
       <div className="flex items-center gap-2">
         <Button size="sm" disabled={busy || !ready} onClick={submit} data-testid="submit-answer">
           提交
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          // As in Claude Code: from a question not answered (a single question's pick is its answer at once).
+          disabled={busy || ready}
+          title={ready ? "每道题都已作答" : "先不作答，和 Claude 聊聊这些问题"}
+          onClick={() => void chat()}
+          data-testid="chat-about-question"
+        >
+          先聊聊
         </Button>
         {error && <span className="text-[12px] text-error">{error}</span>}
       </div>

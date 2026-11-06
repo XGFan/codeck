@@ -437,6 +437,43 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     });
 });
 
+test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点回到输入框；每道题都答了时不能先聊聊", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "question",
+      request_id: "toolu_e2e_chat",
+      agent_id: "a1b2c3d4e5f6",
+      questions: [
+        { question: "用哪个颜色？", header: "颜色", multiSelect: false, options: [{ label: "红" }, { label: "蓝" }] },
+        {
+          question: "要哪些尺寸？",
+          header: "尺寸",
+          multiSelect: true,
+          options: [{ label: "S" }, { label: "M" }, { label: "L" }],
+        },
+      ],
+    }),
+  );
+  const q = page.getByTestId("question-card");
+  const option = (label: string) => q.getByTestId("question-option").filter({ hasText: label });
+  const chat = q.getByTestId("chat-about-question");
+  await option("红").click();
+  await option("S").click();
+  await expect(chat).toBeDisabled();
+  await option("红").click();
+  await option("L").click();
+  await chat.click();
+  await expect
+    .poll(() => lastSent(page, "answer_question"))
+    .toEqual(
+      expect.objectContaining({ request_id: "toolu_e2e_chat", chat: true, answers: [null, { options: ["S", "L"] }] }),
+    );
+  await expect(q).toHaveCount(0);
+  await expect(page.getByTestId("connect-input")).toBeFocused();
+});
+
 test("作答时选项旁显示 preview：先是第一项的，悬停、键盘焦点所在或选中的那项的", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");
