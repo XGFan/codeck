@@ -1195,6 +1195,18 @@ test("粘贴的图片插在光标处，悬停预览，随提示词按位置发�
   await expect(preview).toBeVisible();
   expect(await preview.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
   await expect(page.getByTestId("image-preview")).toContainText("图片 1 · 1×1");
+  // The pointer can move onto the preview (it stays), and a click on its image shows it large.
+  await page.getByTestId("image-preview-open").hover();
+  await page.waitForTimeout(400);
+  await expect(page.getByTestId("image-preview")).toBeVisible();
+  await page.getByTestId("image-preview-open").click();
+  await expect(page.getByTestId("image-large")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("image-large")).toHaveCount(0);
+  // Away from both: it goes.
+  await page.mouse.move(0, 0);
+  await expect(page.getByTestId("image-preview")).toHaveCount(0);
+  await expect(input).toBeFocused();
   await input.press("Meta+ArrowRight");
   await input.press("Enter");
   await expect

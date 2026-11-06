@@ -243,9 +243,21 @@ const defs: Def[] = [
     tokens: tok(9_400, 7_100, 480_000, 11_000),
     turns: [
       {
+        u: "列一下 Longhorn 里现在的卷和各自的副本数。",
+        a: "共 4 个卷：`postgres-data`（3 副本）、`grafana`（2 副本）、`loki`（2 副本）、`vaultwarden`（3 副本）。",
+      },
+      {
+        u: "postgres 那个卷快满了吗？",
+        a: "`postgres-data` 已用 18.6Gi / 20Gi（93%），建议扩容。",
+      },
+      {
         u: "把 postgres 的 PVC 从 20Gi 扩到 50Gi（现在的用量见 [Image #1]），并设置每日备份保留 7 份。",
         images: 1,
         a: "已修改 PVC 请求为 50Gi，并新增 `RecurringJob`（每日 03:00，retain=7）。",
+      },
+      {
+        u: "备份能恢复吗？做一次演练。",
+        a: "从昨天 03:00 的备份恢复到新卷 `postgres-restore-test`，挂到临时 Pod 里核对：表数量与行数和线上一致，`pg_dump` 校验通过。演练用的卷已删除。",
       },
     ],
   },

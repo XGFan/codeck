@@ -369,9 +369,30 @@ export function ImageThumb({ image, ctx }: { image: ImageRef; ctx: ToolCtx | nul
   );
 }
 
+/** Room the marker's preview takes (its image at most 150px high, the label, the padding). */
+const MARKER_PREVIEW_H = 200;
+
+/** Whether a preview of `height` fits above `el` inside its scrolling ancestor (the window when there is none). */
+function fitsAbove(el: HTMLElement, height: number): boolean {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if (o === "auto" || o === "scroll") {
+      const r = p.getBoundingClientRect();
+      top = Math.max(top, r.top);
+      bottom = Math.min(bottom, r.bottom);
+      break;
+    }
+  }
+  const r = el.getBoundingClientRect();
+  // Below only when there is more room there.
+  return r.top - top >= height || r.top - top >= bottom - r.bottom;
+}
+
 /**
  * An image where a prompt has it (`[Image #n]`, as Claude Code writes it), as a block in the line: hovered, a
- * preview above it; clicked, the image large.
+ * preview above it (below when there is no room above); clicked, the image large.
  */
 export function ImageMarker({
   image,
@@ -383,6 +404,7 @@ export function ImageMarker({
   ctx: ToolCtx | null;
 }) {
   const [hover, setHover] = useState(false);
+  const [below, setBelow] = useState(false);
   const [open, setOpen] = useState(false);
   const q = useImage(image && ctx && (hover || open) ? { sessionId: ctx.sessionId, scope: ctx.scope, image } : null);
   const src = q.data ? `data:${q.data.mediaType};base64,${q.data.dataBase64}` : null;
@@ -392,7 +414,10 @@ export function ImageMarker({
         type="button"
         data-testid="prompt-image"
         aria-label={`放大${label}`}
-        onPointerEnter={() => setHover(true)}
+        onPointerEnter={(e) => {
+          setBelow(!fitsAbove(e.currentTarget, MARKER_PREVIEW_H));
+          setHover(true);
+        }}
         onPointerLeave={() => setHover(false)}
         onClick={() => src && setOpen(true)}
         className="mx-[5px] inline-flex items-center gap-1 rounded-[5px] border border-border bg-ground px-1.5 align-[1px] text-[12.5px] leading-[20px] text-text hover:border-accent-border hover:text-accent"
@@ -404,7 +429,11 @@ export function ImageMarker({
         <span
           role="tooltip"
           data-testid="prompt-image-preview"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1.5 flex w-[240px] flex-col gap-1 rounded-[10px] border border-border bg-ground p-2 text-[11px] text-secondary shadow-[0_12px_32px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]"
+          data-below={below || undefined}
+          className={cn(
+            "pointer-events-none absolute left-0 z-30 flex w-[240px] flex-col gap-1 rounded-[10px] border border-border bg-ground p-2 text-[11px] text-secondary shadow-[0_12px_32px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]",
+            below ? "top-full mt-1.5" : "bottom-full mb-1.5",
+          )}
         >
           {src ? (
             <img src={src} alt="" className="max-h-[150px] w-full rounded-md object-contain" />

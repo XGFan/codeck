@@ -12,12 +12,12 @@ export const OPEN = "\u2062";
 export const CLOSE = "\u2063";
 
 /**
- * What is between the marks, piece by piece (as regular expressions): a THREE-PER-EM SPACE (the gap), WORD JOINER,
+ * What is between the marks, piece by piece (as regular expressions): an EN SPACE (the gap), WORD JOINER,
  * ideographic space, WORD JOINER, 图, WORD JOINER, 片, NO-BREAK SPACE, the number, NARROW NO-BREAK SPACE, WORD
  * JOINER, the gap again.
  */
 const PIECES = [
-  "\u2004",
+  "\u2002",
   "\u2060",
   "\u3000",
   "\u2060",
@@ -28,13 +28,13 @@ const PIECES = [
   String.raw`(\d+)`,
   "\u202f",
   "\u2060",
-  "\u2004",
+  "\u2002",
 ];
 /** Characters before the block (the start mark, the gap, a joiner) and after it (a joiner, the gap, the end mark). */
 export const LEAD = 3;
 export const TRAIL = 3;
 
-export const token = (n: number) => `${OPEN}\u2004\u2060\u3000\u2060图\u2060片\u00a0${n}\u202f\u2060\u2004${CLOSE}`;
+export const token = (n: number) => `${OPEN}\u2002\u2060\u3000\u2060图\u2060片\u00a0${n}\u202f\u2060\u2002${CLOSE}`;
 
 const TOKEN_RE = new RegExp(`${OPEN}${PIECES.join("")}${CLOSE}`, "g");
 /** What is left of a token that lost its end (any start of it) or its start (any end of it). */
@@ -42,9 +42,12 @@ const loose = PIECES.map((p) => (p.startsWith("(") ? String.raw`\d+` : p));
 const HEAD_RE = new RegExp(OPEN + loose.reduceRight((acc, p) => `(?:${p}${acc})?`, ""), "g");
 const TAIL_RE = new RegExp(loose.reduce((acc, p) => `(?:${acc}${p})?`, "") + CLOSE, "g");
 
-/** The token as saved before it had gaps: drafts from then read as today's. */
+/** The token as saved before it had gaps: drafts from then read as today's (as are those of the next one below). */
 const GAPLESS_RE = /\u2062\u3000\u2060图\u2060片\u00a0(\d+)\u202f\u2063/g;
-export const upgradeTokens = (text: string) => text.replace(GAPLESS_RE, (_, n: string) => token(Number(n)));
+/** The token as saved while its gaps were THREE-PER-EM SPACEs. */
+const NARROW_RE = /\u2062\u2004\u2060\u3000\u2060图\u2060片\u00a0(\d+)\u202f\u2060\u2004\u2063/g;
+export const upgradeTokens = (text: string) =>
+  text.replace(GAPLESS_RE, (_, n: string) => token(Number(n))).replace(NARROW_RE, (_, n: string) => token(Number(n)));
 
 export interface Tok {
   start: number;

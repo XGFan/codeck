@@ -1,5 +1,6 @@
 import { ImageIcon } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/cn";
 import type { DraftImage } from "./drafts";
 import { LEAD, snap, tokensIn, TRAIL, type Tok } from "./imageTokens";
@@ -44,7 +45,9 @@ export function MirrorText({
         key={`t${t.start}`}
         data-chip={t.n}
         className={cn(
-          "relative rounded-[5px] bg-code text-text shadow-[0_0_0_1px_var(--color-border)]",
+          // Room inside the block, taken back by the margins: the letters stay where the textarea has them (the
+          // padding reaches into the gaps around the block).
+          "relative -mx-[3px] rounded-[5px] bg-code px-[3px] text-text shadow-[0_0_0_1px_var(--color-border)]",
           selected === t.n && "bg-selection text-accent shadow-[0_0_0_1.5px_var(--color-accent)]",
           ghost && "text-transparent",
         )}
@@ -53,7 +56,7 @@ export function MirrorText({
         <ImageIcon
           size={12}
           strokeWidth={1.8}
-          className="pointer-events-none absolute top-1/2 left-[1px] -translate-y-1/2 text-secondary"
+          className="pointer-events-none absolute top-1/2 left-[4px] -translate-y-1/2 text-secondary"
           aria-hidden
         />
         {text.slice(t.start + LEAD + 1, t.end - TRAIL)}
@@ -121,6 +124,15 @@ export function ChipLayer({
 }) {
   const [chips, setChips] = useState<ChipBox[]>([]);
   const [hover, setHover] = useState<number | null>(null);
+  // The pointer leaving a token or its preview hides the preview a moment later: time to cross the gap onto it.
+  const hideTimer = useRef<number | undefined>(undefined);
+  const keep = () => window.clearTimeout(hideTimer.current);
+  const hideSoon = () => {
+    keep();
+    hideTimer.current = window.setTimeout(() => setHover(null), HIDE_DELAY);
+  };
+  useEffect(() => keep, []);
+  const [large, setLarge] = useState<{ n: number; img: DraftImage } | null>(null);
   const [drag, setDrag] = useState<{ tok: Tok; x: number; y: number; to: number | null; line: DOMRect | null } | null>(
     null,
   );
@@ -200,6 +212,7 @@ export function ChipLayer({
     const onMove = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
       moved = true;
+      keep();
       setHover(null);
       const d = dropAt(ev.clientX, ev.clientY);
       setDrag({ tok: c.tok, x: ev.clientX, y: ev.clientY, to: d?.to ?? null, line: d?.line ?? null });
@@ -253,8 +266,12 @@ export function ChipLayer({
           aria-label={`图片 ${c.tok.n}`}
           data-testid="image-chip"
           data-n={c.tok.n}
-          onPointerEnter={() => !dragRef.current && setHover(c.tok.n)}
-          onPointerLeave={() => setHover((h) => (h === c.tok.n ? null : h))}
+          onPointerEnter={() => {
+            if (dragRef.current) return;
+            keep();
+            setHover(c.tok.n);
+          }}
+          onPointerLeave={hideSoon}
           onPointerDown={(e) => start(c, e)}
           className={cn(
             "absolute z-10 cursor-grab rounded-[5px]",
@@ -263,7 +280,40 @@ export function ChipLayer({
           style={{ left: c.left, top: c.top, width: c.width, height: c.height }}
         />
       ))}
-      {shown && img && <Preview chip={shown} img={img} />}
+      {shown && img && (
+        <Preview
+          chip={shown}
+          img={img}
+          onEnter={keep}
+          onLeave={hideSoon}
+          onOpen={() => {
+            keep();
+            setHover(null);
+            setLarge({ n: shown.tok.n, img });
+          }}
+        />
+      )}
+      <Dialog open={!!large} onOpenChange={(o) => !o && setLarge(null)}>
+        <DialogContent
+          className="flex max-h-[90vh] w-auto max-w-[90vw] items-center justify-center p-2"
+          // Back to the box (the preview it was opened from is gone).
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            input.current?.focus();
+          }}
+        >
+          <DialogTitle className="sr-only">图片预览</DialogTitle>
+          <DialogDescription className="sr-only">图片 {large?.n}</DialogDescription>
+          {large && (
+            <img
+              data-testid="image-large"
+              src={large.img.url}
+              alt=""
+              className="max-h-[85vh] max-w-[88vw] object-contain"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
       {drag?.line && (
         <span
           data-testid="image-drop"
@@ -286,28 +336,54 @@ export function ChipLayer({
   );
 }
 
-/** A hovered token's image, above it. */
-function Preview({ chip, img }: { chip: ChipBox; img: DraftImage }) {
+const HIDE_DELAY = 200;
+
+/** A hovered token's image, above it; the pointer can move onto it, a click on the image shows it large. */
+function Preview({
+  chip,
+  img,
+  onEnter,
+  onLeave,
+  onOpen,
+}: {
+  chip: ChipBox;
+  img: DraftImage;
+  onEnter: () => void;
+  onLeave: () => void;
+  onOpen: () => void;
+}) {
   const [size, setSize] = useState<string | null>(null);
   return (
     <div
       role="tooltip"
       data-testid="image-preview"
-      className="pointer-events-none absolute z-30 flex w-[280px] flex-col gap-1.5 rounded-[10px] border border-border bg-ground p-2 shadow-[0_12px_32px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]"
+      onPointerEnter={onEnter}
+      onPointerLeave={onLeave}
+      // Not a click into the box below: the caret stays where it is.
+      onPointerDown={(e) => e.preventDefault()}
+      className="absolute z-30 flex w-[280px] flex-col gap-1.5 rounded-[10px] border border-border bg-ground p-2 shadow-[0_12px_32px_rgba(0,0,0,0.16),0_1px_3px_rgba(0,0,0,0.08)]"
       style={{ left: Math.max(0, chip.left - 20), bottom: `calc(100% - ${chip.top}px + 6px)` }}
     >
-      <img
-        src={img.url}
-        alt=""
-        onLoad={(e) => setSize(`${e.currentTarget.naturalWidth}×${e.currentTarget.naturalHeight}`)}
-        className="max-h-[164px] w-full rounded-md border border-border object-contain"
-      />
+      <button
+        type="button"
+        aria-label="放大图片"
+        data-testid="image-preview-open"
+        onClick={onOpen}
+        className="cursor-zoom-in"
+      >
+        <img
+          src={img.url}
+          alt=""
+          onLoad={(e) => setSize(`${e.currentTarget.naturalWidth}×${e.currentTarget.naturalHeight}`)}
+          className="max-h-[164px] w-full rounded-md border border-border object-contain"
+        />
+      </button>
       <div className="flex justify-between text-[11px] text-secondary">
         <span>
           图片 {chip.tok.n}
           {size && ` · ${size}`}
         </span>
-        <span>拖动移位置 · ⌫ 删除</span>
+        <span>点图放大 · 拖动移位置 · ⌫ 删除</span>
       </div>
     </div>
   );

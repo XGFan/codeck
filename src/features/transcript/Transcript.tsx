@@ -244,7 +244,8 @@ export function TranscriptList({
                   data-row={row.kind}
                   data-rewound={rewound || undefined}
                   className={cn(
-                    "absolute top-0 left-0 w-full",
+                    // A preview open in the row (an image marker's, which may hang below it) over the rows after it.
+                    "absolute top-0 left-0 w-full has-[[role=tooltip]]:z-10",
                     v.index === 0 ? "" : isContinuation(row) ? "pt-2" : "pt-[18px]",
                     rewound && v.index > dimFrom && "opacity-[.38]",
                   )}

@@ -67,6 +67,47 @@ test("你的消息里的 [Image #n] 显示成图片块：悬停预览、点击�
   await expect(page.getByTestId("image-large")).toBeVisible();
 });
 
+test("对话记录里的图片块离顶端太近时，预览出现在下方，不被裁掉也不被下一行盖住", async ({ page }) => {
+  await openSession(page, "Longhorn 卷扩容与备份策略");
+  const transcript = page.getByTestId("transcript");
+  const chip = page.getByTestId("user-bubble").filter({ hasText: "PVC" }).getByTestId("prompt-image");
+  const preview = page.getByTestId("prompt-image-preview");
+  // Room above: the preview above the block.
+  const top = await transcript.evaluate((e) => e.getBoundingClientRect().top);
+  await chip.evaluate((e, top) => {
+    const s = e.closest("[data-testid=transcript]")!;
+    s.scrollTop += e.getBoundingClientRect().top - top - 300;
+  }, top);
+  await chip.hover();
+  await expect(preview.locator("img")).toBeVisible();
+  await expect(preview).not.toHaveAttribute("data-below");
+  await page.mouse.move(0, 0);
+  // Right under the top edge (a short window, so the transcript scrolls that far): below it, and drawn over what
+  // follows.
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await chip.evaluate((e, top) => {
+    const s = e.closest("[data-testid=transcript]")!;
+    s.scrollTop += e.getBoundingClientRect().top - top - 20;
+  }, top);
+  expect((await chip.evaluate((e) => e.getBoundingClientRect().top)) - top).toBeLessThan(80);
+  await chip.hover();
+  await expect(preview).toHaveAttribute("data-below", "true");
+  await expect(preview.locator("img")).toBeVisible();
+  const box = (await preview.boundingBox())!;
+  expect(box.y).toBeGreaterThan(top);
+  // Hit-tested with the preview taking the pointer for a moment (it lets the pointer through).
+  const onTop = await preview.evaluate(
+    (p, { x, y }) => {
+      p.style.pointerEvents = "auto";
+      const hit = !!document.elementFromPoint(x, y)?.closest("[data-testid=prompt-image-preview]");
+      p.style.pointerEvents = "";
+      return hit;
+    },
+    { x: box.x + box.width / 2, y: box.y + box.height - 8 },
+  );
+  expect(onTop).toBe(true);
+});
+
 test("图片缩略图渲染并可放大", async ({ page }) => {
   await openRich(page);
   const read = page.locator('[data-tool="Read"]').filter({ hasText: "grafana-ratelimit.png" });

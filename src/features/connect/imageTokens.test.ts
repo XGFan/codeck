@@ -60,6 +60,12 @@ describe("图片标记", () => {
     expect(upgradeTokens(gapless)).toBe(`前${token(3)}后`);
   });
 
+  it("reads a draft saved while the gaps were narrower as today's", () => {
+    const narrow = "前\u2062\u2004\u2060\u3000\u2060图\u2060片\u00a03\u202f\u2060\u2004\u2063后";
+    expect(upgradeTokens(narrow)).toBe(`前${token(3)}后`);
+    expect(tokensIn(upgradeTokens(narrow))).toHaveLength(1);
+  });
+
   it("a token has no place to break a line", () => {
     // No ordinary space, and word joiners between its letters.
     expect(token(12)).not.toMatch(/ /);
