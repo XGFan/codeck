@@ -85,8 +85,9 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 - `src/queries/`：TanStack Query hooks 与 `queryKeys`；`events.ts` 订阅后端事件并做节流失效（实时追随、统计刷新）。
 - `src/state/ui.ts`：zustand 的 UI 状态；按 Session 的状态（branchChoices、panelStack、⌘F、展开状态等）在切换 Session 时重置；展开状态的键统一由 `features/transcript/keys.ts` 生成；栏的收起状态（`collapsed`）是全局的，存 localStorage。
 - 配色：`lib/theme.ts` 按设置（自动 / 浅色 / 暗色，存 localStorage）在 `<html>` 上写 `data-theme`，`index.css` 的暗色变量、Tailwind 的 `dark:`（`@custom-variant`）、图表与 Shiki 都按它，不直接用 `prefers-color-scheme`；`public/theme-init.js` 在首次绘制前套用；窗口本身经 Tauri 的 `setTheme` 跟着切换。
+- 尺寸：`index.css` 把根字号设为 13px，Tailwind 按 rem 的尺寸类会跟着缩小（`h-8` 是 26px、`h-7` 是 22.75px）；要和像素对齐的地方（侧栏的行高、和计算挂钩的高度、图片块）写成 `h-[28px]` 这样的像素值。
 - 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
-- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls --watch` 的启停在 `lsWatch.ts`，草稿持久化在 `drafts.ts`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
+- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls --watch` 的启停在 `lsWatch.ts`，草稿持久化在 `drafts.ts`；输入框里的图片块是文本框里带不可见起止符的一小段文字（`imageTokens.ts`，纯函数：编号、拆成 `parts`、清理残缺块），由文本框下面的副本画成整块、悬停与拖动在 `ImageChips.tsx`。侧栏（Live / Project / Recent）在 `features/sessions/`：分组、展开、定位与高度分配是 `groups.ts` 里的纯函数，组件在 `Sidebar.tsx`，已添加的 Project 存在 settings.json 的 `sidebarProjects`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
 
 ## 约束
 
