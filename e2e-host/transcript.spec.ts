@@ -19,7 +19,13 @@ test("/v1/rpc 同源：list_sessions 返回 fixture，local 方法被拒", async
   await page.goto(page_url);
   const out = await page.evaluate(async () => {
     const call = async (method: string, args: unknown) =>
-      (await fetch("/v1/rpc", { method: "POST", body: JSON.stringify({ method, args }) })).json();
+      (
+        await fetch("/v1/rpc", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ method, args }),
+        })
+      ).json();
     const query = { query: { projectIds: [], sort: "lastActive", descending: true } };
     return { list: await call("list_sessions", query), local: await call("set_data_root", { path: null }) };
   });

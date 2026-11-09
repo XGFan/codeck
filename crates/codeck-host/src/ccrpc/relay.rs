@@ -897,8 +897,10 @@ fn stop_ls_watch(mut w: LsWatch) {
     });
 }
 
+/// Letters, digits and `-`, not first (it goes on ccrpc's command line: no option).
 fn valid_holder_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    id.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// `--hidden` when the setting asks for new Panes hidden.
@@ -1456,6 +1458,16 @@ printf '%s\n' '{"dir":"/a","records":[{"file":"/a/2.json","at":"2026-11-06T03:38
         let exit = exit_once(&rx, &conn, Duration::from_secs(10));
         assert_eq!(exit.code, Some(3));
         assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn holder_ids_are_alphanumeric_with_inner_dashes() {
+        for ok in ["m9e3766782bef", "H1", "a-b-1"] {
+            assert!(valid_holder_id(ok), "{ok}");
+        }
+        for bad in ["", "-h", "--help", "a b", "a/b", "a;b", "é"] {
+            assert!(!valid_holder_id(bad), "{bad}");
+        }
     }
 
     #[test]

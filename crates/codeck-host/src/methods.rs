@@ -65,15 +65,15 @@ macro_rules! for_each_method {
             local fn ccrpc_set_pane_hidden(holder_id: String, hidden: bool) -> ();
             /// Starts (`on`) or stops `ccrpc ls --json --watch`; its lists come as `CcrpcLsEvent`, its end by
             /// itself as `CcrpcLsEndedEvent`. Starting again restarts it (the current list comes at once).
-            remote fn ccrpc_watch_sessions(on: bool) -> ();
-            remote fn ccrpc_connect(holder_id: String) -> String;
+            local fn ccrpc_watch_sessions(on: bool) -> ();
+            local fn ccrpc_connect(holder_id: String) -> String;
             remote fn ccrpc_new(cwd: String) -> String;
             /// Resume: starts the ended Session `session_id` again in a new Pane (`claude --resume`) and connects to it.
             remote fn ccrpc_resume(session_id: String, cwd: String) -> String;
             /// Fork: starts a Fork of the Session `session_id` in a new Pane (before the Main Line prompt `at`, or
             /// all of it), named `title`, and connects to it; the result comes as ccrpc's `fork` event.
             remote fn ccrpc_fork(session_id: String, cwd: String, at: Option<String>, restore: Option<String>, title: String) -> String;
-            remote fn ccrpc_send(conn: String, line: String) -> ();
+            local fn ccrpc_send(conn: String, line: String) -> ();
             remote fn ccrpc_disconnect(conn: String) -> ();
             local fn ccrpc_gui_log(conn: Option<String>, text: String) -> ();
             /// The connection's log directory, `None` once its ccrpc has exited.

@@ -123,6 +123,21 @@ fn main() {
     };
     let ifaces = net::interfaces().unwrap_or_else(|e| fail(format!("读不了网络接口：{e}")));
     let subnets = net::listeners(&args.listen, &ifaces).unwrap_or_else(|e| fail(e));
+    for s in &subnets {
+        let name = ifaces
+            .iter()
+            .find(|i| i.addr == s.addr)
+            .map_or("?", |i| i.name.as_str());
+        tracing::info!("interface {name}: {}/{}", s.addr, s.prefix_len());
+        if !s.addr.is_private() && !s.addr.is_loopback() {
+            tracing::warn!(
+                "{} is neither a private nor a loopback address: peers in {}/{} reach this Host without authentication",
+                s.addr,
+                s.addr,
+                s.prefix_len()
+            );
+        }
+    }
     let state_dir = args.state_dir.unwrap_or_else(default_state_dir);
     let web_dir = args.web_dir.unwrap_or_else(default_web_dir);
     let (events, sink) = server::event_channel();

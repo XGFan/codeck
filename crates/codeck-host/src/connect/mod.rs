@@ -138,17 +138,16 @@ impl ConnectHub {
         self.changed(&mut inner, conn);
     }
 
-    /// False when the line is the Host's own (a response to an `h<n>` command): not relayed.
+    /// False when the line is the Host's own (the response to a command it sent and still waits for): not
+    /// relayed.
     fn on_line(self: &Arc<Self>, conn: &str, line: &str) -> bool {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return true;
         };
         if v["type"] == "response" {
-            if let Some(id) = v["id"].as_str().filter(|id| id.starts_with('h')) {
-                self.on_response(id, v.clone());
-                return false;
-            }
-            return true;
+            return !v["id"]
+                .as_str()
+                .is_some_and(|id| self.on_response(id, v.clone()));
         }
         let mut inner = self.inner.lock();
         if inner.gone.contains(conn) {
@@ -195,10 +194,11 @@ impl ConnectHub {
         });
     }
 
-    fn on_response(self: &Arc<Self>, id: &str, r: Value) {
+    /// The response to a command the Host sent (`id` pending): handled here, true. Otherwise false.
+    fn on_response(self: &Arc<Self>, id: &str, r: Value) -> bool {
         let mut inner = self.inner.lock();
         let Some(p) = inner.pending.remove(id) else {
-            return;
+            return false;
         };
         if r["success"] == true
             && let Some(e) = inner.conns.get_mut(&p.conn)
@@ -229,6 +229,7 @@ impl ConnectHub {
         if let Some(w) = p.waiter {
             let _ = w.send(r);
         }
+        true
     }
 
     fn on_exit(&self, conn: &str, code: Option<i32>, stderr: String) {
@@ -244,13 +245,17 @@ impl ConnectHub {
             .iter()
             .filter_map(|id| inner.pending.remove(id))
             .collect();
-        if let Some(mut e) = inner.conns.remove(conn) {
-            e.state.proc_exit(code, stderr);
-            (self.events)(HostEvent::ConnectState(Box::new(e.state)));
-            (self.events)(HostEvent::ConnectRemoved {
-                conn: conn.to_string(),
-            });
-        }
+        // Exited before its first line or its registration (e.g. `attach` refused, only stderr): still said,
+        // so a client learns why.
+        let mut state = inner
+            .conns
+            .remove(conn)
+            .map_or_else(|| ConnState::new(conn, None), |e| e.state);
+        state.proc_exit(code, stderr);
+        (self.events)(HostEvent::ConnectState(Box::new(state)));
+        (self.events)(HostEvent::ConnectRemoved {
+            conn: conn.to_string(),
+        });
         drop(inner);
         for p in waiting {
             if let Some(w) = p.waiter {
@@ -304,17 +309,18 @@ impl ConnectHub {
         v
     }
 
-    /// The live connection to `holder_id`, if any.
+    /// The connection to `holder_id`, if any: a live one first (its Session still running), then the newest.
     fn conn_for(&self, holder_id: &str) -> Option<String> {
-        let inner = self.inner.lock();
-        let mut c: Vec<_> = inner
+        // `c<n>`, numbered as started.
+        let seq = |conn: &str| conn[1..].parse::<u64>().unwrap_or(0);
+        self.inner
+            .lock()
             .conns
             .values()
-            .filter(|e| e.state.holder_id.as_deref() == Some(holder_id))
-            .map(|e| e.state.conn.clone())
-            .collect();
-        c.sort();
-        c.pop()
+            .map(|e| &e.state)
+            .filter(|s| s.holder_id.as_deref() == Some(holder_id))
+            .max_by_key(|s| (s.proc_exit.is_none() && !s.session_exited, seq(&s.conn)))
+            .map(|s| s.conn.clone())
     }
 
     /// Sends `command` (an object with `type`) to the connection's ccrpc with an id of the Host's and returns
@@ -377,11 +383,6 @@ impl ConnectHub {
     /// `ccrpc ls --json --watch` printed a list, or ended (why).
     pub fn set_ls(&self, ls: Result<String, String>) {
         *self.ls.lock() = ls.map_err(Some);
-    }
-
-    /// The latest `ccrpc ls --json` list, as ccrpc printed it.
-    pub fn latest_ls(&self) -> Option<String> {
-        self.ls.lock().as_ref().ok().cloned()
     }
 
     fn ls_entries(&self) -> CmdResult<Vec<Value>> {
@@ -691,6 +692,62 @@ mod tests {
         }
         // The first at once, the rest as one once the throttle allows: the last.
         assert_eq!(states, ["busy", "idle"]);
+    }
+
+    #[test]
+    fn an_exit_before_any_line_or_registration_is_still_said() {
+        let f = fixture();
+        (f.sink)(Out::Exit(relay::ExitEvent {
+            conn: "c3".into(),
+            code: Some(2),
+            stderr: "ccrpc: 找不到 Holder".into(),
+        }));
+        let events = f.drain();
+        let names: Vec<_> = events.iter().map(HostEvent::name).collect();
+        assert_eq!(
+            names,
+            [
+                "connect-state-event",
+                "connect-removed-event",
+                "ccrpc-exit-event"
+            ]
+        );
+        let p = events[0].payload();
+        assert_eq!(p["conn"], "c3");
+        assert_eq!(
+            p["procExit"],
+            json!({ "code": 2, "stderr": "ccrpc: 找不到 Holder" })
+        );
+        // The registration after the spawn returned comes too late: nothing comes back.
+        f.hub.register("c3", Some("H1".into()));
+        assert!(f.hub.states().is_empty());
+        assert!(f.drain().is_empty());
+    }
+
+    #[test]
+    fn responses_to_ids_the_host_did_not_send_are_relayed() {
+        let f = fixture();
+        f.hub.register("c1", None);
+        f.drain();
+        f.line(json!({ "type": "response", "id": "h77", "command": "abort", "success": true }));
+        assert!(matches!(&f.drain()[..], [HostEvent::CcrpcLine { .. }]));
+    }
+
+    #[test]
+    fn conn_for_prefers_a_live_connection_then_the_newest() {
+        let f = fixture();
+        for c in ["c9", "c10"] {
+            f.hub.register(c, Some("H1".into()));
+        }
+        f.hub.register("c11", Some("H2".into()));
+        assert_eq!(f.hub.conn_for("H1").as_deref(), Some("c10"));
+        // c10's Session ended: c9 is still live.
+        (f.sink)(Out::Line {
+            conn: "c10".into(),
+            line: json!({ "type": "session_exit" }).to_string(),
+        });
+        assert_eq!(f.hub.conn_for("H1").as_deref(), Some("c9"));
+        assert_eq!(f.hub.conn_for("H3"), None);
     }
 
     #[test]

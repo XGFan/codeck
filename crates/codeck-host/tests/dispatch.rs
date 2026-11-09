@@ -35,6 +35,7 @@ async fn dispatches_json_calls_and_refuses_local_methods_remotely() {
             ccrpc_logs: Some(state.path().join("logs")),
             images: Some(state.path().join("images")),
             data_root: Some(root.path().to_path_buf()),
+            refresh_prices: false,
             ..HostConfig::desktop()
         },
         Arc::new(|_| {}),

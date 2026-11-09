@@ -34,7 +34,6 @@ pub mod types {
 pub type PathAction = Arc<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
 
 /// Where a Host keeps its state, and what it can do on the machine it runs on.
-#[derive(Clone)]
 pub struct HostConfig {
     /// The index and the cached price list.
     pub cache_dir: PathBuf,
@@ -54,6 +53,8 @@ pub struct HostConfig {
     /// ADR-0011): the `connect_*` / `ccrpc_ls` methods and `ConnectState` events. Off on the desktop app, whose
     /// front end does this itself.
     pub track_connect: bool,
+    /// Download LiteLLM's price list at start (tests turn it off); the periodic refresh runs regardless.
+    pub refresh_prices: bool,
 }
 
 impl HostConfig {
@@ -68,6 +69,7 @@ impl HostConfig {
             reveal_path: None,
             open_path: None,
             track_connect: false,
+            refresh_prices: true,
         }
     }
 }
@@ -102,7 +104,9 @@ impl Host {
         );
         // Starts the watcher, then FullScan -> TextBacklog.
         jobs.send(worker::Job::SetRoot);
-        jobs.send(worker::Job::RefreshPrices);
+        if config.refresh_prices {
+            jobs.send(worker::Job::RefreshPrices);
+        }
         let ccrpc = ccrpc::CcrpcState::new(config.ccrpc_logs.clone(), config.images.clone());
         let connect = config.track_connect.then(|| {
             let hub = connect::ConnectHub::new(events.clone(), ccrpc.writer());
@@ -116,10 +120,6 @@ impl Host {
             events,
             config,
         }))
-    }
-
-    pub fn config(&self) -> &HostConfig {
-        &self.config
     }
 
     /// Closes every ccrpc (the process is quitting); the Sessions themselves keep running.

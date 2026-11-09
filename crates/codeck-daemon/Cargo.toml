@@ -22,7 +22,7 @@ libc.workspace = true
 dirs.workspace = true
 axum.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "signal", "macros", "time"] }
-tower-http = { workspace = true, features = ["fs"] }
+tower-http = { workspace = true, features = ["fs", "set-header"] }
 
 [dev-dependencies]
 tempfile.workspace = true

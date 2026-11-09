@@ -72,13 +72,46 @@ pub fn interfaces() -> std::io::Result<Vec<Iface>> {
     Ok(out)
 }
 
+/// Interfaces of VPNs, virtual machines, containers and Apple's peer-to-peer links, by name prefix: private
+/// addresses there are not the LAN, so they are not listened on by default.
+const VIRTUAL_IFACES: &[&str] = &[
+    "utun",
+    "bridge",
+    "vmnet",
+    "vboxnet",
+    "docker",
+    "veth",
+    "virbr",
+    "br-",
+    "tun",
+    "tap",
+    "wg",
+    "tailscale",
+    "ipsec",
+    "ppp",
+    "feth",
+    "llw",
+    "awdl",
+    "anpi",
+];
+
+fn is_virtual(name: &str) -> bool {
+    VIRTUAL_IFACES.iter().any(|p| name.starts_with(p))
+}
+
 /// What to listen on: each of `explicit` (a loopback address answers 127.0.0.0/8, another one must be an
-/// interface's), or by default every up, non-loopback, private (RFC 1918) interface address.
+/// interface's), or by default every up, non-loopback, private (RFC 1918) address of a physical interface
+/// (not [`VIRTUAL_IFACES`]).
 pub fn listeners(explicit: &[Ipv4Addr], ifaces: &[Iface]) -> Result<Vec<Subnet>, String> {
     let mut out: Vec<Subnet> = Vec::new();
     if explicit.is_empty() {
         for i in ifaces {
-            if i.up && !i.loopback && i.addr.is_private() && !out.iter().any(|s| s.addr == i.addr) {
+            if i.up
+                && !i.loopback
+                && i.addr.is_private()
+                && !is_virtual(&i.name)
+                && !out.iter().any(|s| s.addr == i.addr)
+            {
                 out.push(Subnet {
                     addr: i.addr,
                     mask: i.mask,
@@ -118,6 +151,25 @@ pub fn peer_allowed(peer: IpAddr, subnet: &Subnet) -> bool {
     }
 }
 
+/// The `Host` header names this listener: its IPv4 address (a loopback listener: any 127.x or
+/// `localhost`), with or without a port. Any other name may be a DNS rebinding (a page of another site
+/// whose name now points here), so it is refused, as is a request without `Host`.
+pub fn host_allowed(host: Option<&str>, subnet: &Subnet) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
+        Some(_) => return false,
+        None => host,
+    };
+    let loopback = subnet.addr.is_loopback();
+    match name.parse::<Ipv4Addr>() {
+        Ok(ip) => ip == subnet.addr || (loopback && ip.is_loopback()),
+        Err(_) => loopback && name.eq_ignore_ascii_case("localhost"),
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum OriginCheck {
     /// No `Origin` (not a browser) or this daemon's own page.
@@ -127,7 +179,8 @@ pub enum OriginCheck {
     Deny,
 }
 
-/// `origin` is the request's `Origin` header, `host` its `Host` header.
+/// `origin` is the request's `Origin` header, `host` its `Host` header (already checked by [`host_allowed`],
+/// so an origin equal to it is this daemon's own page).
 pub fn check_origin(origin: Option<&str>, host: Option<&str>, allowed: &[String]) -> OriginCheck {
     let Some(origin) = origin else {
         return OriginCheck::Allow;
@@ -182,6 +235,93 @@ mod tests {
             ]
         );
         assert!(listeners(&[], &ifaces[..1]).is_err());
+    }
+
+    #[test]
+    fn default_listeners_skip_vpn_vm_and_container_interfaces() {
+        let mut ifaces: Vec<Iface> = [
+            "utun4",
+            "bridge100",
+            "vmnet8",
+            "vboxnet0",
+            "docker0",
+            "veth12ab",
+            "virbr0",
+            "br-1a2b",
+            "tun0",
+            "tap0",
+            "wg0",
+            "tailscale0",
+            "ipsec0",
+            "ppp0",
+            "feth0",
+            "llw0",
+            "awdl0",
+            "anpi0",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(n, name)| iface(name, [10, 9, n as u8, 1], [255, 255, 255, 0], true, false))
+        .collect();
+        assert!(listeners(&[], &ifaces).is_err());
+        ifaces.push(iface(
+            "en0",
+            [192, 168, 1, 20],
+            [255, 255, 255, 0],
+            true,
+            false,
+        ));
+        ifaces.push(iface("eth0", [10, 0, 0, 5], [255, 0, 0, 0], true, false));
+        let got: Vec<Ipv4Addr> = listeners(&[], &ifaces)
+            .unwrap()
+            .iter()
+            .map(|s| s.addr)
+            .collect();
+        assert_eq!(
+            got,
+            [Ipv4Addr::new(192, 168, 1, 20), Ipv4Addr::new(10, 0, 0, 5)]
+        );
+        // Explicitly, a virtual interface's address is still allowed.
+        let got = listeners(&[[10, 9, 1, 1].into()], &ifaces).unwrap();
+        assert_eq!(got[0].addr, Ipv4Addr::new(10, 9, 1, 1));
+    }
+
+    #[test]
+    fn host_must_name_the_listener() {
+        let lan = Subnet {
+            addr: [192, 168, 1, 20].into(),
+            mask: [255, 255, 255, 0].into(),
+        };
+        for ok in ["192.168.1.20", "192.168.1.20:38471"] {
+            assert!(host_allowed(Some(ok), &lan), "{ok}");
+        }
+        for bad in [
+            "rebind.attacker.example:38471",
+            "localhost:38471",
+            "127.0.0.1:38471",
+            "192.168.1.21:38471",
+            "192.168.1.20:",
+            "192.168.1.20:x",
+            "192.168.1.20.evil.example",
+            "",
+        ] {
+            assert!(!host_allowed(Some(bad), &lan), "{bad}");
+        }
+        assert!(!host_allowed(None, &lan));
+        let lo = Subnet {
+            addr: Ipv4Addr::LOCALHOST,
+            mask: [255, 0, 0, 0].into(),
+        };
+        for ok in ["127.0.0.1:1", "127.4.5.6", "localhost", "LocalHost:38471"] {
+            assert!(host_allowed(Some(ok), &lo), "{ok}");
+        }
+        for bad in [
+            "evil.example:38471",
+            "localhost.evil.example",
+            "192.168.1.20",
+        ] {
+            assert!(!host_allowed(Some(bad), &lo), "{bad}");
+        }
     }
 
     #[test]

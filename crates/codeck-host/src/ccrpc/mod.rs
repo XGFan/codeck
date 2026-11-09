@@ -355,14 +355,6 @@ impl Host {
     /// Starts (`on`) or stops `ccrpc ls --json --watch`; its lists come as `CcrpcLsEvent`, its end by
     /// itself as `CcrpcLsEndedEvent`. Starting again restarts it (the current list comes at once).
     pub async fn ccrpc_watch_sessions(&self, on: bool) -> CmdResult<()> {
-        // The Host keeps its own watch running: a client does not stop it, and starting it again only sends
-        // the current list.
-        if let Some(hub) = &self.connect {
-            if let (true, Some(ls)) = (on, hub.latest_ls()) {
-                (self.events)(HostEvent::CcrpcLs { ls });
-            }
-            return Ok(());
-        }
         let events = self.events.clone();
         let sink: LsSink = Arc::new(move |o| {
             events(match o {

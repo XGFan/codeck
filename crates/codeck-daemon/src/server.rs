@@ -17,14 +17,18 @@ use codeck_host::{EventSink, Host, HostEvent, dispatch};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
-use crate::net::{OriginCheck, Subnet, check_origin, peer_allowed};
+use crate::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
 
 /// Bumped only on incompatible changes to the methods, events or envelopes.
 pub const API_VERSION: u32 = 1;
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
 /// Events a slow client may fall behind by before it is dropped (it resyncs on reconnect).
 const EVENT_BACKLOG: usize = 1024;
+/// The Transcript page's policy: only this daemon's scripts, styles, images and connections (the Shiki
+/// worker is a blob), never framed.
+const WEB_CSP: &str = "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 #[derive(Clone)]
 pub struct Ctx {
@@ -66,10 +70,24 @@ pub fn router(ctx: Ctx, subnet: Subnet) -> Router {
         .route("/health", get(health))
         .route("/v1/rpc", post(rpc))
         .route("/v1/events", get(events))
-        .nest_service("/web", ServeDir::new(&ctx.web_dir))
+        .nest_service("/web", web(&ctx.web_dir))
         .with_state(ctx)
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(middleware::from_fn_with_state(guard, check))
+}
+
+/// The static files under `/web/`, with the page's security headers.
+fn web(dir: &std::path::Path) -> Router {
+    Router::new()
+        .fallback_service(ServeDir::new(dir))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(WEB_CSP),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
 }
 
 fn forbidden(why: &'static str) -> Response {
@@ -92,6 +110,9 @@ async fn check(
     ) else {
         return forbidden("不接受这个来源");
     };
+    if !host_allowed(host.as_deref(), &g.subnet) {
+        return forbidden("不接受这个主机名");
+    }
     match check_origin(origin.as_deref(), host.as_deref(), &g.allowed_origins) {
         OriginCheck::Deny => forbidden("不接受这个来源"),
         OriginCheck::Allow => next.run(req).await,
@@ -149,8 +170,24 @@ struct RpcRequest {
     args: Value,
 }
 
+/// `Content-Type: application/json` (parameters aside): a page of another site cannot send that without a
+/// CORS preflight, which it does not pass.
+fn is_json(h: &HeaderMap) -> bool {
+    h.get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|t| t.trim().eq_ignore_ascii_case("application/json"))
+}
+
 /// `{method, args}` → `{result}` or `{error: {code, message}}`; only `remote` methods.
-async fn rpc(State(ctx): State<Ctx>, body: Bytes) -> Json<Value> {
+async fn rpc(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Response {
+    if !is_json(&headers) {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "请求须是 application/json",
+        )
+            .into_response();
+    }
     let req: RpcRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => {
@@ -158,7 +195,7 @@ async fn rpc(State(ctx): State<Ctx>, body: Bytes) -> Json<Value> {
                 code: ErrorCode::InvalidQuery,
                 message: format!("请求不是有效的 JSON：{e}"),
             };
-            return Json(json!({ "error": e }));
+            return Json(json!({ "error": e })).into_response();
         }
     };
     Json(
@@ -167,6 +204,7 @@ async fn rpc(State(ctx): State<Ctx>, body: Bytes) -> Json<Value> {
             Err(e) => json!({ "error": e }),
         },
     )
+    .into_response()
 }
 
 /// First `hello`, then every event as it happens; no history.
@@ -233,11 +271,22 @@ mod tests {
         }
     }
 
-    /// One HTTP/1.1 request; the status, the head and the body.
+    /// One HTTP/1.1 request with `Host: <addr>`; the status, the head and the body.
     async fn http(addr: SocketAddr, head: &str, body: &str) -> (u16, String, String) {
+        http_as(addr, Some(&addr.to_string()), head, body).await
+    }
+
+    /// One HTTP/1.1 request with this `Host` header (none: without one).
+    async fn http_as(
+        addr: SocketAddr,
+        host: Option<&str>,
+        head: &str,
+        body: &str,
+    ) -> (u16, String, String) {
         let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let host = host.map(|h| format!("\r\nHost: {h}")).unwrap_or_default();
         let req = format!(
-            "{head}\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            "{head}{host}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         );
         s.write_all(req.as_bytes()).await.unwrap();
@@ -309,6 +358,7 @@ mod tests {
                 ccrpc_logs: Some(state.path().join("logs/ccrpc")),
                 images: Some(state.path().join("images")),
                 data_root: Some(root.path().to_path_buf()),
+                refresh_prices: false,
                 ..HostConfig::desktop()
             },
             sink,
@@ -359,6 +409,60 @@ mod tests {
         let (status, head, body) = http(addr, "GET /web/transcript.html HTTP/1.1", "").await;
         assert_eq!((status, body.as_str()), (200, "<!doctype html>"));
         assert!(head.contains("content-type: text/html"), "{head}");
+        assert!(head.contains("x-content-type-options: nosniff"), "{head}");
+        assert!(
+            head.contains("content-security-policy: default-src 'self';"),
+            "{head}"
+        );
+        let (_, head, _) = http(addr, "GET /health HTTP/1.1", "").await;
+        assert!(!head.contains("content-security-policy"), "{head}");
+
+        // A name other than the listener's (DNS rebinding), even with a matching Origin, or no Host at all.
+        let evil = format!("rebind.attacker.example:{}", addr.port());
+        let rpc_head = "POST /v1/rpc HTTP/1.1\r\nContent-Type: application/json";
+        let body = json!({ "method": "list_projects" }).to_string();
+        let (status, _, why) = http_as(
+            addr,
+            Some(&evil),
+            &format!("{rpc_head}\r\nOrigin: http://{evil}"),
+            &body,
+        )
+        .await;
+        assert_eq!((status, why.as_str()), (403, "不接受这个主机名"));
+        let (status, ..) = http_as(addr, None, rpc_head, &body).await;
+        assert_eq!(status, 403);
+        let upgrade = "GET /v1/events HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13";
+        let (status, ..) = http_as(addr, Some(&evil), upgrade, "").await;
+        assert_eq!(status, 403);
+        // `localhost` names a loopback listener.
+        let (status, ..) = http_as(
+            addr,
+            Some(&format!("localhost:{}", addr.port())),
+            "GET /health HTTP/1.1",
+            "",
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        // Only JSON bodies: a form post needs no CORS preflight.
+        for ct in ["text/plain", "application/x-www-form-urlencoded"] {
+            let (status, ..) = http(
+                addr,
+                &format!("POST /v1/rpc HTTP/1.1\r\nContent-Type: {ct}"),
+                &body,
+            )
+            .await;
+            assert_eq!(status, 415, "{ct}");
+        }
+        let (status, ..) = http(addr, "POST /v1/rpc HTTP/1.1", &body).await;
+        assert_eq!(status, 415);
+        let (status, ..) = http(
+            addr,
+            "POST /v1/rpc HTTP/1.1\r\nContent-Type: Application/JSON; charset=utf-8",
+            &body,
+        )
+        .await;
+        assert_eq!(status, 200);
         let (status, ..) = http(addr, "GET /web/../Cargo.toml HTTP/1.1", "").await;
         assert_eq!(status, 404);
 

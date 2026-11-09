@@ -16,7 +16,14 @@ const DROP: &[&str] = &["CLAUDECODE", "TOH_HOLDER_ID", "CLAUDE_CODE_ENTRYPOINT"]
 pub fn login_env() -> HashMap<String, String> {
     let shell = account_shell()
         .or_else(|| std::env::var("SHELL").ok())
-        .unwrap_or_else(|| "/bin/zsh".into());
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "macos") {
+                "/bin/zsh"
+            } else {
+                "/bin/sh"
+            }
+            .into()
+        });
     let mut env = read_login_env(&shell).unwrap_or_else(|| std::env::vars().collect());
     for k in DROP {
         env.remove(*k);
