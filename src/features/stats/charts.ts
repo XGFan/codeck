@@ -1,6 +1,6 @@
 import type { Activity, ActivityBucket, DailyModelTokens } from "@/ipc/bindings";
 import type { ChartOption } from "@/lib/echarts";
-import { formatTokens } from "@/lib/format";
+import { formatCost, formatTokens } from "@/lib/format";
 
 /** Reference dataviz palette (validated): categorical slots 1-3 + 7. */
 export interface Theme {
@@ -54,12 +54,16 @@ export function family(model: string): ModelFamily {
   return m.includes("opus") ? "opus" : m.includes("sonnet") ? "sonnet" : m.includes("haiku") ? "haiku" : "other";
 }
 
-export type Metric = "all" | "input" | "output";
+export type Metric = "all" | "input" | "output" | "cost";
 
 /** Input counts everything the model read: new input plus cache reads and writes. */
 const inputOf = (d: DailyModelTokens) => d.input + d.cacheRead + d.cacheCreation;
 const metricValue = (d: DailyModelTokens, m: Metric) =>
-  m === "output" ? d.output : m === "input" ? inputOf(d) : inputOf(d) + d.output;
+  m === "cost" ? d.cost : m === "output" ? d.output : m === "input" ? inputOf(d) : inputOf(d) + d.output;
+
+/** The model families with something to show for `metric`, stacking order (an unpriced model has no Cost). */
+export const presentFamilies = (daily: DailyModelTokens[], metric: Metric) =>
+  FAMILIES.filter((f) => daily.some((d) => family(d.model) === f && metricValue(d, metric) > 0));
 
 /** The two bars per day of the "all" view; `color` is a theme key. */
 export const IO_SERIES = [
@@ -103,7 +107,8 @@ const base = (t: Theme) => ({
 
 export function dailyOption(daily: DailyModelTokens[], metric: Metric, t: Theme): ChartOption {
   const days = fillDays([...new Set(daily.map((d) => d.day))].sort());
-  const present = FAMILIES.filter((f) => daily.some((d) => family(d.model) === f));
+  const present = presentFamilies(daily, metric);
+  const formatValue = metric === "cost" ? formatCost : formatTokens;
   // "all": input and output side by side; otherwise one bar per day stacked by model family.
   const series =
     metric === "all"
@@ -144,7 +149,7 @@ export function dailyOption(daily: DailyModelTokens[], metric: Metric, t: Theme)
         ps
           .filter((p) => p.value > 0)
           .reverse()
-          .map((p) => `${p.marker}${p.seriesName}　${formatTokens(p.value)}`)
+          .map((p) => `${p.marker}${p.seriesName}　${formatValue(p.value)}`)
           .join("<br/>"),
     },
     xAxis: {
@@ -157,7 +162,10 @@ export function dailyOption(daily: DailyModelTokens[], metric: Metric, t: Theme)
     yAxis: {
       type: "value",
       splitNumber: 3,
-      axisLabel: { color: t.muted, formatter: (v: number) => (v === 0 ? "0" : formatTokens(v)) },
+      axisLabel: {
+        color: t.muted,
+        formatter: (v: number) => (v === 0 ? "0" : metric === "cost" ? `$${v}` : formatTokens(v)),
+      },
       splitLine: { lineStyle: { color: t.grid } },
     },
     series,

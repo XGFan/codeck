@@ -239,6 +239,8 @@ export type DailyModelTokens = {
 	output: number,
 	cacheRead: number,
 	cacheCreation: number,
+	/**  API cost in USD (0 for a model without a price). */
+	cost: number,
 };
 
 export type DataRootSource = 

@@ -163,6 +163,8 @@ fn list_sorts_by_cost_and_stats_sum_it() {
     let stats = engine.stats(&StatsRequest::default()).unwrap();
     let total: f64 = list.iter().map(|s| s.cost).sum();
     assert!(close(stats.overview.cost, total));
+    let daily: f64 = stats.daily.iter().map(|d| d.cost).sum();
+    assert!(close(daily, stats.overview.cost));
     // The ranking's per-session cost is the session's own (all time, so the whole session).
     assert!(stats.sessions.windows(2).all(|w| w[0].cost >= w[1].cost));
     for r in &stats.sessions {

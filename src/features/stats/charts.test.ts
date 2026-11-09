@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activityAxisLabel, activityTitle } from "./charts";
+import { activityAxisLabel, activityTitle, dailyOption, themes } from "./charts";
 
 const at = (y: number, m: number, d: number, h = 0) => new Date(y, m - 1, d, h).getTime();
 
@@ -28,5 +28,43 @@ describe("activityTitle", () => {
     expect(activityTitle("day", at(2026, 10, 22), at(2026, 10, 23))).toBe("10月22日 周四");
     expect(activityTitle("week", at(2026, 10, 19), at(2026, 10, 26))).toBe("10月19日–10月25日");
     expect(activityTitle("month", at(2026, 10, 1), at(2026, 11, 1))).toBe("2026年10月");
+  });
+});
+
+describe("dailyOption", () => {
+  it("Cost 按模型堆叠，纵轴与悬停提示显示美元", () => {
+    const row = (day: string, model: string, cost: number) => ({
+      day,
+      model,
+      input: 1000,
+      output: 1000,
+      cacheRead: 0,
+      cacheCreation: 0,
+      cost,
+    });
+    const option = dailyOption(
+      [
+        row("2026-10-20", "claude-opus-4-7", 1.5),
+        row("2026-10-20", "claude-opus-4-8", 0.5),
+        row("2026-10-21", "claude-sonnet-5-5", 3),
+        row("2026-10-21", "no-price", 0),
+      ],
+      "cost",
+      themes.light,
+    ) as unknown as {
+      series: { name: string; data: number[] }[];
+      yAxis: { axisLabel: { formatter: (v: number) => string } };
+      tooltip: {
+        formatter: (ps: { axisValue: string; marker: string; seriesName: string; value: number }[]) => string;
+      };
+    };
+    expect(option.series.map((s) => [s.name, s.data])).toEqual([
+      ["opus", [2, 0]],
+      ["sonnet", [0, 3]],
+    ]);
+    expect(option.yAxis.axisLabel.formatter(20)).toBe("$20");
+    expect(option.tooltip.formatter([{ axisValue: "2026-10-20", marker: "", seriesName: "opus", value: 2 }])).toContain(
+      "$2.00",
+    );
   });
 });

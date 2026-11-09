@@ -9,12 +9,12 @@ import { useUi } from "@/state/ui";
 import { Bar, Card, Empty, Overview, Segmented } from "./Cards";
 import { Chart, useDark } from "./Chart";
 import {
-  FAMILIES,
   FAMILY_LABEL,
   IO_SERIES,
   type Metric,
   type ModelFamily,
   family,
+  presentFamilies,
   dailyOption,
   activityOption,
   BUCKET_LABEL,
@@ -71,7 +71,7 @@ function StatsPanel() {
   const activityOpt = useMemo(() => (stats ? activityOption(stats.activity, theme) : null), [stats, theme]);
 
   const empty = stats != null && stats.overview.sessions === 0 && stats.daily.length === 0;
-  const present = stats ? FAMILIES.filter((f) => stats.daily.some((d) => family(d.model) === f)) : [];
+  const present = stats ? presentFamilies(stats.daily, metric) : [];
   const maxCost = Math.max(0.01, ...(stats?.sessions.map((s) => s.cost) ?? []));
 
   return (
@@ -109,7 +109,7 @@ function StatsPanel() {
             <div className="grid grid-cols-1 items-start gap-3 @3xl:grid-cols-3">
               <Card
                 className="@3xl:col-span-2"
-                title={metric === "all" ? "每日 token" : "每日 token · 按模型"}
+                title={metric === "all" ? "每日用量" : "每日用量 · 按模型"}
                 testId="stats-daily"
                 aside={
                   <>
@@ -147,6 +147,7 @@ function StatsPanel() {
                         { key: "all", label: "全部" },
                         { key: "input", label: "输入" },
                         { key: "output", label: "输出" },
+                        { key: "cost", label: "Cost" },
                       ]}
                       onChange={setMetric}
                     />
@@ -159,7 +160,7 @@ function StatsPanel() {
                   <Chart
                     testId="daily-chart"
                     height={240}
-                    label="每日 token 堆叠柱状图"
+                    label="每日用量堆叠柱状图"
                     option={dailyOpt!}
                     onPick={(p) => p.name && drill({ kind: "day", day: p.name })}
                   />

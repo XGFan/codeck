@@ -41,6 +41,9 @@ pub struct DailyModelTokens {
     pub cache_read: f64,
     #[specta(type = Number)]
     pub cache_creation: f64,
+    /// API cost in USD (0 for a model without a price).
+    #[specta(type = Number)]
+    pub cost: f64,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]

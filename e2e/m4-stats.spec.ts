@@ -64,15 +64,20 @@ test("Session 排行按金额倒序，点击打开该 Session", async ({ page })
   await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
 });
 
-test("每日 token 可在全部、输入、输出间切换：全部为输入、输出两根柱子，其余按模型", async ({ page }) => {
+test("每日用量可在全部、输入、输出、Cost 间切换：全部为输入、输出两根柱子，其余按模型", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("nav-stats").click();
   const daily = page.getByTestId("stats-daily");
-  await expect(daily).toContainText("每日 token");
+  await expect(daily).toContainText("每日用量");
   await expect(daily).not.toContainText("按模型");
   await expect(daily).not.toContainText("含缓存");
   await expect(daily.getByTestId("legend-item")).toHaveCount(0);
   await daily.getByRole("button", { name: "输出", exact: true }).click();
+  await expect(daily).toContainText("按模型");
+  await expect(daily.getByTestId("legend-item").first()).toBeVisible();
+  const cost = daily.getByRole("button", { name: "Cost", exact: true });
+  await cost.click();
+  await expect(cost).toHaveAttribute("aria-pressed", "true");
   await expect(daily).toContainText("按模型");
   await expect(daily.getByTestId("legend-item").first()).toBeVisible();
   await daily.getByRole("button", { name: "全部" }).click();

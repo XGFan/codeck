@@ -1,5 +1,5 @@
 import type { AppInfo, Diagnostics, IndexStatus, SlashCommand, Stats } from "@/ipc/bindings";
-import { DAY, NOW } from "./builders";
+import { costOf, DAY, NOW, tok } from "./builders";
 
 export const appInfo = {
   version: "0.1.0",
@@ -63,14 +63,12 @@ const daily = Array.from({ length: 30 }, (_, i) => 29 - i).flatMap((back) =>
   models.map((model, m) => {
     const k = back * 2 + m;
     const scale = m === 0 ? 1 : 0.4;
-    return {
-      day: localDay(NOW - back * DAY),
-      model,
-      input: Math.round(rnd(k) * 40_000 * scale) + 2_000,
-      output: Math.round(rnd(k + 100) * 180_000 * scale) + 5_000,
-      cacheRead: Math.round(rnd(k + 200) * 4_000_000 * scale) + 100_000,
-      cacheCreation: Math.round(rnd(k + 300) * 300_000 * scale) + 10_000,
-    };
+    const input = Math.round(rnd(k) * 40_000 * scale) + 2_000;
+    const output = Math.round(rnd(k + 100) * 180_000 * scale) + 5_000;
+    const cacheRead = Math.round(rnd(k + 200) * 4_000_000 * scale) + 100_000;
+    const cacheCreation = Math.round(rnd(k + 300) * 300_000 * scale) + 10_000;
+    const cost = costOf(model, tok(input, output, cacheRead, cacheCreation)) ?? 0;
+    return { day: localDay(NOW - back * DAY), model, input, output, cacheRead, cacheCreation, cost };
   }),
 );
 

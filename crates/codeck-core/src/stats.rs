@@ -10,7 +10,7 @@
 //!   `overview.active_days` and the ranked sessions' `messages`: main-file messages only
 //!   (human/command prompts + assistant messages by `message.id`, as `message_count`).
 //! - Tokens (`overview.output_tokens`, `daily`, session `output_tokens`) and cost
-//!   (`overview.cost`, session `cost`, see `pricing`): main + subagent messages, each billed
+//!   (`overview.cost`, `daily`, session `cost`, see `pricing`): main + subagent messages, each billed
 //!   once (`messages.billed`, see `writer::rebill`); `daily` skips messages without tokens
 //!   (prompts, `<synthetic>` errors).
 //! - `activity`: main-file messages per bar over the range (from the earliest message when it has no
@@ -97,7 +97,8 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
     let mut heat_daily: BTreeMap<NaiveDate, u32> = BTreeMap::new();
     // Main-file messages per local hour, the unit the activity bars are summed from.
     let mut hourly: BTreeMap<NaiveDateTime, u32> = BTreeMap::new();
-    let mut daily: BTreeMap<(NaiveDate, String), [f64; 4]> = BTreeMap::new();
+    // Per day and model: the four token counts, then the cost.
+    let mut daily: BTreeMap<(NaiveDate, String), [f64; 5]> = BTreeMap::new();
     {
         let mut sql = format!(
             "SELECT session_id, {MAIN_FILE_SQL}, ts_ms, {billed}, model, in_tok, out_tok, cr_tok,
@@ -137,7 +138,8 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
             ];
             output += tok[1];
             sess_output[si] += tok[1];
-            match row.get::<_, Option<f64>>(9)? {
+            let msg_cost = row.get::<_, Option<f64>>(9)?;
+            match msg_cost {
                 Some(c) => {
                     cost += c;
                     sess_cost[si] += c;
@@ -151,6 +153,7 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
             for (a, b) in e.iter_mut().zip(tok) {
                 *a += b;
             }
+            e[4] += msg_cost.unwrap_or(0.0);
         }
     }
 
@@ -192,6 +195,7 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
                 output: t[1],
                 cache_read: t[2],
                 cache_creation: t[3],
+                cost: t[4],
             })
             .collect(),
         heat_daily: heat_daily

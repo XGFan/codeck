@@ -22,6 +22,7 @@ describe("inputTotals", () => {
       output: 999,
       cacheRead,
       cacheCreation,
+      cost: 0,
     });
     expect(inputTotals([row(1, 10, 100), row(2, 20, 200)])).toEqual({ input: 3, read: 30, write: 300 });
     expect(inputTotals([])).toEqual({ input: 0, read: 0, write: 0 });
