@@ -13,11 +13,20 @@ test("两栏布局与统计、设置入口可见", async ({ page }) => {
   await expect(sessions.getByTestId("statusbar")).not.toContainText("已索引");
   await expect(sessions.getByTestId("nav-stats")).toBeVisible();
   await expect(page.getByTestId("pane-conversation").getByTestId("settings-button")).toHaveCount(0);
+  // In the window's bottom-left corner, settings first.
+  const pane = (await sessions.boundingBox())!;
+  const settingsBox = (await sessions.getByTestId("settings-button").boundingBox())!;
+  const statsBox = (await sessions.getByTestId("nav-stats").boundingBox())!;
+  expect(settingsBox.x - pane.x).toBeLessThan(10);
+  expect(settingsBox.x).toBeLessThan(statsBox.x);
   // …and join the toolbar while the list is hidden.
   await page.keyboard.press("Control+Meta+L");
   await expect(sessions).toBeHidden();
   await expect(page.getByTestId("toolbar").getByTestId("nav-stats")).toBeVisible();
   await expect(page.getByTestId("toolbar").getByTestId("settings-button")).toBeVisible();
+  const toolbarSettings = (await page.getByTestId("toolbar").getByTestId("settings-button").boundingBox())!;
+  const toolbarStats = (await page.getByTestId("toolbar").getByTestId("nav-stats").boundingBox())!;
+  expect(toolbarSettings.x).toBeLessThan(toolbarStats.x);
   await expect(page.getByTestId("statusbar")).toHaveCount(0);
 });
 

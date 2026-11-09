@@ -57,8 +57,8 @@ export default function App() {
         {/* With the list hidden, its foot's buttons join the toolbar. */}
         {hideList && (
           <>
-            <StatsToggle />
             <SettingsButton className="size-7 text-secondary" />
+            <StatsToggle />
           </>
         )}
       </Toolbar>
