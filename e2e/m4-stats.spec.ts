@@ -103,6 +103,8 @@ test("点击活跃时段的柱子把 Session 列表筛到那段时间", async ({
 });
 
 test("点击模型图例按模型下钻会话列表", async ({ page }) => {
+  // A Thursday: on the default Monday-reset cycle's first day, no mock opus Session is in the cycle yet.
+  await page.clock.setFixedTime(new Date("2026-10-15T10:00:00"));
   await page.goto("/");
   await page.getByTestId("nav-stats").click();
   const daily = page.getByTestId("stats-daily");
