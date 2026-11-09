@@ -223,3 +223,21 @@ body {
   background-color: #ffd54a;
   color: #1c1c1e;
 }
+
+/* The iPhone app's transcript page (transcript.html): modest mobile adjustments, scoped to its root. */
+.transcript-page {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow-x: hidden;
+  font-size: 15px;
+  -webkit-text-size-adjust: 100%;
+}
+.transcript-page pre,
+.transcript-page table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+/* Fork and rewind start a Connect: native on the phone. */
+.transcript-page [data-testid="fork-button"],
+.transcript-page [data-testid="rewind-button"] {
+  display: none;
+}

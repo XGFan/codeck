@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
   worker: { format: "es" },
@@ -13,5 +13,10 @@ export default defineConfig({
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_"],
   server: { port: 1420, strictPort: true },
+  // `--mode host`: the iPhone app'"'"'s transcript page, served by the daemon under /web/.
+  ...(mode === "host" && {
+    base: "/web/",
+    build: { outDir: "dist-web", rollupOptions: { input: path.resolve(import.meta.dirname, "transcript.html") } },
+  }),
   test: { include: ["src/**/*.test.ts", "src/**/*.test.tsx"] },
-});
+}));
