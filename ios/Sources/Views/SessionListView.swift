@@ -9,7 +9,8 @@ struct SessionListView: View {
     @Environment(HostModel.self) private var model
     @State private var query = ""
     @State private var changingHost = false
-    @State private var path: [SessionRoute] = []
+    @State private var path = NavigationPath()
+    @State private var creating = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -23,10 +24,20 @@ struct SessionListView: View {
             .navigationDestination(for: SessionRoute.self) { route in
                 SessionDetailView(sessionId: route.id)
             }
+            .navigationDestination(for: StartingRoute.self) { StartingView(route: $0) }
+            .sheet(isPresented: $creating) {
+                NewSessionSheet { conn, cwd in path.append(StartingRoute(conn: conn, cwd: cwd)) }
+            }
+            .onChange(of: model.connect.openRequest) { _, request in
+                // A Fork got its Session: open it over the Origin's page.
+                guard let request else { return }
+                model.connect.openRequest = nil
+                path.append(SessionRoute(id: request.sessionId))
+            }
             .sheet(isPresented: $changingHost) {
                 NavigationStack {
                     HostSetupView(current: model.address) { address in
-                        path = []
+                        path = NavigationPath()
                         model.connect(to: address)
                     }
                 }
@@ -87,6 +98,10 @@ struct SessionListView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button("新建 Session", systemImage: "plus") { creating = true }
+                .disabled(!model.hasLoaded)
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if let address = model.address {

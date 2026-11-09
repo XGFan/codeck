@@ -61,6 +61,27 @@ struct HostClient: Sendable {
         try await call("get_session", args: ["sessionId": sessionId])
     }
 
+    /// The Projects in the desktop's sidebar; nil before any were added.
+    func sidebarProjects() async throws -> [SidebarProject]? {
+        try await call("get_sidebar_projects", args: [String: String]())
+    }
+
+    /// Directories on the Host completing a typed path (each ends in `/`).
+    func completeDirectories(_ partial: String) async throws -> [String] {
+        try await call("complete_paths", args: CompletePaths(partial: partial))
+    }
+
+    private struct CompletePaths: Encodable, Sendable {
+        var partial: String
+        enum CodingKeys: String, CodingKey { case cwd, partial, files }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeNil(forKey: .cwd)
+            try c.encode(partial, forKey: .partial)
+            try c.encode(false, forKey: .files)
+        }
+    }
+
     /// `{"method", "args"}` → `{"result"}`, or non-2xx `{"error": {"code", "message"}}`.
     func call<Args: Encodable & Sendable, Result: Decodable>(
         _ method: String,

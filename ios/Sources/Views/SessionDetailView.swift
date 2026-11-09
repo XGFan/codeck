@@ -22,10 +22,15 @@ struct SessionDetailView: View {
 
     private var summary: SessionSummary? { model.session(id: sessionId) ?? detail?.summary }
 
+    /// Started from here and not indexed yet: no transcript before its first prompt.
+    private var unindexed: Bool { summary == nil && model.connect.conn(for: sessionId) != nil }
+
     var body: some View {
         ZStack {
             Color(uiColor: .systemBackground).ignoresSafeArea()
-            if let url = transcriptURL {
+            if unindexed {
+                ContentUnavailableView("新 Session", systemImage: "text.bubble", description: Text("发送第一条提示词后显示对话"))
+            } else if let url = transcriptURL {
                 TranscriptWebView(
                     url: url,
                     reloadToken: reloadToken,
@@ -36,7 +41,7 @@ struct SessionDetailView: View {
                 .ignoresSafeArea(edges: .bottom)
                 .opacity(phase == .ready ? 1 : 0)
             }
-            switch phase {
+            switch unindexed ? .ready : phase {
             case .loading:
                 ProgressView()
             case .failed(let message):
@@ -51,7 +56,7 @@ struct SessionDetailView: View {
                 EmptyView()
             }
         }
-        .navigationTitle(summary?.title ?? "Session")
+        .navigationTitle(summary?.title ?? (unindexed ? "新 Session" : "Session"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -59,11 +64,11 @@ struct SessionDetailView: View {
                     .disabled(detail == nil)
             }
             ToolbarItem(placement: .topBarTrailing) {
-                ConnectMenu(sessionId: sessionId)
+                ConnectMenu(sessionId: sessionId, detail: detail, title: summary?.title)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ConnectBarSlot(sessionId: sessionId)
+            ConnectBarSlot(sessionId: sessionId, detail: detail)
         }
         .overlay(alignment: .bottom) {
             if showingCopied {
@@ -81,6 +86,10 @@ struct SessionDetailView: View {
             if let detail { SessionInfoSheet(detail: detail, project: model.project(of: detail.summary)) }
         }
         .task(id: sessionId) { await loadDetail() }
+        .onChange(of: unindexed) { was, now in
+            // Indexed after its first prompt: show its transcript.
+            if was, !now { reload() }
+        }
         .onChange(of: model.resyncGeneration) {
             // After a reconnect the page reloads in place; the loading state shows only after a failure.
             if case .failed = phase { phase = .loading }

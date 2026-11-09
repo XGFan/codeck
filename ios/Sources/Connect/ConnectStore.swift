@@ -12,13 +12,23 @@ final class ConnectStore {
     /// `ccrpc_ls` failed (ccrpc not available on the Host).
     private(set) var lsError: String?
     /// The last failure to show on a Session's page, by Session id.
-    private(set) var errors: [String: String] = [:]
+    var errors: [String: String] = [:]
     /// Sessions a Connect is on its way for.
     private(set) var connecting: Set<String> = []
     /// Requests answered here (`conn|request_id`): hidden at once, before the Host's state drops them.
     private var answered: Set<String> = []
-    /// Connects this app is ending (Disconnect, 关闭 Session): gone without a trace when the Host removes them.
-    @ObservationIgnored private var ending: Set<String> = []
+    /// Connects this app is ending (Disconnect, 关闭 Session, a failed start): gone without a trace when the Host
+    /// removes them.
+    @ObservationIgnored var ending: Set<String> = []
+    /// Connections started here (新建 Session, Resume, Fork) until claude names their Session, by conn id.
+    var starts: [String: StartKind] = [:]
+    /// What a started connection became: its Session id, by conn id (the 「正在启动…」 page turns into it).
+    var started: [String: String] = [:]
+    /// Why a 新建 Session failed (claude exited before naming its Session), by conn id.
+    var startFailures: [String: String] = [:]
+    /// A Session to open now (a Fork that just got its Session).
+    var openRequest: OpenRequest?
+    @ObservationIgnored var failingResumes: Set<String> = []
     /// Conn ids in the order they appeared, so the last ended one of a Session is well defined.
     private var order: [String] = []
     @ObservationIgnored private(set) var client: HostClient?
@@ -34,6 +44,11 @@ final class ConnectStore {
         connecting = []
         answered = []
         ending = []
+        starts = [:]
+        started = [:]
+        startFailures = [:]
+        openRequest = nil
+        failingResumes = []
     }
 
     // MARK: Snapshot and events
@@ -48,6 +63,7 @@ final class ConnectStore {
             order = order.filter { byId[$0] != nil } + states.items.map(\.conn).filter { !order.contains($0) }
             conns = byId
             pruneAnswered()
+            for conn in starts.keys { follow(conn, gone: byId[conn] == nil) }
         }
         do {
             let entries = try await list
@@ -65,11 +81,13 @@ final class ConnectStore {
         if conns[state.conn] == nil, !order.contains(state.conn) { order.append(state.conn) }
         conns[state.conn] = state
         pruneAnswered()
+        follow(state.conn)
     }
 
     /// `connect-removed-event` (after the final state, with `procExit`). One that ended by itself stays, so its
     /// page can say why; one this app ended goes.
     func remove(conn: String) {
+        follow(conn, gone: true)
         if let c = conns[conn], !ending.contains(conn), c.procExit != nil || c.sessionExited {
             answered = answered.filter { !$0.hasPrefix(conn + "|") }
             return
@@ -78,6 +96,19 @@ final class ConnectStore {
         conns[conn] = nil
         order.removeAll { $0 == conn }
         answered = answered.filter { !$0.hasPrefix(conn + "|") }
+    }
+
+    /// Before a Resume: ended Connects of this Session go (one whose ccrpc still runs, driving nothing, is
+    /// disconnected).
+    func dropEnded(of sessionId: String) async {
+        for c in conns.values where c.sessionId == sessionId && !c.isLive {
+            if c.procExit == nil {
+                await disconnect(c)
+            } else {
+                conns[c.conn] = nil
+                order.removeAll { $0 == c.conn }
+            }
+        }
     }
 
     /// `ccrpc-ls-event`: the JSON text `ccrpc ls --json` printed.

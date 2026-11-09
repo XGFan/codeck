@@ -49,6 +49,8 @@ struct SessionSummary: Codable, Hashable, Identifiable, Sendable {
 struct SessionDetail: Codable, Sendable {
     var summary: SessionSummary
     var cwd: String?
+    /// `cwd` no longer exists on the Host.
+    var cwdMissing: Bool?
     var projectPath: String
     /// The Session this one is carried on in; the app opens that one instead.
     var supersededBy: String?
