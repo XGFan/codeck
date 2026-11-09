@@ -15,7 +15,8 @@ const ARROW =
 
 /**
  * The time range: a dropdown of cycles, months, the last N days and everything, then ‹ › stepping a cycle or
- * month back and forth (to the current one at most; the rolling ranges do not step).
+ * month back and forth (to the current one at most; the rolling ranges do not step). The dropdown is as wide as its
+ * longest label, so the arrows stay under the pointer while its text changes.
  */
 export function RangePicker({ sel, onChange }: { sel: RangeSel; onChange: (s: RangeSel) => void }) {
   const weeklyReset = useUi((s) => s.weeklyReset);
@@ -27,10 +28,10 @@ export function RangePicker({ sel, onChange }: { sel: RangeSel; onChange: (s: Ra
       <DropdownMenu>
         <DropdownMenuTrigger
           data-testid="range-trigger"
-          className="flex h-7 items-center gap-1 rounded-md border border-border bg-ground px-2.5 text-[13px] font-semibold outline-none hover:bg-selection focus-visible:outline-2 focus-visible:outline-accent"
+          className="flex h-7 w-[156px] items-center justify-between gap-1 rounded-md border border-border bg-ground px-2.5 text-[13px] font-semibold outline-none hover:bg-selection focus-visible:outline-2 focus-visible:outline-accent"
         >
-          {r.label}
-          <ChevronDown size={13} strokeWidth={1.8} aria-hidden />
+          <span className="min-w-0 truncate">{r.label}</span>
+          <ChevronDown size={13} strokeWidth={1.8} className="shrink-0" aria-hidden />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-48">
           {RANGE_MENU.map((g, gi) => (

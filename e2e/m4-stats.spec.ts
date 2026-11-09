@@ -260,13 +260,19 @@ test("周期与月份可用 ‹ › 前后翻，最多翻到当前；最近 N �
   await expect(next).toBeDisabled();
 });
 
-test("切换时间范围时页面不移动：标题栏、卡片与 Token 卡片里的输入输出位置不变", async ({ page }) => {
+test("切换时间范围时页面不移动：标题栏、‹ ›、卡片与 Token 卡片里的输入输出位置不变", async ({ page }) => {
+  // A Wednesday whose cycle two back starts on 12月28日, the longest label the dropdown can show.
+  await page.clock.setFixedTime(new Date("2027-01-13T10:00:00"));
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto("/");
   await page.getByTestId("nav-stats").click();
+  const range = page.getByRole("group", { name: "时间范围" });
+  const trigger = page.getByTestId("range-trigger");
   const watched = [
     page.getByRole("heading", { name: "统计" }),
-    page.getByTestId("range-trigger"),
+    trigger,
+    range.locator('[aria-label^="上一"]'),
+    range.locator('[aria-label^="下一"]'),
     page.getByTestId("stat-card").first(),
     page.getByTestId("token-output"),
   ];
@@ -279,6 +285,16 @@ test("切换时间范围时页面不移动：标题栏、卡片与 Token 卡片�
     expect(await positions()).toEqual(before);
   }
   await expect(page.getByTestId("cycle-span")).toContainText("还剩");
+
+  // Stepping keeps the arrows under the pointer, and the longest label still fits.
+  const prev = page.getByLabel("上一周期", { exact: true });
+  await prev.click();
+  await expect(trigger).toHaveText("上一周期");
+  expect(await positions()).toEqual(before);
+  await prev.click();
+  await expect(trigger).toHaveText("12月28日起的周期");
+  expect(await positions()).toEqual(before);
+  expect(await trigger.locator("span").evaluate((l) => l.scrollWidth <= l.clientWidth)).toBe(true);
 });
 
 test("卡片高度随自身内容，不被同行更高的卡片撑高", async ({ page }) => {
