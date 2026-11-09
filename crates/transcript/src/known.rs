@@ -126,6 +126,10 @@ pub const TOOLS: &[&str] = &[
 /// Tools that spawn a Subagent Run.
 pub const AGENT_TOOLS: &[&str] = &["Agent", "Task"];
 
+/// Tools whose result can name the Subagent Run they started: a Skill with forked execution too,
+/// though it has no `prompt` or `name` input and is never a teammate.
+pub const RUN_STARTING_TOOLS: &[&str] = &["Agent", "Task", "Skill"];
+
 pub fn is_known_entry_type(t: &str) -> bool {
     ENTRY_TYPES.contains(&t) || ENTRY_TYPE_PREFIXES.iter().any(|p| t.starts_with(p))
 }

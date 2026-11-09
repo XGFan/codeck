@@ -453,6 +453,12 @@ pub struct RawToolUseResult {
     /// Workflow results.
     #[serde(default, deserialize_with = "lenient::string")]
     pub run_id: Option<String>,
+    /// Forked Skill results: started in the background.
+    #[serde(default, deserialize_with = "lenient::boolean")]
+    pub background: Option<bool>,
+    /// Forked Skill results: the run's final text, without the tool_result's wrapper.
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub result: Option<String>,
 }
 
 fn deserialize_content<'de, D: Deserializer<'de>>(d: D) -> Result<Option<RawContent>, D::Error> {

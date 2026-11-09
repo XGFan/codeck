@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use super::nodes::{self, PREVIEW_BYTES, RESULT_BYTES, RESULT_LINES};
 use super::{EntryKind, LoadedFile, SessionSidecar, SessionSkeleton, prompt};
-use crate::known::AGENT_TOOLS;
+use crate::known::{AGENT_TOOLS, RUN_STARTING_TOOLS};
 use crate::model::{AgentId, NodeId, PromptOrigin, SubagentRun};
 use crate::raw::{RawToolUseResult, lenient};
 
@@ -163,7 +163,7 @@ pub fn notification_facts(s: &SessionSkeleton, files: &[LoadedFile]) -> Notices 
     out
 }
 
-/// Facts from the results of Agent/Task tool calls in one file.
+/// Facts from the results of the tool calls in one file that can start a Subagent Run.
 #[derive(Default)]
 struct AgentResults {
     /// `toolUseResult.agentId` → tool_use id.
@@ -174,6 +174,8 @@ struct AgentResults {
     status: HashMap<String, String>,
     /// tool_use id → `toolUseResult.color` (teammates).
     color: HashMap<String, String>,
+    /// tool_use id → `toolUseResult.result` (forked Skills).
+    forked_text: HashMap<String, String>,
 }
 
 fn agent_results(s: &SessionSkeleton, files: &[LoadedFile]) -> AgentResults {
@@ -184,7 +186,7 @@ fn agent_results(s: &SessionSkeleton, files: &[LoadedFile]) -> AgentResults {
                 s.nodes[u]
                     .tool_uses
                     .iter()
-                    .any(|(tid, name)| tid == *id && AGENT_TOOLS.contains(&name.as_str()))
+                    .any(|(tid, name)| tid == *id && RUN_STARTING_TOOLS.contains(&name.as_str()))
             })
         }) else {
             continue;
@@ -198,7 +200,18 @@ fn agent_results(s: &SessionSkeleton, files: &[LoadedFile]) -> AgentResults {
         if let Some(name) = r.name {
             out.by_name.entry(name).or_insert_with(|| id.clone());
         }
-        if let Some(st) = r.status {
+        let status = match r.status {
+            // `forked` says how a Skill ran, not how far it got: in the background it ends with
+            // its notification like an async Agent, in the foreground with this result.
+            Some(st) if st == "forked" => {
+                if let Some(text) = r.result {
+                    out.forked_text.insert(id.clone(), text);
+                }
+                (r.background == Some(true)).then(|| "async_launched".to_owned())
+            }
+            st => st,
+        };
+        if let Some(st) = status {
             out.status.insert(id.clone(), st);
         }
         if let Some(c) = r.color {
@@ -401,8 +414,15 @@ fn outcome(
         .as_ref()
         .map(|(_, err)| if *err { "failed" } else { "completed" }.to_owned());
     let status = note_status.or(result_status).or(ended);
-    let text = result
-        .and_then(|(t, _)| t)
+    // A forked Skill's tool_result wraps the text in "Skill … completed (forked execution)."
+    let forked = results
+        .forked_text
+        .get(tool_use_id)
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(|t| nodes::cap_text(t, RESULT_BYTES, RESULT_LINES).0);
+    let text = forked
+        .or_else(|| result.and_then(|(t, _)| t))
         .or_else(|| note.and_then(|n| n.summary.clone()));
     (false, status, text)
 }

@@ -1169,6 +1169,76 @@ fn subagent_runs_say_how_far_they_got() {
     assert_eq!(run("ag_run").final_text, None);
 }
 
+/// A forked Skill's meta has no `toolUseId`: only the Skill call's result names the run.
+#[test]
+fn forked_skills_link_through_their_result_and_only_background_ones_wait_for_a_notification() {
+    let skill = |id: &str| {
+        format!(r#"{{"type":"tool_use","id":"{id}","name":"Skill","input":{{"skill":"review"}}}}"#)
+    };
+    let result = |n: u32, prev: &str, tool: &str, fields: &str, text: &str| {
+        format!(
+            r#"{{"type":"user","uuid":"r{n}","parentUuid":"{prev}","toolUseResult":{{"success":true,"commandName":"review"{fields}}},"message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"{tool}","content":"{text}"}}]}}}}"#
+        )
+    };
+    let calls = ["t_bg", "t_done", "t_fg", "t_inline"].map(skill).join(",");
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}"#,
+        &format!(
+            r#"{{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{{"id":"m1","content":[{calls}]}}}}"#
+        ),
+        &result(
+            1,
+            "a1",
+            "t_bg",
+            r#","status":"forked","background":true,"agentId":"ag_bg""#,
+            "launched",
+        ),
+        &result(
+            2,
+            "r1",
+            "t_done",
+            r#","status":"forked","background":true,"agentId":"ag_done""#,
+            "launched",
+        ),
+        &result(
+            3,
+            "r2",
+            "t_fg",
+            r#","status":"forked","agentId":"ag_fg","result":"the review""#,
+            r#"Skill \"review\" completed (forked execution).\n\nResult:\nthe review"#,
+        ),
+        &result(4, "r3", "t_inline", "", "Launching skill: review"),
+        r#"{"type":"user","uuid":"n1","parentUuid":"r4","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>ag_done</task-id>\n<tool-use-id>t_done</tool-use-id>\n<status>completed</status>\n<result>found 2 bugs</result>\n</task-notification>"}}"#,
+    ]);
+    let m = r#"{"agentType":"general-purpose","description":"/review x","name":"review","spawnDepth":1}"#;
+    let sidecar = SessionSidecar {
+        subagent_metas: vec![meta("ag_bg", m), meta("ag_done", m), meta("ag_fg", m)],
+        ..SessionSidecar::default()
+    };
+    let s = assemble("sid", Path::new("/nonexistent"), vec![f], sidecar);
+    let t = main_t(&s, false);
+    let run = |id: &str| t.subagents.iter().find(|r| r.agent_id == id).unwrap();
+
+    assert!(t.orphan_subagent_ids.is_empty());
+    assert_eq!(call(&t, "t_bg").subagent_id.as_deref(), Some("ag_bg"));
+    assert_eq!(call(&t, "t_inline").subagent_id, None);
+    // Launched in the background: its tool_result says nothing about how it went.
+    assert!(run("ag_bg").is_async);
+    assert_eq!(run("ag_bg").status.as_deref(), Some("async_launched"));
+    assert_eq!(run("ag_bg").final_text, None);
+    assert!(run("ag_done").is_async);
+    assert_eq!(run("ag_done").status.as_deref(), Some("completed"));
+    assert_eq!(run("ag_done").final_text.as_deref(), Some("found 2 bugs"));
+    assert_eq!(
+        call(&t, "t_done").notification_node_id.as_deref(),
+        Some("n1")
+    );
+    // In the foreground the tool_result is the end of the run; no notification will come.
+    assert!(!run("ag_fg").is_async);
+    assert_eq!(run("ag_fg").status.as_deref(), Some("completed"));
+    assert_eq!(run("ag_fg").final_text.as_deref(), Some("the review"));
+}
+
 #[test]
 fn nested_background_runs_are_read_from_their_parent_file() {
     let main = from_lines(&[

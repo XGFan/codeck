@@ -37,7 +37,7 @@ _Avoid_: 服务端, server, daemon（指概念而非进程时）, Mac（指 Host
 _Avoid_: 恢复, 继续, 重启
 
 **Subagent Run**:
-Session 内由一次 Task/Agent 工具调用派生出的子对话；它属于该 Session，不是独立的 Session。
+Session 内由一次 Task/Agent 工具调用或 fork 执行的 Skill 派生出的子对话；它属于该 Session，不是独立的 Session。
 _Avoid_: sidechain, 子会话, agent session
 
 **Workflow Run**:

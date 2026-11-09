@@ -157,6 +157,18 @@ describe("subagent and workflow cards", () => {
     expect(kinds(rows)).toEqual(["tool"]);
   });
 
+  it("a forked Skill renders as a Subagent card, an inline one as a plain tool call", () => {
+    const run = richSubagents[0]!;
+    const forked = buildRows(
+      input([asstNode("a1", 1, [call("t1", "Skill", { skill: "x" }, ok(), { subagentId: run.agentId })])], {
+        subagents: richSubagents,
+      }),
+    );
+    expect(kinds(forked.rows)).toEqual(["subagent"]);
+    const inline = buildRows(input([asstNode("a1", 1, [call("t1", "Skill", { skill: "x" }, ok())])]));
+    expect(kinds(inline.rows)).toEqual(["tool"]);
+  });
+
   it("subagent scope shows the task prompt card and the final result", () => {
     const agent: SubagentRun = richSubagents[0]!;
     const { rows } = buildRows(input([userNode("s-u1", 1, "task"), asstNode("s-a1", 2, [text("done")])], { agent }));

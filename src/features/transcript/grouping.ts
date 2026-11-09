@@ -129,7 +129,8 @@ const isRetry = (n: Node) => n.body.kind === "system" && n.body.subtype === "api
 
 export const anchorKey = (nodeId: string, toolUseId?: string | null) => (toolUseId ? `${nodeId}|${toolUseId}` : nodeId);
 
-const AGENT_TOOLS = new Set(["Agent", "Task"]);
+// `Skill` only when forked: an inline Skill has no `subagentId`.
+const AGENT_TOOLS = new Set(["Agent", "Task", "Skill"]);
 
 // A coordinator message (SendMessage to a Subagent Run) starts the agent's next round of work.
 const isTurnStart = (b: Body<"userPrompt">) =>
