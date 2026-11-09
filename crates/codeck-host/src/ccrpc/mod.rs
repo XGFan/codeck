@@ -8,7 +8,9 @@ pub mod logs;
 pub mod relay;
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 
@@ -17,7 +19,12 @@ use serde::Serialize;
 use self::relay::{App, LsOut, LsSink, Out, Sink};
 use crate::Host;
 use crate::commands::{CmdResult, internal};
+use crate::connect::{ConnectHub, Writer};
 use crate::events::{EventSink, HostEvent};
+
+/// How long the Host's own `ccrpc ls --json --watch` waits before starting again, at first and at most.
+const LS_RETRY_MIN: Duration = Duration::from_secs(1);
+const LS_RETRY_MAX: Duration = Duration::from_secs(60);
 
 /// ccrpc, its logs and its pasted images, set up by the first command that needs them. A failed
 /// setup is not kept: the next command tries again (e.g. after ccrpc is installed). `Arc` so a
@@ -69,6 +76,52 @@ impl CcrpcState {
             app.disconnect_all();
         }
     }
+
+    /// Writes a command line to a connection's ccrpc (for the Connect hub).
+    pub(crate) fn writer(&self) -> Writer {
+        let cell = self.0.clone();
+        Arc::new(move |conn, line| cell.get()?.send(conn, line))
+    }
+
+    /// Keeps `ccrpc ls --json --watch` running for `hub` (started again after it ends or cannot start, waiting
+    /// longer each time it failed without a list), its lists also as events, until `hub` is stopped.
+    pub(crate) fn keep_watching(&self, hub: Arc<ConnectHub>, events: EventSink) {
+        let cell = self.0.clone();
+        std::thread::spawn(move || {
+            let mut wait = LS_RETRY_MIN;
+            while !hub.stopped() {
+                let listed = Arc::new(AtomicBool::new(false));
+                let (ended_tx, ended) = mpsc::channel::<()>();
+                let sink: LsSink = {
+                    let (hub, events, listed) = (hub.clone(), events.clone(), listed.clone());
+                    Arc::new(move |o| match o {
+                        LsOut::List(ls) => {
+                            listed.store(true, Ordering::SeqCst);
+                            hub.set_ls(Ok(ls.clone()));
+                            events(HostEvent::CcrpcLs { ls });
+                        }
+                        LsOut::Ended(message) => {
+                            hub.set_ls(Err(message.clone()));
+                            events(HostEvent::CcrpcLsEnded { message });
+                            let _ = ended_tx.send(());
+                        }
+                    })
+                };
+                match cell.get().and_then(|app| app.watch_sessions(true, sink)) {
+                    // Until it ends (or is stopped: the sink is dropped).
+                    Ok(()) => {
+                        let _ = ended.recv();
+                    }
+                    Err(e) => hub.set_ls(Err(e.message)),
+                }
+                if listed.load(Ordering::SeqCst) {
+                    wait = LS_RETRY_MIN;
+                }
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(LS_RETRY_MAX);
+            }
+        });
+    }
 }
 
 fn init(paths: &Paths) -> relay::R<App> {
@@ -86,8 +139,11 @@ fn init(paths: &Paths) -> relay::R<App> {
     App::new(env, ccrpc, logs, images)
 }
 
-/// ccrpc's lines and exits, as Host events.
-fn sink(events: &EventSink) -> Sink {
+/// ccrpc's lines and exits, as Host events (through the Connect hub when there is one).
+fn sink(events: &EventSink, hub: Option<&Arc<ConnectHub>>) -> Sink {
+    if let Some(hub) = hub {
+        return hub.sink();
+    }
     let events = events.clone();
     Arc::new(move |o| {
         events(match o {
@@ -299,6 +355,14 @@ impl Host {
     /// Starts (`on`) or stops `ccrpc ls --json --watch`; its lists come as `CcrpcLsEvent`, its end by
     /// itself as `CcrpcLsEndedEvent`. Starting again restarts it (the current list comes at once).
     pub async fn ccrpc_watch_sessions(&self, on: bool) -> CmdResult<()> {
+        // The Host keeps its own watch running: a client does not stop it, and starting it again only sends
+        // the current list.
+        if let Some(hub) = &self.connect {
+            if let (true, Some(ls)) = (on, hub.latest_ls()) {
+                (self.events)(HostEvent::CcrpcLs { ls });
+            }
+            return Ok(());
+        }
         let events = self.events.clone();
         let sink: LsSink = Arc::new(move |o| {
             events(match o {
@@ -311,18 +375,32 @@ impl Host {
     }
 
     pub async fn ccrpc_connect(&self, holder_id: String) -> CmdResult<String> {
-        let sink = sink(&self.events);
-        self.with_ccrpc(move |app| app.connect(sink, &holder_id))
-            .await
+        let sink = sink(&self.events, self.connect.as_ref());
+        let holder = holder_id.clone();
+        let conn = self
+            .with_ccrpc(move |app| app.connect(sink, &holder_id))
+            .await?;
+        self.registered(&conn, Some(holder));
+        Ok(conn)
+    }
+
+    /// A connection was started: its Connect state (when tracked) exists from now on.
+    fn registered(&self, conn: &str, holder_id: Option<String>) {
+        if let Some(hub) = &self.connect {
+            hub.register(conn, holder_id);
+        }
     }
 
     pub async fn ccrpc_new(&self, cwd: String) -> CmdResult<String> {
-        let sink = sink(&self.events);
-        self.with_ccrpc(move |app| {
-            let s = crate::settings::load();
-            app.new_session(sink, &cwd, &s.launch_rules, s.hide_new_panes)
-        })
-        .await
+        let sink = sink(&self.events, self.connect.as_ref());
+        let conn = self
+            .with_ccrpc(move |app| {
+                let s = crate::settings::load();
+                app.new_session(sink, &cwd, &s.launch_rules, s.hide_new_panes)
+            })
+            .await?;
+        self.registered(&conn, None);
+        Ok(conn)
     }
 
     /// Resume: starts the ended Session `session_id` again in a new Pane (`claude --resume`) and connects to it.
@@ -331,12 +409,15 @@ impl Host {
         if self.state.engine().is_live(&session_id) {
             return Err(relay::invalid("Session 仍在运行"));
         }
-        let sink = sink(&self.events);
-        self.with_ccrpc(move |app| {
-            let s = crate::settings::load();
-            app.resume_session(sink, &session_id, &cwd, &s.launch_rules, s.hide_new_panes)
-        })
-        .await
+        let sink = sink(&self.events, self.connect.as_ref());
+        let conn = self
+            .with_ccrpc(move |app| {
+                let s = crate::settings::load();
+                app.resume_session(sink, &session_id, &cwd, &s.launch_rules, s.hide_new_panes)
+            })
+            .await?;
+        self.registered(&conn, None);
+        Ok(conn)
     }
 
     /// Fork: starts a Fork of the Session `session_id` in a new Pane (before the Main Line prompt `at`, or
@@ -349,7 +430,7 @@ impl Host {
         restore: Option<String>,
         title: String,
     ) -> CmdResult<String> {
-        let sink = sink(&self.events);
+        let sink = sink(&self.events, self.connect.as_ref());
         let f = relay::ForkArgs {
             session_id,
             cwd,
@@ -357,11 +438,14 @@ impl Host {
             restore,
             title,
         };
-        self.with_ccrpc(move |app| {
-            let s = crate::settings::load();
-            app.fork_session(sink, &f, &s.launch_rules, s.hide_new_panes)
-        })
-        .await
+        let conn = self
+            .with_ccrpc(move |app| {
+                let s = crate::settings::load();
+                app.fork_session(sink, &f, &s.launch_rules, s.hide_new_panes)
+            })
+            .await?;
+        self.registered(&conn, None);
+        Ok(conn)
     }
 
     pub async fn ccrpc_send(&self, conn: String, line: String) -> CmdResult<()> {

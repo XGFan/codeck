@@ -1,5 +1,6 @@
 //! What the Host reports. The desktop app turns each one into its typed tauri event; the daemon sends
-//! `{event: name(), payload: payload()}`, the same names and payloads.
+//! `{event: name(), payload: payload()}`, the same names and payloads. `ConnectState` / `ConnectRemoved`
+//! come only from a Host that tracks Connect state (the daemon); they have no tauri event.
 
 use std::sync::Arc;
 
@@ -28,6 +29,10 @@ pub enum HostEvent {
     CcrpcLs { ls: String },
     /// `ccrpc ls --json --watch` ended by itself; `message` is why.
     CcrpcLsEnded { message: String },
+    /// A connection's Connect state changed (only with `HostConfig::track_connect`; the whole state).
+    ConnectState(Box<crate::connect::ConnState>),
+    /// A connection's ccrpc exited and its state is gone (after its last `ConnectState`, with `procExit`).
+    ConnectRemoved { conn: String },
 }
 
 pub type EventSink = Arc<dyn Fn(HostEvent) + Send + Sync>;
@@ -44,6 +49,8 @@ impl HostEvent {
             HostEvent::CcrpcExit { .. } => "ccrpc-exit-event",
             HostEvent::CcrpcLs { .. } => "ccrpc-ls-event",
             HostEvent::CcrpcLsEnded { .. } => "ccrpc-ls-ended-event",
+            HostEvent::ConnectState(_) => "connect-state-event",
+            HostEvent::ConnectRemoved { .. } => "connect-removed-event",
         }
     }
 
@@ -60,6 +67,8 @@ impl HostEvent {
             }
             HostEvent::CcrpcLs { ls } => Ok(json!({ "ls": ls })),
             HostEvent::CcrpcLsEnded { message } => Ok(json!({ "message": message })),
+            HostEvent::ConnectState(s) => serde_json::to_value(s),
+            HostEvent::ConnectRemoved { conn } => Ok(json!({ "conn": conn })),
         };
         v.unwrap_or(Value::Null)
     }

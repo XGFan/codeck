@@ -4,6 +4,7 @@
 
 pub mod ccrpc;
 pub mod commands;
+pub mod connect;
 pub mod events;
 mod methods;
 pub mod prices;
@@ -49,7 +50,9 @@ pub struct HostConfig {
     pub reveal_path: Option<PathAction>,
     /// `ccrpc_open_analyzer_records`; `None` = not available on this Host.
     pub open_path: Option<PathAction>,
-    /// Reduce ccrpc's lines to Connect state in the Host (the daemon, ADR-0011). Not used yet.
+    /// Reduce ccrpc's lines to Connect state in the Host and keep `ccrpc ls --json --watch` running (the daemon,
+    /// ADR-0011): the `connect_*` / `ccrpc_ls` methods and `ConnectState` events. Off on the desktop app, whose
+    /// front end does this itself.
     pub track_connect: bool,
 }
 
@@ -72,6 +75,8 @@ impl HostConfig {
 pub struct Host {
     state: Arc<AppState>,
     ccrpc: ccrpc::CcrpcState,
+    /// With `track_connect`.
+    connect: Option<Arc<connect::ConnectHub>>,
     events: EventSink,
     config: HostConfig,
 }
@@ -98,9 +103,16 @@ impl Host {
         // Starts the watcher, then FullScan -> TextBacklog.
         jobs.send(worker::Job::SetRoot);
         jobs.send(worker::Job::RefreshPrices);
+        let ccrpc = ccrpc::CcrpcState::new(config.ccrpc_logs.clone(), config.images.clone());
+        let connect = config.track_connect.then(|| {
+            let hub = connect::ConnectHub::new(events.clone(), ccrpc.writer());
+            ccrpc.keep_watching(hub.clone(), events.clone());
+            hub
+        });
         Ok(Arc::new(Host {
             state,
-            ccrpc: ccrpc::CcrpcState::new(config.ccrpc_logs.clone(), config.images.clone()),
+            ccrpc,
+            connect,
             events,
             config,
         }))
@@ -112,6 +124,9 @@ impl Host {
 
     /// Closes every ccrpc (the process is quitting); the Sessions themselves keep running.
     pub fn shutdown(&self) {
+        if let Some(hub) = &self.connect {
+            hub.stop();
+        }
         self.ccrpc.disconnect_all();
     }
 }

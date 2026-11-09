@@ -82,6 +82,8 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
             }
             HostEvent::CcrpcLs { ls } => CcrpcLsEvent { ls }.emit(&handle),
             HostEvent::CcrpcLsEnded { message } => CcrpcLsEndedEvent { message }.emit(&handle),
+            // Only from a Host that tracks Connect state (the daemon), not this one.
+            HostEvent::ConnectState(_) | HostEvent::ConnectRemoved { .. } => Ok(()),
         };
     })
 }

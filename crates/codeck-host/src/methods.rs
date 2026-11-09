@@ -121,10 +121,13 @@ macro_rules! gen_dispatch {
                         serde_json::to_value(out).map_err(internal)
                     }
                 )*
-                _ => Err(AppError {
-                    code: ErrorCode::NotFound,
-                    message: format!("没有方法 {method}"),
-                }),
+                _ => match crate::connect::dispatch(host, method, args).await {
+                    Some(r) => r,
+                    None => Err(AppError {
+                        code: ErrorCode::NotFound,
+                        message: format!("没有方法 {method}"),
+                    }),
+                },
             }
         }
     };

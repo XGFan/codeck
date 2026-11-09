@@ -133,6 +133,7 @@ fn main() {
             ccrpc_logs: Some(state_dir.join("logs/ccrpc")),
             images: Some(state_dir.join("images")),
             data_root: args.data_root,
+            track_connect: true,
             ..HostConfig::desktop()
         },
         sink,

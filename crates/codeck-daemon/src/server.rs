@@ -35,7 +35,8 @@ pub struct Ctx {
 }
 
 /// The broadcast channel the WebSocket clients read, and the Host's sink writing to it: every event as
-/// `{event, payload}`, except ccrpc's raw lines and exits (remote clients will get the Connect state).
+/// `{event, payload}`, except ccrpc's raw lines and exits (remote clients get the Connect state instead:
+/// `connect-state-event`, `connect-removed-event`).
 pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
     let (tx, _) = broadcast::channel(EVENT_BACKLOG);
     let sink_tx = tx.clone();
@@ -258,6 +259,41 @@ mod tests {
         serde_json::from_str(&body).unwrap()
     }
 
+    #[test]
+    fn events_carry_connect_state_but_not_raw_ccrpc_lines() {
+        let (tx, sink) = event_channel();
+        let mut rx = tx.subscribe();
+        sink(HostEvent::CcrpcLine {
+            conn: "c1".into(),
+            line: "{}".into(),
+        });
+        sink(HostEvent::CcrpcExit {
+            conn: "c1".into(),
+            code: None,
+            stderr: String::new(),
+        });
+        sink(HostEvent::ConnectState(Box::new(
+            codeck_host::connect::ConnState::new("c1", Some("H1".into())),
+        )));
+        sink(HostEvent::ConnectRemoved { conn: "c1".into() });
+        sink(HostEvent::CcrpcLs { ls: "[]".into() });
+        let got: Vec<Value> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|t| serde_json::from_str(t.as_str()).unwrap())
+            .collect();
+        let names: Vec<_> = got.iter().map(|v| v["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "connect-state-event",
+                "connect-removed-event",
+                "ccrpc-ls-event"
+            ]
+        );
+        assert_eq!(got[0]["payload"]["holderId"], "H1");
+        assert_eq!(got[0]["payload"]["state"], "starting");
+        assert_eq!(got[1]["payload"], json!({ "conn": "c1" }));
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn serves_health_rpc_and_events_on_loopback() {
         let root = tempfile::tempdir().unwrap();
@@ -314,6 +350,11 @@ mod tests {
         }
         let v = rpc_call(addr, json!({ "method": "rebuild_index", "args": {} })).await;
         assert_eq!(v["error"]["code"], "invalidQuery", "{v}");
+        // Without `track_connect` there is no Connect state to serve.
+        let v = rpc_call(addr, json!({ "method": "connect_states" })).await;
+        assert_eq!(v["error"]["code"], "invalidQuery", "{v}");
+        let v = rpc_call(addr, json!({ "method": "no_such_method" })).await;
+        assert_eq!(v["error"]["code"], "notFound", "{v}");
 
         let (status, head, body) = http(addr, "GET /web/transcript.html HTTP/1.1", "").await;
         assert_eq!((status, body.as_str()), (200, "<!doctype html>"));
