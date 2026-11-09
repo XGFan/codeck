@@ -28,6 +28,10 @@ _Avoid_: 被驾驶的 Session, 受控 Session（文案中）, 控制模式
 结束 Connect，Session 照常运行。
 _Avoid_: 断开, detach
 
+**Host**:
+持有数据目录、索引与 Connect 的那台机器（Mac 或 Linux），客户端（Mac 桌面、iPhone、浏览器）连上它来浏览 Session 和 Connect。一个 Session 在一个 Host 上至多有一个 Connect，该 Host 的所有客户端共用它：都能看、都能操作，Disconnect 对所有客户端生效。
+_Avoid_: 服务端, server, daemon（指概念而非进程时）, Mac（指 Host 时）
+
 **Resume**:
 让一个已结束的 Session 重新运行（`claude --resume`）并 Connect 它；Session ID 不变，仍是同一个 Session。
 _Avoid_: 恢复, 继续, 重启
