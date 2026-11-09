@@ -9,6 +9,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 ## 平台与分发
 
 - Tauri：Rust 后端负责解析、索引和监听，Web 前端负责全部 UI（ADR-0001）。
+- iPhone：原生 App 经局域网连到运行 `codeck-host` daemon 的 Host（Mac 或 Linux），无鉴权，只在可信网络使用（ADR-0011，见 README「iPhone 与 Host」）。
 - 自用：本地构建，ad-hoc 签名，不做公证，不做自动更新；不开沙盒；macOS 14+，只出 Apple Silicon 版本。
 - 仓库按可以开源的标准组织：有 README 和构建说明，不写死个人路径。
 
@@ -135,7 +136,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 ## Connect
 
-经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`src-tauri/src/ccrpc`）只管 ccrpc 子进程、转发 JSONL、写日志；协议解析与状态在前端（`src/features/connect`）。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
+经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`crates/codeck-host/src/ccrpc`）只管 ccrpc 子进程、转发 JSONL、写日志；桌面的协议解析与状态在前端（`src/features/connect`），daemon 的在 Host（`crates/codeck-host/src/connect`，供 iPhone 等客户端共用，ADR-0011）。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
 
 - **环境**：第一次用到 ccrpc 时读一次登录 shell 的环境（`<shell> -l -c env`，`<shell>` 是账户记录里的登录 shell，不是 CoDeck 继承来的 `$SHELL`），作为所有 ccrpc 子进程的环境，其中 `SHELL` 设为这个 shell：`toh new` 用它起 Pane，CoDeck 不论从 Dock 还是终端启动，Session 都跑在账户的登录 shell 里，带着它的配置设的环境变量。不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
 - **可 Connect 的 Session**：窗口可见、且至少有一个 Live Session 或连接时，后台常驻一个 `ccrpc ls --json --watch`：开始时给一次全表，之后 Pane 来去、隐藏 / 显示、claude 的状态与报到有变化时再给（由文件与进程事件唤醒，不定时查询）；条件不满足时停掉它（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时重新开始；停掉之后才到的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 启动不了、自己退出了或读取 ccrpc 信息失败时停掉，错误显示在「设置 › ccrpc」，可重试。

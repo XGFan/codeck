@@ -9,6 +9,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 - **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork / 转入后台复制的历史不重复计算），统计页汇总总额与 Session 排行（按 Cost）。
 - **Connect**：ToH clay 里装了 ccrpc 插件的 Session，打开时自动 Connect（可在设置里关掉），或在标题栏的「···」菜单里点「Connect」，之后可以直接发提示词（可粘贴截图，图片作为一整块留在光标处，可拖动换位置、悬停预览）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill，输入框里的命令高亮，`/add-dir` 补全目录、`@` 补全文件，支持 `../`）、忙时插话（和终端里一样进 Claude Code 的队列）、回复前按 Esc 撤回刚发的提示词（和终端里一样从对话里拿掉、文字回到输入框）、作答审批 / 提问（也可「先聊聊」）/ 选择、切换权限模式、模型与思考等级、停止后台任务、回退到 Main Line 上某条提示词之前（悬停提示词点「回退」或输入 `/rewind`（`/checkpoint`），可选恢复代码与对话、只恢复对话或只恢复代码）；「关闭」结束 Session 并关掉它的 Pane；也可以在侧栏组头点「+」或按 ⌘N 选 Project 新建 Session，或把已结束的 Session 在新 Pane 里 Resume（`claude --resume`）后接着 Connect，或从任一 Session 的某条提示词之前（或整个 Session）Fork 出新 Session（悬停提示词点「Fork」或「···」菜单里的「Fork」，可选只恢复对话或恢复代码与对话），并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：默认看本周期（自定义每周重置时间）的用量，可切到月份或最近 7 / 30 / 90 天，周期和月份可前后翻；输入、输出 token 与缓存命中率，每日用量（全部 / 输入 / 输出 / Cost，后三者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
+- **iPhone**：原生 App 经局域网连到运行 `codeck-host` 的 Host（Mac 或 Linux），浏览、搜索 Session，阅读 Transcript，并 Connect 运行中的 Session 作答审批、继续对话（见下文「iPhone 与 Host」）。
 
 ## 快捷键
 
@@ -106,6 +107,22 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 
 `crates/codeck-core/tests/fixtures/` 是从真实 Session 精简、脱敏得到的结构样本（见其中的 README），由 `crates/codeck-core/examples/sanitize.rs` 生成；`crates/transcript/tests/` 里解析层的测试也读这份 fixture。
 
+## iPhone 与 Host（局域网）
+
+iPhone App 连到一台 **Host**（运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
+
+**没有鉴权**：daemon 默认只监听本机的私网 IPv4 网卡（不含 VPN、虚拟机与容器网桥），只接受同一子网的来源，只认以 IP 访问的请求，拒绝来自网页的跨源请求；同一局域网里能访问它的设备都能读 Session、在 Host 上新建 Session 和 Connect。只在可信网络里运行，连着酒店、咖啡馆等公共 Wi-Fi 时不要开着它。
+
+启动 daemon（与桌面版的索引、设置、日志分开，状态目录默认 macOS `~/Library/Application Support/dev.joy.codeck.host`、Linux `$XDG_STATE_HOME/codeck`）：
+
+```sh
+pnpm build:web                                   # Transcript 页 → dist-web/
+cargo build --release -p codeck-daemon           # → target/release/codeck-host
+target/release/codeck-host --web-dir dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
+```
+
+daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动输入 Host 的局域网 IPv4，iOS 会询问是否允许访问本地网络。
+
 ## 构建
 
 ```sh
@@ -128,9 +145,12 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 crates/transcript/ 解析库：容错解析、对话组装、组装用的显示模型、进程文件、价格（ccrpc 也用它）
 crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断；应用层的 IPC 类型
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
-src-tauri/        Tauri 外壳：命令与事件、后台 worker、FSEvents 监听、Live 轮询、设置
-src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock 双实现）
-e2e/              Playwright 用例
+crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态；命令表只定义一次
+crates/codeck-daemon/ headless daemon（可执行文件 codeck-host）：以 HTTP + WebSocket 对局域网提供命令表的 remote 部分与 Transcript 页
+src-tauri/        Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件
+src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock / remote 三种实现）；transcript.html 是给 iPhone 的只读 Transcript 页
+ios/              iPhone App（SwiftUI；xcodegen 的 project.yml）
+e2e/              Playwright 用例（mock）；e2e-host/ 为真实后端用例
 ```
 
 **CoDeck、ccrpc 与 ToH 的分工**：ToH 在本机用 Holder 持有 clay Pane 的 PTY，Claude Code 跑在里面，Mac / iPhone / web 的 Client 都能接手同一个 Pane。ccrpc 把一个 Pane 里的交互式 Claude Code 变成 JSONL 接口：经 Holder 收屏幕、写按键，经 ccrpc 插件的 hooks 得知审批、提问与轮次边界并代答审批。CoDeck 每 Connect 一个 Session 起一个 `ccrpc attach` 子进程（Session 同时显示在终端里，两边都能输入）（一个 Session 同时只能连一个 ccrpc），Disconnect 只结束这个 ccrpc，Session 照常运行。对话内容始终来自 CoDeck 自己的索引与实时追随，不经 ccrpc（[ADR-0007](docs/adr/0007-monorepo-parsing-library-and-drive-via-ccrpc.md)）。

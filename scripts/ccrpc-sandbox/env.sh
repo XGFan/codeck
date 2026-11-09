@@ -3,7 +3,7 @@
 # its own TOH_STATE_DIR, CLAUDE_CONFIG_DIR and CCRPC_STATE_DIR under /tmp/codeck-ccrpc-sandbox, Claude
 # Code talking to scripts/ccrpc-sandbox/mock_model.py on loopback (start it with
 # `python3 -I mock_model.py 18765`), the ccrpc Plugin loaded with --plugin-dir (a wrapper adds it to
-# `ccrpc new`). Prints the work folder. Used by `cargo test --test ccrpc_sandbox -- --ignored` and
+# `ccrpc new`). Prints the work folder. Used by `cargo test -p codeck-host --test ccrpc_sandbox -- --ignored` and
 # by scripts/ccrpc-sandbox/run-app.sh.
 set -eu
 B=${CODECK_SANDBOX:-/tmp/codeck-ccrpc-sandbox}; PORT=${PORT:-18765}
