@@ -88,7 +88,7 @@ final class ConnectStore {
     /// page can say why; one this app ended goes.
     func remove(conn: String) {
         follow(conn, gone: true)
-        if let c = conns[conn], !ending.contains(conn), c.procExit != nil || c.sessionExited {
+        if let c = conns[conn], !ending.contains(conn), !c.disconnected, c.procExit != nil || c.sessionExited {
             answered = answered.filter { !$0.hasPrefix(conn + "|") }
             return
         }
@@ -109,6 +109,12 @@ final class ConnectStore {
                 order.removeAll { $0 == c.conn }
             }
         }
+    }
+
+    /// `ccrpc-ls-ended-event`: the Host's `ccrpc ls --watch` stopped; no list until the next one (or `hello`).
+    func lsEnded(_ message: String) {
+        ls = []
+        lsError = message
     }
 
     /// `ccrpc-ls-event`: the JSON text `ccrpc ls --json` printed.

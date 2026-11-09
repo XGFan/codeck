@@ -95,6 +95,20 @@ final class ConnStateDecodingTests: XCTestCase {
         XCTAssertTrue(c.requests.isEmpty)
         XCTAssertTrue(c.isLive)
         XCTAssertFalse(c.canCommand)
+        // Fields an older Host does not send.
+        XCTAssertNil(c.fork)
+        XCTAssertFalse(c.disconnected)
+    }
+
+    func testForkAndDisconnected() throws {
+        let okJSON = #"{"conn": "c2", "disconnected": true, "fork": {"type": "fork", "session_id": "s9", "origin": "s1", "text": null, "title": "拆分 (Fork)", "title_error": "rename failed"}}"#
+        let ok = try JSONDecoder().decode(ConnState.self, from: Data(okJSON.utf8))
+        XCTAssertTrue(ok.disconnected)
+        XCTAssertEqual(ok.fork, .init(sessionId: "s9", titleError: "rename failed"))
+        let failedJSON = #"{"conn": "c3", "fork": {"type": "fork", "error": {"code": "bad_prompt", "message": "没有这个提示词"}}}"#
+        let failed = try JSONDecoder().decode(ConnState.self, from: Data(failedJSON.utf8))
+        XCTAssertEqual(failed.fork?.error?.message, "没有这个提示词")
+        XCTAssertNil(failed.fork?.sessionId)
     }
 
     func testConnectEvents() throws {
@@ -104,6 +118,9 @@ final class ConnStateDecodingTests: XCTestCase {
 
         let removed = try HostEvent.decode(Data(#"{"event": "connect-removed-event", "payload": {"conn": "c1"}}"#.utf8))
         guard case .connectRemoved("c1") = removed else { return XCTFail("removed") }
+
+        let ended = try HostEvent.decode(Data(#"{"event": "ccrpc-ls-ended-event", "payload": {"message": "ccrpc ls 退出了"}}"#.utf8))
+        guard case .ccrpcLsEnded("ccrpc ls 退出了") = ended else { return XCTFail("ls ended") }
 
         let ls = try HostEvent.decode(Data(#"{"event": "ccrpc-ls-event", "payload": {"ls": "[{\"holder_id\":\"h1\",\"session_id\":\"s1\",\"plugin\":true}]"}}"#.utf8))
         guard case .ccrpcLs(let text) = ls else { return XCTFail("ls") }
@@ -198,6 +215,26 @@ final class ConnectStoreTests: XCTestCase {
         store.remove(conn: "c2")
         store.apply(state("c3", session: "s1"))
         XCTAssertEqual(store.conn(for: "s1")?.conn, "c3")
+    }
+
+    func testADisconnectedConnectGoesWithoutATrace() {
+        let store = ConnectStore()
+        var c = state("c1", session: "s1")
+        c.procExit = .init(code: 0, stderr: "")
+        c.disconnected = true
+        store.apply(c)
+        store.remove(conn: "c1")
+        XCTAssertNil(store.conn(for: "s1"))
+    }
+
+    func testLsEndedClearsTheListAndSaysWhy() {
+        let store = ConnectStore()
+        store.applyLs(#"[{"holder_id": "h1", "session_id": "s1", "plugin": true}]"#)
+        store.lsEnded("ccrpc ls 退出了")
+        XCTAssertNil(store.lsEntry(for: "s1"))
+        XCTAssertEqual(store.lsError, "ccrpc ls 退出了")
+        store.applyLs(#"[{"holder_id": "h1", "session_id": "s1", "plugin": true}]"#)
+        XCTAssertNil(store.lsError)
     }
 
     func testBadLsTextKeepsTheLastList() {

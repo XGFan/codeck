@@ -80,11 +80,19 @@ final class StartFlowTests: XCTestCase {
         XCTAssertEqual(StartFlow.outcome(.resume(sessionId: "s1"), conn(session: "s1")), .ready(sessionId: "s1"))
     }
 
-    func testAForkIsReadyOnlyWithAnIdOtherThanItsOrigin() {
+    func testAForkIsReadyOnlyOnItsForkEvent() {
+        // A Session id before the `fork` event (the Origin's, or the new one) is not the end of the setup.
         XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), conn(session: "s1")), .waiting)
-        XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), conn(session: "s2")), .ready(sessionId: "s2"))
-        XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), conn(session: "s1", live: false, notice: "Fork 失败：没有这个提示词")),
-                       .failed("Fork 失败：没有这个提示词"))
+        XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), conn(session: "s2")), .waiting)
+        var done = conn(session: "s2")
+        done.fork = .init(sessionId: "s2")
+        XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), done), .ready(sessionId: "s2"))
+        var refused = conn(session: nil)
+        refused.fork = .init(error: .init(code: "bad_prompt", message: "没有这个提示词"))
+        XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), refused), .failed("没有这个提示词"))
+        // ccrpc ending before the event is a failure too.
+        XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), conn(session: nil, live: false, stderr: "error: boom")),
+                       .failed("error: boom"))
     }
 
     func testEndingBeforeANameIsAFailureWithItsReason() {
@@ -141,7 +149,17 @@ final class StartFollowStoreTests: XCTestCase {
         var c = ConnState(conn: "c1")
         c.sessionId = "s2"
         store.apply(c)
+        XCTAssertNil(store.openRequest)
+        c.fork = .init(sessionId: "s2", titleError: "rename failed")
+        store.apply(c)
         XCTAssertEqual(store.openRequest?.sessionId, "s2")
+        XCTAssertEqual(store.errors["s2"], "Fork 的标题没有改成：rename failed")
+
+        store.starts["c3"] = .fork(origin: "s1")
+        var refused = ConnState(conn: "c3")
+        refused.fork = .init(error: .init(code: "bad_prompt", message: "没有这个提示词"))
+        store.apply(refused)
+        XCTAssertEqual(store.errors["s1"], "Fork 失败：没有这个提示词")
 
         store.starts["c2"] = .fork(origin: "s1")
         var failed = ConnState(conn: "c2")

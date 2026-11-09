@@ -2,8 +2,8 @@ import PhotosUI
 import SwiftUI
 
 /// The input box (Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call
-/// ends); 「排队（空闲后发送）」 → `follow_up`. Photos are saved on the Host first and sent as `parts`, the text
-/// before the images. With the box empty while busy, the button stops the turn (`abort`).
+/// ends); waiting → nothing (the card comes first). Photos are saved on the Host first and sent as `parts`, the
+/// text before the images. With the box empty while busy, the button stops the turn (`abort`).
 struct Composer: View {
     let c: ConnState
     let sessionId: String
@@ -71,27 +71,13 @@ struct Composer: View {
                 .disabled(!live)
                 .sensoryFeedback(.impact, trigger: sending)
         } else if c.state == .busy {
-            // Tap: 插话; hold: 排队 until idle.
-            Menu {
-                queueButton
-            } label: {
-                sendLabel(steer: true)
-            } primaryAction: {
-                Task { await send("steer") }
-            }
-            .disabled(!canSend)
-        } else if c.state == .waiting {
-            // A card comes first: only 排队 until idle.
-            Menu { queueButton } label: { sendLabel(steer: false) }
+            // 插话: delivered when the current tool call ends.
+            Button { Task { await send("steer") } } label: { sendLabel(steer: true) }
                 .disabled(!canSend)
         } else {
             Button { Task { await send("prompt") } } label: { sendLabel(steer: false) }
                 .disabled(!canSend || c.state != .idle)
         }
-    }
-
-    private var queueButton: some View {
-        Button("排队（空闲后发送）", systemImage: "clock") { Task { await send("follow_up") } }
     }
 
     private var canSend: Bool { live && hasContent && !sending && !uploading }

@@ -82,7 +82,7 @@ struct HostClient: Sendable {
         }
     }
 
-    /// `{"method", "args"}` → `{"result"}`, or non-2xx `{"error": {"code", "message"}}`.
+    /// `{"method", "args"}` → `{"result"}` or `{"error": {"code", "message"}}`.
     func call<Args: Encodable & Sendable, Result: Decodable>(
         _ method: String,
         args: Args,
@@ -98,14 +98,13 @@ struct HostClient: Sendable {
         return try Self.decodeRPC(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
+    /// `{"result"}`, or `{"error": {code, message}}`, which the Host sends with HTTP 200 (and any other status).
     static func decodeRPC<Result: Decodable>(_ data: Data, status: Int) throws -> Result {
         let decoder = JSONDecoder()
-        guard (200..<300).contains(status) else {
-            if let body = try? decoder.decode(RPCError.self, from: data) {
-                throw HostError.host(code: body.error.code, message: body.error.message)
-            }
-            throw HostError.badResponse
+        if let body = try? decoder.decode(RPCError.self, from: data) {
+            throw HostError.host(code: body.error.code, message: body.error.message)
         }
+        guard (200..<300).contains(status) else { throw HostError.badResponse }
         do {
             return try decoder.decode(RPCResult<Result>.self, from: data).result
         } catch {

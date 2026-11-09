@@ -141,6 +141,8 @@ final class HostModel {
             connect.remove(conn: conn)
         case .ccrpcLs(let text):
             connect.applyLs(text)
+        case .ccrpcLsEnded(let message):
+            connect.lsEnded(message)
         case .indexStatus, .pricesChanged, .other:
             break
         }

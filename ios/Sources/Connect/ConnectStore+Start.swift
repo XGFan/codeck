@@ -69,7 +69,12 @@ extension ConnectStore {
         case .ready(let sessionId):
             starts[conn] = nil
             started[conn] = sessionId
-            if case .fork = kind { openRequest = OpenRequest(sessionId: sessionId) }
+            if case .fork = kind {
+                if let titleError = conns[conn]?.fork?.titleError {
+                    errors[sessionId] = "Fork 的标题没有改成：\(titleError)"
+                }
+                openRequest = OpenRequest(sessionId: sessionId)
+            }
         case .failed(let reason):
             switch kind {
             case .new:

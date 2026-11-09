@@ -36,6 +36,35 @@ struct ConnState: Decodable, Equatable, Sendable {
         enum CodingKeys: String, CodingKey { case durationMs = "duration_ms", aborted }
     }
 
+    /// ccrpc's `fork` event, as is: how a Fork's setup ended.
+    struct ForkResult: Decodable, Equatable, Sendable {
+        struct Failure: Decodable, Equatable, Sendable {
+            var code: String?
+            var message: String?
+        }
+
+        /// The new Session (success).
+        var sessionId: String?
+        var error: Failure?
+        /// Renaming the Fork to its title failed (it still succeeded).
+        var titleError: String?
+
+        enum CodingKeys: String, CodingKey { case sessionId = "session_id", error, titleError = "title_error" }
+
+        init(sessionId: String? = nil, error: Failure? = nil, titleError: String? = nil) {
+            self.sessionId = sessionId
+            self.error = error
+            self.titleError = titleError
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sessionId = c.lenient(String.self, .sessionId)
+            error = c.lenient(Failure.self, .error)
+            titleError = c.lenient(String.self, .titleError)
+        }
+    }
+
     struct Notice: Decodable, Equatable, Sendable {
         var id: Int
         var text: String
@@ -62,10 +91,14 @@ struct ConnState: Decodable, Equatable, Sendable {
     var procExit: ProcExit?
     var sessionExited = false
     var notices: [Notice] = []
+    /// The `fork` event of a Fork's connection (nil until it comes; absent from older Hosts).
+    var fork: ForkResult?
+    /// A client of this Host called `ccrpc_disconnect` on it: its end is not a failure.
+    var disconnected = false
 
     enum CodingKeys: String, CodingKey {
         case conn, holderId, sessionId, cwd, claudeVersion, ready, state, waiting, mode, model, effort, contextTokens
-        case requests, progress, queue, tasks, lastTurn, procExit, sessionExited, notices
+        case requests, progress, queue, tasks, lastTurn, procExit, sessionExited, notices, fork, disconnected
     }
 
     init(conn: String) { self.conn = conn }
@@ -92,6 +125,8 @@ struct ConnState: Decodable, Equatable, Sendable {
         procExit = c.lenient(ProcExit.self, .procExit)
         sessionExited = c.lenient(Bool.self, .sessionExited) ?? false
         notices = c.lenient(Lossy<Notice>.self, .notices)?.items ?? []
+        fork = c.lenient(ForkResult.self, .fork)
+        disconnected = c.lenient(Bool.self, .disconnected) ?? false
     }
 
     /// Still on its Session: ccrpc runs and the Session has not ended.

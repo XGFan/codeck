@@ -43,16 +43,17 @@ enum StartFlow {
         case failed(String)
     }
 
-    /// Where a started connection is: its state has a Session id (for a Fork, one other than the Origin's), it
-    /// ended first, or neither yet.
+    /// Where a started connection is: its state has a Session id (a Fork: its `fork` event came), it ended first,
+    /// or neither yet.
     static func outcome(_ kind: StartKind, _ c: ConnState?) -> Outcome {
         guard let c else { return .waiting }
-        if let id = c.sessionId {
-            if case .fork(let origin) = kind, id == origin {
-                // Not the Fork yet.
-            } else {
-                return .ready(sessionId: id)
+        if case .fork = kind {
+            if let f = c.fork {
+                if let e = f.error { return .failed(e.message ?? e.code ?? "") }
+                if let id = f.sessionId { return .ready(sessionId: id) }
             }
+        } else if let id = c.sessionId {
+            return .ready(sessionId: id)
         }
         return c.isLive ? .waiting : .failed(reason(c))
     }

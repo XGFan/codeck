@@ -38,6 +38,8 @@ enum HostEvent: Sendable {
     case connectRemoved(conn: String)
     /// `ccrpc ls --json`'s new list, as the JSON text it printed.
     case ccrpcLs(String)
+    /// The Host's `ccrpc ls --watch` stopped, and why.
+    case ccrpcLsEnded(message: String)
     /// An event this version of the app does not use (later additions).
     case other(String)
 
@@ -46,6 +48,7 @@ enum HostEvent: Sendable {
     private struct Hello: Decodable { var apiVersion: Int }
     private struct Removed: Decodable { var conn: String }
     private struct Ls: Decodable { var ls: String }
+    private struct LsEnded: Decodable { var message: String }
 
     static func decode(_ data: Data) throws -> HostEvent {
         let decoder = JSONDecoder()
@@ -67,6 +70,8 @@ enum HostEvent: Sendable {
             return .connectRemoved(conn: try decoder.decode(Payload<Removed>.self, from: data).payload.conn)
         case "ccrpc-ls-event":
             return .ccrpcLs(try decoder.decode(Payload<Ls>.self, from: data).payload.ls)
+        case "ccrpc-ls-ended-event":
+            return .ccrpcLsEnded(message: try decoder.decode(Payload<LsEnded>.self, from: data).payload.message)
         default:
             return .other(name)
         }

@@ -119,18 +119,19 @@ private struct NotConnectedBar: View {
     }
 }
 
-/// 「Session 已结束」, or why ccrpc exited.
+/// 「Session 已结束」, 「已 Disconnect」 (a client of this Host disconnected it: not a failure), or why ccrpc exited.
 private struct EndedNotice: View {
     let c: ConnState
 
     var body: some View {
+        let crashed = c.procExit != nil && !c.disconnected
         HStack(spacing: 10) {
-            Image(systemName: c.procExit != nil ? "exclamationmark.triangle" : "stop.circle")
-                .foregroundStyle(c.procExit != nil ? .red : .secondary)
+            Image(systemName: crashed ? "exclamationmark.triangle" : c.disconnected ? "cable.connector.slash" : "stop.circle")
+                .foregroundStyle(crashed ? .red : .secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(c.procExit.map(ConnectWords.procExit) ?? "Session 已结束")
+                Text(c.disconnected ? "已 Disconnect" : c.procExit.map(ConnectWords.procExit) ?? "Session 已结束")
                     .font(.subheadline.weight(.semibold))
-                if let line = ConnectWords.lastLine(c.procExit?.stderr) {
+                if crashed, let line = ConnectWords.lastLine(c.procExit?.stderr) {
                     Text(line).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }
             }

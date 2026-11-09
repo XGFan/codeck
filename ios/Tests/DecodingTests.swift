@@ -32,6 +32,17 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(list.map(\.id), ["7c1e"])
     }
 
+    func testRPCErrorWithStatus200() throws {
+        // The Host sends errors with HTTP 200.
+        let body = Data(#"{"error": {"code": "invalidQuery", "message": "没有这个连接，或 ccrpc 已退出"}}"#.utf8)
+        XCTAssertThrowsError(try HostClient.decodeRPC(body, status: 200) as String) {
+            XCTAssertEqual($0 as? HostError, .host(code: "invalidQuery", message: "没有这个连接，或 ccrpc 已退出"))
+        }
+        // A result with a null error is a result.
+        let ok: String = try HostClient.decodeRPC(Data(#"{"result": "c1", "error": null}"#.utf8), status: 200)
+        XCTAssertEqual(ok, "c1")
+    }
+
     func testRPCErrorCarriesMessage() {
         let body = Data(#"{"error": {"code": "notFound", "message": "找不到这个 Session。"}}"#.utf8)
         XCTAssertThrowsError(try HostClient.decodeRPC(body, status: 404) as [SessionSummary]) {
