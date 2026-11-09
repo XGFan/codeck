@@ -1,0 +1,127 @@
+{
+  "conn": "c1",
+  "holderId": "h1",
+  "sessionId": "s1",
+  "cwd": "/work/app",
+  "claudeVersion": "2.1.318",
+  "ready": true,
+  "state": "waiting",
+  "waiting": {
+    "kind": "permission",
+    "waiting_for": "Bash"
+  },
+  "mode": "plan",
+  "model": "claude-opus-4-7",
+  "effort": "xhigh",
+  "contextTokens": 52000,
+  "requests": [
+    {
+      "agent_id": null,
+      "input": {
+        "command": "pnpm test",
+        "description": "Run the tests"
+      },
+      "layout_source": "builtin",
+      "options": [
+        {
+          "label": "Yes",
+          "meaning": "allow"
+        },
+        {
+          "label": "Yes, and don't ask again for pnpm test commands in /work/app",
+          "meaning": "allow_always"
+        },
+        {
+          "label": "No",
+          "meaning": "deny"
+        }
+      ],
+      "request_id": "toolu_1",
+      "tool_name": "Bash",
+      "type": "permission_request"
+    },
+    {
+      "agent_id": "agent-7",
+      "questions": [
+        {
+          "header": "DB",
+          "multiSelect": false,
+          "options": [
+            {
+              "description": "Relational",
+              "label": "Postgres"
+            },
+            {
+              "label": "SQLite",
+              "preview": "file.db"
+            }
+          ],
+          "question": "Which database?"
+        }
+      ],
+      "request_id": "toolu_2",
+      "type": "question"
+    },
+    {
+      "layout": "plan_approval",
+      "layout_source": "builtin",
+      "options": [
+        {
+          "description": null,
+          "label": "Yes, auto-accept edits",
+          "meaning": "allow"
+        },
+        {
+          "description": "Tell Claude what to change",
+          "label": "No, keep planning",
+          "meaning": "deny"
+        }
+      ],
+      "request_id": "choice-1",
+      "title": "Ready to code?",
+      "tool_use_id": "toolu_3",
+      "type": "choice"
+    }
+  ],
+  "progress": null,
+  "queue": [
+    "and then run lint"
+  ],
+  "tasks": [
+    {
+      "command": "pnpm dev",
+      "description": "dev server",
+      "id": "b1",
+      "kind": "shell",
+      "status": "running",
+      "tool_use_id": "toolu_9"
+    }
+  ],
+  "lastTurn": {
+    "aborted": false,
+    "api_cost": 0.0123,
+    "background_tasks": [],
+    "duration_ms": 8123,
+    "error": null,
+    "last_text": "Done.",
+    "prompt_id": "p1",
+    "restored_text": null,
+    "trigger": "prompt",
+    "type": "turn_end",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 30,
+      "input_tokens": 10,
+      "output_tokens": 20
+    }
+  },
+  "procExit": null,
+  "sessionExited": false,
+  "notices": [
+    {
+      "id": 1,
+      "text": "排队的消息没有发出：还在忙"
+    }
+  ],
+  "feedbackDraft": null
+}
