@@ -4,7 +4,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 /// A listen address and the subnet its peers must come from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Subnet {
     pub addr: Ipv4Addr,
     pub mask: Ipv4Addr,
@@ -72,36 +72,18 @@ pub fn interfaces() -> std::io::Result<Vec<Iface>> {
     Ok(out)
 }
 
-/// Interfaces of VPNs, virtual machines, containers and Apple's peer-to-peer links, by name prefix: private
-/// addresses there are not the LAN, so they are not listened on by default.
-const VIRTUAL_IFACES: &[&str] = &[
-    "utun",
-    "bridge",
-    "vmnet",
-    "vboxnet",
-    "docker",
-    "veth",
-    "virbr",
-    "br-",
-    "tun",
-    "tap",
-    "wg",
-    "tailscale",
-    "ipsec",
-    "ppp",
-    "feth",
-    "llw",
-    "awdl",
-    "anpi",
-];
+/// Name prefixes of LAN interfaces (macOS `en*`; Linux `eth*`, `en*`, `wl*`). An allowlist: the private
+/// addresses of VPNs, virtual machines, containers and overlays are not the LAN, and a new kind of virtual
+/// interface must not get the unauthenticated API by default. `--listen` names any other interface.
+const LAN_IFACES: &[&str] = &["en", "eth", "wl"];
 
-fn is_virtual(name: &str) -> bool {
-    VIRTUAL_IFACES.iter().any(|p| name.starts_with(p))
+fn is_lan(name: &str) -> bool {
+    LAN_IFACES.iter().any(|p| name.starts_with(p))
 }
 
 /// What to listen on: each of `explicit` (a loopback address answers 127.0.0.0/8, another one must be an
-/// interface's), or by default every up, non-loopback, private (RFC 1918) address of a physical interface
-/// (not [`VIRTUAL_IFACES`]).
+/// interface's), or by default every up, non-loopback, private (RFC 1918) address of a LAN interface
+/// ([`LAN_IFACES`]).
 pub fn listeners(explicit: &[Ipv4Addr], ifaces: &[Iface]) -> Result<Vec<Subnet>, String> {
     let mut out: Vec<Subnet> = Vec::new();
     if explicit.is_empty() {
@@ -109,7 +91,7 @@ pub fn listeners(explicit: &[Ipv4Addr], ifaces: &[Iface]) -> Result<Vec<Subnet>,
             if i.up
                 && !i.loopback
                 && i.addr.is_private()
-                && !is_virtual(&i.name)
+                && is_lan(&i.name)
                 && !out.iter().any(|s| s.addr == i.addr)
             {
                 out.push(Subnet {
@@ -258,6 +240,12 @@ mod tests {
             "llw0",
             "awdl0",
             "anpi0",
+            "cni0",
+            "flannel.1",
+            "podman0",
+            "lxdbr0",
+            "ztabcdef",
+            "nebula1",
         ]
         .iter()
         .enumerate()
@@ -272,6 +260,20 @@ mod tests {
             false,
         ));
         ifaces.push(iface("eth0", [10, 0, 0, 5], [255, 0, 0, 0], true, false));
+        ifaces.push(iface(
+            "enp3s0",
+            [10, 0, 1, 5],
+            [255, 255, 255, 0],
+            true,
+            false,
+        ));
+        ifaces.push(iface(
+            "wlp2s0",
+            [10, 0, 2, 5],
+            [255, 255, 255, 0],
+            true,
+            false,
+        ));
         let got: Vec<Ipv4Addr> = listeners(&[], &ifaces)
             .unwrap()
             .iter()
@@ -279,7 +281,12 @@ mod tests {
             .collect();
         assert_eq!(
             got,
-            [Ipv4Addr::new(192, 168, 1, 20), Ipv4Addr::new(10, 0, 0, 5)]
+            [
+                Ipv4Addr::new(192, 168, 1, 20),
+                Ipv4Addr::new(10, 0, 0, 5),
+                Ipv4Addr::new(10, 0, 1, 5),
+                Ipv4Addr::new(10, 0, 2, 5),
+            ]
         );
         // Explicitly, a virtual interface's address is still allowed.
         let got = listeners(&[[10, 9, 1, 1].into()], &ifaces).unwrap();

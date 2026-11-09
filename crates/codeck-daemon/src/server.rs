@@ -1,5 +1,6 @@
 //! The HTTP + WebSocket face of the Host: `/health`, `POST /v1/rpc`, `GET /v1/events`, `/web/*`.
 
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use codeck_core::model::{AppError, ErrorCode};
 use codeck_host::{EventSink, Host, HostEvent, dispatch};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -52,6 +54,75 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
         let _ = sink_tx.send(msg.into());
     });
     (tx, sink)
+}
+
+/// The listeners being served, one per [`Subnet`].
+pub struct Serving {
+    port: u16,
+    router: Box<dyn Fn(Subnet) -> Router + Send>,
+    tasks: HashMap<Subnet, JoinHandle<()>>,
+    /// Could not be bound at the last look: said once, tried again at each.
+    failed: HashSet<Subnet>,
+}
+
+impl Serving {
+    pub fn new(port: u16, router: Box<dyn Fn(Subnet) -> Router + Send>) -> Self {
+        Serving {
+            port,
+            router,
+            tasks: HashMap::new(),
+            failed: HashSet::new(),
+        }
+    }
+
+    pub async fn start(&mut self, subnet: Subnet) -> std::io::Result<()> {
+        let listener = tokio::net::TcpListener::bind((subnet.addr, self.port)).await?;
+        tracing::info!(
+            "listening on http://{}/ (peers from {}/{})",
+            listener
+                .local_addr()
+                .map_or(subnet.addr.to_string(), |a| a.to_string()),
+            subnet.addr,
+            subnet.prefix_len()
+        );
+        let app = (self.router)(subnet).into_make_service_with_connect_info::<SocketAddr>();
+        let task = tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!("serve {}: {e}", subnet.addr);
+            }
+        });
+        self.tasks.insert(subnet, task);
+        Ok(())
+    }
+
+    /// Serves exactly `wanted`: listeners no longer wanted stop, new ones start. One that cannot be bound now
+    /// is tried again at the next call.
+    pub async fn follow(&mut self, wanted: &[Subnet]) {
+        self.tasks.retain(|s, task| {
+            let keep = wanted.contains(s);
+            if !keep {
+                task.abort();
+                tracing::info!("stopped listening on {}", s.addr);
+            }
+            keep
+        });
+        self.failed.retain(|s| wanted.contains(s));
+        for &s in wanted {
+            if self.tasks.contains_key(&s) {
+                continue;
+            }
+            match self.start(s).await {
+                Ok(()) => {
+                    self.failed.remove(&s);
+                }
+                Err(e) => {
+                    if self.failed.insert(s) {
+                        tracing::warn!("cannot listen on {}:{}: {e}", s.addr, self.port);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -341,6 +412,49 @@ mod tests {
         assert_eq!(got[0]["payload"]["holderId"], "H1");
         assert_eq!(got[0]["payload"]["state"], "starting");
         assert_eq!(got[1]["payload"], json!({ "conn": "c1" }));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn follow_starts_and_stops_listeners_as_addresses_come_and_go() {
+        let free = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let addr = free.local_addr().unwrap();
+        drop(free);
+        let subnet = Subnet {
+            addr: Ipv4Addr::LOCALHOST,
+            mask: Ipv4Addr::new(255, 0, 0, 0),
+        };
+        let mut serving = Serving::new(addr.port(), Box::new(|_| Router::new()));
+        let answers = || async { tokio::net::TcpStream::connect(addr).await.is_ok() };
+        // Stopping and starting are not instant: the old socket goes when its task does.
+        async fn eventually(mut check: impl AsyncFnMut() -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !check().await {
+                assert!(Instant::now() < deadline, "timed out");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+
+        serving.follow(&[subnet]).await;
+        assert!(answers().await);
+        // Unchanged: the running listener stays.
+        serving.follow(&[subnet]).await;
+        assert_eq!(serving.tasks.len(), 1);
+        assert!(serving.failed.is_empty());
+        assert!(answers().await);
+
+        serving.follow(&[]).await;
+        assert!(serving.tasks.is_empty());
+        eventually(async || !answers().await).await;
+
+        // A new address comes up.
+        eventually(async || {
+            serving.follow(&[subnet]).await;
+            serving.tasks.len() == 1
+        })
+        .await;
+        assert!(answers().await);
     }
 
     #[tokio::test(flavor = "multi_thread")]

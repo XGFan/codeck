@@ -111,7 +111,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 
 iPhone App 连到一台 **Host**（运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session；也能在 Host 上新建 Session、Resume 已结束的 Session、Fork 整个 Session。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
 
-**没有鉴权**：daemon 默认只监听本机的私网 IPv4 网卡（不含 VPN、虚拟机与容器网桥），只接受同一子网的来源，只认以 IP 访问的请求，拒绝来自网页的跨源请求；同一局域网里能访问它的设备都能读 Session、在 Host 上新建 Session 和 Connect。只在可信网络里运行，连着酒店、咖啡馆等公共 Wi-Fi 时不要开着它。
+**没有鉴权**：daemon 默认只监听本机局域网网卡（名字以 `en`、`eth`、`wl` 开头）的私网 IPv4 地址，不含 VPN、虚拟机与容器网桥，其他网卡要用 `--listen` 指定；默认的监听地址随网络变化增减，daemon 不用重启。它只接受同一子网的来源，只认以 IP 访问的请求，拒绝来自网页的跨源请求；同一局域网里能访问它的设备都能读 Session、在 Host 上新建 Session 和 Connect。只在可信网络里运行，连着酒店、咖啡馆等公共 Wi-Fi 时不要开着它。
 
 启动 daemon（与桌面版的索引、设置、日志分开，状态目录默认 macOS `~/Library/Application Support/dev.joy.codeck.host`、Linux `$XDG_STATE_HOME/codeck`）：
 

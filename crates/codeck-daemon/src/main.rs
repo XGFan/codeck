@@ -7,18 +7,20 @@ mod fixtures;
 mod net;
 mod server;
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use codeck_host::{Host, HostConfig};
 
 const DEFAULT_PORT: u16 = 38471;
+/// How often the default listeners are checked against the machine's addresses.
+const NETWORK_POLL: std::time::Duration = std::time::Duration::from_secs(5);
 
 const USAGE: &str = "用法：codeck-host [--port <端口>] [--listen <IPv4>]… [--state-dir <目录>] [--data-root <目录>] [--web-dir <目录>] [--allow-origin <origin>]…
 
   --port          端口，默认 38471
-  --listen        监听的 IPv4 地址，可重复；默认是所有已启用的私网接口，回环地址只在这里指定时监听
+  --listen        监听的 IPv4 地址，可重复；默认是所有已启用的局域网网卡（en*、eth*、wl*）的私网地址，随网络变化增减；其他网卡与回环地址只在这里指定时监听
   --state-dir     索引、日志、图片与 settings.json 所在的目录
   --data-root     Claude Code 的数据目录；默认依次取 settings.json、$CLAUDE_CONFIG_DIR、~/.claude
   --web-dir       /web/ 下提供的静态文件
@@ -122,7 +124,16 @@ fn main() {
         }
     };
     let ifaces = net::interfaces().unwrap_or_else(|e| fail(format!("读不了网络接口：{e}")));
-    let subnets = net::listeners(&args.listen, &ifaces).unwrap_or_else(|e| fail(e));
+    // The default listeners follow the network: none yet is not an error (started before the network is up).
+    let follow_network = args.listen.is_empty();
+    let subnets = if follow_network {
+        net::listeners(&[], &ifaces).unwrap_or_default()
+    } else {
+        net::listeners(&args.listen, &ifaces).unwrap_or_else(|e| fail(e))
+    };
+    if subnets.is_empty() {
+        tracing::warn!("no private IPv4 address on a LAN interface yet; waiting for the network");
+    }
     for s in &subnets {
         let name = ifaces
             .iter()
@@ -171,27 +182,32 @@ fn main() {
         .unwrap_or_else(|e| fail(e));
     runtime.block_on(async move {
         let port = args.port.unwrap_or(DEFAULT_PORT);
+        let mut serving =
+            server::Serving::new(port, Box::new(move |s| server::router(ctx.clone(), s)));
         for subnet in subnets {
-            let listener = tokio::net::TcpListener::bind((subnet.addr, port))
+            serving
+                .start(subnet)
                 .await
                 .unwrap_or_else(|e| fail(format!("监听不了 {}:{port}：{e}", subnet.addr)));
-            tracing::info!(
-                "listening on http://{}/ (peers from {}/{})",
-                listener
-                    .local_addr()
-                    .map_or(subnet.addr.to_string(), |a| a.to_string()),
-                subnet.addr,
-                subnet.prefix_len()
-            );
-            let app = server::router(ctx.clone(), subnet)
-                .into_make_service_with_connect_info::<SocketAddr>();
-            tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, app).await {
-                    tracing::error!("serve {}: {e}", subnet.addr);
-                }
-            });
         }
-        shutdown_signal().await;
+        let shutdown = shutdown_signal();
+        if !follow_network {
+            return shutdown.await;
+        }
+        tokio::pin!(shutdown);
+        let mut poll = tokio::time::interval(NETWORK_POLL);
+        loop {
+            tokio::select! {
+                _ = &mut shutdown => return,
+                _ = poll.tick() => match net::interfaces() {
+                    Ok(ifaces) => {
+                        let wanted = net::listeners(&[], &ifaces).unwrap_or_default();
+                        serving.follow(&wanted).await;
+                    }
+                    Err(e) => tracing::warn!("cannot read network interfaces: {e}"),
+                },
+            }
+        }
     });
     host.shutdown();
     std::process::exit(0);
