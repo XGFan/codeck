@@ -87,6 +87,7 @@ pnpm typecheck && pnpm lint && pnpm test                # 前端类型检查、h
 pnpm exec playwright install webkit && pnpm test:e2e    # E2E（mock 模式，WebKit）
 ```
 
+- `pnpm test:e2e:host`：真实后端 E2E，起 `codeck-host` 读一份 fixture 副本，测 `/web/transcript.html`（端口 `E2E_HOST_PORT`，默认 38497）。
 - `E2E_PORT=<端口>`：E2E 的 mock 开发服务器端口（默认 1421），并行跑多份 E2E 时各用一个。
 - `CODECK_FIXTURE_DENYLIST="词1,词2"`：fixture 脱敏检查额外拦截的私有词（如公司、客户名），不写进仓库。
 - 真实数据探针（只读，索引写入临时目录），用于检查性能与兼容性：
