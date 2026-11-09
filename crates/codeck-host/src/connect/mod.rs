@@ -28,6 +28,9 @@ pub type Writer = Arc<dyn Fn(&str, &str) -> relay::R<()> + Send + Sync>;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(150);
 /// A connection's state goes out at most this often (the last change always does).
 const THROTTLE: Duration = Duration::from_millis(100);
+/// How long a new attach waits for the ended connections of its Holder to go (ccrpc detaches once its stdin
+/// closes, and gets SIGTERM after five seconds).
+const ENDED_CONN_WAIT: Duration = Duration::from_secs(10);
 
 pub struct ConnectHub {
     inner: Mutex<Inner>,
@@ -318,8 +321,8 @@ impl ConnectHub {
         v
     }
 
-    /// The connection to `holder_id`, if any: a live one first (its Session still running), then the newest.
-    fn conn_for(&self, holder_id: &str) -> Option<String> {
+    /// The newest connection to `holder_id` whose Session is still running.
+    fn live_conn_for(&self, holder_id: &str) -> Option<String> {
         // `c<n>`, numbered as started.
         let seq = |conn: &str| conn[1..].parse::<u64>().unwrap_or(0);
         self.inner
@@ -328,8 +331,33 @@ impl ConnectHub {
             .values()
             .map(|e| &e.state)
             .filter(|s| s.holder_id.as_deref() == Some(holder_id))
-            .max_by_key(|s| (s.proc_exit.is_none() && !s.session_exited, seq(&s.conn)))
+            .filter(|s| s.proc_exit.is_none() && !s.session_exited)
+            .max_by_key(|s| seq(&s.conn))
             .map(|s| s.conn.clone())
+    }
+
+    /// The connections to `holder_id` whose Session ended: their ccrpc keeps running, attached, driving nothing.
+    fn ended_conns_for(&self, holder_id: &str) -> Vec<String> {
+        self.inner
+            .lock()
+            .conns
+            .values()
+            .map(|e| &e.state)
+            .filter(|s| s.holder_id.as_deref() == Some(holder_id) && s.session_exited)
+            .map(|s| s.conn.clone())
+            .collect()
+    }
+
+    /// Blocks until the ccrpc of each of `conns` has exited, at most `timeout`.
+    fn wait_gone(&self, conns: &[String], timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline
+            && conns
+                .iter()
+                .any(|c| self.inner.lock().conns.contains_key(c))
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Sends `command` (an object with `type`) to the connection's ccrpc with an id of the Host's and returns
@@ -459,11 +487,23 @@ pub(crate) async fn dispatch(host: &Host, method: &str, args: Value) -> Option<C
 }
 
 impl Host {
-    /// The Host's connection to `holder_id`: the one it has, or a new one.
-    async fn connect_shared(&self, hub: &ConnectHub, holder_id: String) -> CmdResult<String> {
+    /// The Host's connection to `holder_id`: the live one it has, or a new one.
+    async fn connect_shared(&self, hub: &Arc<ConnectHub>, holder_id: String) -> CmdResult<String> {
         let _one = hub.shared.lock().await;
-        if let Some(conn) = hub.conn_for(&holder_id) {
+        if let Some(conn) = hub.live_conn_for(&holder_id) {
             return Ok(conn);
+        }
+        // claude was started again in this Pane: a ccrpc still attached must go first, a second attach is refused.
+        let ended = hub.ended_conns_for(&holder_id);
+        if !ended.is_empty() {
+            for conn in &ended {
+                // An error here means it already exited.
+                let _ = self.ccrpc_disconnect(conn.clone()).await;
+            }
+            let hub = hub.clone();
+            tokio::task::spawn_blocking(move || hub.wait_gone(&ended, ENDED_CONN_WAIT))
+                .await
+                .map_err(internal)?;
         }
         self.ccrpc_connect(holder_id).await
     }
@@ -761,20 +801,30 @@ mod tests {
     }
 
     #[test]
-    fn conn_for_prefers_a_live_connection_then_the_newest() {
+    fn a_holder_gets_its_newest_live_connection_and_never_an_ended_one() {
         let f = fixture();
         for c in ["c9", "c10"] {
             f.hub.register(c, Some("H1".into()));
         }
         f.hub.register("c11", Some("H2".into()));
-        assert_eq!(f.hub.conn_for("H1").as_deref(), Some("c10"));
+        assert_eq!(f.hub.live_conn_for("H1").as_deref(), Some("c10"));
+        let end = |conn: &str| {
+            (f.sink)(Out::Line {
+                conn: conn.into(),
+                line: json!({ "type": "session_exit" }).to_string(),
+            })
+        };
         // c10's Session ended: c9 is still live.
-        (f.sink)(Out::Line {
-            conn: "c10".into(),
-            line: json!({ "type": "session_exit" }).to_string(),
-        });
-        assert_eq!(f.hub.conn_for("H1").as_deref(), Some("c9"));
-        assert_eq!(f.hub.conn_for("H3"), None);
+        end("c10");
+        assert_eq!(f.hub.live_conn_for("H1").as_deref(), Some("c9"));
+        assert_eq!(f.hub.ended_conns_for("H1"), ["c10"]);
+        // Nothing live is left to hand back, only connections to end first.
+        end("c9");
+        assert_eq!(f.hub.live_conn_for("H1"), None);
+        let mut ended = f.hub.ended_conns_for("H1");
+        ended.sort();
+        assert_eq!(ended, ["c10", "c9"]);
+        assert_eq!(f.hub.live_conn_for("H3"), None);
     }
 
     #[test]
