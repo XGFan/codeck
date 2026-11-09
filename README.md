@@ -109,7 +109,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 
 ## iPhone 与 Host（局域网）
 
-iPhone App 连到一台 **Host**（运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
+iPhone App 连到一台 **Host**（运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session；也能在 Host 上新建 Session、Resume 已结束的 Session、Fork 整个 Session。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
 
 **没有鉴权**：daemon 默认只监听本机的私网 IPv4 网卡（不含 VPN、虚拟机与容器网桥），只接受同一子网的来源，只认以 IP 访问的请求，拒绝来自网页的跨源请求；同一局域网里能访问它的设备都能读 Session、在 Host 上新建 Session 和 Connect。只在可信网络里运行，连着酒店、咖啡馆等公共 Wi-Fi 时不要开着它。
 
@@ -120,6 +120,8 @@ pnpm build:web                                   # Transcript 页 → dist-web/
 cargo build --release -p codeck-daemon           # → target/release/codeck-host
 target/release/codeck-host --web-dir dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
 ```
+
+目前的限制：没有推送通知；iPhone 上只能 Fork 整个 Session，不能按提示词 Fork 或回退；回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；daemon 没有连接数与请求频率的限制。
 
 daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动输入 Host 的局域网 IPv4，iOS 会询问是否允许访问本地网络。
 
