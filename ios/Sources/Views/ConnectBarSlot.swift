@@ -13,7 +13,8 @@ struct ConnectBarSlot: View {
         let store = model.connect
         let c = store.conn(for: sessionId)
         let resume = resumeOffer(c)
-        if let c, c.isLive {
+        // A Resume shows its connection only for what it asks before starting (the folder trust dialog).
+        if let c, c.isLive, !store.isResuming(sessionId) || !store.requests(of: c).isEmpty {
             ConnectedBar(c: c, sessionId: sessionId)
                 .id(c.conn)
         } else if store.connecting.contains(sessionId) {

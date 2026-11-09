@@ -12,7 +12,7 @@ final class HostModel {
     private(set) var isLoading = false
     /// What went wrong with the Host; shown as the offline banner.
     private(set) var problem: String?
-    /// Increments on each `hello` after the first, i.e. after every reconnect: open pages reload.
+    /// Increments on each `hello` after the first, i.e. after every reconnect: open pages catch up.
     private(set) var resyncGeneration = 0
     /// The Host's Connects and `ccrpc ls`.
     let connect = ConnectStore()
@@ -22,6 +22,11 @@ final class HostModel {
     @ObservationIgnored private var helloCount = 0
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var refreshAgain = false
+    @ObservationIgnored private var checkHealthNext = false
+    /// Changes come a few times a second while a Session writes; each refetch is the whole list.
+    @ObservationIgnored private lazy var eventRefresh = TrailingThrottle(interval: .seconds(1)) { [weak self] in
+        await self?.refresh(checkHealth: false)
+    }
 
     init(store: HostAddressStore = HostAddressStore()) {
         self.store = store
@@ -38,6 +43,7 @@ final class HostModel {
 
     private func use(_ address: HostAddress) {
         stream?.stop()
+        eventRefresh.cancel()
         self.address = address
         sessions = []
         projects = [:]
@@ -78,7 +84,8 @@ final class HostModel {
     // MARK: Fetching
 
     /// Refetches Sessions and Projects; concurrent calls coalesce into one more pass.
-    func refresh() async {
+    func refresh(checkHealth: Bool = true) async {
+        checkHealthNext = checkHealthNext || checkHealth
         if let refreshTask {
             refreshAgain = true
             await refreshTask.value
@@ -87,7 +94,9 @@ final class HostModel {
         let task = Task {
             repeat {
                 refreshAgain = false
-                await fetchAll()
+                let health = checkHealthNext
+                checkHealthNext = false
+                await fetchAll(checkHealth: health)
             } while refreshAgain
         }
         refreshTask = task
@@ -95,13 +104,13 @@ final class HostModel {
         refreshTask = nil
     }
 
-    private func fetchAll() async {
+    private func fetchAll(checkHealth: Bool) async {
         guard let client else { return }
         let address = client.address
         isLoading = true
         defer { isLoading = false }
         do {
-            _ = try await client.checkHealth()
+            if checkHealth { _ = try await client.checkHealth() }
             async let sessions = client.listSessions()
             async let projects = client.listProjects()
             let (s, p) = try await (sessions, projects)
@@ -132,7 +141,7 @@ final class HostModel {
             Task { await connect.resync() }
         case .sessionsChanged:
             // list_sessions has no id filter; the whole list is one call.
-            Task { await refresh() }
+            eventRefresh.fire()
         case .liveChanged(let snapshot):
             apply(snapshot)
         case .connectState(let state):
@@ -156,7 +165,7 @@ final class HostModel {
         }
         let known = Set(sessions.map(\.id))
         if hasLoaded, states.keys.contains(where: { !known.contains($0) }) {
-            Task { await refresh() }
+            eventRefresh.fire()
         }
     }
 
@@ -175,5 +184,34 @@ final class HostModel {
             guard let p = projects[s.projectId] else { return false }
             return p.displayName.localizedCaseInsensitiveContains(q) || p.path.localizedCaseInsensitiveContains(q)
         }
+    }
+}
+
+/// Runs `action` `interval` after the first `fire()`; fires until then are covered by that run, later ones start
+/// the next interval, so the last change is never lost.
+@MainActor
+final class TrailingThrottle {
+    private let interval: Duration
+    private let action: @MainActor () async -> Void
+    private var pending: Task<Void, Never>?
+
+    init(interval: Duration, action: @escaping @MainActor () async -> Void) {
+        self.interval = interval
+        self.action = action
+    }
+
+    func fire() {
+        guard pending == nil else { return }
+        pending = Task { [weak self, interval] in
+            try? await Task.sleep(for: interval)
+            guard let self, !Task.isCancelled else { return }
+            self.pending = nil
+            await self.action()
+        }
+    }
+
+    func cancel() {
+        pending?.cancel()
+        pending = nil
     }
 }

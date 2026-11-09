@@ -107,19 +107,113 @@ enum ConnectWords {
         "ccrpc 已退出（\(e.code.map { "退出码 \($0)" } ?? "被信号终止")）"
     }
 
-    /// A tool input in short: its command or path when it has one, else the first lines of its JSON.
-    static func inputSummary(_ input: JSONValue?) -> String {
-        guard let input else { return "" }
-        for key in ["command", "file_path", "notebook_path", "url", "pattern", "path"] {
-            if let s = input[key]?.stringValue, !s.isEmpty { return s }
+    /// All of a tool's input, as a permission card shows it, so nothing is approved unseen: the fields people read
+    /// first in blocks of their own, whatever else it holds as JSON after them.
+    static func inputBlocks(tool: String, _ input: JSONValue?) -> [InputBlock] {
+        guard let input else { return [] }
+        guard case .object(var rest) = input else {
+            if case .null = input { return [] }
+            return [InputBlock(kind: .code, text: input.stringValue ?? input.pretty)]
         }
-        if case .object(let o) = input, o.isEmpty { return "" }
-        return input.pretty.split(separator: "\n", omittingEmptySubsequences: false).prefix(8).joined(separator: "\n")
+        var out: [InputBlock] = []
+        func take(_ key: String, _ kind: InputBlock.Kind, label: String? = nil) {
+            guard let text = rest[key]?.stringValue else { return }
+            rest[key] = nil
+            if !text.isEmpty { out.append(InputBlock(kind: kind, text: text, label: label)) }
+        }
+        take("file_path", .path)
+        take("notebook_path", .path)
+        take("command", .code)
+        take("description", .note)
+        if ["Edit", "Write", "NotebookEdit"].contains(tool) {
+            take("old_string", .removed, label: "改动前")
+            take("new_string", .added, label: "改动后")
+            take("content", .added, label: "写入内容")
+            take("new_source", .added, label: "写入内容")
+        }
+        if !rest.isEmpty { out.append(InputBlock(kind: .code, text: JSONValue.object(rest).pretty)) }
+        return out
     }
 
     /// The last non-blank line of ccrpc's stderr.
     static func lastLine(_ s: String?) -> String? {
         s?.split(whereSeparator: \.isNewline).last { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(String.init)
+    }
+}
+
+/// One part of a tool's input on a permission card.
+struct InputBlock: Equatable {
+    enum Kind: Equatable { case path, code, note, removed, added }
+
+    var kind: Kind
+    var text: String
+    var label: String?
+}
+
+// MARK: Slash commands (slash.ts)
+
+/// A command from `list_slash_commands`.
+struct SlashCommand: Decodable, Equatable, Sendable {
+    var name: String
+    /// `builtin`, `user`, `project` or `plugin`.
+    var source: String
+    /// Opens a panel or picker in the terminal rather than running (built-in commands only).
+    var interactive: Bool
+
+    enum CodingKeys: String, CodingKey { case name, source, interactive }
+
+    init(name: String, source: String = "builtin", interactive: Bool = false) {
+        self.name = name
+        self.source = source
+        self.interactive = interactive
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        source = c.lenient(String.self, .source) ?? ""
+        interactive = c.lenient(Bool.self, .interactive) ?? false
+    }
+}
+
+enum SlashRules {
+    /// The name typed at the start of `body` (`/name args`), without the slash; empty when `body` is no `/name`.
+    static func typedName(_ body: String) -> String {
+        guard body.hasPrefix("/") else { return "" }
+        return String(body.dropFirst().prefix { !$0.isWhitespace })
+    }
+
+    /// The command named at the start of `body`, when it is one in `list`. As in Claude Code, a plugin's command
+    /// may be named without its plugin when no other has that name.
+    static func commandOf(_ body: String, _ list: [SlashCommand]?) -> SlashCommand? {
+        let name = typedName(body)
+        guard !name.isEmpty, let list else { return nil }
+        if let exact = list.first(where: { $0.name == name }) { return exact }
+        if name.contains(":") { return nil }
+        let short = list.filter { $0.source == "plugin" && $0.name.split(separator: ":").last.map(String.init) == name }
+        return short.count == 1 ? short[0] : nil
+    }
+
+    /// What ccrpc's `slash` should type for `body`, or nil to send it as a `prompt`. Built-in commands (and
+    /// command-like names not in the list) go as `slash`: a local command or a panel leaves nothing in the transcript
+    /// a `prompt` could wait for. Custom commands and skills, a path such as `/Users/…`, a multi-line text, one with
+    /// images, or anything while the list is unknown go as `prompt`.
+    static func slashCommand(_ body: String, withImages: Bool, _ list: [SlashCommand]?) -> String? {
+        guard list != nil, body.hasPrefix("/"), !withImages, !body.contains(where: \.isNewline) else { return nil }
+        guard typedName(body).range(of: #"^[A-Za-z0-9_.:-]+$"#, options: .regularExpression) != nil else { return nil }
+        if let known = commandOf(body, list), known.source != "builtin" { return nil }
+        return String(body.dropFirst())
+    }
+
+    /// Why `body` is not sent at all: going back to a prompt means picking it in the transcript, not here.
+    static func refusedHere(_ body: String) -> String? {
+        body.range(of: #"^/(rewind|checkpoint)(\s|$)"#, options: .regularExpression) == nil ? nil : "iPhone 上不能回退"
+    }
+
+    /// Why `body` is not sent while busy: a panel opened from the queue would hold the turn until someone closes it.
+    static func refusedWhileBusy(_ body: String, _ list: [SlashCommand]?) -> String? {
+        guard let panel = commandOf(body, list), panel.source == "builtin", panel.interactive else { return nil }
+        return "/\(panel.name) 会在终端里打开界面，等空闲时再发"
     }
 }
 

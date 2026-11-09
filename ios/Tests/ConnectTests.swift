@@ -54,7 +54,10 @@ final class ConnStateDecodingTests: XCTestCase {
         guard case .permission(let p) = c.requests[0] else { return XCTFail("permission") }
         XCTAssertEqual(p.toolName, "Bash")
         XCTAssertEqual(p.allowAlways?.label, "Yes, and don't ask again for rm commands")
-        XCTAssertEqual(ConnectWords.inputSummary(p.input), "rm -rf build")
+        XCTAssertEqual(ConnectWords.inputBlocks(tool: p.toolName, p.input), [
+            InputBlock(kind: .code, text: "rm -rf build"),
+            InputBlock(kind: .note, text: "清理"),
+        ])
 
         guard case .question(let q) = c.requests[1] else { return XCTFail("question") }
         XCTAssertEqual(q.agentId, "a1b2c3d4e5f6")
@@ -183,7 +186,7 @@ final class ConnectStoreTests: XCTestCase {
 
         var closed = state("c2", session: "s2")
         store.apply(closed)
-        store.markEnding("c2")
+        store.ending.insert("c2")
         closed.procExit = .init(code: 0, stderr: "")
         store.apply(closed)
         store.remove(conn: "c2")
@@ -243,6 +246,88 @@ final class ConnectStoreTests: XCTestCase {
         store.applyLs("not json")
         XCTAssertEqual(store.ls.count, 1)
         XCTAssertFalse(store.ls[0].plugin)
+    }
+
+    // MARK: Snapshots
+
+    func testAnEventThatCameDuringASnapshotIsNewerThanIt() {
+        var ended = state("c5", session: "s5")
+        ended.procExit = .init(code: 0, stderr: "")
+        var busy = state("c6", session: "s6")
+        busy.state = .busy
+        let stale = [state("c5", session: "s5"), state("c6", session: "s6"), state("c7", session: "s7")]
+
+        let merged = ConnectStore.merged(
+            local: ["c5": ended, "c6": busy], snapshot: stale, touched: ["c5", "c6", "c8"], ending: []
+        )
+        XCTAssertEqual(merged["c5"]?.procExit?.code, 0, "not brought back as live")
+        XCTAssertEqual(merged["c6"]?.state, .busy)
+        XCTAssertEqual(merged["c7"]?.sessionId, "s7", "unknown to the events: from the snapshot")
+        XCTAssertNil(merged["c8"], "removed by an event while the snapshot was on its way")
+    }
+
+    func testAConnectThatEndedByItselfOutlivesASnapshot() {
+        var crashed = state("c1", session: "s1")
+        crashed.procExit = .init(code: 1, stderr: "boom")
+        var closedHere = state("c2", session: "s2")
+        closedHere.procExit = .init(code: 0, stderr: "")
+        var disconnected = state("c3", session: "s3")
+        disconnected.procExit = .init(code: 0, stderr: "")
+        disconnected.disconnected = true
+        let wentAway = state("c4", session: "s4")
+
+        let merged = ConnectStore.merged(
+            local: ["c1": crashed, "c2": closedHere, "c3": disconnected, "c4": wentAway],
+            snapshot: [], touched: [], ending: ["c2"]
+        )
+        XCTAssertEqual(Array(merged.keys), ["c1"])
+    }
+
+    // MARK: A page following its Connect
+
+    func testAnOpenPageFollowsItsConnectToTheNewSession() {
+        let store = ConnectStore()
+        store.pageOpened("s1")
+        store.apply(state("c1", session: "s1"))
+        store.apply(state("c1", session: "s2"))
+        XCTAssertEqual(store.moved, ["s1": "s2"])
+        // Until the page takes it: the bar (and what is typed in it) stays.
+        XCTAssertEqual(store.conn(for: "s1")?.conn, "c1")
+    }
+
+    func testAPageNotOnScreenDoesNotFollow() {
+        let store = ConnectStore()
+        store.pageOpened("s1")
+        store.pageClosed("s1")
+        store.apply(state("c1", session: "s1"))
+        store.apply(state("c1", session: "s2"))
+        XCTAssertTrue(store.moved.isEmpty)
+        XCTAssertNil(store.conn(for: "s1"))
+    }
+
+    func testAForkSettingUpIsNotAMove() {
+        let store = ConnectStore()
+        store.pageOpened("origin")
+        store.starts["c1"] = .fork(origin: "origin")
+        store.apply(state("c1", session: "origin"))
+        store.apply(state("c1", session: "forked"))
+        XCTAssertTrue(store.moved.isEmpty)
+    }
+
+    func testFirstNameOfANewSessionIsNotAMove() {
+        let store = ConnectStore()
+        store.pageOpened("s1")
+        store.apply(state("c1", session: nil))
+        store.apply(state("c1", session: "s1"))
+        XCTAssertTrue(store.moved.isEmpty)
+    }
+
+    func testAResumeBeforeItsNameIsFoundOnItsSession() {
+        let store = ConnectStore()
+        store.starts["c1"] = .resume(sessionId: "s1")
+        store.apply(state("c1", session: nil, ready: false))
+        XCTAssertEqual(store.conn(for: "s1")?.conn, "c1")
+        XCTAssertNil(store.conn(for: "s2"))
     }
 
     func testListsMainLineRequestsFirst() throws {
@@ -324,6 +409,128 @@ final class AnswersTests: XCTestCase {
         XCTAssertEqual(ConnectWords.modelLabel("claude-sonnet-4-20250514"), "Sonnet 4")
         XCTAssertEqual(ConnectWords.modelLabel("Sonnet 4.5"), "Sonnet 4.5")
         XCTAssertEqual(ConnectWords.modelFamily("claude-opus-4-7"), "opus")
+    }
+}
+
+/// Mirrors src/features/connect/slash.test.ts.
+final class SlashRulesTests: XCTestCase {
+    private static func cmd(_ name: String, _ source: String = "builtin", interactive: Bool = false) -> SlashCommand {
+        SlashCommand(name: name, source: source, interactive: interactive)
+    }
+
+    private let list = [
+        cmd("clear"), cmd("compact"), cmd("cost"), cmd("release-notes"), cmd("release", "project"),
+        cmd("kit:review", "plugin"), cmd("review"), cmd("omc:autopilot", "plugin"), cmd("omc:plan", "plugin"),
+        cmd("kit:plan", "plugin"), cmd("dir:test", "project"), cmd("model", interactive: true),
+    ]
+
+    func testCommandOf() {
+        XCTAssertEqual(SlashRules.commandOf("/review the PR", list)?.name, "review")
+        XCTAssertEqual(SlashRules.commandOf("/kit:review", list)?.name, "kit:review")
+        XCTAssertEqual(SlashRules.commandOf("/autopilot build it", list)?.name, "omc:autopilot")
+        XCTAssertNil(SlashRules.commandOf("/plan", list), "two plugins have it")
+        XCTAssertNil(SlashRules.commandOf("/kit:autopilot", list))
+        XCTAssertNil(SlashRules.commandOf("/auto", list))
+        XCTAssertNil(SlashRules.commandOf("/test", list), "only a plugin's goes by its short name")
+        XCTAssertNil(SlashRules.commandOf("autopilot", list))
+    }
+
+    func testBuiltInAndUnknownCommandsGoAsSlash() {
+        XCTAssertEqual(SlashRules.slashCommand("/compact keep the API notes", withImages: false, list), "compact keep the API notes")
+        XCTAssertEqual(SlashRules.slashCommand("/doctor", withImages: false, list), "doctor")
+    }
+
+    func testGoingBackToAPromptIsRefusedHere() {
+        XCTAssertEqual(SlashRules.refusedHere("/rewind"), "iPhone 上不能回退")
+        XCTAssertEqual(SlashRules.refusedHere("/checkpoint now"), "iPhone 上不能回退")
+        XCTAssertNil(SlashRules.refusedHere("/rewinder"))
+        XCTAssertNil(SlashRules.refusedHere("rewind"))
+    }
+
+    func testTheRestGoesAsAPrompt() {
+        XCTAssertNil(SlashRules.slashCommand("/cost", withImages: false, nil), "list unknown")
+        XCTAssertNil(SlashRules.slashCommand("/Users/me/shot.png 这是什么", withImages: false, list))
+        XCTAssertNil(SlashRules.slashCommand("/release v1", withImages: false, list))
+        XCTAssertNil(SlashRules.slashCommand("/kit:review", withImages: false, list))
+        XCTAssertNil(SlashRules.slashCommand("/autopilot go", withImages: false, list))
+        XCTAssertNil(SlashRules.slashCommand("/compact\nmore", withImages: false, list))
+        XCTAssertNil(SlashRules.slashCommand("/cost", withImages: true, list))
+        XCTAssertNil(SlashRules.slashCommand("/", withImages: false, list))
+        XCTAssertNil(SlashRules.slashCommand("hello", withImages: false, list))
+    }
+
+    func testAPanelIsRefusedWhileBusy() {
+        XCTAssertEqual(SlashRules.refusedWhileBusy("/model opus", list), "/model 会在终端里打开界面，等空闲时再发")
+        XCTAssertNil(SlashRules.refusedWhileBusy("/compact", list))
+        XCTAssertNil(SlashRules.refusedWhileBusy("/model", nil))
+        XCTAssertNil(SlashRules.refusedWhileBusy("继续", list))
+    }
+}
+
+/// A permission card shows all of a tool's input.
+final class InputBlocksTests: XCTestCase {
+    func testEditShowsBothSides() {
+        let blocks = ConnectWords.inputBlocks(tool: "Edit", [
+            "file_path": "/w/a.swift", "old_string": "let a = 1", "new_string": "let a = 2", "replace_all": true,
+        ])
+        XCTAssertEqual(blocks, [
+            InputBlock(kind: .path, text: "/w/a.swift"),
+            InputBlock(kind: .removed, text: "let a = 1", label: "改动前"),
+            InputBlock(kind: .added, text: "let a = 2", label: "改动后"),
+            InputBlock(kind: .code, text: "{\n  \"replace_all\" : true\n}"),
+        ])
+    }
+
+    func testWriteAndCommandAreNotCut() {
+        let long = (1...400).map { "line \($0)" }.joined(separator: "\n")
+        XCTAssertEqual(ConnectWords.inputBlocks(tool: "Write", ["file_path": "/w/a", "content": .string(long)]), [
+            InputBlock(kind: .path, text: "/w/a"),
+            InputBlock(kind: .added, text: long, label: "写入内容"),
+        ])
+        XCTAssertEqual(ConnectWords.inputBlocks(tool: "Bash", ["command": .string(long)]), [InputBlock(kind: .code, text: long)])
+    }
+
+    func testNotebookEditShowsItsSource() {
+        let blocks = ConnectWords.inputBlocks(tool: "NotebookEdit", ["notebook_path": "/w/n.ipynb", "new_source": "print(1)"])
+        XCTAssertEqual(blocks.map(\.text), ["/w/n.ipynb", "print(1)"])
+    }
+
+    func testAnyOtherToolShowsEveryField() {
+        let blocks = ConnectWords.inputBlocks(tool: "mcp__x__do", ["content": "正文", "deep": ["a": [1, 2]]])
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertTrue(blocks[0].text.contains("正文"))
+        XCTAssertTrue(blocks[0].text.contains("\"deep\""))
+        XCTAssertEqual(blocks[0].kind, .code)
+    }
+
+    func testNothingToShow() {
+        XCTAssertEqual(ConnectWords.inputBlocks(tool: "Bash", nil), [])
+        XCTAssertEqual(ConnectWords.inputBlocks(tool: "Bash", .null), [])
+        XCTAssertEqual(ConnectWords.inputBlocks(tool: "Bash", [:]), [])
+    }
+}
+
+@MainActor
+final class TrailingThrottleTests: XCTestCase {
+    func testABurstRunsOnceAfterTheIntervalAndALaterChangeRunsAgain() async throws {
+        var runs = 0
+        let throttle = TrailingThrottle(interval: .milliseconds(40)) { runs += 1 }
+        for _ in 0..<5 { throttle.fire() }
+        XCTAssertEqual(runs, 0, "trailing, not leading")
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(runs, 1)
+        throttle.fire()
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(runs, 2, "a change after the run is not lost")
+    }
+
+    func testCancelDropsWhatIsPending() async throws {
+        var runs = 0
+        let throttle = TrailingThrottle(interval: .milliseconds(20)) { runs += 1 }
+        throttle.fire()
+        throttle.cancel()
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(runs, 0)
     }
 }
 

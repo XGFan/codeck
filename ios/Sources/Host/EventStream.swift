@@ -9,6 +9,8 @@ final class EventStream {
     /// The socket closed or could not connect; `attempt` counts consecutive failures from 0.
     var onDisconnect: (_ attempt: Int) -> Void = { _ in }
 
+    static let maximumMessageSize = 64 * 1024 * 1024
+
     private let url: URL
     private let session: URLSession
     private var loop: Task<Void, Never>?
@@ -46,6 +48,8 @@ final class EventStream {
         var attempt = 0
         while !Task.isCancelled {
             let task = session.webSocketTask(with: url)
+            // A Connect state carries each request's whole tool input; the default limit is 1 MiB.
+            task.maximumMessageSize = Self.maximumMessageSize
             socket = task
             task.resume()
             let pinger = Task { [weak task] in

@@ -29,8 +29,25 @@ final class ConnectStore {
     /// A Session to open now (a Fork that just got its Session).
     var openRequest: OpenRequest?
     @ObservationIgnored var failingResumes: Set<String> = []
+    /// Resumes and Forks whose call to the Host is on its way (no connection yet), so a second tap is refused at once.
+    var pendingStarts: Set<StartKind> = []
+    /// How long a Resume may take to name its Session, counted from the last card it waited on.
+    @ObservationIgnored var resumeTimeout: Duration = .seconds(30)
+    /// When a start last had a card up or just lost one, by conn id.
+    @ObservationIgnored var cardSeenAt: [String: ContinuousClock.Instant] = [:]
+    /// Forks whose Session was opened for a card before the Fork was done, by conn id.
+    @ObservationIgnored var forkCardsOpened: Set<String> = []
+    /// `/clear` and the like took the Connect of an open page to another Session: the new id, by the old one, until
+    /// the page follows.
+    var moved: [String: String] = [:]
+    /// Session pages on screen, and how many of each.
+    @ObservationIgnored var openPages: [String: Int] = [:]
     /// Conn ids in the order they appeared, so the last ended one of a Session is well defined.
     private var order: [String] = []
+    /// Connections the events (or a start) changed since the last snapshot was asked for: what they say is newer.
+    @ObservationIgnored var touched: Set<String> = []
+    /// The latest snapshot asked for; an older one's answer is dropped.
+    @ObservationIgnored private var syncRound = 0
     @ObservationIgnored private(set) var client: HostClient?
 
     /// A new Host: everything from the old one goes.
@@ -49,6 +66,11 @@ final class ConnectStore {
         startFailures = [:]
         openRequest = nil
         failingResumes = []
+        cardSeenAt = [:]
+        forkCardsOpened = []
+        pendingStarts = []
+        moved = [:]
+        touched = []
     }
 
     // MARK: Snapshot and events
@@ -56,15 +78,8 @@ final class ConnectStore {
     /// After every `hello`: the Host keeps no event history, so take its whole state again.
     func resync() async {
         guard let client else { return }
-        async let states = client.call("connect_states", args: Empty(), as: Lossy<ConnState>.self)
         async let list = client.call("ccrpc_ls", args: Empty(), as: Lossy<LsEntry>.self)
-        if let states = try? await states, client.address == self.client?.address {
-            let byId = Dictionary(states.items.map { ($0.conn, $0) }, uniquingKeysWith: { _, b in b })
-            order = order.filter { byId[$0] != nil } + states.items.map(\.conn).filter { !order.contains($0) }
-            conns = byId
-            pruneAnswered()
-            for conn in starts.keys { follow(conn, gone: byId[conn] == nil) }
-        }
+        await syncStates()
         do {
             let entries = try await list
             guard client.address == self.client?.address else { return }
@@ -76,19 +91,94 @@ final class ConnectStore {
         }
     }
 
+    /// Takes the Host's Connect states again. False when that could not be done: nothing is known then.
+    @discardableResult
+    func syncStates() async -> Bool {
+        guard let client else { return false }
+        syncRound += 1
+        let round = syncRound
+        touched = []
+        guard let states = try? await client.call("connect_states", args: Empty(), as: Lossy<ConnState>.self),
+              client.address == self.client?.address, round == syncRound
+        else { return false }
+        let merged = Self.merged(local: conns, snapshot: states.items, touched: touched, ending: ending)
+        for s in states.items where !touched.contains(s.conn) {
+            noteMove(from: conns[s.conn], to: s)
+            noteCard(from: conns[s.conn], to: s)
+        }
+        order = order.filter { merged[$0] != nil } + states.items.map(\.conn).filter { merged[$0] != nil && !order.contains($0) }
+        conns = merged
+        pruneAnswered()
+        for conn in starts.keys { follow(conn, gone: merged[conn] == nil && !touched.contains(conn)) }
+        return true
+    }
+
+    /// The Connects after a snapshot. An event that came while it was on its way is newer than it, whichever the Host
+    /// did first; one that ended by itself is no longer on the Host, and stays so its page can say why.
+    static func merged(
+        local: [String: ConnState], snapshot: [ConnState], touched: Set<String>, ending: Set<String>
+    ) -> [String: ConnState] {
+        var out = Dictionary(snapshot.filter { !touched.contains($0.conn) }.map { ($0.conn, $0) }, uniquingKeysWith: { _, b in b })
+        for (id, c) in local where out[id] == nil && (touched.contains(id) || endedByItself(c, ending: ending)) {
+            out[id] = c
+        }
+        return out
+    }
+
+    private static func endedByItself(_ c: ConnState, ending: Set<String>) -> Bool {
+        !ending.contains(c.conn) && !c.disconnected && (c.procExit != nil || c.sessionExited)
+    }
+
     /// `connect-state-event`: the whole state of one Connect.
     func apply(_ state: ConnState) {
+        touched.insert(state.conn)
+        store(state)
+    }
+
+    private func store(_ state: ConnState) {
         if conns[state.conn] == nil, !order.contains(state.conn) { order.append(state.conn) }
+        noteMove(from: conns[state.conn], to: state)
+        noteCard(from: conns[state.conn], to: state)
         conns[state.conn] = state
         pruneAnswered()
         follow(state.conn)
     }
 
+    /// A start's card is up or just went: the time claude has to name its Session counts from here.
+    private func noteCard(from old: ConnState?, to new: ConnState) {
+        guard starts[new.conn] != nil, !new.requests.isEmpty || old?.requests.isEmpty == false else { return }
+        cardSeenAt[new.conn] = .now
+    }
+
+    /// The connection went on to another Session: a page open on the old one goes with it (a start's own changes
+    /// of Session are not that).
+    private func noteMove(from old: ConnState?, to new: ConnState) {
+        guard starts[new.conn] == nil, let from = old?.sessionId, let to = new.sessionId, from != to, openPages[from] != nil
+        else { return }
+        moved[from] = to
+    }
+
+    /// A Session page came on screen.
+    func pageOpened(_ sessionId: String) {
+        openPages[sessionId, default: 0] += 1
+        // A card that came on a Fork of this Session while its page was off screen.
+        for (conn, kind) in starts where kind == .fork(origin: sessionId) { follow(conn) }
+    }
+
+    /// A Session page left the screen.
+    func pageClosed(_ sessionId: String) {
+        guard let n = openPages[sessionId] else { return }
+        openPages[sessionId] = n > 1 ? n - 1 : nil
+    }
+
     /// `connect-removed-event` (after the final state, with `procExit`). One that ended by itself stays, so its
     /// page can say why; one this app ended goes.
     func remove(conn: String) {
+        touched.insert(conn)
         follow(conn, gone: true)
-        if let c = conns[conn], !ending.contains(conn), !c.disconnected, c.procExit != nil || c.sessionExited {
+        cardSeenAt[conn] = nil
+        forkCardsOpened.remove(conn)
+        if let c = conns[conn], Self.endedByItself(c, ending: ending) {
             answered = answered.filter { !$0.hasPrefix(conn + "|") }
             return
         }
@@ -132,11 +222,13 @@ final class ConnectStore {
     }
 
     /// The Connect of a Session: a live one first, else the last that ended. Before ccrpc's `ready` it is known
-    /// by its Holder only.
-    func conn(for sessionId: String) -> ConnState? {
+    /// by its Holder only, or as the Resume of this Session. A page whose Connect just moved on still finds it.
+    func conn(for requested: String) -> ConnState? {
+        let sessionId = moved[requested] ?? requested
         let holder = lsEntry(for: sessionId)?.holderId
         let all = order.compactMap { conns[$0] }.filter { c in
-            c.ready || c.sessionId != nil ? c.sessionId == sessionId : holder != nil && c.holderId == holder
+            if c.sessionId == nil, starts[c.conn] == .resume(sessionId: sessionId) { return true }
+            return c.ready || c.sessionId != nil ? c.sessionId == sessionId : holder != nil && c.holderId == holder
         }
         return all.last { $0.isLive } ?? all.last
     }
@@ -178,7 +270,7 @@ final class ConnectStore {
                 var c = ConnState(conn: conn)
                 c.holderId = entry.holderId
                 c.state = .starting
-                apply(c)
+                store(c)
             }
         } catch {
             errors[sessionId] = "连接失败：\(Self.text(error))"
@@ -214,16 +306,17 @@ final class ConnectStore {
         }
     }
 
-    /// 「关闭 Session」 is under way: its ccrpc exiting next is not news.
-    func markEnding(_ conn: String) {
-        ending.insert(conn)
-    }
-
     /// Answers a card; answered, it leaves at once (the Host's state drops it on the tool's result).
     func answer(_ c: ConnState, requestId: String, _ command: JSONValue) async -> CommandResponse {
         let r = await self.command(c.conn, command)
         if r.success { answered.insert("\(c.conn)|\(requestId)") }
         return r
+    }
+
+    /// The slash commands available in `cwd`; nil when the Host cannot say (the text then goes as a prompt).
+    func slashCommands(cwd: String?) async -> [SlashCommand]? {
+        guard let client else { return nil }
+        return (try? await client.call("list_slash_commands", args: ["cwd": cwd], as: Lossy<SlashCommand>.self))?.items
     }
 
     /// Saves an image on the Host for a prompt's `parts`; returns its path there.

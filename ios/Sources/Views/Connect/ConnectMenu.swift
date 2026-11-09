@@ -15,7 +15,7 @@ struct ConnectMenu: View {
     @State private var confirmingFork = false
 
     var body: some View {
-        let c = model.connect.conn(for: sessionId).flatMap { $0.isLive ? $0 : nil }
+        let c = model.connect.conn(for: sessionId).flatMap { $0.isLive && !model.connect.isResuming(sessionId) ? $0 : nil }
         let fork = forkOffer
         if c != nil || fork != .hidden {
             Menu {
@@ -89,7 +89,9 @@ struct ConnectMenu: View {
         if flow.stopTasks(running: c.runningTasks.count) { cmd["stop_tasks"] = true }
         let r = await store.command(c.conn, .object(cmd))
         switch flow.outcome(of: r) {
-        case .done: store.markEnding(c.conn)
+        case .done:
+            // ccrpc stays on a closed Pane until told to go.
+            await store.disconnect(c)
         case .confirmTasks: confirming = true
         case .failed(let text): store.setError(sessionId, text)
         }

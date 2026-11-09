@@ -118,7 +118,8 @@ struct StartingRoute: Hashable {
     var cwd: String
 }
 
-/// 「正在启动…」 until claude names the Session, then that Session's page.
+/// 「正在启动…」 until claude names the Session, then that Session's page; what claude asks before that (the folder
+/// trust dialog) is answered here.
 struct StartingView: View {
     let route: StartingRoute
     @Environment(HostModel.self) private var model
@@ -139,6 +140,17 @@ struct StartingView: View {
                         ProgressView()
                         Text("正在启动…").font(.headline)
                         Text(route.cwd).font(.footnote.monospaced()).foregroundStyle(.secondary)
+                        if let c = model.connect.conns[route.conn] {
+                            let requests = model.connect.requests(of: c)
+                            if !requests.isEmpty {
+                                ScrollView {
+                                    VStack(spacing: 8) {
+                                        ForEach(requests) { RequestCard(request: $0, c: c) }
+                                    }
+                                }
+                                .scrollBounceBehavior(.basedOnSize)
+                            }
+                        }
                     }
                     .padding()
                 }

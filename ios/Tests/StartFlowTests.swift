@@ -170,11 +170,291 @@ final class StartFollowStoreTests: XCTestCase {
         XCTAssertNil(store.conns["c2"])
     }
 
+    func testAForkWithACardOpensItsSessionOnce() throws {
+        let store = ConnectStore()
+        store.pageOpened("s1")
+        store.starts["c1"] = .fork(origin: "s1")
+        var c = ConnState(conn: "c1")
+        c.sessionId = "s2"
+        store.apply(c)
+        XCTAssertNil(store.openRequest)
+        c.requests = [try JSONDecoder().decode(
+            ConnRequest.self, from: Data(#"{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}"#.utf8)
+        )]
+        store.apply(c)
+        XCTAssertEqual(store.openRequest?.sessionId, "s2")
+        store.openRequest = nil
+        store.apply(c)
+        XCTAssertNil(store.openRequest, "once")
+        c.fork = .init(sessionId: "s2")
+        store.apply(c)
+        XCTAssertNil(store.openRequest, "already open")
+        XCTAssertEqual(store.started["c1"], "s2")
+    }
+
+    func testAForkCardWaitsForItsOriginsPage() throws {
+        let store = ConnectStore()
+        store.starts["c1"] = .fork(origin: "s1")
+        var c = ConnState(conn: "c1")
+        c.sessionId = "s2"
+        c.requests = [try JSONDecoder().decode(
+            ConnRequest.self, from: Data(#"{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}"#.utf8)
+        )]
+        store.apply(c)
+        XCTAssertNil(store.openRequest, "its origin is off screen")
+        store.pageOpened("s1")
+        XCTAssertEqual(store.openRequest?.sessionId, "s2")
+    }
+
+    func testAForkFailingAfterACardSaysSoOnItsOwnPageToo() throws {
+        let store = ConnectStore()
+        store.pageOpened("s1")
+        store.starts["c1"] = .fork(origin: "s1")
+        var c = ConnState(conn: "c1")
+        c.sessionId = "s2"
+        c.requests = [try JSONDecoder().decode(
+            ConnRequest.self, from: Data(#"{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}"#.utf8)
+        )]
+        store.apply(c)
+        XCTAssertEqual(store.openRequest?.sessionId, "s2")
+        c.requests = []
+        c.sessionExited = true
+        store.apply(c)
+        store.remove(conn: "c1")
+        XCTAssertEqual(store.errors["s1"], store.errors["s2"])
+        XCTAssertEqual(store.errors["s2"]?.hasPrefix("Fork 失败："), true)
+    }
+
     func testANewSessionRemovedBeforeItsNameFails() {
         let store = ConnectStore()
         store.starts["c1"] = .new(cwd: "/w")
         store.apply(ConnState(conn: "c1"))
         store.remove(conn: "c1")
         XCTAssertEqual(store.startFailures["c1"], "claude 退出了")
+    }
+}
+
+/// The Host, as canned answers by RPC method; records what was called (`connect_command:<type>` for commands).
+private final class StubHost: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var answers: [String: String] = [:]
+    nonisolated(unsafe) private static var log: [String] = []
+
+    static func set(_ answers: [String: String]) {
+        lock.withLock {
+            self.answers = answers
+            log = []
+        }
+    }
+
+    static func answer(_ method: String, _ json: String?) { lock.withLock { answers[method] = json } }
+
+    static var calls: [String] { lock.withLock { log } }
+
+    static func client() -> HostClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubHost.self]
+        return HostClient(address: HostAddress(host: "127.0.0.1", port: 9), session: URLSession(configuration: config))
+    }
+
+    override class func canInit(with _: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        var body = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 65536)
+            while stream.hasBytesAvailable {
+                let n = stream.read(&buffer, maxLength: buffer.count)
+                if n <= 0 { break }
+                body.append(buffer, count: n)
+            }
+        }
+        let rpc = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        let method = rpc?["method"] as? String ?? ""
+        let type = ((rpc?["args"] as? [String: Any])?["command"] as? [String: Any])?["type"] as? String
+        let reply: String? = Self.lock.withLock {
+            Self.log.append(type.map { "\(method):\($0)" } ?? method)
+            return Self.answers[method]
+        }
+        guard let reply else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(reply.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+/// Resume and failed starts against a stubbed Host.
+@MainActor
+final class ResumeAgainstHostTests: XCTestCase {
+    private let starting = #"{"result": [{"conn": "c1", "state": "starting"}]}"#
+    private let named = #"{"result": [{"conn": "c1", "sessionId": "s1", "ready": true, "state": "idle"}]}"#
+    private let commandOK = #"{"result": {"success": true, "data": {"lines": ["claude 没起来", ""], "cursor": [1, 0]}}}"#
+
+    private func store(timeout: Duration = .milliseconds(20)) -> ConnectStore {
+        let store = ConnectStore()
+        store.reset(client: StubHost.client())
+        store.resumeTimeout = timeout
+        return store
+    }
+
+    private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
+        for _ in 0..<300 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("timed out: \(what)")
+    }
+
+    func testASecondTapStartsNothing() async {
+        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting])
+        let store = store(timeout: .seconds(60))
+        async let first: Void = store.resume(sessionId: "s1", cwd: "/w")
+        async let second: Void = store.resume(sessionId: "s1", cwd: "/w")
+        _ = await (first, second)
+        XCTAssertEqual(StubHost.calls.filter { $0 == "ccrpc_resume" }.count, 1)
+        XCTAssertTrue(store.isResuming("s1"))
+    }
+
+    func testAResumeThatCouldNotStartCanBeTriedAgain() async {
+        StubHost.set(["ccrpc_resume": #"{"error": {"code": "x", "message": "没有 ccrpc"}}"#])
+        let store = store(timeout: .seconds(60))
+        await store.resume(sessionId: "s1", cwd: "/w")
+        XCTAssertFalse(store.isResuming("s1"))
+        XCTAssertEqual(store.errors["s1"], "Resume 失败：没有 ccrpc")
+    }
+
+    func testAForkIsMarkedBeforeTheHostAnswers() async {
+        StubHost.set(["ccrpc_fork": #"{"result": "c1"}"#])
+        let store = store(timeout: .seconds(60))
+        async let first: Void = store.fork(sessionId: "s1", cwd: "/w", title: "t (Fork)")
+        async let second: Void = store.fork(sessionId: "s1", cwd: "/w", title: "t (Fork)")
+        _ = await (first, second)
+        XCTAssertEqual(StubHost.calls.filter { $0 == "ccrpc_fork" }.count, 1)
+    }
+
+    func testTheTimeoutGivesUpOnlyOnWhatTheHostSaysNow() async throws {
+        StubHost.set([
+            "ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting, "connect_command": commandOK,
+            "ccrpc_disconnect": #"{"result": null}"#,
+        ])
+        let store = store()
+        await store.resume(sessionId: "s1", cwd: "/w")
+        try await waitUntil("gave up") { !store.isResuming("s1") }
+        XCTAssertTrue(StubHost.calls.contains("connect_command:exit"))
+        XCTAssertEqual(store.errors["s1"], "Resume 失败：30 秒内没有启动（claude 没起来）")
+    }
+
+    func testReadyWithoutANameIsNotStarted() async throws {
+        StubHost.set([
+            "ccrpc_resume": #"{"result": "c1"}"#, "connect_states": #"{"result": [{"conn": "c1", "ready": true, "state": "idle"}]}"#,
+            "connect_command": commandOK, "ccrpc_disconnect": #"{"result": null}"#,
+        ])
+        let store = store()
+        await store.resume(sessionId: "s1", cwd: "/w")
+        try await waitUntil("gave up") { !store.isResuming("s1") }
+        XCTAssertTrue(StubHost.calls.contains("connect_command:exit"))
+    }
+
+    func testASessionThatStartedMeanwhileIsLeftAlone() async throws {
+        // The app was suspended: no event told it the Session started, only the Host's state now does.
+        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": named, "connect_command": commandOK])
+        let store = store()
+        await store.resume(sessionId: "s1", cwd: "/w")
+        try await waitUntil("followed") { !store.isResuming("s1") }
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
+        XCTAssertNil(store.errors["s1"])
+        XCTAssertEqual(store.started["c1"], "s1")
+    }
+
+    func testAHostThatCannotBeAskedProvesNothing() async throws {
+        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_command": commandOK])
+        let store = store()
+        await store.resume(sessionId: "s1", cwd: "/w")
+        try await waitUntil("asked twice") { StubHost.calls.filter { $0 == "connect_states" }.count >= 2 }
+        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
+        XCTAssertTrue(store.isResuming("s1"))
+        store.reset(client: nil)
+    }
+
+    func testNamedDuringTheLastMomentsNothingIsEnded() async throws {
+        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting, "connect_command": commandOK])
+        let store = store()
+        await store.resume(sessionId: "s1", cwd: "/w")
+        try await waitUntil("giving up") { store.failingResumes.contains("c1") }
+        var ready = ConnState(conn: "c1")
+        ready.sessionId = "s1"
+        ready.ready = true
+        store.apply(ready)
+        try await waitUntil("stopped") { !store.failingResumes.contains("c1") }
+        XCTAssertFalse(StubHost.calls.contains("connect_command:exit"))
+        XCTAssertNil(store.errors["s1"])
+    }
+
+    func testACardKeepsTheTimeoutWaiting() async throws {
+        let card = #"{"result": [{"conn": "c1", "state": "starting", "requests": [{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}]}]}"#
+        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": card, "connect_command": commandOK])
+        let store = store()
+        await store.resume(sessionId: "s1", cwd: "/w")
+        try await waitUntil("asked twice") { StubHost.calls.filter { $0 == "connect_states" }.count >= 2 }
+        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
+        XCTAssertEqual(store.conn(for: "s1")?.requests.count, 1, "the card is on the Session's page")
+        store.reset(client: nil)
+    }
+
+    func testAnAnsweredCardGivesClaudeTheWholeTimeout() async throws {
+        // Right after the answer the Host has neither a card nor a name.
+        StubHost.set([
+            "ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting, "connect_command": commandOK,
+            "ccrpc_disconnect": #"{"result": null}"#,
+        ])
+        let store = store(timeout: .milliseconds(400))
+        await store.resume(sessionId: "s1", cwd: "/w")
+        var c = ConnState(conn: "c1")
+        c.state = .starting
+        c.requests = [try JSONDecoder().decode(
+            ConnRequest.self, from: Data(#"{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}"#.utf8)
+        )]
+        store.apply(c)
+        try await Task.sleep(for: .milliseconds(300))
+        c.requests = []
+        store.apply(c)
+        try await waitUntil("the timer ran out") { StubHost.calls.contains("connect_states") }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
+        XCTAssertTrue(store.isResuming("s1"))
+        try await waitUntil("gave up") { !store.isResuming("s1") }
+        XCTAssertTrue(StubHost.calls.contains("connect_command:exit"))
+    }
+
+    func testANewSessionThatFailedEndsItsCcrpc() async throws {
+        StubHost.set(["ccrpc_disconnect": #"{"result": null}"#])
+        let store = store()
+        store.starts["c1"] = .new(cwd: "/w")
+        var exited = ConnState(conn: "c1")
+        exited.sessionExited = true
+        store.apply(exited)
+        try await waitUntil("disconnected") { StubHost.calls.contains("ccrpc_disconnect") }
+        XCTAssertEqual(store.startFailures["c1"], "claude 退出了")
+    }
+
+    func testASnapshotKeepsWhatEndedByItself() async {
+        StubHost.set(["connect_states": #"{"result": []}"#])
+        let store = store()
+        var crashed = ConnState(conn: "c1")
+        crashed.sessionId = "s1"
+        crashed.procExit = .init(code: 1, stderr: "boom")
+        store.apply(crashed)
+        store.remove(conn: "c1")
+        await store.syncStates()
+        XCTAssertEqual(store.conn(for: "s1")?.procExit?.code, 1)
     }
 }

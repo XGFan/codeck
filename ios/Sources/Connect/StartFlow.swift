@@ -26,7 +26,7 @@ enum StartOffer: Equatable {
 }
 
 /// A connection started here, followed until claude names its Session.
-enum StartKind: Equatable, Sendable {
+enum StartKind: Hashable, Sendable {
     case new(cwd: String)
     /// Continues this Session (the id stays).
     case resume(sessionId: String)

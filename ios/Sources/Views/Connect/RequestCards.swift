@@ -10,15 +10,7 @@ struct RequestCard: View {
         case .permission(let r): PermissionCard(r: r, c: c)
         case .question(let r): QuestionCard(r: r, c: c).id("\(r.requestId)|\(r.questions.count)")
         case .choice(let r): ChoiceCard(r: r, c: c)
-        case .screen(let r):
-            CardShell(
-                icon: "rectangle.dashed",
-                title: r.type == "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : "认不出的屏幕（\(r.context ?? "")）",
-                status: "等待处理"
-            ) {
-                ScreenLines(lines: r.lines)
-                Text("请在终端里处理").font(.footnote).foregroundStyle(.secondary)
-            }
+        case .screen(let r): ScreenCard(r: r, c: c)
         case .other(let type, _):
             CardShell(icon: "hourglass", title: type == "rewind" ? "回退确认" : "Claude Code 在等待操作", status: "等待处理") {
                 Text("这里还不能作答，请在终端里处理").font(.footnote).foregroundStyle(.secondary)
@@ -83,15 +75,7 @@ private struct PermissionCard: View {
 
     var body: some View {
         CardShell(icon: "hand.raised", title: "允许 \(r.toolName)？", status: "等待审批", agent: r.agentId) {
-            let summary = ConnectWords.inputSummary(r.input)
-            if !summary.isEmpty {
-                Text(summary)
-                    .font(.footnote.monospaced())
-                    .lineLimit(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8))
-            }
+            InputBlocksView(blocks: ConnectWords.inputBlocks(tool: r.toolName, r.input))
             VStack(spacing: 8) {
                 answerButton(Answers.permissionLabel(r, meaning: "allow", fallback: "允许"), prominent: true) {
                     answer("allow")
@@ -177,6 +161,99 @@ private struct ChoiceCard: View {
         }
         .disabled(busy)
         .sensoryFeedback(.success, trigger: answered)
+    }
+}
+
+/// All of a tool's input in one scroller inside the card, so the answers stay within reach however long it is.
+private struct InputBlocksView: View {
+    let blocks: [InputBlock]
+    @State private var height: CGFloat = 0
+
+    private static let maxHeight: CGFloat = 160
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                        InputBlockView(block: block)
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
+            }
+            .frame(height: min(height, Self.maxHeight))
+            .scrollIndicators(height > Self.maxHeight ? .visible : .hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            if height > Self.maxHeight {
+                Text("内容较长，上下滑动查看全部").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct InputBlockView: View {
+    let block: InputBlock
+
+    var body: some View {
+        if block.kind == .note {
+            Text(block.text).font(.footnote).foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                if let label = block.label {
+                    Text(label).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(block.text)
+                    .font(.footnote.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(tint, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
+    private var tint: Color {
+        switch block.kind {
+        case .removed: .red.opacity(0.14)
+        case .added: .green.opacity(0.14)
+        default: Color(uiColor: .tertiarySystemFill)
+        }
+    }
+}
+
+/// A screen ccrpc cannot read (a panel such as `/cost`'s, an unknown dialog): shown as is; Esc closes it (`abort`
+/// while busy or waiting; otherwise ccrpc refuses that, so the key itself).
+private struct ScreenCard: View {
+    let r: ScreenRequest
+    let c: ConnState
+    @Environment(HostModel.self) private var model
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        CardShell(
+            icon: "rectangle.dashed",
+            title: r.type == "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : "认不出的屏幕（\(r.context ?? "")）",
+            status: "等待处理"
+        ) {
+            ScreenLines(lines: r.lines)
+            HStack(spacing: 8) {
+                Button("关闭（Esc）") { Task { await close() } }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(busy)
+                Text("其他操作请在终端里处理").font(.footnote).foregroundStyle(.secondary)
+            }
+            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+        }
+    }
+
+    private func close() async {
+        busy = true
+        error = nil
+        let esc: JSONValue = c.isBusy ? ["type": "abort"] : ["type": "send_keys", "keys": ["esc"]]
+        let r = await model.connect.command(c.conn, esc)
+        busy = false
+        if !r.success { error = "关闭失败：\(r.errorText)" }
     }
 }
 

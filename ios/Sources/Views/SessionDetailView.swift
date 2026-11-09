@@ -91,10 +91,22 @@ struct SessionDetailView: View {
             if was, !now { reload() }
         }
         .onChange(of: model.resyncGeneration) {
-            // After a reconnect the page reloads in place; the loading state shows only after a failure.
-            if case .failed = phase { phase = .loading }
-            reloadToken += 1
-            Task { await loadDetail() }
+            // The page refetches by itself after a reconnect (its own socket's `hello`): only a failed load starts over.
+            if case .failed = phase { reload() } else { Task { await loadDetail() } }
+        }
+        .onAppear { model.connect.pageOpened(sessionId) }
+        .onDisappear { model.connect.pageClosed(sessionId) }
+        .onChange(of: sessionId) { old, new in
+            model.connect.pageClosed(old)
+            model.connect.pageOpened(new)
+        }
+        .onChange(of: model.connect.moved[sessionId]) { _, next in
+            // `/clear` and the like: the page follows its Connect, and the input box keeps what was typed.
+            guard let next else { return }
+            model.connect.moved[sessionId] = nil
+            detail = nil
+            phase = .loading
+            sessionId = next
         }
     }
 
@@ -108,7 +120,9 @@ struct SessionDetailView: View {
 
     private func loadDetail() async {
         guard let client = model.client else { return }
-        guard let d = try? await client.getSession(sessionId) else { return }
+        let requested = sessionId
+        // The page may have moved on (`/clear`) while this was on its way.
+        guard let d = try? await client.getSession(requested), requested == sessionId else { return }
         // A Session carried on in another one opens that one, as on the desktop.
         if let next = d.supersededBy, next != sessionId {
             phase = .loading

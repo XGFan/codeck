@@ -1,8 +1,8 @@
 import PhotosUI
 import SwiftUI
 
-/// The input box (Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call
-/// ends); waiting → nothing (the card comes first). Photos are saved on the Host first and sent as `parts`, the
+/// The input box (Composer.tsx): idle → `prompt`, or `slash` for a built-in command; busy → `steer` (插话, delivered
+/// when the current tool call ends); waiting → nothing (the card comes first). Photos are saved on the Host first and sent as `parts`, the
 /// text before the images. With the box empty while busy, the button stops the turn (`abort`).
 struct Composer: View {
     let c: ConnState
@@ -102,8 +102,20 @@ struct Composer: View {
         guard canSend else { return }
         let body = body_
         let paths = images.compactMap(\.path)
+        if let refused = SlashRules.refusedHere(body) { return model.connect.setError(sessionId, refused) }
+        var list: [SlashCommand]?
+        if body.hasPrefix("/") {
+            sending = true
+            list = await model.connect.slashCommands(cwd: c.cwd)
+            sending = false
+        }
+        if type == "steer", let refused = SlashRules.refusedWhileBusy(body, list) {
+            return model.connect.setError(sessionId, refused)
+        }
         var cmd: [String: JSONValue] = ["type": .string(type)]
-        if paths.isEmpty {
+        if type == "prompt", let command = SlashRules.slashCommand(body, withImages: !paths.isEmpty, list) {
+            cmd = ["type": "slash", "command": .string(command)]
+        } else if paths.isEmpty {
             cmd["text"] = .string(body)
         } else {
             let text: [JSONValue] = body.isEmpty ? [] : [["text": .string(body)]]
