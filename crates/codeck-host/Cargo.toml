@@ -1,0 +1,28 @@
+[package]
+name = "codeck-host"
+description = "CoDeck Host: the runtime around codeck_core::Engine (worker, watcher, settings, ccrpc) and the method table, without tauri."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+codeck-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+specta.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+ureq.workspace = true
+base64.workspace = true
+chrono.workspace = true
+libc.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

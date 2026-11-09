@@ -11,10 +11,8 @@ use codeck_core::model::{AppInfo, IndexStatus, LiveChanged, SessionsChanged};
 use codeck_core::{ChangeSet, CoreError, CoreResult, Engine, paths};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use parking_lot::Mutex;
-use tauri::{AppHandle, Manager};
-use tauri_specta::Event;
 
-use crate::events::{IndexStatusEvent, LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent};
+use crate::events::{EventSink, HostEvent};
 use crate::prices;
 use crate::settings;
 use crate::state::{AppState, open_engine};
@@ -86,8 +84,16 @@ pub fn channel() -> (JobSender, Receiver<Job>, Arc<AtomicBool>) {
 
 /// Spawns the worker and the timer: it polls Live Sessions itself (process files only, no index:
 /// it neither waits behind indexing nor interrupts it) and queues periodic rescans.
-pub fn spawn(app: AppHandle, rx: Receiver<Job>, jobs: JobSender, backlog_cancel: Arc<AtomicBool>) {
-    let (timer_app, timer_jobs) = (app.clone(), jobs.clone());
+/// `cache_dir` is where an Engine opened by `SwapRoot` keeps its index.
+pub fn spawn(
+    state: Arc<AppState>,
+    sink: EventSink,
+    cache_dir: PathBuf,
+    rx: Receiver<Job>,
+    backlog_cancel: Arc<AtomicBool>,
+) {
+    let jobs = state.jobs.clone();
+    let (timer_state, timer_sink, timer_jobs) = (state.clone(), sink.clone(), jobs.clone());
     std::thread::Builder::new()
         .name("cv-timer".into())
         .spawn(move || {
@@ -100,8 +106,8 @@ pub fn spawn(app: AppHandle, rx: Receiver<Job>, jobs: JobSender, backlog_cancel:
                         break;
                     }
                 } else {
-                    let engine = timer_app.state::<AppState>().engine();
-                    poll_live(&timer_app, &engine);
+                    let engine = timer_state.engine();
+                    poll_live(&timer_sink, &engine);
                 }
             }
         })
@@ -110,7 +116,9 @@ pub fn spawn(app: AppHandle, rx: Receiver<Job>, jobs: JobSender, backlog_cancel:
         .name("cv-worker".into())
         .spawn(move || {
             Worker {
-                app,
+                state,
+                sink,
+                cache_dir,
                 queue: Queue::new(rx, backlog_cancel.clone()),
                 jobs,
                 backlog_cancel,
@@ -215,7 +223,9 @@ impl Queue {
 }
 
 struct Worker {
-    app: AppHandle,
+    state: Arc<AppState>,
+    sink: EventSink,
+    cache_dir: PathBuf,
     queue: Queue,
     jobs: JobSender,
     backlog_cancel: Arc<AtomicBool>,
@@ -236,7 +246,7 @@ fn log_err(op: &str, e: &CoreError) {
 impl Worker {
     fn run(mut self) {
         while let Some(step) = self.queue.next() {
-            let engine = self.app.state::<AppState>().engine();
+            let engine = self.state.engine();
             let job = match step {
                 Step::Backlog => {
                     self.queue.backlog = self.text_backlog(&engine);
@@ -260,9 +270,7 @@ impl Worker {
                 }
                 Job::RefreshPrices => self.refresh_prices(&engine),
                 Job::ApplyPrices(json) => match engine.update_prices(&json) {
-                    Ok(true) => {
-                        let _ = PricesChangedEvent.emit(&self.app);
-                    }
+                    Ok(true) => (self.sink)(HostEvent::PricesChanged),
                     Ok(false) => {}
                     Err(e) => log_err("update prices", &e),
                 },
@@ -308,14 +316,18 @@ impl Worker {
         // Saved only once the new root opens: a failure keeps the settings on the running root.
         let mut wanted = settings::load();
         wanted.data_root = data_root.clone();
-        let opened = open_engine(&wanted).and_then(|engine| {
+        let opened = open_engine(
+            wanted.data_root.as_deref().map(std::path::Path::new),
+            self.cache_dir.clone(),
+        )
+        .and_then(|engine| {
             settings::update(|s| s.data_root = data_root).map_err(CoreError::from)?;
             Ok(engine)
         });
         match opened {
             Ok(engine) => {
                 let engine = Arc::new(engine);
-                *self.app.state::<AppState>().engine.write() = engine.clone();
+                *self.state.engine.write() = engine.clone();
                 let _ = reply.send(Ok(engine.app_info()));
                 self.restart_watcher(&engine);
                 // A new Engine reports Live Sessions only once there are some: replace the
@@ -328,7 +340,7 @@ impl Worker {
                         LiveChanged { live: Vec::new() }
                     }
                 };
-                let _ = LiveChangedEvent(live).emit(&self.app);
+                (self.sink)(HostEvent::LiveChanged(live));
                 self.full_scan(&engine);
             }
             Err(e) => {
@@ -347,7 +359,7 @@ impl Worker {
     }
 
     fn emit_status(&self, status: IndexStatus) {
-        let _ = IndexStatusEvent(status).emit(&self.app);
+        (self.sink)(HostEvent::IndexStatus(status));
     }
 
     fn emit_error(&self, engine: &Engine, e: &CoreError) {
@@ -360,17 +372,16 @@ impl Worker {
         if cs.changed.is_empty() && cs.removed.is_empty() && !cs.projects_changed {
             return;
         }
-        let _ = SessionsChangedEvent(SessionsChanged {
+        (self.sink)(HostEvent::SessionsChanged(SessionsChanged {
             changed: cs.changed,
             removed: cs.removed,
             projects_changed: cs.projects_changed,
-        })
-        .emit(&self.app);
+        }));
     }
 
     /// Throttled progress callback for the engine.
     fn progress(&self) -> impl Fn(&IndexStatus) + 'static {
-        let app = self.app.clone();
+        let sink = self.sink.clone();
         let last = self.last_status.clone();
         move |status: &IndexStatus| {
             let mut last = last.lock();
@@ -379,7 +390,7 @@ impl Worker {
                 return;
             }
             *last = Some(now);
-            let _ = IndexStatusEvent(status.clone()).emit(&app);
+            sink(HostEvent::IndexStatus(status.clone()));
         }
     }
 
@@ -422,7 +433,7 @@ impl Worker {
             }
         }
         if !live.is_empty() {
-            poll_live(&self.app, engine);
+            poll_live(&self.sink, engine);
         }
     }
 
@@ -444,11 +455,9 @@ impl Worker {
 }
 
 /// Emits the Live Sessions when they changed since the last poll.
-fn poll_live(app: &AppHandle, engine: &Engine) {
+fn poll_live(sink: &EventSink, engine: &Engine) {
     match engine.poll_live() {
-        Ok(Some(live)) => {
-            let _ = LiveChangedEvent(live).emit(app);
-        }
+        Ok(Some(live)) => sink(HostEvent::LiveChanged(live)),
         Ok(None) => {}
         Err(e) => log_err("poll_live", &e),
     }

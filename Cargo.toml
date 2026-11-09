@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/transcript", "crates/codeck-core", "crates/ccrpc", "src-tauri"]
+members = [
+    "crates/transcript",
+    "crates/codeck-core",
+    "crates/codeck-host",
+    "crates/codeck-daemon",
+    "crates/ccrpc",
+    "src-tauri",
+]
 resolver = "3"
 
 [workspace.package]
@@ -10,6 +17,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 codeck-core = { path = "crates/codeck-core" }
+codeck-host = { path = "crates/codeck-host" }
 transcript = { path = "crates/transcript" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
@@ -44,6 +52,11 @@ notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 tracing-subscriber = "0.3.23"
 ureq = "3.4.2"
+tokio = { version = "1.54.1", features = ["rt"] }
+axum = { version = "0.8.9", features = ["ws"] }
+tower-http = "0.6.11"
+tokio-tungstenite = "0.29.0"
+futures-util = "0.3.34"
 
 # On macOS 27 (ld-27037), proc-macro dylibs that cargo strips in release builds with
 # MACOSX_DEPLOYMENT_TARGET >= 14 (set by `tauri build` from minimumSystemVersion) fail to

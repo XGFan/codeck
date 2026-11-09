@@ -1,6 +1,8 @@
-//! The app's own settings (`~/Library/Application Support/dev.joy.codeck/settings.json`).
+//! The Host's own settings (desktop: `~/Library/Application Support/dev.joy.codeck/settings.json`; the
+//! daemon's are in its state directory).
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -78,8 +80,24 @@ pub fn normalize_sidebar(projects: Vec<SidebarProject>) -> Vec<SidebarProject> {
     out
 }
 
-pub fn settings_path() -> PathBuf {
+/// The desktop app's settings file.
+pub fn default_settings_path() -> PathBuf {
     codeck_core::paths::default_settings_dir().join(SETTINGS_FILE)
+}
+
+/// Set once per process by `Host::start`.
+static PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Makes `path` the settings file of this process; a later call with another path is ignored (one
+/// Host per process).
+pub fn set_path(path: PathBuf) {
+    if PATH.get_or_init(|| path.clone()) != &path {
+        tracing::warn!("settings file already set; ignoring {}", path.display());
+    }
+}
+
+pub fn settings_path() -> PathBuf {
+    PATH.get().cloned().unwrap_or_else(default_settings_path)
 }
 
 /// Missing or unreadable settings fall back to defaults.

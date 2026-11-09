@@ -40,7 +40,7 @@ fi
 has() { echo "$changed" | grep -vE '\.md$' | grep -qE "$1"; }
 rust=false; ccrpc=false; web=false
 has '^(crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/)' && rust=true
-has '^(crates/ccrpc/|src-tauri/src/ccrpc/)' && ccrpc=true
+has '^(crates/ccrpc/|crates/codeck-host/src/ccrpc/)' && ccrpc=true
 has '^(src/|e2e/|package\.json$|pnpm-lock\.yaml$|(vite|playwright)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|index\.html$|\.prettier)' && web=true
 if ! $rust && ! $web; then
   echo "pre-push: 只有文档等改动，跳过检查。"

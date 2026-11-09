@@ -1,0 +1,30 @@
+[package]
+name = "codeck-daemon"
+description = "CoDeck's headless Host: serves the Host's remote methods and events over HTTP + WebSocket on the LAN (ADR-0011)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "codeck-host"
+path = "src/main.rs"
+
+[dependencies]
+codeck-core.workspace = true
+codeck-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+libc.workspace = true
+dirs.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "signal", "macros", "time"] }
+tower-http = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true

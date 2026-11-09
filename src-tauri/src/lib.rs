@@ -1,67 +1,23 @@
-//! CoDeck desktop app: tauri shell around `codeck_core::Engine`.
+//! CoDeck desktop app: tauri shell around `codeck_host::Host`.
 
-pub mod ccrpc;
 pub mod commands;
 pub mod events;
-pub mod prices;
-pub mod settings;
-pub mod state;
-pub mod watcher;
-pub mod worker;
 
+use std::sync::Arc;
+
+use codeck_host::{Host, HostConfig, HostEvent};
 use tauri::Manager;
-use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
+use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 
 use crate::events::{
     CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent, IndexStatusEvent,
     LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent,
 };
-use crate::state::{AppState, open_engine};
 
 /// The single source of commands and events, shared by the app and the bindings export.
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
-        .commands(collect_commands![
-            commands::get_app_info,
-            commands::set_data_root,
-            commands::get_index_status,
-            commands::rebuild_index,
-            commands::list_projects,
-            commands::list_sessions,
-            commands::get_session,
-            commands::get_transcript,
-            commands::get_tool_detail,
-            commands::get_image,
-            commands::search,
-            commands::resolve_jump,
-            commands::find_in_session,
-            commands::reveal_session_file,
-            commands::sync_session,
-            commands::get_stats,
-            commands::get_diagnostics,
-            commands::list_slash_commands,
-            commands::complete_paths,
-            commands::get_sidebar_projects,
-            commands::set_sidebar_projects,
-            ccrpc::ccrpc_info,
-            ccrpc::ccrpc_set_analyzer,
-            ccrpc::ccrpc_test_analyzer,
-            ccrpc::ccrpc_analyzer_records,
-            ccrpc::ccrpc_open_analyzer_records,
-            ccrpc::ccrpc_set_launch_rules,
-            ccrpc::ccrpc_set_hide_new_panes,
-            ccrpc::ccrpc_set_pane_hidden,
-            ccrpc::ccrpc_watch_sessions,
-            ccrpc::ccrpc_connect,
-            ccrpc::ccrpc_new,
-            ccrpc::ccrpc_resume,
-            ccrpc::ccrpc_fork,
-            ccrpc::ccrpc_send,
-            ccrpc::ccrpc_disconnect,
-            ccrpc::ccrpc_gui_log,
-            ccrpc::ccrpc_log_dir,
-            ccrpc::ccrpc_save_image,
-        ])
+        .commands(commands::collect())
         .events(collect_events![
             IndexStatusEvent,
             SessionsChangedEvent,
@@ -84,16 +40,20 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(ccrpc::CcrpcState::default())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
-            let (jobs, rx, backlog_cancel) = worker::channel();
-            app.manage(AppState::new(open_engine(&settings::load())?, jobs.clone()));
-            worker::spawn(app.handle().clone(), rx, jobs.clone(), backlog_cancel);
-            // Starts the watcher, then FullScan -> TextBacklog.
-            jobs.send(worker::Job::SetRoot);
-            jobs.send(worker::Job::RefreshPrices);
+            let config = HostConfig {
+                reveal_path: Some(Arc::new(|p| {
+                    tauri_plugin_opener::reveal_item_in_dir(p).map_err(|e| e.to_string())
+                })),
+                open_path: Some(Arc::new(|p| {
+                    tauri_plugin_opener::open_path(p, None::<&str>).map_err(|e| e.to_string())
+                })),
+                ..HostConfig::desktop()
+            };
+            let host = Host::start(config, sink(app.handle().clone()))?;
+            app.manage(host);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -101,9 +61,29 @@ pub fn run() {
         .run(|handle, ev| {
             if let tauri::RunEvent::Exit = ev {
                 // Closes every ccrpc; the Sessions themselves keep running.
-                handle.state::<ccrpc::CcrpcState>().disconnect_all();
+                if let Some(host) = handle.try_state::<Arc<Host>>() {
+                    host.shutdown();
+                }
             }
         });
+}
+
+/// The Host's events, as the typed events.
+fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
+    Arc::new(move |e| {
+        let _ = match e {
+            HostEvent::IndexStatus(s) => IndexStatusEvent(s).emit(&handle),
+            HostEvent::SessionsChanged(s) => SessionsChangedEvent(s).emit(&handle),
+            HostEvent::LiveChanged(l) => LiveChangedEvent(l).emit(&handle),
+            HostEvent::PricesChanged => PricesChangedEvent.emit(&handle),
+            HostEvent::CcrpcLine { conn, line } => CcrpcLineEvent { conn, line }.emit(&handle),
+            HostEvent::CcrpcExit { conn, code, stderr } => {
+                CcrpcExitEvent { conn, code, stderr }.emit(&handle)
+            }
+            HostEvent::CcrpcLs { ls } => CcrpcLsEvent { ls }.emit(&handle),
+            HostEvent::CcrpcLsEnded { message } => CcrpcLsEndedEvent { message }.emit(&handle),
+        };
+    })
 }
 
 /// Writes `src/ipc/bindings.ts`. Run with `pnpm bindings`.
@@ -116,4 +96,68 @@ fn export_bindings() {
             concat!(env!("CARGO_MANIFEST_DIR"), "/../src/ipc/bindings.ts"),
         )
         .expect("failed to export typescript bindings");
+}
+
+/// The daemon sends `HostEvent::name()` / `payload()`: they must be what the typed events emit.
+#[cfg(test)]
+#[test]
+fn host_events_match_the_typed_events() {
+    use serde::Serialize;
+    fn same<E: Event + Serialize>(host: HostEvent, typed: E) {
+        assert_eq!(host.name(), E::NAME);
+        assert_eq!(host.payload(), serde_json::to_value(typed).unwrap());
+    }
+    let s = codeck_core::model::SessionsChanged {
+        changed: vec!["a".into()],
+        removed: vec!["b".into()],
+        projects_changed: true,
+    };
+    same(
+        HostEvent::IndexStatus(Default::default()),
+        IndexStatusEvent(Default::default()),
+    );
+    same(
+        HostEvent::SessionsChanged(s.clone()),
+        SessionsChangedEvent(s),
+    );
+    same(
+        HostEvent::LiveChanged(Default::default()),
+        LiveChangedEvent(Default::default()),
+    );
+    same(HostEvent::PricesChanged, PricesChangedEvent);
+    let (conn, line, stderr) = ("c1".to_string(), "{}".to_string(), "e".to_string());
+    same(
+        HostEvent::CcrpcLine {
+            conn: conn.clone(),
+            line: line.clone(),
+        },
+        CcrpcLineEvent {
+            conn: conn.clone(),
+            line,
+        },
+    );
+    same(
+        HostEvent::CcrpcExit {
+            conn: conn.clone(),
+            code: Some(1),
+            stderr: stderr.clone(),
+        },
+        CcrpcExitEvent {
+            conn,
+            code: Some(1),
+            stderr,
+        },
+    );
+    same(
+        HostEvent::CcrpcLs { ls: "[]".into() },
+        CcrpcLsEvent { ls: "[]".into() },
+    );
+    same(
+        HostEvent::CcrpcLsEnded {
+            message: "m".into(),
+        },
+        CcrpcLsEndedEvent {
+            message: "m".into(),
+        },
+    );
 }
