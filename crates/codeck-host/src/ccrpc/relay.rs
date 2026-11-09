@@ -162,6 +162,8 @@ pub struct App {
     ls_watch: Mutex<Option<LsWatch>>,
     /// Bumped whenever the watch is started or stopped: lines of an older one are dropped.
     ls_gen: Arc<std::sync::atomic::AtomicU64>,
+    /// The day logs and images were last pruned.
+    pruned_on: Mutex<chrono::NaiveDate>,
     sub_timeout: Duration,
     disconnect_grace: Duration,
     kill_after: Duration,
@@ -177,7 +179,8 @@ impl App {
     ) -> R<App> {
         logs::mkdir(&log_root)
             .map_err(|e| io(format!("建不了日志目录 {}：{e}", log_root.display())))?;
-        logs::prune(&log_root, chrono::Local::now().date_naive());
+        let today = chrono::Local::now().date_naive();
+        logs::prune(&log_root, today, &[]);
         logs::prune_files(&images);
         let gui = logs::append(&log_root.join("gui.log"))
             .map_err(|e| io(format!("打不开 gui.log：{e}")))?;
@@ -192,6 +195,7 @@ impl App {
             doctor: Mutex::new(None),
             ls_watch: Mutex::new(None),
             ls_gen: Arc::default(),
+            pruned_on: Mutex::new(today),
             sub_timeout: SUBCOMMAND_TIMEOUT,
             disconnect_grace: DISCONNECT_GRACE,
             kill_after: KILL_AFTER,
@@ -395,6 +399,21 @@ impl App {
         Ok(())
     }
 
+    /// Prunes logs and images at most once a day, for a Host that runs for months.
+    fn prune_if_due(&self) {
+        let today = chrono::Local::now().date_naive();
+        if std::mem::replace(&mut *self.pruned_on.lock(), today) != today {
+            let live: Vec<PathBuf> = self
+                .conns
+                .lock()
+                .values()
+                .map(|c| c.dir.lock().clone())
+                .collect();
+            logs::prune(&self.log_root, today, &live);
+            logs::prune_files(&self.images);
+        }
+    }
+
     /// `ccrpc attach <holder>`.
     pub fn connect(&self, sink: Sink, holder_id: &str) -> R<String> {
         if !valid_holder_id(holder_id) {
@@ -498,6 +517,7 @@ impl App {
 
     /// Starts ccrpc `sub` with `args` and relays it to `sink` as a new connection.
     fn spawn(&self, sink: Sink, sub: &str, args: &[String], dir_name: &str) -> R<String> {
+        self.prune_if_due();
         let id = format!("c{}", self.next());
         let dir = logs::conn_dir(&self.log_root, dir_name)
             .map_err(|e| io(format!("建不了日志目录：{e}")))?;
@@ -744,6 +764,7 @@ impl App {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(base64.as_bytes())
             .map_err(|e| invalid(format!("图片数据不对：{e}")))?;
+        self.prune_if_due();
         logs::mkdir(&self.images).map_err(|e| io(e.to_string()))?;
         let path = self
             .images
@@ -1154,6 +1175,23 @@ mod tests {
         std::fs::write(&fake, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         App::new(HashMap::new(), fake, dir.join("logs"), dir.join("img")).unwrap()
+    }
+
+    #[test]
+    fn old_logs_are_pruned_again_on_a_later_day_only() {
+        let d = tempfile::tempdir().unwrap();
+        let app = fake_ccrpc(d.path(), "exit 0");
+        let old = d.path().join("logs/2020-01-01");
+        std::fs::create_dir_all(&old).unwrap();
+        app.prune_if_due();
+        assert!(old.exists(), "already pruned today");
+        let yesterday = app.pruned_on.lock().pred_opt().unwrap();
+        *app.pruned_on.lock() = yesterday;
+        app.prune_if_due();
+        assert!(!old.exists());
+        std::fs::create_dir_all(&old).unwrap();
+        app.prune_if_due();
+        assert!(old.exists(), "once a day");
     }
 
     /// A hung subcommand (`ccrpc hide`) is killed and reported instead of stalling for good.

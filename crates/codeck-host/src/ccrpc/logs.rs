@@ -53,8 +53,9 @@ pub fn conn_dir(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     unreachable!()
 }
 
-/// Removes `<root>/<date>` directories older than `KEEP_DAYS` (only names that are dates).
-pub fn prune(root: &Path, today: chrono::NaiveDate) {
+/// Removes `<root>/<date>` directories older than `KEEP_DAYS` (only names that are dates), except those holding a
+/// directory of `live` (a connection still writing there).
+pub fn prune(root: &Path, today: chrono::NaiveDate, live: &[PathBuf]) {
     let Ok(rd) = std::fs::read_dir(root) else {
         return;
     };
@@ -66,8 +67,12 @@ pub fn prune(root: &Path, today: chrono::NaiveDate) {
         else {
             continue;
         };
-        if (today - d).num_days() > KEEP_DAYS && e.path().is_dir() {
-            let _ = std::fs::remove_dir_all(e.path());
+        let path = e.path();
+        if (today - d).num_days() > KEEP_DAYS
+            && path.is_dir()
+            && !live.iter().any(|l| l.starts_with(&path))
+        {
+            let _ = std::fs::remove_dir_all(path);
         }
     }
 }
@@ -201,14 +206,19 @@ mod tests {
     #[test]
     fn prune_removes_only_old_date_dirs() {
         let d = tempfile::tempdir().unwrap();
-        for n in ["2026-10-01", "2026-10-25", "notes"] {
+        for n in ["2026-10-01", "2026-10-02", "2026-10-25", "notes"] {
             std::fs::create_dir(d.path().join(n)).unwrap();
         }
         prune(
             d.path(),
             chrono::NaiveDate::from_ymd_opt(2026, 11, 4).unwrap(),
+            &[d.path().join("2026-10-02/m1")],
         );
         assert!(!d.path().join("2026-10-01").exists());
+        assert!(
+            d.path().join("2026-10-02").exists(),
+            "a live connection's day stays"
+        );
         assert!(d.path().join("2026-10-25").exists());
         assert!(d.path().join("notes").exists());
     }
