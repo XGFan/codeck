@@ -14,6 +14,8 @@ final class HostModel {
     private(set) var problem: String?
     /// Increments on each `hello` after the first, i.e. after every reconnect: open pages reload.
     private(set) var resyncGeneration = 0
+    /// The Host's Connects and `ccrpc ls`.
+    let connect = ConnectStore()
 
     @ObservationIgnored private let store: HostAddressStore
     @ObservationIgnored private var stream: EventStream?
@@ -42,6 +44,7 @@ final class HostModel {
         hasLoaded = false
         problem = nil
         helloCount = 0
+        connect.reset(client: HostClient(address: address))
         let stream = EventStream(address: address)
         stream.onEvent = { [weak self] in self?.handle($0) }
         stream.onDisconnect = { [weak self] attempt in
@@ -126,11 +129,18 @@ final class HostModel {
             helloCount += 1
             if helloCount > 1 { resyncGeneration += 1 }
             Task { await refresh() }
+            Task { await connect.resync() }
         case .sessionsChanged:
             // list_sessions has no id filter; the whole list is one call.
             Task { await refresh() }
         case .liveChanged(let snapshot):
             apply(snapshot)
+        case .connectState(let state):
+            connect.apply(state)
+        case .connectRemoved(let conn):
+            connect.remove(conn: conn)
+        case .ccrpcLs(let text):
+            connect.applyLs(text)
         case .indexStatus, .pricesChanged, .other:
             break
         }

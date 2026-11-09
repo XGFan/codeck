@@ -58,9 +58,12 @@ struct SessionDetailView: View {
                 Button("详情", systemImage: "info.circle") { showingInfo = true }
                     .disabled(detail == nil)
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                ConnectMenu(sessionId: sessionId)
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ConnectBarSlot(session: summary)
+            ConnectBarSlot(sessionId: sessionId)
         }
         .overlay(alignment: .bottom) {
             if showingCopied {

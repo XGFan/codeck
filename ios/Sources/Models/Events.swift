@@ -32,12 +32,20 @@ enum HostEvent: Sendable {
     case liveChanged(LiveChanged)
     case indexStatus
     case pricesChanged
-    /// An event this version of the app does not use (Connect events, later additions).
+    /// One Connect's whole state changed.
+    case connectState(ConnState)
+    /// A Connect is gone (its ccrpc exited and was cleaned up).
+    case connectRemoved(conn: String)
+    /// `ccrpc ls --json`'s new list, as the JSON text it printed.
+    case ccrpcLs(String)
+    /// An event this version of the app does not use (later additions).
     case other(String)
 
     private struct Envelope: Decodable { var event: String }
     private struct Payload<T: Decodable>: Decodable { var payload: T }
     private struct Hello: Decodable { var apiVersion: Int }
+    private struct Removed: Decodable { var conn: String }
+    private struct Ls: Decodable { var ls: String }
 
     static func decode(_ data: Data) throws -> HostEvent {
         let decoder = JSONDecoder()
@@ -53,6 +61,12 @@ enum HostEvent: Sendable {
             return .indexStatus
         case "prices-changed-event":
             return .pricesChanged
+        case "connect-state-event":
+            return .connectState(try decoder.decode(Payload<ConnState>.self, from: data).payload)
+        case "connect-removed-event":
+            return .connectRemoved(conn: try decoder.decode(Payload<Removed>.self, from: data).payload.conn)
+        case "ccrpc-ls-event":
+            return .ccrpcLs(try decoder.decode(Payload<Ls>.self, from: data).payload.ls)
         default:
             return .other(name)
         }

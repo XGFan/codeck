@@ -42,7 +42,12 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - Tests
+      - path: Tests
+        excludes:
+          - Fixtures/**
+      # Golden JSON produced by the Host's Rust code (cargo test -p codeck-host --test conn_state_golden).
+      - path: Tests/Fixtures
+        buildPhase: resources
     dependencies:
       - target: CoDeck
     settings:

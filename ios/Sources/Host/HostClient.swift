@@ -65,11 +65,12 @@ struct HostClient: Sendable {
     func call<Args: Encodable & Sendable, Result: Decodable>(
         _ method: String,
         args: Args,
-        as _: Result.Type = Result.self
+        as _: Result.Type = Result.self,
+        timeout: TimeInterval = 20
     ) async throws -> Result {
         var request = URLRequest(url: address.baseURL.appending(path: "v1/rpc"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 20
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(RPCRequest(method: method, args: args))
         let (data, response) = try await send(request)
