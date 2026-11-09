@@ -239,6 +239,10 @@ pub struct BgTask {
     pub command: Option<String>,
     /// `running` until Claude Code reports it ended (`completed`, `failed`, `killed`, …).
     pub status: String,
+    /// A running Teammate between rounds, waiting for a message. Claude Code keeps it `running` and
+    /// leaves it out of its own count of what is working.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub idle: bool,
 }
 
 /// A tool_use that has no tool_result yet.
@@ -308,6 +312,10 @@ pub struct Tailer {
     usage_seen: HashSet<String>,
     /// Background tasks, in start order.
     tasks: Vec<BgTask>,
+    /// The Main Line's teammates, by what it says of them.
+    teammates: subagent::Teammates,
+    /// Teammate names by the `description` they were spawned with: how Stop's list names them.
+    teammate_names: HashMap<String, Vec<String>>,
     /// Tasks whose notifications are a Monitor's ([`monitor_notice`]).
     monitors: HashSet<String>,
     /// Byte offset of every main-file entry, kept when `main_only` or `keep_offsets`.
@@ -354,6 +362,8 @@ impl Tailer {
             keep_offsets: false,
             usage_seen: HashSet::new(),
             tasks: Vec::new(),
+            teammates: subagent::Teammates::default(),
+            teammate_names: HashMap::new(),
             monitors: HashSet::new(),
             queue: Vec::new(),
             last_feedback: None,
@@ -412,6 +422,86 @@ impl Tailer {
     /// listed as `shell` in Stop's `background_tasks`) is told from a shell.
     pub fn monitors(&self) -> &HashSet<String> {
         &self.monitors
+    }
+
+    /// Whether the teammates spawned with `description` that have not exited are all idle.
+    pub fn teammate_idle(&self, description: &str) -> bool {
+        let Some(names) = self.teammate_names.get(description) else {
+            return false;
+        };
+        let mut live = names
+            .iter()
+            .filter_map(|n| self.teammates.state(n))
+            .filter(|s| *s != "exited")
+            .peekable();
+        live.peek().is_some() && live.all(|s| s == "idle")
+    }
+
+    /// A Main Line entry relaying messages from teammates, delivered at once or from the queue.
+    fn note_teammate_messages(&mut self, e: &RawEntry) {
+        let text = match e.entry_type() {
+            "user" if !prompt::is_human_prompt(e) => prompt::user_text(e),
+            "attachment" => e
+                .queued_command()
+                .and_then(|q| q.text())
+                .unwrap_or_default(),
+            _ => return,
+        };
+        if text.contains("<teammate-message") {
+            for m in prompt::teammate_messages(&text) {
+                self.teammates.message(&m);
+            }
+        }
+    }
+
+    /// A Main Line entry's tool calls that spawn a teammate or send one a message.
+    fn note_teammate_calls(&mut self, e: &RawEntry) {
+        if e.entry_type() != "assistant" {
+            return;
+        }
+        for b in e.blocks() {
+            if b.block_type() != "tool_use" {
+                continue;
+            }
+            let tool = b.name.as_deref().unwrap_or_default();
+            if !matches!(tool, "Agent" | "Task" | "SendMessage") {
+                continue;
+            }
+            let Some(input) = b
+                .input
+                .as_deref()
+                .and_then(|r| serde_json::from_str::<Value>(r.get()).ok())
+            else {
+                continue;
+            };
+            let id = b.id.as_deref().unwrap_or_default();
+            self.note_teammate_call(id, tool, &input, e.timestamp.as_deref());
+        }
+    }
+
+    fn note_teammate_call(&mut self, id: &str, tool: &str, input: &Value, at: Option<&str>) {
+        let field = |k: &str| input.get(k).and_then(Value::as_str);
+        match tool {
+            "Agent" | "Task" => {
+                let Some(name) = field("name") else { return };
+                self.teammates.spawned(name, id);
+                if let Some(description) = field("description") {
+                    let names = self
+                        .teammate_names
+                        .entry(description.to_string())
+                        .or_default();
+                    if !names.iter().any(|n| n == name) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+            "SendMessage" => {
+                if let Some(to) = field("to") {
+                    self.teammates.sent(to, at);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn note_monitor(&mut self, text: &str) {
@@ -886,6 +976,10 @@ impl Tailer {
             b.run_id = run.map(str::to_string);
             b
         };
+        if agent.is_none() {
+            self.note_teammate_messages(e);
+            self.note_teammate_calls(e);
+        }
         match e.entry_type() {
             "system" if agent.is_none() && e.subtype.as_deref() == Some("turn_duration") => {
                 self.pending.retain(|_, p| p.agent_id.is_some());
@@ -1247,6 +1341,7 @@ impl Tailer {
                         description: field("description").or(summary),
                         command: field("command"),
                         status: "running".into(),
+                        idle: false,
                     });
                 }
                 if let Some(path) = persisted_path(&text, &self.session_dir()) {
@@ -2443,6 +2538,63 @@ mod tests {
         assert_eq!(status, [("bg1", "running"), ("bg2", "stopped")]);
     }
 
+    /// A teammate is idle from its `idle_notification` (delivered at once or queued) until the
+    /// lead sends it a message; Stop's list names it by the description it was spawned with.
+    #[test]
+    fn a_teammate_is_idle_between_rounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let call = |id: &str, name: &str, input: Value| {
+            json!({"type": "assistant", "uuid": format!("c-{id}"), "message": {"id": format!("m-{id}"), "role": "assistant",
+                "content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}})
+        };
+        let relayed = |from: &str, at: &str| {
+            format!(
+                "Another Claude session sent a message:\n<teammate-message teammate_id=\"{from}\" color=\"blue\">\n{{\"type\":\"idle_notification\",\"from\":\"{from}\",\"timestamp\":\"{at}\",\"idleReason\":\"available\"}}\n</teammate-message>"
+            )
+        };
+        let spawn = call(
+            "t1",
+            "Agent",
+            json!({"name": "w", "description": "write docs", "prompt": "p"}),
+        );
+        let mut lines = vec![spawn];
+        write_lines(&main, &lines);
+        let mut t = Tailer::new(&main);
+        t.poll();
+        assert!(!t.teammate_idle("write docs"));
+        assert!(!t.teammate_idle("something else"));
+
+        lines.push(json!({"type": "user", "uuid": "n1", "message": {"role": "user", "content": relayed("w", "2026-11-09T09:37:52.717Z")}}));
+        write_lines(&main, &lines);
+        t.poll();
+        assert!(t.teammate_idle("write docs"));
+
+        let mut send = call("t2", "SendMessage", json!({"to": "w", "message": "more"}));
+        send["timestamp"] = json!("2026-11-09T09:38:00.000Z");
+        lines.push(send);
+        write_lines(&main, &lines);
+        t.poll();
+        assert!(!t.teammate_idle("write docs"));
+
+        lines.push(
+            json!({"type": "attachment", "uuid": "n2", "attachment": {"type": "queued_command",
+            "prompt": relayed("w", "2026-11-09T09:37:59.000Z"), "origin": {"kind": "coordinator"}}}),
+        );
+        write_lines(&main, &lines);
+        t.poll();
+        // Written after the lead's message but sent before it: the new round is still running.
+        assert!(!t.teammate_idle("write docs"));
+
+        lines.push(
+            json!({"type": "user", "uuid": "n3", "message": {"role": "user",
+            "content": relayed("w", "2026-11-09T09:39:00.000Z")}}),
+        );
+        write_lines(&main, &lines);
+        t.poll();
+        assert!(t.teammate_idle("write docs"));
+    }
+
     /// `get_tasks` puts `BgTask` on the wire: the kind is a lowercase string, `command` only
     /// for a shell or a Monitor.
     #[test]
@@ -2454,6 +2606,7 @@ mod tests {
             description: Some("d".into()),
             command: command.map(str::to_string),
             status: "running".into(),
+            idle: false,
         };
         let all = [
             task(TaskKind::Shell, Some("sleep 5")),

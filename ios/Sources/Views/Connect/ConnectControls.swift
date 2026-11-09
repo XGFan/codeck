@@ -11,7 +11,7 @@ struct ConnectControls: View {
     var body: some View {
         HStack(spacing: 4) {
             modeMenu
-            let running = c.runningTasks.count
+            let running = c.workingTasks.count
             if running > 0 || showingTasks {
                 Button {
                     showingTasks = true

@@ -126,7 +126,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `answer_rewind {request_id, option \| cancel}` | 作答确认页：`both`（代码与对话）/ `conversation` / `code`，或取消；恢复了对话时返回放回输入框的提示词 |
 | `set_mode {mode}` | 切权限模式：`manual` / `accept_edits` / `plan` / `auto` |
 | `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
-| `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Monitor、Workflow Run |
+| `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Monitor、Workflow Run；一轮结束、等消息的 Teammate 带 `idle: true` |
 | `dismiss_feedback_draft` | 关掉模型起草的反馈卡片（终端里的 `0`）；发送只能在终端里做 |
 | `exit {close_pane?, stop_tasks?}` | 退出 claude；`close_pane` 时连 Pane 一起结束；还有后台任务时只在带 `stop_tasks` 时停掉它们退出，否则报 `tasks_running` |
 

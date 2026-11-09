@@ -60,6 +60,7 @@ fn merge_stop_tasks(tasks: &mut Vec<BgTask>, seen: impl Fn(&str) -> bool, bg: &V
             description: t["description"].as_str().map(str::to_string),
             command: t["command"].as_str().map(str::to_string),
             status: t["status"].as_str().unwrap_or("running").to_string(),
+            idle: false,
         });
     }
 }
@@ -105,6 +106,7 @@ impl Engine {
                 .then(|| text(&input["command"]))
                 .flatten(),
             status: "running".into(),
+            idle: false,
         });
     }
 
@@ -152,12 +154,19 @@ impl Engine {
             }
         }
         // Known only from Stop (a plugin's monitor is listed as a shell there): its notifications
-        // say it is a Monitor.
+        // say it is a Monitor. Stop calls a teammate between rounds `running` too: the Main Line
+        // tells whether it is idle.
         if let Some(tl) = self.tailer.as_ref() {
             for t in &mut out {
                 if t.kind == TaskKind::Shell && tl.monitors().contains(&t.id) {
                     t.kind = TaskKind::Monitor;
                 }
+                t.idle = t.kind == TaskKind::Agent
+                    && t.status == "running"
+                    && t.tool_use_id.is_empty()
+                    && t.description
+                        .as_deref()
+                        .is_some_and(|d| tl.teammate_idle(d));
             }
         }
         out
@@ -329,6 +338,7 @@ mod tests {
             description: Some("ccrpc side".into()),
             command: None,
             status: "running".into(),
+            idle: false,
         };
         let mut tasks = vec![hooked.clone()];
         let both = json!([

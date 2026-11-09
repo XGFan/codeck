@@ -69,9 +69,13 @@ export function Tasks({ c }: { c: ConnState }) {
   };
   // The kind whose popover is open: its button stays while it is, after its last running task was stopped too.
   const [openKind, setOpenKind] = useState<string | null>(null);
-  const running = c.tasks.filter((t) => t.status === "running");
+  // An idle Teammate is not listed, as in the TUI.
+  const listed = c.tasks.filter((t) => !t.idle);
+  const running = listed.filter((t) => t.status === "running");
+  // Its last task went idle: the button goes with no close event, and must not come back open.
+  if (openKind && !listed.some((t) => t.kind === openKind)) setOpenKind(null);
   const kinds = byKind(running).map(([kind, ts]) => ({ kind, n: ts.length }));
-  if (openKind && !kinds.some((k) => k.kind === openKind) && c.tasks.some((t) => t.kind === openKind))
+  if (openKind && !kinds.some((k) => k.kind === openKind) && listed.some((t) => t.kind === openKind))
     kinds.push({ kind: openKind, n: 0 });
   if (kinds.length === 0) return null;
 
@@ -97,7 +101,7 @@ export function Tasks({ c }: { c: ConnState }) {
       c={c}
       kind={kind}
       n={n}
-      all={c.tasks.filter((t) => t.kind === kind)}
+      all={listed.filter((t) => t.kind === kind)}
       open={open}
       shown={openKind === kind}
       onShown={(o) => setOpenKind(o ? kind : null)}

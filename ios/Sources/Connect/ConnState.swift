@@ -138,6 +138,9 @@ struct ConnState: Decodable, Equatable, Sendable {
     var isBusy: Bool { state == .busy || state == .waiting }
 
     var runningTasks: [ConnTask] { tasks.filter { $0.status == "running" } }
+
+    /// Running and not an idle Teammate: what the tasks button counts, as in the TUI.
+    var workingTasks: [ConnTask] { runningTasks.filter { !$0.idle } }
 }
 
 /// A background task (`get_tasks`).
@@ -148,8 +151,10 @@ struct ConnTask: Decodable, Equatable, Identifiable, Sendable {
     var description: String?
     var command: String?
     var status: String
+    /// A Teammate between rounds: `status` stays `running`, it is not working.
+    var idle = false
 
-    enum CodingKeys: String, CodingKey { case id, kind, toolUseId = "tool_use_id", description, command, status }
+    enum CodingKeys: String, CodingKey { case id, kind, toolUseId = "tool_use_id", description, command, status, idle }
 
     init(id: String, kind: String, description: String? = nil, command: String? = nil, status: String) {
         self.id = id
@@ -167,6 +172,7 @@ struct ConnTask: Decodable, Equatable, Identifiable, Sendable {
         description = c.lenient(String.self, .description)
         command = c.lenient(String.self, .command)
         status = c.lenient(String.self, .status) ?? "running"
+        idle = c.lenient(Bool.self, .idle) ?? false
     }
 
     /// What the list shows as its name.

@@ -755,6 +755,8 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await page.getByTestId("panel-close").click();
   // A Teammate is listed under a task id of its own: it opens its Subagent Run by its description.
   await page.getByTestId("tasks-agent").click();
+  // An idle Teammate is neither counted nor listed, as in the TUI.
+  await expect(tasks.filter({ hasText: "已经空闲的 Teammate" })).toHaveCount(0);
   await tasks.filter({ hasText: "补限流文档" }).getByTestId("task-open").click();
   await expect(page.getByTestId("panel-breadcrumb").getByTestId("crumb")).toHaveText(["writer · 补限流文档"]);
   await page.getByTestId("panel-close").click();
@@ -945,7 +947,7 @@ test("关闭：还有后台任务时先确认，取消则什么也不发", async
   await expect(state(page)).toContainText("空闲");
   await page.getByTestId("connect-close").click();
   const confirm = page.getByTestId("connect-close-confirm");
-  await expect(confirm).toContainText("停掉 3 个后台任务");
+  await expect(confirm).toContainText("停掉 4 个后台任务");
   await confirm.getByRole("button", { name: "取消" }).click();
   await expect(confirm).toHaveCount(0);
   expect(await lastSent(page, "exit")).toBeUndefined();
@@ -962,7 +964,7 @@ test("关闭：忙时确认后先中止本轮再结束", async ({ page }) => {
   await send(page, "改一下 README");
   await expect(state(page)).toContainText("工作中");
   await page.getByTestId("connect-close").click();
-  await expect(page.getByTestId("connect-close-confirm")).toContainText("中止本轮、停掉 3 个后台任务");
+  await expect(page.getByTestId("connect-close-confirm")).toContainText("中止本轮、停掉 4 个后台任务");
   await page.getByTestId("connect-close-ok").click();
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   const types = (await probe(page)).sent.map((s) => s.msg.type);

@@ -12,7 +12,7 @@ struct TasksSheet: View {
 
     var body: some View {
         let c = model.connect.conns[conn]
-        let tasks = c?.tasks ?? []
+        let tasks = (c?.tasks ?? []).filter { !$0.idle }
         let running = tasks.filter { $0.status == "running" }
         let done = tasks.filter { $0.status != "running" }
         NavigationStack {

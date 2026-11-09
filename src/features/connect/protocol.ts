@@ -137,6 +137,8 @@ export interface Task {
   description: string | null;
   command?: string | null;
   status: string;
+  /** A Teammate between rounds: `status` stays `running`, it is not working. */
+  idle?: boolean;
 }
 
 /** The draft behind Claude Code's 「Product feedback drafted」 card: the model's `SendFeedback` call. */

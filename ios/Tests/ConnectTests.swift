@@ -33,6 +33,7 @@ final class ConnStateDecodingTests: XCTestCase {
       "tasks": [
         {"id": "b1", "kind": "shell", "tool_use_id": "toolu_9", "description": null, "command": "npm run dev", "status": "running"},
         {"id": "m1", "kind": "monitor", "description": "watch", "status": "completed"},
+        {"id": "t1", "kind": "agent", "tool_use_id": "", "description": "docs", "status": "running", "idle": true},
         {"kind": "agent"}
       ],
       "lastTurn": {"type": "turn_end", "duration_ms": 1200},
@@ -85,8 +86,9 @@ final class ConnStateDecodingTests: XCTestCase {
     func testKeepsWhatDecodesAndDropsTheRest() throws {
         let c = try JSONDecoder().decode(ConnState.self, from: Data(Self.stateJSON.utf8))
         XCTAssertEqual(c.queue, ["先这样"])
-        XCTAssertEqual(c.tasks.map(\.id), ["b1", "m1"])
-        XCTAssertEqual(c.runningTasks.map(\.name), ["npm run dev"])
+        XCTAssertEqual(c.tasks.map(\.id), ["b1", "m1", "t1"])
+        XCTAssertEqual(c.runningTasks.map(\.name), ["npm run dev", "docs"])
+        XCTAssertEqual(c.workingTasks.map(\.name), ["npm run dev"])
         XCTAssertEqual(c.progress?.elapsedS, 12)
         XCTAssertEqual(c.notices, [.init(id: 1, text: "分析完成")])
     }

@@ -229,6 +229,8 @@ struct Teammate {
     /// Its latest report, or the result of its latest round.
     last_text: Option<String>,
     color: Option<String>,
+    /// When the lead last sent it a message (RFC 3339, as Claude Code writes it).
+    woken_at: Option<String>,
 }
 
 impl Default for Teammate {
@@ -237,20 +239,21 @@ impl Default for Teammate {
             state: "running",
             last_text: None,
             color: None,
+            woken_at: None,
         }
     }
 }
 
 /// Teammates by the Agent call that spawned them; a name reused after a shutdown is a new one.
 #[derive(Debug, Default)]
-struct Teammates {
+pub struct Teammates {
     by_tool: HashMap<String, Teammate>,
     /// Name → tool_use id of its latest spawn.
     current: HashMap<String, String>,
 }
 
 impl Teammates {
-    fn spawned(&mut self, name: &str, tool_use_id: &str) {
+    pub fn spawned(&mut self, name: &str, tool_use_id: &str) {
         self.current.insert(name.to_owned(), tool_use_id.to_owned());
         self.by_tool
             .insert(tool_use_id.to_owned(), Teammate::default());
@@ -261,8 +264,13 @@ impl Teammates {
         self.by_tool.get_mut(tool)
     }
 
-    /// The lead sent `to` (a name, or `*` for all) a message: it works on it.
-    fn sent(&mut self, to: &str) {
+    /// `running`, `idle` or `exited`, for the latest teammate of that name.
+    pub fn state(&self, name: &str) -> Option<&'static str> {
+        Some(self.by_tool.get(self.current.get(name)?)?.state)
+    }
+
+    /// The lead sent `to` (a name, or `*` for all) a message at `at`: it works on it.
+    pub fn sent(&mut self, to: &str, at: Option<&str>) {
         let tools: Vec<String> = self
             .current
             .iter()
@@ -272,6 +280,7 @@ impl Teammates {
         for t in tools {
             if let Some(m) = self.by_tool.get_mut(&t).filter(|m| m.state != "exited") {
                 m.state = "running";
+                m.woken_at = at.map(str::to_owned);
             }
         }
     }
@@ -279,7 +288,7 @@ impl Teammates {
     /// One `<teammate-message>` relayed to the lead: a report (plain text), the end of a round
     /// (`idle_notification`, with the round's `result` since 2.1.251), or a shutdown
     /// (`shutdown_approved` from it, `teammate_terminated` from `system`: "X has shut down.").
-    fn message(&mut self, m: &prompt::TeammateMessage) {
+    pub fn message(&mut self, m: &prompt::TeammateMessage) {
         let json = serde_json::from_str::<serde_json::Value>(&m.body).ok();
         let field = |k: &str| {
             json.as_ref()
@@ -312,7 +321,13 @@ impl Teammates {
         let Some(t) = name.and_then(|n| self.get_mut(&n)) else {
             return;
         };
-        if t.state != "exited" {
+        // A notification is written when delivered: one from before the lead's last message says
+        // nothing about the round that message started.
+        let stale = state == "idle"
+            && field("timestamp")
+                .zip(t.woken_at.as_deref())
+                .is_some_and(|(at, woken)| at.as_str() < woken);
+        if t.state != "exited" && !stale {
             t.state = state;
         }
         if text.is_some() {
@@ -343,7 +358,7 @@ fn teammates(s: &SessionSkeleton, files: &[LoadedFile]) -> Teammates {
                     } else if tool == "SendMessage"
                         && let Some(to) = input_field(id, "to")
                     {
-                        out.sent(&to);
+                        out.sent(&to, s.entry(files, i).timestamp.as_deref());
                     }
                 }
             }
@@ -663,7 +678,14 @@ mod tests {
         ));
         assert_eq!(now(&t).state, "idle");
         assert_eq!(now(&t).last_text.as_deref(), Some("Stage one done."));
-        t.sent("line-a");
+        t.sent("line-a", Some("2026-11-09T10:00:00.000Z"));
+        assert_eq!(now(&t).state, "running");
+        // Written after the lead's message but sent before it: the new round is still running.
+        t.message(&msg(
+            "line-a",
+            None,
+            r#"{"type":"idle_notification","from":"line-a","timestamp":"2026-11-09T09:59:59.000Z"}"#,
+        ));
         assert_eq!(now(&t).state, "running");
         t.message(&msg(
             "line-a",
@@ -681,7 +703,7 @@ mod tests {
         ));
         assert_eq!(now(&t).state, "exited");
         // Exited stays exited; a message to everyone does not wake it.
-        t.sent("*");
+        t.sent("*", None);
         t.message(&msg(
             "line-a",
             None,
