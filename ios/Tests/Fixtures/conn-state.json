@@ -123,5 +123,7 @@
       "text": "排队的消息没有发出：还在忙"
     }
   ],
-  "feedbackDraft": null
+  "feedbackDraft": null,
+  "fork": null,
+  "disconnected": false
 }

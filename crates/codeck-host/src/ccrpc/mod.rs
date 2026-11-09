@@ -445,6 +445,10 @@ impl Host {
     }
 
     pub async fn ccrpc_disconnect(&self, conn: String) -> CmdResult<()> {
+        // Before ccrpc is asked to go: its exit's final state then says it was a Disconnect.
+        if let Some(hub) = &self.connect {
+            hub.mark_disconnected(&conn);
+        }
         self.with_ccrpc(move |app| {
             if app.disconnect(&conn) {
                 Ok(())

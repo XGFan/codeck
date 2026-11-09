@@ -138,6 +138,15 @@ impl ConnectHub {
         self.changed(&mut inner, conn);
     }
 
+    /// A client is disconnecting the connection: its coming exit is deliberate.
+    pub fn mark_disconnected(self: &Arc<Self>, conn: &str) {
+        let mut inner = self.inner.lock();
+        if let Some(e) = inner.conns.get_mut(conn) {
+            e.state.disconnected = true;
+            self.changed(&mut inner, conn);
+        }
+    }
+
     /// False when the line is the Host's own (the response to a command it sent and still waits for): not
     /// relayed.
     fn on_line(self: &Arc<Self>, conn: &str, line: &str) -> bool {
@@ -722,6 +731,24 @@ mod tests {
         f.hub.register("c3", Some("H1".into()));
         assert!(f.hub.states().is_empty());
         assert!(f.drain().is_empty());
+    }
+
+    #[test]
+    fn a_disconnect_is_in_the_final_state() {
+        let f = fixture();
+        f.hub.register("c1", Some("H1".into()));
+        f.hub.mark_disconnected("c1");
+        assert!(f.last_state().disconnected);
+        // Unknown connections are left alone.
+        f.hub.mark_disconnected("c9");
+        assert_eq!(f.hub.states().len(), 1);
+        (f.sink)(Out::Exit(relay::ExitEvent {
+            conn: "c1".into(),
+            code: Some(0),
+            stderr: String::new(),
+        }));
+        let s = f.last_state();
+        assert!(s.disconnected && s.proc_exit.is_some());
     }
 
     #[test]

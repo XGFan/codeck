@@ -38,6 +38,10 @@ pub struct ConnState {
     /// Short notices, newest last, at most 5.
     pub notices: Vec<Notice>,
     pub feedback_draft: Option<Value>,
+    /// The last `fork` event (`ccrpc new --fork` done, or why it failed), as ccrpc wrote it.
+    pub fork: Option<Value>,
+    /// A client of this Host disconnected it (its ccrpc's exit is not a failure).
+    pub disconnected: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -93,6 +97,8 @@ impl ConnState {
             session_exited: false,
             notices: Vec::new(),
             feedback_draft: None,
+            fork: None,
+            disconnected: false,
         }
     }
 
@@ -232,6 +238,7 @@ impl ConnState {
                 s.mode = self.mode.take();
                 s.model = self.model.take();
                 s.effort = self.effort.take();
+                s.disconnected = self.disconnected;
                 *self = s;
             }
             "session_exit" => {
@@ -241,7 +248,8 @@ impl ConnState {
                 self.progress = None;
                 self.feedback_draft = None;
             }
-            // Responses, and content events (block text, branch, workflow, fork): not state.
+            "fork" => self.fork = Some(m.clone()),
+            // Responses, and content events (block text, branch, workflow): not state.
             _ => return false,
         }
         true
@@ -413,6 +421,29 @@ mod tests {
         n.apply(&json!({ "type": "session_changed", "session_id": "first", "previous": null }));
         assert_eq!(n.session_id.as_deref(), Some("first"));
         assert_eq!(ids(&n), ["t1"]);
+    }
+
+    #[test]
+    fn keeps_the_fork_event_until_the_session_changes_and_the_disconnect_through_it() {
+        let done = json!({ "type": "fork", "session_id": "f1", "origin": "s0", "text": "再试", "title": "T", "title_error": null });
+        let mut s = fold(&[ready(), done.clone()]);
+        assert_eq!(s.fork, Some(done));
+        let failed =
+            json!({ "type": "fork", "error": { "code": "exited", "message": "claude 退出了" } });
+        s.apply(&failed);
+        assert_eq!(s.fork, Some(failed));
+        s.disconnected = true;
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["fork"]["error"]["code"], "exited");
+        assert_eq!(v["disconnected"], true);
+        s.apply(&json!({ "type": "session_changed", "session_id": "new", "previous": "old" }));
+        assert_eq!(s.fork, None);
+        assert!(s.disconnected);
+        let v = serde_json::to_value(ConnState::new("c1", None)).unwrap();
+        assert_eq!(
+            (&v["fork"], &v["disconnected"]),
+            (&Value::Null, &json!(false))
+        );
     }
 
     #[test]
