@@ -362,7 +362,7 @@ test("收拢子 Project：路径下的 Project 成为子组，已单独添加的
   await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toHaveCount(0);
 });
 
-test("⌘N 选已添加的 Project 新建 Session；组头「+」直接在它的目录新建", async ({ page }) => {
+test("⌘N 选已添加的 Project 新建 Session；组头「+」与右键菜单直接在它的目录新建", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("Meta+N");
   const dialog = page.getByTestId("new-session-dialog");
@@ -379,6 +379,11 @@ test("⌘N 选已添加的 Project 新建 Session；组头「+」直接在它的
   await homelab.hover();
   await homelab.getByRole("button", { name: "在 homelab-infra 新建 Session" }).click();
   await expect.poll(() => guiLog(page)).toContain("new /Users/dev/Developer/homelab-infra");
+
+  // Right-clicking the header: the same, from a menu.
+  await group(page, LUMEN).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "新建 Session" }).click();
+  await expect.poll(() => guiLog(page)).toContain(`new ${LUMEN}`);
 });
 
 test("首次启动自动打开「添加 Project」；取消后没有组，Session 仍在 Live 与 Recent 里", async ({ page }) => {

@@ -517,7 +517,8 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
 
   const startDrag = (index: number, e: React.PointerEvent) => {
     const el = scrollRef.current;
-    if (e.button !== 0 || list.length < 2 || !el) return;
+    // ⌃-click is macOS's right click: it opens the context menu, not a drag.
+    if (e.button !== 0 || e.ctrlKey || list.length < 2 || !el) return;
     const startY = e.clientY;
     const header = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const pressInHeader = e.clientY - header.top;
@@ -792,78 +793,86 @@ function GroupHeader({
   onRemove: () => void;
 }) {
   return (
-    <div
-      data-testid="sidebar-group"
-      data-path={g.path}
-      className={cn(
-        "group/g flex h-full items-center rounded-md pr-[4px] hover:bg-black/[0.04] has-[[data-state=open]]:bg-black/[0.04] dark:hover:bg-white/[0.05]",
-        dimmed && "opacity-35",
-      )}
-    >
-      <button
-        type="button"
-        aria-expanded={open}
-        onPointerDown={onPointerDown}
-        onClick={onToggle}
-        title={g.path}
-        className="flex h-full min-w-0 flex-1 cursor-default items-center gap-[6px] rounded-md pr-[4px] pl-[10px] text-left font-semibold outline-none focus-visible:outline-2 focus-visible:outline-accent"
-      >
-        <span className="flex w-[12px] shrink-0 justify-center">
-          <span className="group-hover/g:hidden">
-            <Chevron open={open} />
-          </span>
-          <GripVertical
-            size={12}
-            strokeWidth={2}
-            className="hidden shrink-0 text-secondary group-hover/g:block"
-            aria-hidden
-          />
-        </span>
-        <span className="truncate">{g.name}</span>
-        <span className="shrink-0 text-[11px] font-normal text-secondary tabular-nums">{formatCount(g.total)}</span>
-        {!open && g.live && <LiveDot state={g.live} title="有 Live Session" />}
-        <span className="flex-1" />
-        {!open && g.lastMs > 0 && (
-          <span className="shrink-0 text-[11px] font-normal text-secondary group-hover/g:hidden group-has-[[data-state=open]]/g:hidden">
-            {formatRelative(g.lastMs)}
-          </span>
-        )}
-      </button>
-      <span className="hidden items-center group-hover/g:flex group-focus-within/g:flex group-has-[[data-state=open]]/g:flex">
-        <button
-          type="button"
-          aria-label={`在 ${g.name} 新建 Session`}
-          title="新建 Session"
-          onClick={onNew}
-          className={ICON}
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          data-testid="sidebar-group"
+          data-path={g.path}
+          className={cn(
+            "group/g flex h-full items-center rounded-md pr-[4px] hover:bg-black/[0.04] has-[[data-state=open]]:bg-black/[0.04] dark:hover:bg-white/[0.05]",
+            MENU_OPEN,
+            dimmed && "opacity-35",
+          )}
         >
-          <Plus size={14} strokeWidth={1.8} aria-hidden />
-        </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger aria-label={`${g.name} 的更多操作`} className={ICON}>
-            <Ellipsis size={14} strokeWidth={1.8} aria-hidden />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {(g.childProjects > 0 || g.nest) && (
-              <>
-                <DropdownMenuCheckboxItem checked={g.nest} onCheckedChange={(c) => onNest(c === true)}>
-                  收拢子 Project（{formatCount(g.childProjects)} 个）
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-              </>
+          <button
+            type="button"
+            aria-expanded={open}
+            onPointerDown={onPointerDown}
+            onClick={onToggle}
+            title={g.path}
+            className="flex h-full min-w-0 flex-1 cursor-default items-center gap-[6px] rounded-md pr-[4px] pl-[10px] text-left font-semibold outline-none focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <span className="flex w-[12px] shrink-0 justify-center">
+              <span className="group-hover/g:hidden">
+                <Chevron open={open} />
+              </span>
+              <GripVertical
+                size={12}
+                strokeWidth={2}
+                className="hidden shrink-0 text-secondary group-hover/g:block"
+                aria-hidden
+              />
+            </span>
+            <span className="truncate">{g.name}</span>
+            <span className="shrink-0 text-[11px] font-normal text-secondary tabular-nums">{formatCount(g.total)}</span>
+            {!open && g.live && <LiveDot state={g.live} title="有 Live Session" />}
+            <span className="flex-1" />
+            {!open && g.lastMs > 0 && (
+              <span className="shrink-0 text-[11px] font-normal text-secondary group-hover/g:hidden group-has-[[data-state=open]]/g:hidden">
+                {formatRelative(g.lastMs)}
+              </span>
             )}
-            <DropdownMenuItem disabled={first} onSelect={() => onMove(-1)}>
-              上移
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={last} onSelect={() => onMove(1)}>
-              下移
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={onRemove}>从侧栏移除</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </span>
-    </div>
+          </button>
+          <span className="hidden items-center group-hover/g:flex group-focus-within/g:flex group-has-[[data-state=open]]/g:flex">
+            <button
+              type="button"
+              aria-label={`在 ${g.name} 新建 Session`}
+              title="新建 Session"
+              onClick={onNew}
+              className={ICON}
+            >
+              <Plus size={14} strokeWidth={1.8} aria-hidden />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger aria-label={`${g.name} 的更多操作`} className={ICON}>
+                <Ellipsis size={14} strokeWidth={1.8} aria-hidden />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {(g.childProjects > 0 || g.nest) && (
+                  <>
+                    <DropdownMenuCheckboxItem checked={g.nest} onCheckedChange={(c) => onNest(c === true)}>
+                      收拢子 Project（{formatCount(g.childProjects)} 个）
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                <DropdownMenuItem disabled={first} onSelect={() => onMove(-1)}>
+                  上移
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={last} onSelect={() => onMove(1)}>
+                  下移
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onRemove}>从侧栏移除</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onNew}>新建 Session</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
