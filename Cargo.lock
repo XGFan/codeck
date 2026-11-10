@@ -638,6 +638,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codeck-cli"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "codeck-core",
+ "codeck-host",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "transcript",
+]
+
+[[package]]
 name = "codeck-core"
 version = "0.1.0"
 dependencies = [

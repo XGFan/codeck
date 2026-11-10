@@ -5,6 +5,7 @@ members = [
     "crates/codeck-host",
     "crates/codeck-daemon",
     "crates/ccrpc",
+    "crates/codeck-cli",
     "src-tauri",
 ]
 resolver = "3"

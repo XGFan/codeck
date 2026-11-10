@@ -1,0 +1,28 @@
+[package]
+name = "codeck-cli"
+description = "CoDeck's command line for AI callers: read Sessions through a read-only index and start one through ccrpc (ADR-0012)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "codeck_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codeck"
+path = "src/main.rs"
+
+[dependencies]
+codeck-core.workspace = true
+codeck-host.workspace = true
+transcript.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rusqlite.workspace = true
