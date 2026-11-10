@@ -141,12 +141,29 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 
 在 macOS 27 上，`tauri build` 设置的 `MACOSX_DEPLOYMENT_TARGET=14.0` 会让 cargo strip 后的 proc-macro 动态库无法加载（`mis-aligned LINKEDIT string pool`），因此 `Cargo.toml` 中对 `profile.release.build-override` 关闭了 strip，不影响最终应用。
 
+## 命令行（codeck）
+
+`crates/codeck-cli` 编出可执行文件 `codeck`，供 AI（如 Claude Code 经 Bash）查询本机的 Session。除 `new` 外全部只读，不需要应用开着，也不抢 Connect。stdout 是一个 JSON 文档（`show` 是文本），失败时退出码 1，stderr 是一行 `{"code","message"}`（[ADR-0013](docs/adr/0013-codeck-cli-read-only-and-new-only.md)）。
+
+| 命令 | 作用 |
+|---|---|
+| `codeck sessions [--project P] [--live] [--limit N]` | 列出 Session，带 Live 状态 |
+| `codeck search "词" [--project P] [--limit N]` | 全文搜索，语法同 ⌘K，命中带 sessionId 与轮次 |
+| `codeck show <id> [--turn N] [--full] [--agent ID]` | 紧凑文本形式的对话，默认 Main Line |
+| `codeck wait <id> [--timeout 秒]` | 等到 Session 变成 idle、waiting 或结束；超时退出码 124 |
+| `codeck new --cwd DIR` | 新建 Session，提示词从 stdin 读，发出后放手 |
+
+索引只读打开，版本或数据目录不一致时报错，不会改动它；桌面没开时索引不更新，结果里的 `indexedAt` 说明数据有多新。`--project P` 收 Project 的路径。全局选项 `--cache-dir DIR` 指定索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`，在 daemon 的 Host 上指向 `<状态目录>/cache`。
+
+`new` 用 ccrpc（查找顺序同上）在 clay 里新建 Session，启动参数与「新开的 Pane」同桌面的设置；目录没有信任过时报错，由人先在终端里打开一次。使用说明在 [crates/codeck-cli/SKILL.md](crates/codeck-cli/SKILL.md)，要装成 Claude Code 的 Skill 时手动复制到 `~/.claude/skills/codeck/`，CLI 不写数据目录。
+
 ## 结构
 
 ```
 crates/transcript/ 解析库：容错解析、对话组装、组装用的显示模型、进程文件、价格（ccrpc 也用它）
 crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断；应用层的 IPC 类型
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
+crates/codeck-cli/    codeck 命令行（可执行文件 codeck）：给 AI 用，查询 Session，新建 Session（ADR-0013）
 crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态；命令表只定义一次
 crates/codeck-daemon/ headless daemon（可执行文件 codeck-host）：以 HTTP + WebSocket 对局域网提供命令表的 remote 部分与 Transcript 页
 src-tauri/        Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件

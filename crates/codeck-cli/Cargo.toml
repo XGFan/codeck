@@ -1,6 +1,6 @@
 [package]
 name = "codeck-cli"
-description = "CoDeck's command line for AI callers: read Sessions through a read-only index and start one through ccrpc (ADR-0012)."
+description = "CoDeck's command line for AI callers: read Sessions through a read-only index and start one through ccrpc (ADR-0013)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

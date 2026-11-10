@@ -12,6 +12,7 @@ CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude
 | `crates/codeck-core`、`crates/codeck-host`、`crates/codeck-daemon`、`src-tauri`、`src` | CoDeck 本体（桌面与 daemon） | 本文件 |
 | `ios` | iPhone App（SwiftUI，xcodegen） | 本文件「ios」 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
+| `crates/codeck-cli` | 命令行 `codeck`：给 AI 查询 Session 与新建 Session（ADR-0013） | 本文件「架构」 |
 
 一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的 Connect 功能（ADR-0007）。Connect E2E 的 wire fixture 在 `src/mocks/data/connect/`，`tools.jsonl` 用 `scripts/record-connect-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
 
@@ -46,6 +47,7 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
   | cargo run -p transcript --example update_pricing   # 刷新内置价格快照
 pnpm tauri build --bundles app --target aarch64-apple-darwin
 
+cargo run -p codeck-cli -- sessions --limit 5   # 命令行（只读打开桌面的索引）；用法见 crates/codeck-cli/SKILL.md
 pnpm build:web                 # iPhone 用的只读 Transcript 页 → dist-web/（vite --mode host）
 cargo run -p codeck-daemon -- --listen 127.0.0.1 --state-dir /tmp/h --web-dir dist-web   # 本机试 daemon（别用桌面的状态目录）
 pnpm test:e2e:host             # 真实后端 E2E：起 codeck-host 读 fixture 副本
@@ -98,6 +100,12 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 - 尺寸：`index.css` 把根字号设为 13px，Tailwind 按 rem 的尺寸类会跟着缩小（`h-8` 是 26px、`h-7` 是 22.75px）；要和像素对齐的地方（侧栏的行高、和计算挂钩的高度、图片块）写成 `h-[28px]` 这样的像素值。
 - 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
 - `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls --watch` 的启停在 `lsWatch.ts`，草稿持久化在 `drafts.ts`；输入框里的图片块是文本框里带不可见起止符的一小段文字（`imageTokens.ts`，纯函数：编号、拆成 `parts`、清理残缺块），由文本框下面的副本画成整块、悬停与拖动在 `ImageChips.tsx`。侧栏（Live / Project / Recent）在 `features/sessions/`：分组、展开、定位与高度分配是 `groups.ts` 里的纯函数，组件在 `Sidebar.tsx`，已添加的 Project 存在 settings.json 的 `sidebarProjects`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
+
+### codeck-cli
+
+- `sessions` / `search` / `show` 经 `Engine::open_read_only`（`Index::open_read_only`）读索引，不起 `Host`：只读打开，不建目录、不建库、不写 `user_version`，版本或数据根不一致时报错而不重建（不然版本不同的 CLI 一运行就把桌面的索引删掉）；没有 `-wal` 时用 `immutable`，免得 SQLite 建 `-wal` / `-shm`。`Engine` 里只有只读模式才会把索引没有的 Session 退回 `scan_sessions` 找文件。
+- `turns.rs` 是轮次编号的唯一来源（`show --turn` 与 `search` 共用，在带隐藏节点的 Transcript 上算）；`search` 经 `resolve_jump` 把命中换成显示节点再查编号，落在 Subagent Run 或已回退 Branch 上的写 `turn: null`。
+- `wait` 只读进程文件，不碰索引。`new` 走 `ccrpc new`，启动规则与环境同桌面（`codeck_host::ccrpc::{env, launch}`）；`ready` 的 `session_id` 常为 null，要等 `session_changed` 才发提示词。输出类型在这个 crate 里单独定义，不直接用 IPC 类型。
 
 ### ios（iPhone App）
 

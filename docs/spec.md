@@ -211,6 +211,19 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
     gui.log      用户操作（按钮 → 命令 id）、失败的命令、ccrpc 的退出码与 stderr
   ```
 
+## CLI
+
+`codeck`（`crates/codeck-cli`，ADR-0013）供 AI 查询本机的 Session，除 `new` 外全部只读，不需要应用或 daemon 开着。数据目录的确定顺序同桌面。
+
+- **输出**：除 `show` 外 stdout 是一个 JSON 文档，字段小驼峰；基于索引的结果带 `indexedAt`（索引最后一次写入的时间）。成功退出码 0，`wait` 超时 124，其他错误 1，stderr 是一行 `{"code","message"}`（`new` 知道 Pane 时另带 `holderId`）。文本字段有上限，截断处写明原长。
+- **索引**：只读打开（`--cache-dir` 指定目录，默认桌面的；在 daemon 的 Host 上是 `<状态目录>/cache`）。索引不存在、schema 版本或数据目录不一致时报错退出，不做修改，也不建任何文件。不运行同步、监听与价格下载。
+- **`sessions`**：按最后活动倒序，默认 20 条；`status` 为 `busy` / `waiting` / `idle` / `ended`，实时读进程文件。`--live` 只留运行中的（索引没收录的 Session 不在内）。`--project` 收 Project 的路径。
+- **`search`**：语法同 ⌘K，默认 20 个 Session、每个 5 条命中。每条命中有 `location`：`mainLine`（带 `turn`）、`subagent`（带 `agentId`，无 `turn`）、`branch`（已回退的 Branch，无 `turn`）、`unknown`（文件在索引之后变了，无 `turn`）。
+- **轮次**：每条用户输入（人亲手输入的与命令；Subagent Run 里还有上级发来的消息）开始一轮，第一条是第 1 轮；第一条用户输入之前的内容是第 0 轮。Main Line 上的编号在 `search` 与 `show --turn` 里相同。
+- **`show`**：默认 Main Line 的概览，一轮一段（用户输入、工具列表、回答），超过 50 轮时只显示最后 50 轮并写明。`--turn N` 输出这一轮的完整过程（说明、思考、工具）与回答；`--full`（必须带 `--turn`）附上每次工具调用的输入与输出，每段 8000 字、一轮 20 万字为限。`--agent ID` 换成一个 Subagent Run。回答是这一轮最后一次工具调用或思考之后的文字，同界面的按轮折叠。打开被接替的 Session 时转到接替它的 Session（同界面）。Session 的文件列表、Fork 来源、接续与 Subagent 统计来自索引，文件内容总是读最新的；索引没收录时直接读 `projects/*/<id>.jsonl`，头部写 `partial`，没有 Fork 与接续信息，也没有 `project=`。
+- **`wait`**：只读进程文件，每秒一次，`idle` / `waiting` / 结束时立即返回 `{"sessionId","status","waitingFor"}`；默认 110 秒，超时退出码 124，stdout 仍是当前状态。进程文件连续两次读不到才算结束；既没有进程文件也没有 transcript 的 id 报 `not_found`。
+- **`new`**：校验 `--cwd` 是目录、stdin 的提示词非空，用设置里的启动规则与「新开的 Pane」拼 `ccrpc new`，环境同桌面（登录 shell）。等 `ready`，`session_id` 为 null 时再等 `session_changed`（各 60 秒），发 `prompt`，等响应成功后关闭 stdin：ccrpc Disconnect，Session 继续运行，输出 `{"sessionId","holderId","cwd"}`。目录信任框（`choice`，layout `trust_folder`）答「不信任」让 claude 退出，报错 `untrusted_dir`；其他 `choice`、超时、提示词发送失败时关闭 stdin 报错，Pane 留给人处理；ccrpc 启动失败或提前退出时，错误是它 stderr 的最后一行。
+
 ## 测试
 
 - 解析器的回归测试使用 fixture：从真实 Session 精简后脱敏（保留结构，文本替换成占位内容），覆盖 Branch、Fork、compact、Subagent、Workflow、后台 agent、失败的调用、图片等情况。
