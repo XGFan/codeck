@@ -55,7 +55,7 @@ struct NewSessionSheet: View {
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(d.name).foregroundStyle(.primary)
+                                        Text(d.name).foregroundStyle(Color(uiColor: .label))
                                         Text(d.path).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                                             .truncationMode(.head)
                                     }
@@ -70,19 +70,27 @@ struct NewSessionSheet: View {
             .navigationTitle("新建 Session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    if starting {
-                        ProgressView()
-                    } else {
-                        Button("新建", action: start).disabled(cwd.isEmpty || StartFlow.cwdProblem(path) != nil)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Button(action: start) {
+                    HStack(spacing: 8) {
+                        if starting { ProgressView().tint(.white) }
+                        Text("新建")
                     }
                 }
+                .buttonStyle(PillButtonStyle())
+                .disabled(starting || cwd.isEmpty || StartFlow.cwdProblem(path) != nil)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
             .task { sidebar = try? await model.client?.sidebarProjects() }
             .task(id: path) { await complete() }
         }
         .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 
     private func complete() async {
@@ -128,37 +136,45 @@ struct StartingView: View {
         if let sessionId = model.connect.started[route.conn] {
             SessionDetailView(sessionId: sessionId)
         } else {
-            Group {
-                if let failure = model.connect.startFailures[route.conn] {
-                    ContentUnavailableView {
-                        Label("新建 Session 失败", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(failure)
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("正在启动…").font(.headline)
-                        Text(route.cwd).font(.footnote.monospaced()).foregroundStyle(.secondary)
-                        if let c = model.connect.conns[route.conn] {
-                            let requests = model.connect.requests(of: c)
-                            if !requests.isEmpty {
-                                ScrollView {
-                                    VStack(spacing: 8) {
-                                        ForEach(requests) { RequestCard(request: $0, c: c) }
-                                    }
-                                }
-                                .scrollBounceBehavior(.basedOnSize)
-                            }
+            let failure = model.connect.startFailures[route.conn]
+            let c = failure == nil ? model.connect.conns[route.conn] : nil
+            let requests = c.map { model.connect.requests(of: $0) } ?? []
+            GeometryReader { proxy in
+                ZStack {
+                    Color(uiColor: .systemBackground).ignoresSafeArea()
+                    if let failure {
+                        ContentUnavailableView {
+                            Label("新建 Session 失败", systemImage: "exclamationmark.triangle")
+                        } description: {
+                            Text(failure)
                         }
+                    } else {
+                        VStack(spacing: 10) {
+                            ProgressView().controlSize(.large)
+                            Text("正在启动…").font(.title3.bold()).padding(.top, 4)
+                            Text(route.cwd).font(.footnote.monospaced()).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 40)
                     }
-                    .padding()
+                    if !requests.isEmpty { RequestScrim() }
+                }
+                .overlay(alignment: .top) {
+                    FloatingHeader(title: "新 Session") { Color.clear }
+                }
+                .overlay(alignment: .bottom) {
+                    if let c, !requests.isEmpty {
+                        RequestPanel(
+                            requests: requests,
+                            c: c,
+                            maxHeight: RequestPanel.heightLimit(
+                                screen: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom,
+                                belowHeader: proxy.size.height - 57
+                            )
+                        )
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(uiColor: .systemBackground))
-            .navigationTitle("新 Session")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 }

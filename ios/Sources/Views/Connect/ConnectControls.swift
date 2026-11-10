@@ -1,51 +1,55 @@
 import SwiftUI
 
-/// Under the input box: the permission mode (idle or busy), background tasks, and the model with its effort
-/// (idle only), as at the foot of the desktop's input box.
+/// Above the input box: the permission mode (idle or busy), the model with its effort (idle only), and background
+/// tasks while some run.
 struct ConnectControls: View {
     let c: ConnState
     let sessionId: String
+    @Binding var showingTasks: Bool
     @Environment(HostModel.self) private var model
-    @State private var showingTasks = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             modeMenu
+            modelMenu
             let running = c.workingTasks.count
             if running > 0 || showingTasks {
                 Button {
                     showingTasks = true
                 } label: {
-                    Label("\(running) 个后台任务", systemImage: "square.stack.3d.up")
+                    GlassPillLabel { Text("\(running) 个任务") }
                 }
-                .padding(.horizontal, 6)
+                .buttonStyle(.plain)
             }
-            Spacer(minLength: 4)
-            modelMenu
-        }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-        .buttonStyle(.borderless)
-        .sheet(isPresented: $showingTasks) {
-            TasksSheet(sessionId: sessionId, conn: c.conn)
+            Spacer(minLength: 0)
         }
     }
 
     private var modeMenu: some View {
-        Menu {
-            Picker("权限模式", selection: Binding(get: { c.mode ?? "" }, set: { setMode($0) })) {
-                ForEach(ConnectWords.modes, id: \.id) { Text($0.label).tag($0.id) }
+        let enabled = c.canCommand && (c.state == .idle || c.state == .busy)
+        return Menu {
+            Section("权限模式") {
+                Picker("权限模式", selection: Binding(get: { c.mode ?? "" }, set: { setMode($0) })) {
+                    ForEach(ConnectWords.modes, id: \.id) { Text($0.label).tag($0.id) }
+                }
             }
         } label: {
-            Label(ConnectWords.modeLabel(c.mode), systemImage: "checkmark.shield")
-                .foregroundStyle(c.mode == "auto" ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                .padding(.vertical, 6)
+            GlassPillLabel(enabled: enabled) {
+                if c.mode == "auto" {
+                    Text(ConnectWords.modeLabel(c.mode)).foregroundStyle(Palette.warnText)
+                } else {
+                    Text(ConnectWords.modeLabel(c.mode))
+                }
+            }
         }
-        .disabled(!c.canCommand || !(c.state == .idle || c.state == .busy))
+        .menuOrder(.fixed)
+        .tint(Color(uiColor: .label))
+        .disabled(!enabled)
     }
 
     private var modelMenu: some View {
         let family = ConnectWords.modelFamily(c.model)
+        let enabled = c.canCommand && c.state == .idle
         return Menu {
             Section("模型 · 也会成为新 Session 的默认") {
                 ForEach(ConnectWords.models, id: \.alias) { m in
@@ -65,15 +69,15 @@ struct ConnectControls: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Text(c.model.map(ConnectWords.modelLabel) ?? "模型").foregroundStyle(.primary)
-                if let effort = c.effort { Text(ConnectWords.effortLabel(effort)) }
-                Image(systemName: "chevron.up.chevron.down").imageScale(.small)
+            GlassPillLabel(enabled: enabled) {
+                Text([c.model.map(ConnectWords.modelLabel) ?? "模型", c.effort.map(ConnectWords.effortLabel)]
+                    .compactMap { $0 }
+                    .joined(separator: " "))
             }
-            .lineLimit(1)
-            .padding(.vertical, 6)
         }
-        .disabled(!c.canCommand || c.state != .idle)
+        .menuOrder(.fixed)
+        .tint(Color(uiColor: .label))
+        .disabled(!enabled)
     }
 
     private func setMode(_ mode: String) {

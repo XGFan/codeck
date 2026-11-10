@@ -11,17 +11,40 @@ struct RequestCard: View {
         case .question(let r): QuestionCard(r: r, c: c).id("\(r.requestId)|\(r.questions.count)")
         case .choice(let r): ChoiceCard(r: r, c: c)
         case .screen(let r): ScreenCard(r: r, c: c)
-        case .other(let type, _):
-            CardShell(icon: "hourglass", title: type == "rewind" ? "回退确认" : "Claude Code 在等待操作", status: "等待处理") {
-                Text("这里还不能作答，请在终端里处理").font(.footnote).foregroundStyle(.secondary)
-            }
+        case .other(let type, _): OtherRequestCard(type: type, c: c)
         }
     }
 }
 
-/// A card's frame: an icon, a title, what it waits for, then the body.
+/// A request the phone cannot answer: the input box is not there meanwhile, so the turn can still be stopped here.
+private struct OtherRequestCard: View {
+    let type: String
+    let c: ConnState
+    @Environment(HostModel.self) private var model
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        CardShell(title: type == "rewind" ? "回退确认" : "Claude Code 在等待操作", status: "等待处理") {
+            Text("这里还不能作答，请在终端里处理").font(.footnote).foregroundStyle(.secondary)
+            Button("中止") {
+                Task {
+                    busy = true
+                    error = nil
+                    let r = await model.connect.command(c.conn, ["type": "abort"])
+                    busy = false
+                    if !r.success { error = "中止失败：\(r.errorText)" }
+                }
+            }
+            .buttonStyle(PillButtonStyle(kind: .neutral, height: 44))
+            .disabled(busy || !c.isBusy)
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
+        }
+    }
+}
+
+/// A request's title, what it waits for, then its body. The panel is its background.
 struct CardShell<Content: View>: View {
-    let icon: String
     let title: String
     let status: String
     var agent: String?
@@ -29,31 +52,33 @@ struct CardShell<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).foregroundStyle(.tint)
-                Text(title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                if let agent {
-                    Text("Subagent \(agent.prefix(8))")
-                        .font(.caption2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 4))
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.headline)
+                    if let agent {
+                        Text("Subagent \(agent.prefix(8))")
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Palette.neutral, in: RoundedRectangle(cornerRadius: 4))
+                    }
                 }
-                Spacer(minLength: 4)
-                Text(status).font(.caption).foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(status)
+                    .font(.footnote)
+                    .foregroundStyle(Palette.warnText)
+                    .padding(.top, 2)
             }
+            .padding(.horizontal, 4)
             content
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.orange.opacity(0.5)))
     }
 }
 
 /// Sends an answer; its error stays on the card.
 @MainActor
-private func sendAnswer(
+func sendAnswer(
     _ store: ConnectStore, _ c: ConnState, _ requestId: String, _ command: JSONValue,
     busy: Binding<Bool>, error: Binding<String?>, answered: Binding<Int>
 ) async {
@@ -74,43 +99,37 @@ private struct PermissionCard: View {
     @State private var answered = 0
 
     var body: some View {
-        CardShell(icon: "hand.raised", title: "允许 \(r.toolName)？", status: "等待审批", agent: r.agentId) {
+        CardShell(title: "允许 \(r.toolName)？", status: "等待审批", agent: r.agentId) {
             InputBlocksView(blocks: ConnectWords.inputBlocks(tool: r.toolName, r.input))
-            VStack(spacing: 8) {
-                answerButton(Answers.permissionLabel(r, meaning: "allow", fallback: "允许"), prominent: true) {
-                    answer("allow")
-                }
-                if let always = r.allowAlways {
-                    answerButton(always.label) { answer("allow_always") }
-                }
-                answerButton(Answers.permissionLabel(r, meaning: "deny", fallback: "拒绝")) { answer("deny") }
-                HStack(spacing: 8) {
-                    TextField("拒绝，并告诉 Claude", text: $feedback, axis: .vertical)
-                        .lineLimit(1...4)
-                        .submitLabel(.send)
-                        .onSubmit(denyWithMessage)
-                    if !feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button("发送", systemImage: "arrow.up.circle.fill", action: denyWithMessage)
-                            .labelStyle(.iconOnly)
-                            .font(.title2)
-                            .disabled(busy)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
+            Button(Answers.permissionLabel(r, meaning: "allow", fallback: "允许")) { answer("allow") }
+                .buttonStyle(PillButtonStyle())
+            if let always = r.allowAlways {
+                Button(always.label) { answer("allow_always") }
+                    .buttonStyle(PillButtonStyle(kind: .tinted, height: 48))
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            Button(Answers.permissionLabel(r, meaning: "deny", fallback: "拒绝")) { answer("deny") }
+                .buttonStyle(PillButtonStyle(kind: .neutral, height: 48))
+            HStack(spacing: 8) {
+                TextField("拒绝，并告诉 Claude", text: $feedback, axis: .vertical)
+                    .font(.system(size: 15))
+                    .lineLimit(1...4)
+                    .submitLabel(.send)
+                    .onSubmit(denyWithMessage)
+                if !feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("发送", systemImage: "arrow.up.circle.fill", action: denyWithMessage)
+                        .labelStyle(.iconOnly)
+                        .font(.title2)
+                        .disabled(busy)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(minHeight: 44)
+            .background(Palette.field, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
         }
         .disabled(busy)
         .sensoryFeedback(.success, trigger: answered)
-    }
-
-    private func answerButton(_ title: String, prominent: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).frame(maxWidth: .infinity)
-        }
-        .buttonStyle(ProminenceStyle(prominent: prominent))
     }
 
     private func answer(_ decision: String, message: String? = nil) {
@@ -137,27 +156,25 @@ private struct ChoiceCard: View {
     @State private var answered = 0
 
     var body: some View {
-        CardShell(icon: "checklist", title: r.title, status: "等待选择") {
-            VStack(spacing: 8) {
-                ForEach(Array(r.options.enumerated()), id: \.offset) { i, o in
-                    Button {
-                        let cmd: JSONValue = ["type": "answer_choice", "request_id": .string(r.requestId), "option": .string(o.label)]
-                        Task {
-                            await sendAnswer(model.connect, c, r.requestId, cmd, busy: $busy, error: $error, answered: $answered)
-                        }
-                    } label: {
-                        VStack(spacing: 2) {
-                            Text(o.label)
-                            if let d = o.description, !d.isEmpty {
-                                Text(d).font(.caption).opacity(0.75)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
+        CardShell(title: r.title, status: "等待选择") {
+            ForEach(Array(r.options.enumerated()), id: \.offset) { i, o in
+                Button {
+                    let cmd: JSONValue = ["type": "answer_choice", "request_id": .string(r.requestId), "option": .string(o.label)]
+                    Task {
+                        await sendAnswer(model.connect, c, r.requestId, cmd, busy: $busy, error: $error, answered: $answered)
                     }
-                    .buttonStyle(ProminenceStyle(prominent: i == 0))
+                } label: {
+                    VStack(spacing: 1) {
+                        Text(o.label)
+                        if let d = o.description, !d.isEmpty {
+                            Text(d).font(.caption).opacity(0.8)
+                        }
+                    }
+                    .padding(.vertical, 8)
                 }
+                .buttonStyle(PillButtonStyle(kind: i == 0 ? .primary : .tinted))
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
         }
         .disabled(busy)
         .sensoryFeedback(.success, trigger: answered)
@@ -165,11 +182,12 @@ private struct ChoiceCard: View {
 }
 
 /// All of a tool's input in one scroller inside the card, so the answers stay within reach however long it is.
-private struct InputBlocksView: View {
+struct InputBlocksView: View {
     let blocks: [InputBlock]
+    var maxHeight: CGFloat = 160
+    /// Whether some of the input is out of view.
+    var onOverflow: (Bool) -> Void = { _ in }
     @State private var height: CGFloat = 0
-
-    private static let maxHeight: CGFloat = 160
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -181,13 +199,14 @@ private struct InputBlocksView: View {
                 }
                 .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
             }
-            .frame(height: min(height, Self.maxHeight))
-            .scrollIndicators(height > Self.maxHeight ? .visible : .hidden)
+            .frame(height: min(height, maxHeight))
+            .scrollIndicators(height > maxHeight ? .visible : .hidden)
             .scrollBounceBehavior(.basedOnSize)
-            if height > Self.maxHeight {
-                Text("内容较长，上下滑动查看全部").font(.caption2).foregroundStyle(.secondary)
+            if height > maxHeight {
+                Text("内容较长，上下滑动查看全部").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
             }
         }
+        .onChange(of: height > maxHeight, initial: true) { _, over in onOverflow(over) }
     }
 }
 
@@ -195,27 +214,31 @@ private struct InputBlockView: View {
     let block: InputBlock
 
     var body: some View {
-        if block.kind == .note {
-            Text(block.text).font(.footnote).foregroundStyle(.secondary)
-        } else {
+        switch block.kind {
+        case .note:
+            Text(block.text).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
+        case .path:
+            Text(block.text).font(.caption.monospaced()).foregroundStyle(.secondary).padding(.horizontal, 4)
+        case .code, .removed, .added:
             VStack(alignment: .leading, spacing: 3) {
                 if let label = block.label {
-                    Text(label).font(.caption).foregroundStyle(.secondary)
+                    Text(label).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
                 }
                 Text(block.text)
                     .font(.footnote.monospaced())
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(tint, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(tint, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
     }
 
     private var tint: Color {
         switch block.kind {
-        case .removed: .red.opacity(0.14)
-        case .added: .green.opacity(0.14)
-        default: Color(uiColor: .tertiarySystemFill)
+        case .removed: Color(light: 0xFCEAE9, dark: 0x3A2220)
+        case .added: Color(light: 0xE7F5EC, dark: 0x17301F)
+        default: Palette.field
         }
     }
 }
@@ -231,19 +254,20 @@ private struct ScreenCard: View {
 
     var body: some View {
         CardShell(
-            icon: "rectangle.dashed",
             title: r.type == "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : "认不出的屏幕（\(r.context ?? "")）",
             status: "等待处理"
         ) {
             ScreenLines(lines: r.lines)
-            HStack(spacing: 8) {
-                Button("关闭（Esc）") { Task { await close() } }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(busy)
+            HStack(spacing: 12) {
+                Button { Task { await close() } } label: {
+                    Text("关闭（Esc）").font(.system(size: 15))
+                }
+                .buttonStyle(PillButtonStyle(kind: .neutral, height: 44))
+                .fixedSize()
+                .disabled(busy)
                 Text("其他操作请在终端里处理").font(.footnote).foregroundStyle(.secondary)
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
         }
     }
 
@@ -264,37 +288,20 @@ private struct ScreenLines: View {
     var body: some View {
         ScrollView(.horizontal) {
             Text(trimmed.joined(separator: "\n"))
-                .font(.caption.monospaced())
-                .foregroundStyle(Color(white: 0.9))
+                .font(.system(size: 12.5, design: .monospaced))
+                .lineSpacing(3)
+                .foregroundStyle(Color(red: 0xE6 / 255, green: 0xE6 / 255, blue: 0xE6 / 255))
                 .fixedSize()
-                .padding(8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color(red: 0x1F / 255, green: 0x20 / 255, blue: 0x23 / 255), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var trimmed: [String] {
         let blank = { (s: String) in s.trimmingCharacters(in: .whitespaces).isEmpty }
         guard let a = lines.firstIndex(where: { !blank($0) }), let b = lines.lastIndex(where: { !blank($0) }) else { return [] }
         return Array(lines[a...b])
-    }
-}
-
-/// A full-width answer: filled for the default one, tinted otherwise.
-struct ProminenceStyle: ButtonStyle {
-    var prominent: Bool
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(prominent ? .semibold : .regular))
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
-            .foregroundStyle(prominent ? AnyShapeStyle(.white) : AnyShapeStyle(.tint))
-            .background(
-                prominent ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.accentColor.opacity(0.12)),
-                in: RoundedRectangle(cornerRadius: 10)
-            )
-            .opacity(configuration.isPressed ? 0.6 : isEnabled ? 1 : 0.5)
     }
 }

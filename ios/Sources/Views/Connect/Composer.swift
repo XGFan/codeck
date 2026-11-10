@@ -1,19 +1,29 @@
 import PhotosUI
 import SwiftUI
 
+/// The button at the end of the input box.
+enum ComposerAction: Equatable {
+    case stop, steer, send
+
+    static func of(state: ConnState.Phase?, isBusy: Bool, hasContent: Bool, uploading: Bool) -> ComposerAction {
+        if isBusy, !hasContent, !uploading { return .stop }
+        return state == .busy ? .steer : .send
+    }
+}
+
 /// The input box (Composer.tsx): idle → `prompt`, or `slash` for a built-in command; busy → `steer` (插话, delivered
 /// when the current tool call ends); waiting → nothing (the card comes first). Photos are saved on the Host first and sent as `parts`, the
 /// text before the images. With the box empty while busy, the button stops the turn (`abort`).
 struct Composer: View {
     let c: ConnState
     let sessionId: String
+    @Binding var text: String
+    @Binding var images: [ComposerImage]
+    var focused: FocusState<Bool>.Binding
     @Environment(HostModel.self) private var model
-    @State private var text = ""
-    @State private var images: [ComposerImage] = []
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var sending = false
     @State private var sent = 0
-    @FocusState private var focused: Bool
 
     private var body_: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var uploading: Bool { images.contains { $0.path == nil && !$0.failed } }
@@ -22,26 +32,36 @@ struct Composer: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            PhotosPicker(selection: $pickerItems, maxSelectionCount: 6, matching: .images) {
-                Image(systemName: "photo.on.rectangle")
-                    .font(.title3)
-                    .frame(width: 36, height: 36)
-            }
-            .disabled(!live)
-            .accessibilityLabel("添加图片")
-            VStack(alignment: .leading, spacing: 8) {
-                if !images.isEmpty { thumbnails }
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused($focused)
+            VStack(alignment: .leading, spacing: 0) {
+                if !images.isEmpty {
+                    thumbnails
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                }
+                HStack(alignment: .bottom, spacing: 2) {
+                    PhotosPicker(selection: $pickerItems, maxSelectionCount: 6, matching: .images) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Palette.accentText)
+                            .frame(width: 44, height: 44)
+                    }
                     .disabled(!live)
+                    .accessibilityLabel("添加图片")
+                    .padding(.vertical, 4)
+                    TextField(placeholder, text: $text, axis: .vertical)
+                        .font(.system(size: 16))
+                        .lineLimit(1...6)
+                        .focused(focused)
+                        .disabled(!live)
+                        .padding(.vertical, 15)
+                }
+                .padding(.leading, 4)
+                .padding(.trailing, 16)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+            .glass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .opacity(live && c.state != .waiting ? 1 : 0.6)
             sendButton
         }
-        .opacity(live ? 1 : 0.6)
         .sensoryFeedback(.success, trigger: sent)
         .onChange(of: pickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -64,39 +84,52 @@ struct Composer: View {
 
     @ViewBuilder
     private var sendButton: some View {
-        if c.isBusy, !hasContent, !uploading {
-            Button("中止", systemImage: "stop.circle.fill") { Task { await abort() } }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 32))
-                .disabled(!live)
-                .sensoryFeedback(.impact, trigger: sending)
-        } else if c.state == .busy {
+        switch ComposerAction.of(state: c.state, isBusy: c.isBusy, hasContent: hasContent, uploading: uploading) {
+        case .stop:
+            Button { Task { await abort() } } label: {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(.white)
+                    .frame(width: 14, height: 14)
+                    .frame(width: 52, height: 52)
+                    .background(Palette.accent, in: Circle())
+                    .shadow(color: .black.opacity(0.12), radius: 9, y: 6)
+            }
+            .accessibilityLabel("中止")
+            .buttonStyle(.plain)
+            .disabled(!live)
+            .sensoryFeedback(.impact, trigger: sending)
+        case .steer:
             // 插话: delivered when the current tool call ends.
-            Button { Task { await send("steer") } } label: { sendLabel(steer: true) }
-                .disabled(!canSend)
-        } else {
-            Button { Task { await send("prompt") } } label: { sendLabel(steer: false) }
-                .disabled(!canSend || c.state != .idle)
+            Button { Task { await send("steer") } } label: {
+                Text("插话")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 20)
+                    .frame(height: 52)
+                    .background(canSend ? Palette.accent : Self.offFill, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+        case .send:
+            let enabled = canSend && c.state == .idle
+            Button { Task { await send("prompt") } } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(enabled ? Palette.accent : Self.offFill, in: Circle())
+            }
+            .accessibilityLabel("发送")
+            .buttonStyle(.plain)
+            .disabled(!enabled)
         }
     }
 
     private var canSend: Bool { live && hasContent && !sending && !uploading }
 
-    @ViewBuilder
-    private func sendLabel(steer: Bool) -> some View {
-        if steer {
-            Label("插话", systemImage: "arrow.up")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .foregroundStyle(.white)
-                .background(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.gray.opacity(0.4)), in: Capsule())
-        } else {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: 32))
-                .accessibilityLabel("发送")
-        }
-    }
+    private static let offFill = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark ? UIColor(rgb: 0xFFFFFF, alpha: 0.18) : UIColor(rgb: 0x787880, alpha: 0.32)
+    })
 
     private func send(_ type: String) async {
         guard canSend else { return }

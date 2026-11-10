@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// One Session: the Host's Transcript page, with native loading / error states.
+/// One Session: the Host's Transcript page across the whole screen, with the header and the Connect controls floating
+/// over it, and native loading / error states.
 struct SessionDetailView: View {
     @Environment(HostModel.self) private var model
     @State private var sessionId: String
@@ -10,6 +11,12 @@ struct SessionDetailView: View {
     @State private var copied = 0
     @State private var showingCopied = false
     @State private var showingInfo = false
+    @State private var atBottom = true
+    /// In screen coordinates, as the full-screen Transcript sees them.
+    @State private var screen = CGRect.zero
+    @State private var visibleBottom: CGFloat = 0
+    @State private var headerBottom: CGFloat = 0
+    @State private var slotTop: CGFloat?
 
     enum Phase: Equatable {
         case loading, ready
@@ -25,9 +32,30 @@ struct SessionDetailView: View {
     /// Started from here and not indexed yet: no transcript before its first prompt.
     private var unindexed: Bool { summary == nil && model.connect.conn(for: sessionId) != nil }
 
+    private var title: String { summary?.title ?? (unindexed ? "新 Session" : "Session") }
+
+    /// Connected: what the Connect is doing. Otherwise, while the Session runs somewhere, its Live status.
+    private var headerStatus: HeaderStatus? {
+        if let c = model.connect.conn(for: sessionId), c.isLive, !model.connect.isResuming(sessionId) {
+            return .connected(c)
+        }
+        return summary?.live.map { HeaderStatus(text: $0.status.label, dot: $0.status.color) }
+    }
+
+    private var hasRequests: Bool {
+        guard let c = model.connect.conn(for: sessionId), c.isLive else { return false }
+        return !model.connect.requests(of: c).isEmpty
+    }
+
+    /// How much of the screen, keyboard included, the bottom floats cover.
+    private var bottomInset: CGFloat { slotTop.map { max(0, screen.maxY - $0) } ?? 0 }
+
     var body: some View {
         ZStack {
-            Color(uiColor: .systemBackground).ignoresSafeArea()
+            Color(uiColor: .systemBackground)
+                // Inside `ignoresSafeArea`: outside it this would be the area left by the safe areas and the keyboard.
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }, action: { screen = $0 })
+                .ignoresSafeArea()
             if unindexed {
                 ContentUnavailableView("新 Session", systemImage: "text.bubble", description: Text("发送第一条提示词后显示对话"))
             } else if let url = transcriptURL {
@@ -36,9 +64,12 @@ struct SessionDetailView: View {
                     reloadToken: reloadToken,
                     onReady: { phase = .ready },
                     onFailure: { phase = .failed($0) },
-                    onCopy: copy
+                    onCopy: copy,
+                    bottomInset: bottomInset,
+                    topInset: headerBottom + 8,
+                    onAtBottom: { atBottom = $0 }
                 )
-                .ignoresSafeArea(edges: .bottom)
+                .ignoresSafeArea()
                 .opacity(phase == .ready ? 1 : 0)
             }
             switch unindexed ? .ready : phase {
@@ -50,36 +81,53 @@ struct SessionDetailView: View {
                 } description: {
                     Text(message)
                 } actions: {
-                    Button("重试", action: reload).buttonStyle(.borderedProminent)
+                    Button("重试", action: reload)
+                        .buttonStyle(PillButtonStyle(height: 50))
+                        .frame(width: 220)
                 }
             case .ready:
                 EmptyView()
             }
-        }
-        .navigationTitle(summary?.title ?? (unindexed ? "新 Session" : "Session"))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("详情", systemImage: "info.circle") { showingInfo = true }
-                    .disabled(detail == nil)
+            // The status bar stays readable over the Transcript that scrolls under it.
+            VStack {
+                LinearGradient(
+                    stops: [.init(color: Color(uiColor: .systemBackground), location: 0.6), .init(color: .clear, location: 1)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: max(0, headerBottom - screen.minY - 49))
+                Spacer(minLength: 0)
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                ConnectMenu(sessionId: sessionId, detail: detail, title: summary?.title)
-            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            if hasRequests { RequestScrim() }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            ConnectBarSlot(sessionId: sessionId, detail: detail)
+        .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).maxY }, action: { visibleBottom = $0 })
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .top) {
+            VStack(spacing: 8) {
+                FloatingHeader(title: title, status: headerStatus) {
+                    ConnectMenu(sessionId: sessionId, detail: detail, title: summary?.title) { showingInfo = true }
+                }
+                .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).maxY }, action: { headerBottom = $0 })
+                if showingCopied {
+                    Label("已复制", systemImage: "checkmark")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .glassCapsule()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
         .overlay(alignment: .bottom) {
-            if showingCopied {
-                Label("已复制", systemImage: "checkmark")
-                    .font(.subheadline.weight(.medium))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+            ConnectBarSlot(
+                sessionId: sessionId,
+                detail: detail,
+                atBottom: atBottom,
+                panelMaxHeight: RequestPanel.heightLimit(screen: screen.height, belowHeader: visibleBottom - headerBottom - 8)
+            )
+            .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }, action: { slotTop = $0 })
         }
         .sensoryFeedback(.success, trigger: copied)
         .sheet(isPresented: $showingInfo) {
@@ -173,9 +221,12 @@ struct SessionInfoSheet: View {
             .navigationTitle(detail.summary.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成", systemImage: "checkmark") { dismiss() }.labelStyle(.iconOnly)
+                }
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }

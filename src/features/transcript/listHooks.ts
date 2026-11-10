@@ -133,7 +133,8 @@ export function useFollowBottom(
     const ro = new ResizeObserver(() => {
       if (pinned.current) toBottom();
     });
-    for (const el of [tailRef.current, scrollRef.current]) if (el) ro.observe(el);
+    // The border box: a taller `--connect-h` is padding on the tail, which the default content box does not report.
+    for (const el of [tailRef.current, scrollRef.current]) if (el) ro.observe(el, { box: "border-box" });
     return () => ro.disconnect();
   }, [toBottom, scrollRef]);
 

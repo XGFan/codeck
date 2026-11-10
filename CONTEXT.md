@@ -13,7 +13,7 @@ _Avoid_: 会话文件, conversation, chat, transcript（指整体时）
 _Avoid_: 项目目录, workspace, folder
 
 **Live Session**:
-仍有 Claude Code 进程在运行、可能继续追加内容的 Session；其余 Session 视为已结束。侧栏顶部列出它们的那一块就叫「Live」。
+仍有 Claude Code 进程在运行、可能继续追加内容的 Session；其余 Session 视为已结束。侧栏顶部列出它们的那一块就叫「Live」；iPhone 列表把它们分在「等你处理」与「进行中」两段。
 _Avoid_: 活跃会话, active session, 进行中的会话, 运行中 / Running（指侧栏那一块时）
 
 **Connect**:

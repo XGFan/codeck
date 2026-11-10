@@ -15,6 +15,41 @@ test("对话页渲染真实后端里的 Session，不带 Connect", async ({ page
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
 });
 
+test("App 写入的内边距生效：顶部让出，底部变高时仍贴底，滚离底部时告诉 App", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 320 });
+  await page.addInitScript(() => {
+    const w = window as unknown as { posted: unknown[]; webkit: unknown };
+    w.posted = [];
+    w.webkit = { messageHandlers: { codeck: { postMessage: (m: unknown) => w.posted.push(m) } } };
+  });
+  await page.goto(page_url);
+  await expect(page.getByText("Add retry with exponential backoff to the HTTP client").first()).toBeVisible({
+    timeout: 20_000,
+  });
+  const scroller = page.locator("[data-scope]").first();
+  const gap = () => scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  const setVar = (name: string, value: string) =>
+    page.evaluate(([n, v]) => document.documentElement.style.setProperty(n!, v!), [name, value]);
+
+  await setVar("--transcript-top", "70px");
+  await expect(scroller).toHaveCSS("padding-top", "70px");
+
+  await scroller.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  // The list learns it is at the end from the scroll event, dispatched with the next frame.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await setVar("--connect-h", "400px");
+  await expect.poll(gap).toBeLessThanOrEqual(2);
+
+  await scroller.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { posted: unknown[] }).posted))
+    .toContainEqual({ type: "scroll", atBottom: false });
+});
+
 test("/v1/rpc 同源：list_sessions 返回 fixture，local 方法被拒", async ({ page }) => {
   await page.goto(page_url);
   const out = await page.evaluate(async () => {

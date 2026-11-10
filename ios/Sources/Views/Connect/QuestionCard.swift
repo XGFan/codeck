@@ -24,17 +24,14 @@ struct QuestionCard: View {
 
     var body: some View {
         let title = r.questions.count > 1 ? "向你提问 · \(r.questions.count) 个问题" : "向你提问"
-        CardShell(icon: "questionmark.bubble", title: title, status: "等待回答", agent: r.agentId) {
+        CardShell(title: title, status: "等待回答", agent: r.agentId) {
             ForEach(Array(r.questions.enumerated()), id: \.offset) { i, q in
                 question(i, q)
             }
-            HStack {
-                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                Spacer()
-                Button("提交", action: submit)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(busy || !ready)
-            }
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
+            Button("提交", action: submit)
+                .buttonStyle(PillButtonStyle())
+                .disabled(busy || !ready)
         }
         .sensoryFeedback(.success, trigger: answered)
         .sensoryFeedback(.selection, trigger: picked)
@@ -51,54 +48,61 @@ struct QuestionCard: View {
                 if let header = q.header, !header.isEmpty {
                     Text(header)
                         .font(.caption)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(Palette.accentText)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                        .background(Palette.tint, in: RoundedRectangle(cornerRadius: 5))
                 }
-                Text(q.question).font(.subheadline.weight(.medium))
+                Text(q.question)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if q.multiSelect { Text("多选").font(.caption).foregroundStyle(.secondary) }
             }
+            .padding(.horizontal, 4)
             ForEach(q.options, id: \.label) { o in
                 let on = picked[i].contains(o.label)
                 Button {
                     if !q.multiSelect { useOther[i] = false }
                     picked[i] = Answers.togglePick(picked[i], o.label, multi: q.multiSelect)
                 } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(spacing: 10) {
                         Mark(on: on, multi: q.multiSelect)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(o.label).foregroundStyle(.primary)
+                            Text(o.label).font(.system(size: 16)).foregroundStyle(.primary)
                             if let d = o.description, !d.isEmpty {
                                 Text(d).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(optionBackground(on), in: RoundedRectangle(cornerRadius: 10))
+                    .frame(minHeight: 44)
+                    .background(optionBackground(on), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(busy)
             }
             let otherOn = Answers.otherChosen(other, useOther, i)
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Button {
                     if q.multiSelect { useOther[i].toggle() } else { chooseOther(i, q) }
                 } label: {
                     Mark(on: otherOn, multi: q.multiSelect)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 TextField("其他：自己写答案", text: binding(i, q), axis: .vertical)
+                    .font(.system(size: 16))
                     .lineLimit(1...4)
                     .foregroundStyle(!otherOn && !other[i].isEmpty ? .secondary : .primary)
                     .strikethrough(!otherOn && !other[i].trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(optionBackground(otherOn), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(optionBackground(otherOn), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .disabled(busy)
         }
     }
@@ -118,9 +122,7 @@ struct QuestionCard: View {
         if !q.multiSelect { picked[i] = [] }
     }
 
-    private func optionBackground(_ on: Bool) -> AnyShapeStyle {
-        on ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(Color(uiColor: .tertiarySystemFill))
-    }
+    private func optionBackground(_ on: Bool) -> Color { on ? Palette.tint : Palette.field }
 
     private func submit() {
         let answers = Answers.questionAnswers(r.questions, picked: picked, other: other, useOther: useOther)
@@ -141,8 +143,15 @@ private struct Mark: View {
     let multi: Bool
 
     var body: some View {
-        Image(systemName: multi ? (on ? "checkmark.square.fill" : "square") : (on ? "largecircle.fill.circle" : "circle"))
-            .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            .imageScale(.medium)
+        let shape = RoundedRectangle(cornerRadius: multi ? 6 : 10)
+        ZStack {
+            if on {
+                shape.fill(Palette.accent)
+                Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+            } else {
+                shape.strokeBorder(.secondary, lineWidth: 1.5)
+            }
+        }
+        .frame(width: 20, height: 20)
     }
 }

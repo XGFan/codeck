@@ -17,6 +17,7 @@ struct CoDeckApp: App {
                 }
             }
             .environment(model)
+            .tint(Palette.accentText)
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

@@ -39,10 +39,13 @@ struct TasksSheet: View {
             .navigationTitle("后台任务")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成", systemImage: "checkmark") { dismiss() }.labelStyle(.iconOnly)
+                }
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
         .task { _ = await model.connect.command(conn, ["type": "get_tasks"]) }
     }
 

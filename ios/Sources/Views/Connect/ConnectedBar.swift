@@ -1,63 +1,90 @@
 import SwiftUI
 
-/// A live Connect: its state, the cards it waits on, queued messages, the last error, the input box and its
-/// controls; a notice shows briefly above the bar.
+/// A live Connect at the bottom of its Session page: the requests it waits on in a panel, otherwise the input box
+/// with its controls and, above them, queued messages and the last error; a notice shows briefly on top.
 struct ConnectedBar: View {
     let c: ConnState
     let sessionId: String
+    /// The Transcript is at its end (the control row is put away when it is not).
+    let atBottom: Bool
+    let panelMaxHeight: CGFloat
     @Environment(HostModel.self) private var model
     @State private var toast: String?
     @State private var seenNotice = Int.min
-    @State private var cardsHeight: CGFloat = 0
+    // Up here so a draft outlives the requests that replace the input box.
+    @State private var text = ""
+    @State private var images: [ComposerImage] = []
+    @State private var showingTasks = false
+    @FocusState private var focused: Bool
+
+    /// The control row: put away while the Transcript is read further up, unless something needs it; a waiting
+    /// Session has none of its controls to offer.
+    static func showsControls(state: ConnState.Phase?, atBottom: Bool, focused: Bool, hasError: Bool, hasQueue: Bool) -> Bool {
+        state != .waiting && (atBottom || focused || hasError || hasQueue)
+    }
 
     var body: some View {
         let store = model.connect
         let requests = store.requests(of: c)
-        VStack(spacing: 8) {
-            StatusRow(c: c)
-            if !requests.isEmpty {
-                ScrollView {
-                    VStack(spacing: 8) {
-                        ForEach(requests) { RequestCard(request: $0, c: c) }
+        let error = store.errors[sessionId]
+        VStack(spacing: 0) {
+            if requests.isEmpty {
+                VStack(spacing: 8) {
+                    if c.state == .waiting, c.waiting?.kind != "question" {
+                        // Waiting with nothing to show yet: the analyzer may be looking at the screen.
+                        Text("正在识别界面…")
+                            .font(.footnote)
+                            .foregroundStyle(Palette.warnText)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 36)
+                            .glassCapsule()
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { cardsHeight = $0 }
+                    if let error {
+                        ErrorLine(text: error) { store.setError(sessionId, nil) }
+                    }
+                    if !c.queue.isEmpty { QueueChips(queue: c.queue) }
+                    if Self.showsControls(
+                        state: c.state, atBottom: atBottom, focused: focused,
+                        hasError: error != nil, hasQueue: !c.queue.isEmpty
+                    ) {
+                        ConnectControls(c: c, sessionId: sessionId, showingTasks: $showingTasks)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                    Composer(c: c, sessionId: sessionId, text: $text, images: $images, focused: $focused)
                 }
-                .frame(height: min(cardsHeight, 380))
-                .scrollBounceBehavior(.basedOnSize)
-            } else if c.state == .waiting, c.waiting?.kind != "question" {
-                // Waiting with nothing to show yet: the analyzer may be looking at the screen.
-                Label("正在识别界面…", systemImage: "text.viewfinder")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+                .animation(.snappy, value: atBottom)
+            } else {
+                RequestPanel(
+                    requests: requests,
+                    c: c,
+                    error: error,
+                    onCloseError: { store.setError(sessionId, nil) },
+                    maxHeight: panelMaxHeight
+                )
+                .transition(.move(edge: .bottom))
             }
-            if !c.queue.isEmpty { QueueChips(queue: c.queue) }
-            if let error = store.errors[sessionId] {
-                ErrorLine(text: error) { store.setError(sessionId, nil) }
-            }
-            Composer(c: c, sessionId: sessionId)
-            ConnectControls(c: c, sessionId: sessionId)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .animation(.snappy, value: requests.isEmpty)
         .overlay(alignment: .top) {
-            // Above the bar: the container's bottom sits 8 pt over the bar's top.
+            // Above the rest: the container's bottom sits 8 pt over its top.
             ZStack {
                 if let toast {
-                Label(toast, systemImage: "info.circle")
-                    .font(.footnote)
-                    .lineLimit(2)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.regularMaterial, in: Capsule())
-                    .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    Label(toast, systemImage: "info.circle")
+                        .font(.footnote)
+                        .lineLimit(2)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .glassCapsule()
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .alignmentGuide(.top) { $0[.bottom] + 8 }
+        }
+        .sheet(isPresented: $showingTasks) {
+            TasksSheet(sessionId: sessionId, conn: c.conn)
         }
         .sensoryFeedback(trigger: requests.count) { old, new in new > old ? .warning : nil }
         .onAppear { seenNotice = c.notices.last?.id ?? Int.min }
@@ -73,40 +100,6 @@ struct ConnectedBar: View {
     }
 }
 
-/// The state word, what Claude Code is doing and for how long.
-private struct StatusRow: View {
-    let c: ConnState
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(ConnectWords.state(c.state)).fontWeight(.medium)
-            if c.state == .busy {
-                if let text = c.progress?.text ?? c.progress?.verb {
-                    Text(text).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                }
-                Spacer(minLength: 4)
-                if let s = c.progress?.elapsedS {
-                    Text(ConnectWords.elapsed(s)).foregroundStyle(.secondary).monospacedDigit()
-                }
-            } else {
-                Spacer(minLength: 0)
-            }
-        }
-        .font(.footnote)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var color: Color {
-        switch c.state {
-        case .busy: .green
-        case .waiting: .orange
-        case .idle: .secondary
-        default: .gray.opacity(0.5)
-        }
-    }
-}
-
 /// What waits in Claude Code's own queue.
 private struct QueueChips: View {
     let queue: [String]
@@ -114,18 +107,20 @@ private struct QueueChips: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                Label("排队 \(queue.count) 条", systemImage: "clock")
-                    .foregroundStyle(.secondary)
+                chip { Text("排队 \(queue.count) 条").foregroundStyle(.secondary) }
                 ForEach(Array(queue.enumerated()), id: \.offset) { _, text in
-                    Text(text)
-                        .lineLimit(1)
-                        .frame(maxWidth: 220)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+                    chip { Text(text).lineLimit(1).frame(maxWidth: 220) }
                 }
             }
             .font(.footnote)
         }
+        .scrollClipDisabled()
+    }
+
+    private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 12)
+            .frame(minHeight: 36)
+            .glassCapsule()
     }
 }

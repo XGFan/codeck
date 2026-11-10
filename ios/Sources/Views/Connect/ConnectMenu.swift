@@ -1,13 +1,14 @@
 import SwiftUI
 
-/// The 「···」 menu in the navigation bar: while connected, Disconnect (the Session keeps running) and
-/// 「关闭 Session」 (ends it with its Pane, after a confirmation; see `CloseFlow`); 「Fork」 for any indexed Session,
-/// running or not (a new Session copying this one's conversation, in a new Pane).
+/// The 「···」 menu of the header: the Session's details; 「Fork」 for any indexed Session, running or not (a new
+/// Session copying this one's conversation, in a new Pane); while connected, Disconnect (the Session keeps running)
+/// and 「关闭 Session」 (ends it with its Pane, after a confirmation; see `CloseFlow`).
 struct ConnectMenu: View {
     let sessionId: String
     /// For Fork (the directory to start in); nil while loading or not indexed.
     let detail: SessionDetail?
     let title: String?
+    let onInfo: () -> Void
     @Environment(HostModel.self) private var model
     @State private var flow = CloseFlow()
     @State private var confirming = false
@@ -17,20 +18,10 @@ struct ConnectMenu: View {
     var body: some View {
         let c = model.connect.conn(for: sessionId).flatMap { $0.isLive && !model.connect.isResuming(sessionId) ? $0 : nil }
         let fork = forkOffer
-        if c != nil || fork != .hidden {
-            Menu {
-                if let c {
-                    Section {
-                        Button("Disconnect", systemImage: "cable.connector.slash") {
-                            Task { await model.connect.disconnect(c) }
-                        }
-                        Button("关闭 Session", systemImage: "power", role: .destructive) {
-                            flow = CloseFlow()
-                            confirming = true
-                        }
-                        .disabled(closing || !(c.isBusy || c.state == .idle))
-                    }
-                }
+        Menu {
+            Section {
+                Button("Session 详情", systemImage: "info.circle", action: onInfo)
+                    .disabled(detail == nil)
                 if fork != .hidden {
                     let forking = model.connect.isForking(sessionId)
                     Button {
@@ -41,28 +32,48 @@ struct ConnectMenu: View {
                     }
                     .disabled(fork != .enabled || forking)
                 }
-            } label: {
-                Label("更多", systemImage: "ellipsis.circle")
             }
-            .confirmationDialog("关闭 Session？", isPresented: $confirming, titleVisibility: .visible) {
-                if let c {
-                    Button("关闭", role: .destructive) { Task { await close(c) } }
+            if let c {
+                Section {
+                    Button("Disconnect", systemImage: "cable.connector.slash") {
+                        Task { await model.connect.disconnect(c) }
+                    }
+                    Button("关闭 Session", systemImage: "power", role: .destructive) {
+                        flow = CloseFlow()
+                        confirming = true
+                    }
+                    .disabled(closing || !(c.isBusy || c.state == .idle))
                 }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 48, height: 48)
+                .glass(in: Circle())
+                .contentShape(Circle())
+                .accessibilityLabel("更多")
+        }
+        .menuOrder(.fixed)
+        .tint(Color(uiColor: .label))
+        .confirmationDialog("关闭 Session？", isPresented: $confirming, titleVisibility: .visible) {
+            if let c {
+                Button("关闭", role: .destructive) { Task { await close(c) } }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(flow.message(busy: c?.isBusy ?? false, running: c?.runningTasks.count ?? 0))
+        }
+        .background {
+            // A view of its own: two dialogs on one view do not both present.
+            Color.clear.confirmationDialog("Fork 这个 Session？", isPresented: $confirmingFork, titleVisibility: .visible) {
+                Button("Fork") { startFork() }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text(flow.message(busy: c?.isBusy ?? false, running: c?.runningTasks.count ?? 0))
+                Text("在新的 Pane 里起一个新 Session，复制这个 Session 的全部对话，原 Session 不受影响。")
             }
-            .background {
-                // A view of its own: two dialogs on one view do not both present.
-                Color.clear.confirmationDialog("Fork 这个 Session？", isPresented: $confirmingFork, titleVisibility: .visible) {
-                    Button("Fork") { startFork() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    Text("在新的 Pane 里起一个新 Session，复制这个 Session 的全部对话，原 Session 不受影响。")
-                }
-            }
-            .sensoryFeedback(.warning, trigger: confirming) { _, new in new }
         }
+        .sensoryFeedback(.warning, trigger: confirming) { _, new in new }
     }
 
     private var forkOffer: StartOffer {
