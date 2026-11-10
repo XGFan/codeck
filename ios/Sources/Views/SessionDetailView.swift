@@ -52,7 +52,7 @@ struct SessionDetailView: View {
 
     var body: some View {
         ZStack {
-            Color(uiColor: .systemBackground)
+            Palette.transcriptGround
                 // Inside `ignoresSafeArea`: outside it this would be the area left by the safe areas and the keyboard.
                 .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }, action: { screen = $0 })
                 .ignoresSafeArea()
@@ -91,7 +91,7 @@ struct SessionDetailView: View {
             // The status bar stays readable over the Transcript that scrolls under it.
             VStack {
                 LinearGradient(
-                    stops: [.init(color: Color(uiColor: .systemBackground), location: 0.6), .init(color: .clear, location: 1)],
+                    stops: [.init(color: Palette.transcriptGround, location: 0.6), .init(color: .clear, location: 1)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
