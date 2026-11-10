@@ -73,6 +73,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - **Recent**（底部固定）：所有不是 Live 的 Session（在已添加的 Project 里或不在），按最后一次用户输入排序，行上是标题、启动 Project 名与时间；没添加的 Project 的 Session 从这里找。默认 6 行、内部滚动；拖动它的上边缘按整行调节行数（最少 1 行，最多留给 Project 区标题与 4 行，获得焦点时 ↑ / ↓ 每次一行），Session 少于设定的行数时按实际行数；点标题收起成只剩标题；行数与收起状态重启后保留。Session 结束时出现在这里，Resume 后离开。
   - 窗口矮时 Project 区至少留标题与 4 行：先减少 Recent 的行数，再减少 Live 的，各最少 1 行（窗口变高后回到设定的行数）。
   - 行只有一行：Live 点、标题、等待作答时的「等待作答」标签、相对时间；消息数、token、Cost 只在 Session 头部与统计里。还没进索引的 Session 标题是「新 Session」，标签是 cwd 的最后一段，没有时间。
+  - 行的右键菜单有「重命名」：Connected Session 空闲时可用，填写新标题后发送 `/rename <标题>`，标题仍来自 transcript 的 `custom-title`，这条命令计入消息数；未 Connect 或不空闲时置灰，并写「Connect 后可用」「空闲时可用」。发送失败时对话框不关，写明原因。
   - 组的展开状态在重启后保留，默认组展开，子组与「其他 N 个子 Project」收起；「显示更多」不保留。从搜索、链接、组头「+」等打开的 Session（不是在侧栏里点的）所在的组、子组自动展开，并滚动到它。
   - ↑↓ 在获得焦点的那一块里切换 Session。
   - 已添加的 Project 存进 `settings.json` 的 `sidebarProjects`（路径与是否收拢，按侧栏里的顺序）。

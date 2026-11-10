@@ -197,5 +197,5 @@ export function AddProjectDialog({
   );
 }
 
-const BUTTON =
+export const BUTTON =
   "flex h-[28px] items-center gap-1.5 rounded-md border border-border bg-ground px-3 text-[12px] text-text outline-none focus-visible:outline-2 focus-visible:outline-accent";

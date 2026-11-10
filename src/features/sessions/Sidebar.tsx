@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LiveDot, type LiveDotState } from "@/components/LiveDot";
-import { NewSessionError, useConnect, useUnread } from "@/features/connect";
+import { connFor, isLive, NewSessionError, useConnect, useUnread } from "@/features/connect";
 import { api } from "@/ipc";
 import type { ProjectSummary, SidebarProject } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
@@ -40,6 +40,7 @@ import {
   type SideSession,
 } from "./groups";
 import { NewSessionDialog } from "./NewSessionDialog";
+import { RenameDialog } from "./RenameDialog";
 import { forkingSessions, pendingSessions } from "./pending";
 
 const NO_PROJECTS: ProjectSummary[] = [];
@@ -102,6 +103,7 @@ export function SidebarDialogs({ data }: { data: SidebarData }) {
   return (
     <>
       <NewSessionDialog sidebar={sidebar} projects={projects} />
+      <RenameDialog />
       {entries !== undefined && <AddProjectDialog projects={projects} entries={entries} onSave={save} />}
     </>
   );
@@ -628,10 +630,7 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
                 data-testid="sidebar-sub"
                 aria-expanded={it.open}
                 onClick={() => toggle(it.key, it.open)}
-                className={cn(
-                  ROW,
-                  "pl-[22px] font-medium data-[state=open]:bg-black/[0.04] dark:data-[state=open]:bg-white/[0.05]",
-                )}
+                className={cn(ROW, "pl-[22px] font-medium", MENU_OPEN)}
               >
                 <Chevron open={it.open} />
                 <span className="min-w-0 flex-1 truncate">{it.sub.name}</span>
@@ -743,6 +742,8 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
 
 export const ROW =
   "flex h-[28px] w-full cursor-default items-center gap-[7px] rounded-md pr-[8px] text-left text-[13px] text-text outline-none hover:bg-black/[0.04] focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-white/[0.05]";
+/** A row whose context menu is open stays lit, as under the pointer. */
+const MENU_OPEN = "data-[state=open]:bg-black/[0.04] dark:data-[state=open]:bg-white/[0.05]";
 const ICON =
   "flex size-[24px] shrink-0 items-center justify-center rounded-[5px] text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent";
 export const SECTION =
@@ -897,44 +898,73 @@ export function Row({
 }) {
   const chip = s.pending ? (s.cwd?.split("/").filter(Boolean).pop() ?? null) : plainTag ? null : tag;
   return (
-    <div
-      role="option"
-      aria-selected={selected}
-      data-testid={testId}
-      data-session-id={s.id}
-      data-pending={s.pending ? "" : undefined}
-      onClick={() => onOpen(s.id)}
-      title={s.pending ? (s.cwd ?? undefined) : undefined}
-      className={cn(
-        ROW,
-        depth === 2 ? "pl-[46px]" : depth === 1 ? "pl-[30px]" : "pl-[10px]",
-        selected && "bg-selection hover:bg-selection",
-      )}
-    >
-      {s.live ? (
-        <LiveDot state={s.live} title={LIVE_TITLE[s.live]} testId="live-dot" />
-      ) : (
-        dotSlot && <span className="w-2 shrink-0" aria-hidden />
-      )}
-      <span className="min-w-0 flex-1 truncate">{s.title}</span>
-      {s.live === "waiting" && (
-        <span
-          data-testid="waiting-tag"
-          className="shrink-0 rounded border border-tag-border bg-tag px-1 text-[11px] leading-[15px] font-semibold text-tag-text"
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          role="option"
+          aria-selected={selected}
+          data-testid={testId}
+          data-session-id={s.id}
+          data-pending={s.pending ? "" : undefined}
+          onClick={() => onOpen(s.id)}
+          title={s.pending ? (s.cwd ?? undefined) : undefined}
+          className={cn(
+            ROW,
+            depth === 2 ? "pl-[46px]" : depth === 1 ? "pl-[30px]" : "pl-[10px]",
+            selected ? "bg-selection hover:bg-selection" : MENU_OPEN,
+          )}
         >
-          等待作答
-        </span>
-      )}
-      <UnreadDot id={s.id} />
-      {chip && (
-        <span className="max-w-[110px] shrink-0 truncate rounded bg-text/8 px-[5px] text-[11px] text-secondary">
-          {chip}
-        </span>
-      )}
-      {plainTag && !s.pending && tag && (
-        <span className="max-w-[88px] shrink-0 truncate text-[11px] text-secondary">{tag}</span>
-      )}
-      {time && !s.pending && <span className="shrink-0 text-[11px] text-secondary">{formatRelative(s.timeMs)}</span>}
-    </div>
+          {s.live ? (
+            <LiveDot state={s.live} title={LIVE_TITLE[s.live]} testId="live-dot" />
+          ) : (
+            dotSlot && <span className="w-2 shrink-0" aria-hidden />
+          )}
+          <span className="min-w-0 flex-1 truncate">{s.title}</span>
+          {s.live === "waiting" && (
+            <span
+              data-testid="waiting-tag"
+              className="shrink-0 rounded border border-tag-border bg-tag px-1 text-[11px] leading-[15px] font-semibold text-tag-text"
+            >
+              等待作答
+            </span>
+          )}
+          <UnreadDot id={s.id} />
+          {chip && (
+            <span className="max-w-[110px] shrink-0 truncate rounded bg-text/8 px-[5px] text-[11px] text-secondary">
+              {chip}
+            </span>
+          )}
+          {plainTag && !s.pending && tag && (
+            <span className="max-w-[88px] shrink-0 truncate text-[11px] text-secondary">{tag}</span>
+          )}
+          {time && !s.pending && (
+            <span className="shrink-0 text-[11px] text-secondary">{formatRelative(s.timeMs)}</span>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <RenameItem s={s} />
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** Mounted only while the menu is open. `/rename` needs the prompt: a Connected Session that is idle. */
+function RenameItem({ s }: { s: SideSession }) {
+  const setRenaming = useUi((u) => u.setRenaming);
+  const why = useConnect((st) => {
+    const c = connFor(st, s.id);
+    if (!c || !isLive(c)) return "Connect 后可用";
+    return c.state === "idle" ? null : "空闲时可用";
+  });
+  return (
+    <ContextMenuItem
+      disabled={why != null}
+      className="data-[disabled]:text-secondary"
+      onSelect={() => setRenaming({ id: s.id, title: s.pending ? "" : s.title })}
+    >
+      重命名
+      {why && <span className="ml-3 text-[11.5px] text-secondary">{why}</span>}
+    </ContextMenuItem>
   );
 }

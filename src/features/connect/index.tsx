@@ -21,7 +21,7 @@ export { QuestionForm } from "./QuestionForm";
 export { RewindButton, RewoundDivider, useRewindView, useShownTranscript, type RewindView } from "./RewindViews";
 export { ForkButton, ForkMenuItem, ForkPending } from "./ForkViews";
 export { CcrpcSettings } from "./Settings";
-export { connFor, lsEntryFor, useConnect } from "./store";
+export { connFor, isLive, lsEntryFor, useConnect } from "./store";
 
 /**
  * The CoDeck's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one

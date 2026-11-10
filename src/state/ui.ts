@@ -70,8 +70,14 @@ const sessionDefaults = {
 
 /** A dialog over the window is open (⌘K, stats, Settings, the sidebar's): keys meant for the window behind are not handled. */
 export const selectOverlayOpen = (
-  s: Pick<UiState, "searchOpen" | "statsOpen" | "settingsOpen" | "newSessionOpen" | "addProjectOpen">,
-) => s.searchOpen || s.statsOpen || s.settingsOpen || s.newSessionOpen || s.addProjectOpen;
+  s: Pick<UiState, "searchOpen" | "statsOpen" | "settingsOpen" | "newSessionOpen" | "addProjectOpen" | "renaming">,
+) => s.searchOpen || s.statsOpen || s.settingsOpen || s.newSessionOpen || s.addProjectOpen || s.renaming != null;
+
+/** The Session 「重命名」 is open for, and the title its input starts with. */
+export interface RenameTarget {
+  id: string;
+  title: string;
+}
 
 interface UiState {
   /** Session list filter; empty = all projects (matches `SessionQuery.projectIds`). */
@@ -121,6 +127,9 @@ interface UiState {
   /** 「添加 Project」. */
   addProjectOpen: boolean;
   setAddProjectOpen: (open: boolean) => void;
+  /** 「重命名」 from a Session row's context menu. */
+  renaming: RenameTarget | null;
+  setRenaming: (target: RenameTarget | null) => void;
 
   setProjectIds: (ids: string[]) => void;
   /** Switches session (resetting per-session state); a no-op when the id is unchanged. */
@@ -190,6 +199,8 @@ export const useUi = create<UiState>()((set) => ({
   setNewSessionOpen: (newSessionOpen) => set({ newSessionOpen }),
   addProjectOpen: false,
   setAddProjectOpen: (addProjectOpen) => set({ addProjectOpen }),
+  renaming: null,
+  setRenaming: (renaming) => set({ renaming }),
   setConvWidth: (px) => {
     const convWidth = clampWidth(px);
     save(CONV_WIDTH_KEY, { px: convWidth });
