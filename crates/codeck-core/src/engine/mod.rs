@@ -143,6 +143,19 @@ impl Engine {
             &cfg.data_root,
             prices.clone(),
         )?;
+        Self::over(cfg, index, prices)
+    }
+
+    /// Opens the existing index for reading only; nothing on disk is created, written or deleted
+    /// (see [`Index::open_read_only`]). No sync, watcher or price download: the index stays as the
+    /// last writer left it. A Session it does not know is read straight from its file.
+    pub fn open_read_only(cfg: EngineConfig) -> CoreResult<Self> {
+        let index = Index::open_read_only(&index_db_path(&cfg.cache_dir), &cfg.data_root)?;
+        let prices = Arc::new(RwLock::new(PriceTable::embedded()));
+        Self::over(cfg, index, prices)
+    }
+
+    fn over(cfg: EngineConfig, index: Index, prices: Arc<RwLock<PriceTable>>) -> CoreResult<Self> {
         let (sessions_total, text_ready) =
             index.read(|c| Ok((reader::session_count(c)?, reader::text_ready(c)?)))?;
         Ok(Engine {
@@ -176,6 +189,16 @@ impl Engine {
 
     pub fn index_status(&self) -> IndexStatus {
         self.status.lock().clone()
+    }
+
+    /// When the index was last written (the newer of the database and its `-wal`).
+    pub fn indexed_at(&self) -> Option<std::time::SystemTime> {
+        let mut wal = self.index.path.as_os_str().to_owned();
+        wal.push("-wal");
+        [self.index.path.clone(), PathBuf::from(wal)]
+            .iter()
+            .filter_map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+            .max()
     }
 
     /// Phase 1: stat walk + metadata parse of changed files.

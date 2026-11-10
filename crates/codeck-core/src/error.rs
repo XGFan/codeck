@@ -16,6 +16,9 @@ pub enum CoreError {
     Io(#[from] std::io::Error),
     #[error("索引出错：{0}")]
     Index(#[from] rusqlite::Error),
+    /// A read-only open found no usable index; carries the reason in Chinese.
+    #[error("{0}")]
+    IndexUnavailable(String),
     #[error("数据解析失败：{0}")]
     Json(#[from] serde_json::Error),
     #[error("操作已取消")]
@@ -30,7 +33,7 @@ impl CoreError {
             CoreError::NotFound(_) => ErrorCode::NotFound,
             CoreError::InvalidQuery(_) => ErrorCode::InvalidQuery,
             CoreError::Io(_) => ErrorCode::Io,
-            CoreError::Index(_) => ErrorCode::Index,
+            CoreError::Index(_) | CoreError::IndexUnavailable(_) => ErrorCode::Index,
             CoreError::Json(_) | CoreError::Internal(_) => ErrorCode::Internal,
             CoreError::Cancelled => ErrorCode::Cancelled,
         }

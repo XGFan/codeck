@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 use schema::{DDL, DROP_ALL, SCHEMA_VERSION};
 use transcript::pricing::{PriceTable, Usage};
 
@@ -25,8 +25,10 @@ const READ_POOL_MAX: usize = 4;
 #[derive(Debug)]
 pub struct Index {
     pub path: PathBuf,
+    /// Read-only ([`Index::open_read_only`]): SQLite refuses every write made through it.
     writer: Mutex<Connection>,
     readers: Mutex<Vec<Connection>>,
+    read_only: bool,
 }
 
 impl Index {
@@ -53,7 +55,44 @@ impl Index {
             path: path.to_path_buf(),
             writer: Mutex::new(conn),
             readers: Mutex::new(Vec::new()),
+            read_only: false,
         })
+    }
+
+    /// Opens an existing index without changing anything: no directory, database, journal mode
+    /// or `user_version` is created or written, and a missing index or one built by another
+    /// version or for another data root is an error, not a rebuild.
+    pub fn open_read_only(path: &Path, data_root: &Path) -> CoreResult<Self> {
+        if !path.is_file() {
+            return Err(CoreError::IndexUnavailable("索引不存在".into()));
+        }
+        let conn = open_read_only_conn(path)?;
+        let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version != SCHEMA_VERSION {
+            return Err(CoreError::IndexUnavailable(
+                "索引版本与 CLI 不一致，请升级 CoDeck".into(),
+            ));
+        }
+        let stored: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key='data_root'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if stored.as_deref() != Some(data_root.display().to_string().as_str()) {
+            return Err(CoreError::IndexUnavailable(
+                "索引对应的数据目录与当前不一致".into(),
+            ));
+        }
+        Ok(Index {
+            path: path.to_path_buf(),
+            writer: Mutex::new(conn),
+            readers: Mutex::new(Vec::new()),
+            read_only: true,
+        })
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Runs `f` with the (single) writer connection.
@@ -67,6 +106,7 @@ impl Index {
         let pooled = self.readers.lock().pop();
         let conn = match pooled {
             Some(c) => c,
+            None if self.read_only => open_read_only_conn(&self.path)?,
             None => open_conn(&self.path)?,
         };
         let out = f(&conn);
@@ -111,6 +151,36 @@ fn open_conn(path: &Path) -> CoreResult<Connection> {
     conn.busy_timeout(Duration::from_secs(10))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    Ok(conn)
+}
+
+/// A connection that cannot write. Without a `-wal` file (no writer has the index open) it is
+/// opened immutable, because SQLite would otherwise create `-wal` and `-shm` next to the database
+/// even for a read-only connection; a writer starting during that read may give it an inconsistent
+/// view, which ends with the command.
+fn open_read_only_conn(path: &Path) -> CoreResult<Connection> {
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    let immutable = if Path::new(&wal).exists() {
+        ""
+    } else {
+        "&immutable=1"
+    };
+    // `%`, `?` and `#` are the characters a SQLite URI path gives a meaning to.
+    let file = path
+        .display()
+        .to_string()
+        .replace('%', "%25")
+        .replace('?', "%3f")
+        .replace('#', "%23");
+    let conn = Connection::open_with_flags(
+        format!("file:{file}?mode=ro{immutable}"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(Duration::from_secs(10))?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(conn)
 }

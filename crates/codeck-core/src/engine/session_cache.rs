@@ -1,7 +1,7 @@
 //! Display caches: assembled Sessions and Subagent Run files kept parsed, validated by a
 //! revision over every source and sidecar file, and extended in place on appends.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
@@ -71,6 +71,14 @@ impl Engine {
                 })
             })
             .collect();
+        if main.is_empty() && self.index.is_read_only() {
+            // Nothing keeps this index up to date: a Session too new for it is read from its file.
+            main = scan::scan_sessions(&self.cfg.data_root, &BTreeSet::from([sid.to_owned()]))
+                .files
+                .into_iter()
+                .filter(|f| f.role == FileRole::Main)
+                .collect();
+        }
         if main.is_empty() {
             return Err(CoreError::NotFound("该 Session".into()));
         }
