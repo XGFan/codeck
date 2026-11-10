@@ -19,6 +19,7 @@ export interface SideSession {
 /** The Sessions of one Project gathered into a nesting group (「收拢子 Project」). */
 export interface SubGroup {
   projectId: string;
+  path: string;
   name: string;
   sessions: SideSession[];
   lastMs: number;
@@ -143,7 +144,7 @@ export function buildSidebar(
   for (const { s, path } of rows) {
     const e = path ? entryFor(path, entries) : null;
     const g = e && groups.get(e.path);
-    if (!g) continue;
+    if (!g || !path) continue;
     g.total++;
     g.lastMs = Math.max(g.lastMs, s.timeMs);
     if (s.live && (!g.live || URGENCY[s.live] > URGENCY[g.live])) g.live = s.live;
@@ -155,7 +156,8 @@ export function buildSidebar(
     if (!sub) {
       sub = {
         projectId: s.projectId,
-        name: byId.get(s.projectId)?.displayName ?? basename(path ?? ""),
+        path,
+        name: byId.get(s.projectId)?.displayName ?? basename(path),
         sessions: [],
         lastMs: 0,
         active: false,

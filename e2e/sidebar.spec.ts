@@ -350,6 +350,12 @@ test("收拢子 Project：路径下的 Project 成为子组，已单独添加的
   await sub.click();
   await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toBeVisible();
 
+  // Right-click: a new Session in the sub-Project's own directory, and the sub-group stays as it was.
+  await sub.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "新建 Session" }).click();
+  await expect.poll(() => guiLog(page)).toContain("new /Users/dev/Developer/orbit-web");
+  await expect(sub).toHaveAttribute("aria-expanded", "true");
+
   // Turned off in the group's menu: orbit-web's Sessions are in no group (still in 「Recent」).
   await groupMenu(page, "/Users/dev/Developer", "收拢子 Project（3 个）");
   await expect(page.getByTestId("sidebar-sub")).toHaveCount(0);

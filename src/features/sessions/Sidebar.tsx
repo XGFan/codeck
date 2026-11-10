@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronRight, Ellipsis, GripVertical, Plus, SquarePen } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -620,20 +621,30 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
         );
       case "sub":
         return (
-          <button
-            type="button"
-            data-testid="sidebar-sub"
-            aria-expanded={it.open}
-            onClick={() => toggle(it.key, it.open)}
-            className={cn(ROW, "pl-[22px] font-medium")}
-          >
-            <Chevron open={it.open} />
-            <span className="min-w-0 flex-1 truncate">{it.sub.name}</span>
-            {!it.open && it.sub.sessions.some((s) => s.live) && <LiveDot state={liveOf(it.sub.sessions)!} />}
-            <span className="shrink-0 text-[11px] font-normal text-secondary">
-              {formatCount(it.sub.sessions.length)} · {formatRelative(it.sub.lastMs)}
-            </span>
-          </button>
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="sidebar-sub"
+                aria-expanded={it.open}
+                onClick={() => toggle(it.key, it.open)}
+                className={cn(
+                  ROW,
+                  "pl-[22px] font-medium data-[state=open]:bg-black/[0.04] dark:data-[state=open]:bg-white/[0.05]",
+                )}
+              >
+                <Chevron open={it.open} />
+                <span className="min-w-0 flex-1 truncate">{it.sub.name}</span>
+                {!it.open && it.sub.sessions.some((s) => s.live) && <LiveDot state={liveOf(it.sub.sessions)!} />}
+                <span className="shrink-0 text-[11px] font-normal text-secondary">
+                  {formatCount(it.sub.sessions.length)} · {formatRelative(it.sub.lastMs)}
+                </span>
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onSelect={() => void newSession(it.sub.path)}>新建 Session</ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         );
       case "subsRest":
         return (
