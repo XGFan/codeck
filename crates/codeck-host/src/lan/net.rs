@@ -1,4 +1,4 @@
-//! Where the daemon listens and whom it answers: private IPv4 interfaces only, peers from the
+//! Where a Host listens and whom it answers: private IPv4 interfaces only, peers from the
 //! listener's own subnet, and no foreign browser origins (ADR-0011: LAN only, no auth).
 
 use std::net::{IpAddr, Ipv4Addr};
@@ -154,7 +154,7 @@ pub fn host_allowed(host: Option<&str>, subnet: &Subnet) -> bool {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OriginCheck {
-    /// No `Origin` (not a browser) or this daemon's own page.
+    /// No `Origin` (not a browser) or this Host's own page.
     Allow,
     /// An origin given with `--allow-origin`: allowed, with CORS headers.
     Cors,
@@ -162,7 +162,7 @@ pub enum OriginCheck {
 }
 
 /// `origin` is the request's `Origin` header, `host` its `Host` header (already checked by [`host_allowed`],
-/// so an origin equal to it is this daemon's own page).
+/// so an origin equal to it is this Host's own page).
 pub fn check_origin(origin: Option<&str>, host: Option<&str>, allowed: &[String]) -> OriginCheck {
     let Some(origin) = origin else {
         return OriginCheck::Allow;

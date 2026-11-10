@@ -176,6 +176,11 @@ export function createRemoteApi(base: string): RemoteApi {
         }
       }),
     onCcrpcLsEnded: (cb) => listen<{ message: string }>("ccrpc-ls-ended-event", (p) => cb(p.message)),
+    connectSnapshot: () => desktopOnly("读取 Connect 状态"),
+    onCcrpcRemoteConn: () => Promise.resolve(() => {}),
+    onCcrpcClosing: () => Promise.resolve(() => {}),
+    lanStatus: () => desktopOnly("局域网访问"),
+    lanSetEnabled: () => desktopOnly("局域网访问"),
     onResync(cb) {
       resyncs.add(cb);
       open();

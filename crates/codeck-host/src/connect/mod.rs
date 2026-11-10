@@ -1,7 +1,7 @@
-//! Connect state held by the Host (ADR-0011; only with `HostConfig::track_connect`, i.e. the daemon): every
-//! connection's ccrpc lines are folded into a [`ConnState`] that all of the Host's clients share, and clients
-//! send ccrpc commands through the Host ([`ConnectHub::command`]), which gives them ids `h<n>` and hands back
-//! the response. The desktop app keeps doing this in its own store (`src/features/connect`).
+//! Connect state held by the Host (ADR-0011; with `HostConfig::track_connect`): every connection's ccrpc lines are
+//! folded into a [`ConnState`] that all of the Host's remote clients share, and they send ccrpc commands through the
+//! Host ([`ConnectHub::command`]), which gives them ids `h<n>` and hands back the response. The desktop app's window
+//! keeps doing this in its own store (`src/features/connect`) and adopts the Host's connections (ADR-0012).
 
 pub mod state;
 
@@ -42,7 +42,19 @@ pub struct ConnectHub {
     shared: tokio::sync::Mutex<()>,
     /// The latest `ccrpc ls --json --watch` list, or why there is none.
     ls: Mutex<Result<String, Option<String>>>,
+    /// Who owns the one `ccrpc ls --json --watch`. Also held while a watch is started or stopped, so a keep loop
+    /// that was just ended cannot start one afterwards.
+    keep: Mutex<Keep>,
     stopped: AtomicBool,
+}
+
+#[derive(Default)]
+struct Keep {
+    /// Of the latest keep loop; a loop runs while its own is the latest and `on`.
+    generation: u64,
+    on: bool,
+    /// The front end wants the watch: what comes back when the keep loop ends.
+    wanted: bool,
 }
 
 #[derive(Default)]
@@ -92,6 +104,7 @@ impl ConnectHub {
             seq: AtomicU64::new(0),
             shared: tokio::sync::Mutex::new(()),
             ls: Mutex::new(Err(None)),
+            keep: Mutex::default(),
             stopped: AtomicBool::new(false),
         })
     }
@@ -177,6 +190,12 @@ impl ConnectHub {
             self.changed(&mut inner, conn);
         }
         drop(inner);
+        // A failed Fork: ccrpc closes the Pane and exits, and the window that did not start it has nothing to show.
+        if v["type"] == "fork" && !v["error"].is_null() {
+            (self.events)(HostEvent::CcrpcClosing {
+                conn: conn.to_string(),
+            });
+        }
         // As the desktop app does: the background tasks again once connected and after each turn.
         if matches!(v["type"].as_str(), Some("ready" | "turn_end")) {
             self.send_own(conn, "get_tasks");
@@ -238,6 +257,10 @@ impl ConnectHub {
             }
         }
         drop(inner);
+        // On the connection's reader thread, so before its exit event: the Session is being quit on purpose.
+        if p.waiter.is_some() && p.command == "exit" && r["success"] == true {
+            (self.events)(HostEvent::CcrpcClosing { conn: p.conn });
+        }
         if let Some(w) = p.waiter {
             let _ = w.send(r);
         }
@@ -321,7 +344,7 @@ impl ConnectHub {
         v
     }
 
-    /// The newest connection to `holder_id` whose Session is still running.
+    /// The newest connection to `holder_id` whose Session is still running and which no one is disconnecting.
     fn live_conn_for(&self, holder_id: &str) -> Option<String> {
         // `c<n>`, numbered as started.
         let seq = |conn: &str| conn[1..].parse::<u64>().unwrap_or(0);
@@ -331,19 +354,28 @@ impl ConnectHub {
             .values()
             .map(|e| &e.state)
             .filter(|s| s.holder_id.as_deref() == Some(holder_id))
-            .filter(|s| s.proc_exit.is_none() && !s.session_exited)
+            .filter(|s| s.proc_exit.is_none() && !s.session_exited && !s.disconnected)
             .max_by_key(|s| seq(&s.conn))
             .map(|s| s.conn.clone())
     }
 
     /// The connections to `holder_id` whose Session ended: their ccrpc keeps running, attached, driving nothing.
     fn ended_conns_for(&self, holder_id: &str) -> Vec<String> {
+        self.conns_for(holder_id, |s| s.session_exited && !s.disconnected)
+    }
+
+    /// The connections to `holder_id` being disconnected: their ccrpc is still attached for a moment.
+    fn disconnecting_conns_for(&self, holder_id: &str) -> Vec<String> {
+        self.conns_for(holder_id, |s| s.disconnected)
+    }
+
+    fn conns_for(&self, holder_id: &str, which: impl Fn(&ConnState) -> bool) -> Vec<String> {
         self.inner
             .lock()
             .conns
             .values()
             .map(|e| &e.state)
-            .filter(|s| s.holder_id.as_deref() == Some(holder_id) && s.session_exited)
+            .filter(|s| s.holder_id.as_deref() == Some(holder_id) && which(s))
             .map(|s| s.conn.clone())
             .collect()
     }
@@ -431,6 +463,72 @@ impl ConnectHub {
         }
     }
 
+    /// A new keep loop takes over the watch; returns its generation.
+    pub(crate) fn begin_keep(&self) -> u64 {
+        let mut keep = self.keep.lock();
+        keep.generation += 1;
+        keep.on = true;
+        keep.generation
+    }
+
+    fn is_current(&self, keep: &Keep, generation: u64) -> bool {
+        keep.on && keep.generation == generation && !self.stopped()
+    }
+
+    /// The keep loop `generation` is still the one that should run.
+    pub(crate) fn keep_current(&self, generation: u64) -> bool {
+        self.is_current(&self.keep.lock(), generation)
+    }
+
+    /// Runs `start` unless the keep loop `generation` was ended meanwhile.
+    pub(crate) fn start_if_current(
+        &self,
+        generation: u64,
+        start: impl FnOnce() -> relay::R<()>,
+    ) -> relay::R<()> {
+        let keep = self.keep.lock();
+        if self.is_current(&keep, generation) {
+            start()?;
+        }
+        Ok(())
+    }
+
+    /// The front end asks for the watch (`on`) or not. Without a keep loop `run` does that; with one its watch stays
+    /// (a second one would stop it), and this returns the list to send the front end at once, if there is one yet.
+    pub(crate) fn front_end_watch(
+        &self,
+        on: bool,
+        run: impl FnOnce() -> relay::R<()>,
+    ) -> relay::R<Option<String>> {
+        let mut keep = self.keep.lock();
+        keep.wanted = on;
+        if !keep.on || self.stopped() {
+            run()?;
+            return Ok(None);
+        }
+        if !on {
+            return Ok(None);
+        }
+        match &*self.ls.lock() {
+            Ok(ls) => Ok(Some(ls.clone())),
+            Err(Some(why)) => Err(relay::failed(format!("ccrpc 不可用：{why}"))),
+            Err(None) => Ok(None),
+        }
+    }
+
+    /// Ends the keep loop: `stop_watch` stops its watch, then `resume` runs if the front end still wants one. The
+    /// cached list goes with it: nothing would keep it up to date.
+    pub(crate) fn end_keep(&self, stop_watch: impl FnOnce(), resume: impl FnOnce()) {
+        let mut keep = self.keep.lock();
+        keep.on = false;
+        keep.generation += 1;
+        stop_watch();
+        *self.ls.lock() = Err(None);
+        if keep.wanted {
+            resume();
+        }
+    }
+
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
     }
@@ -440,8 +538,8 @@ impl ConnectHub {
     }
 }
 
-/// The Connect methods only the daemon serves (`remote`, outside the method table, so the desktop app's
-/// commands and bindings stay as they are). `None`: not one of them.
+/// The Connect methods only remote clients call (`remote`, outside the method table, so the desktop app's commands
+/// and bindings stay as they are). `None`: not one of them.
 pub(crate) async fn dispatch(host: &Host, method: &str, args: Value) -> Option<CmdResult<Value>> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -488,24 +586,70 @@ pub(crate) async fn dispatch(host: &Host, method: &str, args: Value) -> Option<C
 
 impl Host {
     /// The Host's connection to `holder_id`: the live one it has, or a new one.
-    async fn connect_shared(&self, hub: &Arc<ConnectHub>, holder_id: String) -> CmdResult<String> {
+    pub(crate) async fn connect_shared(
+        &self,
+        hub: &Arc<ConnectHub>,
+        holder_id: String,
+    ) -> CmdResult<String> {
         let _one = hub.shared.lock().await;
         if let Some(conn) = hub.live_conn_for(&holder_id) {
             return Ok(conn);
         }
-        // claude was started again in this Pane: a ccrpc still attached must go first, a second attach is refused.
+        // claude was started again in this Pane, or the last connection is being disconnected: a ccrpc still attached
+        // must go first, a second attach is refused.
         let ended = hub.ended_conns_for(&holder_id);
-        if !ended.is_empty() {
-            for conn in &ended {
-                // An error here means it already exited.
-                let _ = self.ccrpc_disconnect(conn.clone()).await;
-            }
+        for conn in &ended {
+            // Replaced, which a client's window must not take for a failure.
+            (self.events)(HostEvent::CcrpcClosing { conn: conn.clone() });
+            // An error here means it already exited.
+            let _ = self.ccrpc_disconnect(conn.clone()).await;
+        }
+        let mut going = ended;
+        going.extend(hub.disconnecting_conns_for(&holder_id));
+        if !going.is_empty() {
             let hub = hub.clone();
-            tokio::task::spawn_blocking(move || hub.wait_gone(&ended, ENDED_CONN_WAIT))
+            tokio::task::spawn_blocking(move || hub.wait_gone(&going, ENDED_CONN_WAIT))
                 .await
                 .map_err(internal)?;
         }
-        self.ccrpc_connect(holder_id).await
+        self.attach(holder_id).await
+    }
+
+    /// The Host's connections as it folds them, as JSON: what a window that lost its own state starts from.
+    pub async fn connect_snapshot(&self) -> CmdResult<String> {
+        let states = self
+            .connect
+            .as_ref()
+            .map(|hub| hub.states())
+            .unwrap_or_default();
+        serde_json::to_string(&states).map_err(internal)
+    }
+
+    /// One call from a client on the LAN (`remote` methods only). The desktop's front end learns from these about
+    /// connections it did not start itself; its own calls never come through here.
+    pub async fn remote_call(&self, method: &str, args: Value) -> CmdResult<Value> {
+        if method == "ccrpc_disconnect"
+            && let Some(conn) = args["conn"].as_str()
+        {
+            (self.events)(HostEvent::CcrpcClosing {
+                conn: conn.to_string(),
+            });
+        }
+        let holder_id = (method == "connect_shared")
+            .then(|| args["holderId"].as_str().map(str::to_string))
+            .flatten();
+        let out = crate::dispatch(self, method, args, true).await;
+        if matches!(
+            method,
+            "ccrpc_new" | "ccrpc_resume" | "ccrpc_fork" | "connect_shared"
+        ) && let Ok(Value::String(conn)) = &out
+        {
+            (self.events)(HostEvent::CcrpcRemoteConn {
+                conn: conn.clone(),
+                holder_id,
+            });
+        }
+        out
     }
 }
 
@@ -825,6 +969,37 @@ mod tests {
         ended.sort();
         assert_eq!(ended, ["c10", "c9"]);
         assert_eq!(f.hub.live_conn_for("H3"), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_clients_exit_is_announced_as_deliberate() {
+        let f = fixture();
+        f.hub.register("c1", Some("H1".into()));
+        let hub = f.hub.clone();
+        let call = tokio::spawn(async move { hub.command("c1", json!({ "type": "exit" })).await });
+        let id = f.wrote().1["id"].clone();
+        f.line(json!({ "type": "response", "id": id, "command": "exit", "success": true }));
+        call.await.unwrap().unwrap();
+        assert!(
+            f.drain()
+                .iter()
+                .any(|e| matches!(e, HostEvent::CcrpcClosing { conn } if conn == "c1"))
+        );
+    }
+
+    #[test]
+    fn a_failed_fork_is_closing() {
+        let f = fixture();
+        f.hub.register("c1", None);
+        let closing = |f: &Fixture| {
+            f.drain()
+                .iter()
+                .any(|e| matches!(e, HostEvent::CcrpcClosing { .. }))
+        };
+        f.line(json!({ "type": "fork", "session_id": "s2" }));
+        assert!(!closing(&f));
+        f.line(json!({ "type": "fork", "error": { "code": "x", "message": "m" } }));
+        assert!(closing(&f));
     }
 
     #[test]

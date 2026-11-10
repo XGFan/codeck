@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Settings } from "lucide-react";
 import { Tabs } from "radix-ui";
 import { useEffect, useState } from "react";
@@ -153,6 +153,58 @@ const THEMES: { value: ThemePref; label: string }[] = [
   { value: "dark", label: "暗色" },
 ];
 
+/** 「局域网访问」: this Mac as a Host on the LAN. What it listens on follows the network: read again while shown. */
+function LanAccessField() {
+  const qc = useQueryClient();
+  const { data: status } = useQuery({
+    queryKey: queryKeys.lanStatus,
+    queryFn: () => api.lanStatus(),
+    refetchInterval: 5000,
+  });
+  const toggle = useMutation({
+    mutationFn: (on: boolean) => api.lanSetEnabled(on),
+    onSuccess: async (next) => {
+      // A refresh under way read the state before the switch.
+      await qc.cancelQueries({ queryKey: queryKeys.lanStatus });
+      qc.setQueryData(queryKeys.lanStatus, next);
+    },
+  });
+  const enabled = toggle.isPending ? toggle.variables : (status?.enabled ?? false);
+  const note = "text-[12px] text-secondary";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Segmented
+        label="局域网访问"
+        value={enabled}
+        options={[
+          { value: true, label: "开启" },
+          { value: false, label: "关闭" },
+        ]}
+        onChange={(on) => {
+          if (!toggle.isPending && on !== enabled) toggle.mutate(on);
+        }}
+        testId="lan-access"
+      />
+      <div className={note}>开启后，同一网络的设备无需验证即可连接这台 Mac 并操作 Session；关闭窗口不退出应用。</div>
+      {status?.enabled && (status.addresses.length > 0 || !status.error) && (
+        <div data-testid="lan-addresses" className={note}>
+          {status.addresses.length > 0 ? `地址：${status.addresses.join("、")}` : "没有可用的局域网地址。"}
+        </div>
+      )}
+      {status?.error && (
+        <div data-testid="lan-error" className="text-[12px] text-error">
+          {status.error}
+        </div>
+      )}
+      {toggle.error && (
+        <div data-testid="lan-toggle-error" className="text-[12px] text-error">
+          {errorText(toggle.error)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GeneralTab() {
   const { data: info } = useAppInfo();
   const theme = useThemePref();
@@ -182,6 +234,9 @@ function GeneralTab() {
             打开可以 Connect 的 Session 时自动 Connect；Disconnect 后要再次打开才会再连。
           </div>
         </div>
+      </Row>
+      <Row label="局域网访问" testId="set-lan-access">
+        <LanAccessField />
       </Row>
       <Row label="对话宽度" testId="set-conv-width">
         <ConvWidthField />

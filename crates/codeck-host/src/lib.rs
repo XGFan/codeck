@@ -6,6 +6,7 @@ pub mod ccrpc;
 pub mod commands;
 pub mod connect;
 pub mod events;
+pub mod lan;
 mod methods;
 pub mod prices;
 pub mod settings;
@@ -13,8 +14,12 @@ pub mod state;
 pub mod watcher;
 pub mod worker;
 
+#[cfg(test)]
+#[path = "../../codeck-core/tests/common/fixtures.rs"]
+mod fixtures;
+
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use codeck_core::{CoreResult, paths};
 
@@ -26,6 +31,7 @@ use crate::state::{AppState, open_engine};
 pub mod types {
     pub use crate::ccrpc::relay::{AnalyzerRecords, AnalyzerTest};
     pub use crate::ccrpc::{AnalyzerInfo, CcrpcInfo};
+    pub use crate::lan::LanStatus;
     pub use crate::settings::{LaunchRule, SidebarProject};
     pub use codeck_core::model::*;
 }
@@ -49,10 +55,15 @@ pub struct HostConfig {
     pub reveal_path: Option<PathAction>,
     /// `ccrpc_open_analyzer_records`; `None` = not available on this Host.
     pub open_path: Option<PathAction>,
-    /// Reduce ccrpc's lines to Connect state in the Host and keep `ccrpc ls --json --watch` running (the daemon,
-    /// ADR-0011): the `connect_*` / `ccrpc_ls` methods and `ConnectState` events. Off on the desktop app, whose
-    /// front end does this itself.
+    /// Reduce ccrpc's lines to Connect state in the Host (ADR-0011): the `connect_*` / `ccrpc_ls` methods and
+    /// `ConnectState` events. The desktop app's front end keeps its own state, but the Host folds there too, so that
+    /// turning LAN access on finds the connections it already has (ADR-0012).
     pub track_connect: bool,
+    /// Keep `ccrpc ls --json --watch` running from the start (the daemon). Not the desktop app: it runs a login shell,
+    /// which must wait for the first ccrpc command there; its watch runs while LAN access is on.
+    pub keep_ls_watch: bool,
+    /// Can serve the LAN when 「局域网访问」 says so (the desktop app; the daemon has its own listeners).
+    pub lan: Option<lan::LanConfig>,
     /// Download LiteLLM's price list at start (tests turn it off); the periodic refresh runs regardless.
     pub refresh_prices: bool,
 }
@@ -69,16 +80,21 @@ impl HostConfig {
             reveal_path: None,
             open_path: None,
             track_connect: false,
+            keep_ls_watch: false,
+            lan: None,
             refresh_prices: true,
         }
     }
 }
 
 pub struct Host {
+    /// What the methods, which only get `&self`, hand to the LAN listeners.
+    me: Weak<Host>,
     state: Arc<AppState>,
     ccrpc: ccrpc::CcrpcState,
     /// With `track_connect`.
     connect: Option<Arc<connect::ConnectHub>>,
+    lan: lan::LanService,
     events: EventSink,
     config: HostConfig,
 }
@@ -110,13 +126,17 @@ impl Host {
         let ccrpc = ccrpc::CcrpcState::new(config.ccrpc_logs.clone(), config.images.clone());
         let connect = config.track_connect.then(|| {
             let hub = connect::ConnectHub::new(events.clone(), ccrpc.writer());
-            ccrpc.keep_watching(hub.clone(), events.clone());
+            if config.keep_ls_watch {
+                ccrpc.keep_watching(hub.clone(), events.clone());
+            }
             hub
         });
-        Ok(Arc::new(Host {
+        Ok(Arc::new_cyclic(|me| Host {
+            me: me.clone(),
             state,
             ccrpc,
             connect,
+            lan: lan::LanService::default(),
             events,
             config,
         }))

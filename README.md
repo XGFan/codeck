@@ -9,7 +9,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 - **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork / 转入后台复制的历史不重复计算），统计页汇总总额与 Session 排行（按 Cost）。
 - **Connect**：ToH clay 里装了 ccrpc 插件的 Session，打开时自动 Connect（可在设置里关掉），或在标题栏的「···」菜单里点「Connect」，之后可以直接发提示词（可粘贴截图，图片作为一整块留在光标处，可拖动换位置、悬停预览）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill，输入框里的命令高亮，`/add-dir` 补全目录、`@` 补全文件，支持 `../`）、忙时插话（和终端里一样进 Claude Code 的队列）、回复前按 Esc 撤回刚发的提示词（和终端里一样从对话里拿掉、文字回到输入框）、作答审批 / 提问（也可「先聊聊」）/ 选择、切换权限模式、模型与思考等级、停止后台任务、回退到 Main Line 上某条提示词之前（悬停提示词点「回退」或输入 `/rewind`（`/checkpoint`），可选恢复代码与对话、只恢复对话或只恢复代码）；在侧栏的 Session 行上右键重命名（发送 `/rename`，空闲时可用）；「关闭」结束 Session 并关掉它的 Pane；也可以在侧栏组头点「+」、在 Project 或子 Project 上右键或按 ⌘N 选 Project 新建 Session，或把已结束的 Session 在新 Pane 里 Resume（`claude --resume`）后接着 Connect，或从任一 Session 的某条提示词之前（或整个 Session）Fork 出新 Session（悬停提示词点「Fork」或「···」菜单里的「Fork」，可选只恢复对话或恢复代码与对话），并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：默认看本周期（自定义每周重置时间）的用量，可切到月份或最近 7 / 30 / 90 天，周期和月份可前后翻；输入、输出 token 与缓存命中率，每日用量（全部 / 输入 / 输出 / Cost，后三者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
-- **iPhone**：原生 App 经局域网连到运行 `codeck-host` 的 Host（Mac 或 Linux），浏览、搜索 Session，阅读 Transcript，并 Connect 运行中的 Session 作答审批、继续对话（见下文「iPhone 与 Host」）。
+- **iPhone**：原生 App 经局域网连到打开了「局域网访问」的 CoDeck，或运行 `codeck-host` 的 Host（Mac 或 Linux），浏览、搜索 Session，阅读 Transcript，并 Connect 运行中的 Session 作答审批、继续对话（见下文「iPhone 与 Host」）。
 
 ## 快捷键
 
@@ -22,7 +22,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | ⌘N | 新建 Session（选已添加的 Project，⌘O 选其他目录） |
 | ↑ / ↓ | 在 Session 列表中切换（列表获得焦点时） |
 | ⌃⌘L | 收起 / 展开 Session 列表 |
-| ⌘, | 设置（界面主题、自动 Connect、对话宽度、数据目录、ccrpc、格式兼容性诊断、重建索引） |
+| ⌘, | 设置（界面主题、自动 Connect、局域网访问、对话宽度、数据目录、ccrpc、格式兼容性诊断、重建索引） |
 | Esc | 关闭搜索、查找或 Subagent 面板；Connect 后选回退点时（没有这些要关）退出选回退点 |
 | Enter / ⌘Enter | Connect 后：空闲发送；忙时插话（当前工具调用结束后送达）/ 中断本轮立即发送（同终端里的 ctrl+enter）；等待作答时把焦点移到请求卡片 |
 | ↑（光标在输入框第一行） | Connect 后：忙时把排队的消息取回输入框编辑（同终端里的 ↑），放在已有内容前面；从 CoDeck 插话时带的图片一并取回 |
@@ -43,7 +43,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | ccrpc 日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.codeck/ccrpc/` |
 | 输入区粘贴的图片 | `~/Library/Caches/dev.joy.codeck/images/` |
 
-应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 Cost；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）。
+应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 Cost；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）。默认不监听任何端口，只有打开「局域网访问」时才在局域网地址上接受连接（见「iPhone 与 Host」）。
 
 索引只镜像数据目录当前内容：源文件被删，对应 Session 也随之消失；升级后索引格式变化会自动重建（[ADR-0003](docs/adr/0003-index-is-disposable-mirror.md)）。索引放在 Caches 中，不进入 Time Machine 备份。
 
@@ -109,11 +109,13 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 
 ## iPhone 与 Host（局域网）
 
-iPhone App 连到一台 **Host**（运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session；也能在 Host 上新建 Session、Resume 已结束的 Session、Fork 整个 Session。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
+iPhone App 连到一台 **Host**（打开了「局域网访问」的 CoDeck，或运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session；也能在 Host 上新建 Session、Resume 已结束的 Session、Fork 整个 Session。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
 
 **没有鉴权**：daemon 默认只监听本机局域网网卡（名字以 `en`、`eth`、`wl` 开头）的私网 IPv4 地址，不含 VPN、虚拟机与容器网桥，其他网卡要用 `--listen` 指定；默认的监听地址随网络变化增减，daemon 不用重启。它只接受同一子网的来源，只认以 IP 访问的请求，拒绝来自网页的跨源请求；同一局域网里能访问它的设备都能读 Session、在 Host 上新建 Session 和 Connect。只在可信网络里运行，连着酒店、咖啡馆等公共 Wi-Fi 时不要开着它。
 
-启动 daemon（与桌面版的索引、设置、日志分开，状态目录默认 macOS `~/Library/Application Support/dev.joy.codeck.host`、Linux `$XDG_STATE_HOME/codeck`）：
+在 Mac 上用桌面版当 Host：打开「设置 › 通用 › 局域网访问」，把设置里显示的地址填进 iPhone。桌面窗口和 iPhone 共用同一个 Connect，都能操作；打开期间关窗只隐藏，⌘Q 才退出（[ADR-0012](docs/adr/0012-desktop-app-is-the-lan-host.md)）。上面的安全说明同样适用，应用也不阻止系统休眠，Mac 睡着后 iPhone 连不上。同一台 Mac 上不要同时开着它和 daemon：两者用同一个端口，而且是两个 Host，一个 Session 同时只能被其中一个 Connect。
+
+Linux 或不想开桌面版时，启动 daemon（与桌面版的索引、设置、日志分开，状态目录默认 macOS `~/Library/Application Support/dev.joy.codeck.host`、Linux `$XDG_STATE_HOME/codeck`）：
 
 ```sh
 pnpm build:web                                   # Transcript 页 → dist-web/
@@ -171,9 +173,9 @@ crates/transcript/ 解析库：容错解析、对话组装、组装用的显示�
 crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断；应用层的 IPC 类型
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
 crates/codeck-cli/    codeck 命令行（可执行文件 codeck）：给 AI 用，查询 Session，新建 Session（ADR-0013）
-crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态；命令表只定义一次
-crates/codeck-daemon/ headless daemon（可执行文件 codeck-host）：以 HTTP + WebSocket 对局域网提供命令表的 remote 部分与 Transcript 页
-src-tauri/        Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件
+crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态、局域网 HTTP + WebSocket 服务（命令表的 remote 部分与 Transcript 页）；命令表只定义一次
+crates/codeck-daemon/ headless daemon（可执行文件 codeck-host）：命令行外壳，一直提供上述服务
+src-tauri/        Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件；局域网访问打开时也提供上述服务
 src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock / remote 三种实现）；transcript.html 是给 iPhone 的只读 Transcript 页
 ios/              iPhone App（SwiftUI；xcodegen 的 project.yml）
 e2e/              Playwright 用例（mock）；e2e-host/ 为真实后端用例

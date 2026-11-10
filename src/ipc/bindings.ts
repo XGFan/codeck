@@ -80,14 +80,22 @@ export const commands = {
 	/**  The connection's log directory, `None` once its ccrpc has exited. */
 	ccrpcLogDir: (conn: string) => __TAURI_INVOKE<string | null>("ccrpc_log_dir", { conn }),
 	ccrpcSaveImage: (base64: string, ext: string) => __TAURI_INVOKE<string>("ccrpc_save_image", { base64, ext }),
+	/**  The Host's connections as it folds them: a JSON array of Connect states, `[]` on a Host that does not. */
+	connectSnapshot: () => __TAURI_INVOKE<string>("connect_snapshot"),
+	/**  「局域网访问」: whether it is on, the addresses being served and why one cannot be. */
+	lanStatus: () => __TAURI_INVOKE<LanStatus>("lan_status"),
+	/**  Turns LAN access on or off at once and saves that; returns the state after. */
+	lanSetEnabled: (on: boolean) => __TAURI_INVOKE<LanStatus>("lan_set_enabled", { on }),
 };
 
 /** Events */
 export const events = {
+	ccrpcClosingEvent: makeEvent<CcrpcClosingEvent>("ccrpc-closing-event"),
 	ccrpcExitEvent: makeEvent<CcrpcExitEvent>("ccrpc-exit-event"),
 	ccrpcLineEvent: makeEvent<CcrpcLineEvent>("ccrpc-line-event"),
 	ccrpcLsEndedEvent: makeEvent<CcrpcLsEndedEvent>("ccrpc-ls-ended-event"),
 	ccrpcLsEvent: makeEvent<CcrpcLsEvent>("ccrpc-ls-event"),
+	ccrpcRemoteConnEvent: makeEvent<CcrpcRemoteConnEvent>("ccrpc-remote-conn-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
@@ -199,6 +207,11 @@ export type BranchPoint = {
 	options: BranchOption[],
 };
 
+/**  This connection is being closed on purpose (by a client on the LAN, or replaced): its exit is no failure. */
+export type CcrpcClosingEvent = {
+	conn: string,
+};
+
 /**  A connection's ccrpc exited; `stderr` is its tail (at most 4000 characters). */
 export type CcrpcExitEvent = {
 	conn: string,
@@ -230,6 +243,12 @@ export type CcrpcLsEndedEvent = {
 /**  `ccrpc ls --json --watch` printed the list again: its JSON array as printed (the front end parses it). */
 export type CcrpcLsEvent = {
 	ls: string,
+};
+
+/**  A client on the LAN started or took up this connection: the window adopts it. */
+export type CcrpcRemoteConnEvent = {
+	conn: string,
+	holderId: string | null,
 };
 
 export type DailyModelTokens = {
@@ -397,6 +416,15 @@ export type JumpTarget = {
 	inSubagent: boolean,
 	inAbandonedBranch: boolean,
 	needsHidden: boolean,
+};
+
+/**  「局域网访问」 as the settings page shows it. */
+export type LanStatus = {
+	enabled: boolean,
+	/**  `address:port`, each being listened on. */
+	addresses: string[],
+	/**  Why an address that should be listened on is not. */
+	error: string | null,
 };
 
 /**  「设置 › ccrpc › 启动参数」: `args` (shell-style words) go to claude when a Session starts in `dir` or below. */

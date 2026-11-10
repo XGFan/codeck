@@ -11,12 +11,13 @@
 // opens `fork` (before a prompt), `fork-session` (the whole Session), `fork-warning` (restoring code: the rewind's ⚠
 // confirm card first) or `fork-failed` (once a test set `forkFails`). A recording whose meta has `on_request`
 // stands for a Session other tests need out of `ccrpc ls`: it is listed once a test (or the console) calls
-// `__cvCcrpc.list(name)`.
+// `__cvCcrpc.list(name)`. `__cvCcrpc.remoteConn(name)` and `remoteDisconnect(conn)` stand for an iPhone on the LAN; what
+// has to be there before the app starts (`snapshot`, `lan`) comes from an init script's `window.__cvCcrpcPreset`.
 
 import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
 import { editable } from "@/features/connect/queue";
 import type { Api, Unlisten } from "./api";
-import type { AnalyzerInfo, AppError, LaunchRule } from "./bindings";
+import type { AnalyzerInfo, AppError, LanStatus, LaunchRule } from "./bindings";
 
 /** A rejected IPC call as the backend rejects it (`AppError`, not an `Error`). */
 export const appError = (code: AppError["code"], message: string): AppError => ({ code, message });
@@ -102,6 +103,8 @@ interface Conn {
   queue?: string[];
   /** What follows `ready` waits this long (claude still starting). */
   startMs?: number;
+  /** Started by a client on the LAN: a Connect to the same Holder gets this connection. */
+  remote?: boolean;
 }
 
 /** What `/model <alias>` sets in the mock: the display name ccrpc reports at once, and its effort mark. */
@@ -120,6 +123,8 @@ const lineCbs = new Set<LineCb>();
 const exitCbs = new Set<ExitCb>();
 const lsCbs = new Set<LsCb>();
 const lsEndedCbs = new Set<(message: string) => void>();
+const remoteConnCbs = new Set<(conn: string, holderId: string | null) => void>();
+const closingCbs = new Set<(conn: string) => void>();
 const conns = new Map<string, Conn>();
 /** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
 const closedPanes = new Set<string>();
@@ -165,6 +170,16 @@ export interface CcrpcProbe {
   failNext?: string;
   /** Set by a test: Claude Code runs a monitor of its own (not in `get_tasks`), so `exit` asks about it. */
   monitorRunning?: boolean;
+  /** 「局域网访问」 as the mock Host has it (a test's change shows at the next refresh). */
+  lan: LanStatus;
+  /** Set by a test: the next `lanSetEnabled` is refused with this. */
+  lanFails?: string;
+  /** What `connectSnapshot` lists: the Host's connections, as `HostConn`s. */
+  snapshot: Record<string, unknown>[];
+  /** A client on the LAN starts a connection replaying the recording `name`; returns its id. */
+  remoteConn: (name: string) => string;
+  /** A client on the LAN Disconnects `conn`: the closing event, then its exit. */
+  remoteDisconnect: (conn: string) => void;
 }
 const probe: CcrpcProbe = {
   sent: [],
@@ -186,12 +201,32 @@ const probe: CcrpcProbe = {
   emit: (msg) => {
     for (const id of conns.keys()) emit(id, msg as unknown as InMsg);
   },
+  lan: { enabled: false, addresses: [], error: null },
+  snapshot: [],
+  remoteConn: (name) => {
+    const fx = fixtures.find((f) => f.name === name);
+    if (!fx) throw new Error(`没有 ${name} 的录制`);
+    const id = open(fx);
+    conns.get(id)!.remote = true;
+    // After the replay's first events: the Host does not promise this comes first.
+    later(() => remoteConnCbs.forEach((cb) => cb(id, fx.ls.holder_id)));
+    return id;
+  },
+  remoteDisconnect: (id) => {
+    const c = conns.get(id);
+    if (!c || c.closed) return;
+    c.closed = true;
+    closingCbs.forEach((cb) => cb(id));
+    later(() => exitCbs.forEach((cb) => cb(id, 0, "")));
+  },
 };
 
 declare global {
   interface Window {
     /** E2E spy on the mock ccrpc. */
     __cvCcrpc?: CcrpcProbe;
+    /** Set by an init script: what the probe starts with. */
+    __cvCcrpcPreset?: Partial<CcrpcProbe>;
   }
 }
 
@@ -385,6 +420,11 @@ type CcrpcApi = Pick<
   | "onCcrpcExit"
   | "onCcrpcLs"
   | "onCcrpcLsEnded"
+  | "connectSnapshot"
+  | "onCcrpcRemoteConn"
+  | "onCcrpcClosing"
+  | "lanStatus"
+  | "lanSetEnabled"
 >;
 
 /** The Session whose Resume fails in the mock: claude cannot find it (`resume-failed.jsonl`). */
@@ -415,8 +455,11 @@ function analyzerInfo(): AnalyzerInfo {
 
 const ANALYSES_DIR = "/mock/.local/share/ccrpc/analyses";
 
+/** Where the mock app listens with 「局域网访问」 on. */
+const MOCK_LAN_ADDRESS = "192.168.2.50:38471";
+
 export function createMockCcrpc(): CcrpcApi {
-  window.__cvCcrpc = probe;
+  window.__cvCcrpc = Object.assign(probe, window.__cvCcrpcPreset);
   return {
     ccrpcInfo: async () => ({
       ccrpcPath: "/mock/bin/ccrpc",
@@ -489,6 +532,8 @@ export function createMockCcrpc(): CcrpcApi {
     ccrpcConnect: async (holderId) => {
       const fx = fixtures.find((f) => f.ls.holder_id === holderId);
       if (!fx) throw appError("internal", `没有 ${holderId} 的录制`);
+      const shared = [...conns].find(([, c]) => c.remote && !c.closed && c.fx === fx)?.[0];
+      if (shared) return shared;
       const id = open(fx);
       // Tauri does not promise the command's answer before the connection's first events.
       if (fx.connectDelayMs) await new Promise((r) => setTimeout(r, fx.connectDelayMs));
@@ -569,5 +614,17 @@ export function createMockCcrpc(): CcrpcApi {
     onCcrpcExit: (cb) => subscribe(exitCbs, cb),
     onCcrpcLs: (cb) => subscribe(lsCbs, cb),
     onCcrpcLsEnded: (cb) => subscribe(lsEndedCbs, cb),
+    connectSnapshot: async () => JSON.stringify(probe.snapshot),
+    onCcrpcRemoteConn: (cb) => subscribe(remoteConnCbs, cb),
+    onCcrpcClosing: (cb) => subscribe(closingCbs, cb),
+    lanStatus: async () => probe.lan,
+    lanSetEnabled: async (on) => {
+      if (probe.lanFails) {
+        const why = probe.lanFails;
+        probe.lanFails = undefined;
+        throw appError("internal", why);
+      }
+      return (probe.lan = { enabled: on, addresses: on ? [MOCK_LAN_ADDRESS] : [], error: null });
+    },
   };
 }

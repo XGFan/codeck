@@ -1,6 +1,6 @@
-//! What the Host reports. The desktop app turns each one into its typed tauri event; the daemon sends
+//! What the Host reports. The desktop app turns each one into its typed tauri event; clients on the LAN get
 //! `{event: name(), payload: payload()}`, the same names and payloads. `ConnectState` / `ConnectRemoved`
-//! come only from a Host that tracks Connect state (the daemon); they have no tauri event.
+//! come only from a Host that tracks Connect state, for its remote clients; they have no tauri event.
 
 use std::sync::Arc;
 
@@ -29,10 +29,20 @@ pub enum HostEvent {
     CcrpcLs { ls: String },
     /// `ccrpc ls --json --watch` ended by itself; `message` is why.
     CcrpcLsEnded { message: String },
+    /// The watch the Host keeps ended by itself: remote clients get it as `CcrpcLsEnded`; the desktop's window does
+    /// not, since it would stop listening and the Host starts the watch again by itself.
+    CcrpcLsKeptEnded { message: String },
     /// A connection's Connect state changed (only with `HostConfig::track_connect`; the whole state).
     ConnectState(Box<crate::connect::ConnState>),
     /// A connection's ccrpc exited and its state is gone (after its last `ConnectState`, with `procExit`).
     ConnectRemoved { conn: String },
+    /// A remote client started or took up this connection: the desktop's front end adopts it (ADR-0012).
+    CcrpcRemoteConn {
+        conn: String,
+        holder_id: Option<String>,
+    },
+    /// This connection is being closed on purpose (by a remote client, or replaced): its exit is no failure.
+    CcrpcClosing { conn: String },
 }
 
 pub type EventSink = Arc<dyn Fn(HostEvent) + Send + Sync>;
@@ -48,9 +58,13 @@ impl HostEvent {
             HostEvent::CcrpcLine { .. } => "ccrpc-line-event",
             HostEvent::CcrpcExit { .. } => "ccrpc-exit-event",
             HostEvent::CcrpcLs { .. } => "ccrpc-ls-event",
-            HostEvent::CcrpcLsEnded { .. } => "ccrpc-ls-ended-event",
+            HostEvent::CcrpcLsEnded { .. } | HostEvent::CcrpcLsKeptEnded { .. } => {
+                "ccrpc-ls-ended-event"
+            }
             HostEvent::ConnectState(_) => "connect-state-event",
             HostEvent::ConnectRemoved { .. } => "connect-removed-event",
+            HostEvent::CcrpcRemoteConn { .. } => "ccrpc-remote-conn-event",
+            HostEvent::CcrpcClosing { .. } => "ccrpc-closing-event",
         }
     }
 
@@ -66,9 +80,16 @@ impl HostEvent {
                 Ok(json!({ "conn": conn, "code": code, "stderr": stderr }))
             }
             HostEvent::CcrpcLs { ls } => Ok(json!({ "ls": ls })),
-            HostEvent::CcrpcLsEnded { message } => Ok(json!({ "message": message })),
+            HostEvent::CcrpcLsEnded { message } | HostEvent::CcrpcLsKeptEnded { message } => {
+                Ok(json!({ "message": message }))
+            }
             HostEvent::ConnectState(s) => serde_json::to_value(s),
-            HostEvent::ConnectRemoved { conn } => Ok(json!({ "conn": conn })),
+            HostEvent::ConnectRemoved { conn } | HostEvent::CcrpcClosing { conn } => {
+                Ok(json!({ "conn": conn }))
+            }
+            HostEvent::CcrpcRemoteConn { conn, holder_id } => {
+                Ok(json!({ "conn": conn, "holderId": holder_id }))
+            }
         };
         v.unwrap_or(Value::Null)
     }

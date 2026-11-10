@@ -1850,3 +1850,81 @@ test("回退：没有代码改动时只能恢复对话；输入框已有内容�
   await expect(rowOf(page, "91d5-u0")).toHaveAttribute("data-rewound", "true");
   await expect(page.getByTestId("transcript").getByTestId("rewind-button")).toHaveCount(0);
 });
+
+const remoteConn = (page: Page, name: string) => page.evaluate((n) => window.__cvCcrpc!.remoteConn(n), name);
+
+test("iPhone 发起的连接：桌面显示状态、能打字", async ({ page }) => {
+  await page.goto("/");
+  await open(page, TOOLS);
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+
+  await remoteConn(page, "tools");
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  await expect(state(page)).toContainText("空闲");
+  await inMenu(page, "connect-disconnect", (b) => expect(b).toBeVisible());
+
+  await send(page, "MOCK-TOOL please");
+  await expect(page.getByTestId("permission-card")).toBeVisible();
+  expect(await lastSent(page, "prompt")).toMatchObject({ text: "MOCK-TOOL please" });
+});
+
+test("iPhone Disconnect：桌面不留「ccrpc 已退出」卡片，可再次 Connect", async ({ page }) => {
+  await page.goto("/");
+  await open(page, TOOLS);
+  const conn = await remoteConn(page, "tools");
+  await expect(state(page)).toContainText("空闲");
+
+  await page.evaluate((c) => window.__cvCcrpc!.remoteDisconnect(c), conn);
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(page.getByText("ccrpc 已退出")).toHaveCount(0);
+  await inMenu(page, "connect-button", (b) => expect(b).toBeEnabled());
+});
+
+test("打开窗口时认领 Host 上的连接：状态和等待作答的卡片都在", async ({ page }) => {
+  await page.addInitScript(
+    (snapshot) => (window.__cvCcrpcPreset = { snapshot }),
+    [
+      {
+        conn: "c3",
+        holderId: "m8ded9f28b056",
+        sessionId: "a7c63e92-0008-4000-8000-000000000008",
+        cwd: "/work/homelab",
+        claudeVersion: "2.1.0",
+        ready: true,
+        state: "waiting",
+        waiting: null,
+        mode: "manual",
+        model: null,
+        effort: null,
+        contextTokens: null,
+        requests: [
+          {
+            type: "permission_request",
+            request_id: "toolu_snap",
+            tool_name: "Bash",
+            input: { command: "ls" },
+            agent_id: null,
+            options: [
+              { label: "Yes", meaning: "allow" },
+              { label: "No", meaning: "deny" },
+            ],
+          },
+        ],
+        progress: null,
+        queue: [],
+        tasks: [],
+        lastTurn: null,
+        procExit: null,
+        sessionExited: false,
+        notices: [],
+        feedbackDraft: null,
+        fork: null,
+        disconnected: false,
+      },
+    ],
+  );
+  await page.goto("/");
+  await open(page, TOOLS);
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  await expect(page.getByTestId("permission-card")).toBeVisible();
+});

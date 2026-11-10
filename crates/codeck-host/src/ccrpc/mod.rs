@@ -84,17 +84,20 @@ impl CcrpcState {
     }
 
     /// Keeps `ccrpc ls --json --watch` running for `hub` (started again after it ends or cannot start, waiting
-    /// longer each time it failed without a list), its lists also as events, until `hub` is stopped.
+    /// longer each time it failed without a list), its lists also as events, until `hub` is stopped or
+    /// [`Self::stop_keeping`].
     pub(crate) fn keep_watching(&self, hub: Arc<ConnectHub>, events: EventSink) {
         let cell = self.0.clone();
+        let generation = hub.begin_keep();
         std::thread::spawn(move || {
             let mut wait = LS_RETRY_MIN;
-            while !hub.stopped() {
+            while hub.keep_current(generation) {
                 let listed = Arc::new(AtomicBool::new(false));
                 let (ended_tx, ended) = mpsc::channel::<()>();
                 let sink: LsSink = {
                     let (hub, events, listed) = (hub.clone(), events.clone(), listed.clone());
                     Arc::new(move |o| match o {
+                        _ if !hub.keep_current(generation) => {}
                         LsOut::List(ls) => {
                             listed.store(true, Ordering::SeqCst);
                             hub.set_ls(Ok(ls.clone()));
@@ -102,17 +105,22 @@ impl CcrpcState {
                         }
                         LsOut::Ended(message) => {
                             hub.set_ls(Err(message.clone()));
-                            events(HostEvent::CcrpcLsEnded { message });
+                            events(HostEvent::CcrpcLsKeptEnded { message });
                             let _ = ended_tx.send(());
                         }
                     })
                 };
-                match cell.get().and_then(|app| app.watch_sessions(true, sink)) {
-                    // Until it ends (or is stopped: the sink is dropped).
+                // Setting up may run a login shell: outside the lock of `start_if_current`.
+                let started = cell.get().and_then(|app| {
+                    hub.start_if_current(generation, || app.watch_sessions(true, sink))
+                });
+                match started {
+                    // Until it ends (or is stopped, or was not started: the sink is dropped).
                     Ok(()) => {
                         let _ = ended.recv();
                     }
-                    Err(e) => hub.set_ls(Err(e.message)),
+                    Err(e) if hub.keep_current(generation) => hub.set_ls(Err(e.message)),
+                    Err(_) => {}
                 }
                 if listed.load(Ordering::SeqCst) {
                     wait = LS_RETRY_MIN;
@@ -122,6 +130,43 @@ impl CcrpcState {
             }
         });
     }
+
+    /// Ends [`Self::keep_watching`]: its watch stops, and the front end's starts again if it still wants one.
+    pub(crate) async fn stop_keeping(&self, hub: Arc<ConnectHub>, events: EventSink) {
+        let cell = self.0.clone();
+        let done = tokio::task::spawn_blocking(move || {
+            // Under `end_keep`'s lock, like the loop's start. No app yet: nothing was started, and the loop's setup
+            // starts nothing once its generation is over.
+            hub.end_keep(
+                || {
+                    if let Some(app) = cell.app.get() {
+                        let _ = app.watch_sessions(false, ls_sink(events.clone()));
+                    }
+                },
+                || {
+                    if let Some(app) = cell.app.get()
+                        && let Err(e) = app.watch_sessions(true, ls_sink(events.clone()))
+                    {
+                        events(HostEvent::CcrpcLsEnded { message: e.message });
+                    }
+                },
+            );
+        })
+        .await;
+        if let Err(e) = done {
+            tracing::warn!("stopping the ls watch failed: {e}");
+        }
+    }
+}
+
+/// `ccrpc ls --json --watch`'s output, as Host events.
+fn ls_sink(events: EventSink) -> LsSink {
+    Arc::new(move |o| {
+        events(match o {
+            LsOut::List(ls) => HostEvent::CcrpcLs { ls },
+            LsOut::Ended(message) => HostEvent::CcrpcLsEnded { message },
+        })
+    })
 }
 
 fn init(paths: &Paths) -> relay::R<App> {
@@ -356,17 +401,30 @@ impl Host {
     /// itself as `CcrpcLsEndedEvent`. Starting again restarts it (the current list comes at once).
     pub async fn ccrpc_watch_sessions(&self, on: bool) -> CmdResult<()> {
         let events = self.events.clone();
-        let sink: LsSink = Arc::new(move |o| {
-            events(match o {
-                LsOut::List(ls) => HostEvent::CcrpcLs { ls },
-                LsOut::Ended(message) => HostEvent::CcrpcLsEnded { message },
-            })
-        });
-        self.with_ccrpc(move |app| app.watch_sessions(on, sink))
-            .await
+        let sink = ls_sink(events.clone());
+        let hub = self.connect.clone();
+        self.with_ccrpc(move |app| {
+            let Some(hub) = hub else {
+                return app.watch_sessions(on, sink);
+            };
+            if let Some(ls) = hub.front_end_watch(on, || app.watch_sessions(on, sink))? {
+                events(HostEvent::CcrpcLs { ls });
+            }
+            Ok(())
+        })
+        .await
     }
 
+    /// With Connect state, the connection the Host already has to `holder_id`, whoever started it.
     pub async fn ccrpc_connect(&self, holder_id: String) -> CmdResult<String> {
+        match self.connect.clone() {
+            Some(hub) => self.connect_shared(&hub, holder_id).await,
+            None => self.attach(holder_id).await,
+        }
+    }
+
+    /// `ccrpc attach`: a new connection to `holder_id`.
+    pub(crate) async fn attach(&self, holder_id: String) -> CmdResult<String> {
         let sink = sink(&self.events, self.connect.as_ref());
         let holder = holder_id.clone();
         let conn = self

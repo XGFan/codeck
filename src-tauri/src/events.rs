@@ -47,3 +47,17 @@ pub struct CcrpcExitEvent {
     pub code: Option<i32>,
     pub stderr: String,
 }
+
+/// A client on the LAN started or took up this connection: the window adopts it.
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CcrpcRemoteConnEvent {
+    pub conn: String,
+    pub holder_id: Option<String>,
+}
+
+/// This connection is being closed on purpose (by a client on the LAN, or replaced): its exit is no failure.
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct CcrpcClosingEvent {
+    pub conn: String,
+}

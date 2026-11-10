@@ -79,5 +79,10 @@ export function createRealApi(): Api {
         cb(ls);
       }),
     onCcrpcLsEnded: (cb) => events.ccrpcLsEndedEvent.listen(({ payload }) => cb(payload.message)),
+    connectSnapshot: commands.connectSnapshot,
+    onCcrpcRemoteConn: (cb) => events.ccrpcRemoteConnEvent.listen(({ payload }) => cb(payload.conn, payload.holderId)),
+    onCcrpcClosing: (cb) => events.ccrpcClosingEvent.listen(({ payload }) => cb(payload.conn)),
+    lanStatus: commands.lanStatus,
+    lanSetEnabled: commands.lanSetEnabled,
   };
 }

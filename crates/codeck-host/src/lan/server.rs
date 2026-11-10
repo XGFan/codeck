@@ -1,6 +1,6 @@
 //! The HTTP + WebSocket face of the Host: `/health`, `POST /v1/rpc`, `GET /v1/events`, `/web/*`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,21 +14,21 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use codeck_core::model::{AppError, ErrorCode};
-use codeck_host::{EventSink, Host, HostEvent, dispatch};
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use crate::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
+use super::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
+use crate::{EventSink, Host, HostEvent};
 
 /// Bumped only on incompatible changes to the methods, events or envelopes.
 pub const API_VERSION: u32 = 1;
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
 /// Events a slow client may fall behind by before it is dropped (it resyncs on reconnect).
 const EVENT_BACKLOG: usize = 1024;
-/// The Transcript page's policy: only this daemon's scripts, styles, images and connections (the Shiki
+/// The Transcript page's policy: only this Host's scripts, styles, images and connections (the Shiki
 /// worker is a blob), never framed.
 const WEB_CSP: &str = "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -38,16 +38,51 @@ pub struct Ctx {
     pub events: broadcast::Sender<Utf8Bytes>,
     pub allowed_origins: Arc<Vec<String>>,
     pub web_dir: PathBuf,
+    pub gate: Gate,
+}
+
+/// Whether what is already connected is still served. A stopped listener's upgraded WebSockets and the requests
+/// reaching it meanwhile are tasks of their own and would go on, so turning LAN access off closes this too. The
+/// daemon's never closes.
+#[derive(Clone, Default)]
+pub struct Gate(watch::Sender<bool>);
+
+impl Gate {
+    pub fn close(&self) {
+        // Not `send`, which fails while no one is subscribed.
+        self.0.send_replace(true);
+    }
+
+    pub fn is_closed(&self) -> bool {
+        *self.0.borrow()
+    }
+
+    /// Resolves once closed, at once if already.
+    pub async fn closed(&self) {
+        let mut rx = self.0.subscribe();
+        // Fails only without a sender, and `self` is one.
+        let _ = rx.wait_for(|closed| *closed).await;
+    }
 }
 
 /// The broadcast channel the WebSocket clients read, and the Host's sink writing to it: every event as
 /// `{event, payload}`, except ccrpc's raw lines and exits (remote clients get the Connect state instead:
-/// `connect-state-event`, `connect-removed-event`).
+/// `connect-state-event`, `connect-removed-event`) and what only tells the desktop's front end about a remote
+/// client's connections.
 pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
     let (tx, _) = broadcast::channel(EVENT_BACKLOG);
     let sink_tx = tx.clone();
     let sink: EventSink = Arc::new(move |e: HostEvent| {
-        if matches!(e, HostEvent::CcrpcLine { .. } | HostEvent::CcrpcExit { .. }) {
+        // On the desktop app most of the time no one is listening: not worth serializing every event for.
+        if sink_tx.receiver_count() == 0
+            || matches!(
+                e,
+                HostEvent::CcrpcLine { .. }
+                    | HostEvent::CcrpcExit { .. }
+                    | HostEvent::CcrpcRemoteConn { .. }
+                    | HostEvent::CcrpcClosing { .. }
+            )
+        {
             return;
         }
         let msg = json!({ "event": e.name(), "payload": e.payload() }).to_string();
@@ -61,8 +96,8 @@ pub struct Serving {
     port: u16,
     router: Box<dyn Fn(Subnet) -> Router + Send>,
     tasks: HashMap<Subnet, JoinHandle<()>>,
-    /// Could not be bound at the last look: said once, tried again at each.
-    failed: HashSet<Subnet>,
+    /// Could not be bound at the last look, and why: logged once, tried again at each.
+    failed: HashMap<Subnet, String>,
 }
 
 impl Serving {
@@ -71,7 +106,7 @@ impl Serving {
             port,
             router,
             tasks: HashMap::new(),
-            failed: HashSet::new(),
+            failed: HashMap::new(),
         }
     }
 
@@ -106,7 +141,7 @@ impl Serving {
             }
             keep
         });
-        self.failed.retain(|s| wanted.contains(s));
+        self.failed.retain(|s, _| wanted.contains(s));
         for &s in wanted {
             if self.tasks.contains_key(&s) {
                 continue;
@@ -116,12 +151,45 @@ impl Serving {
                     self.failed.remove(&s);
                 }
                 Err(e) => {
-                    if self.failed.insert(s) {
+                    let why = if e.kind() == std::io::ErrorKind::AddrInUse {
+                        format!("{}:{} 已被占用", s.addr, self.port)
+                    } else {
+                        format!("监听不了 {}:{}：{e}", s.addr, self.port)
+                    };
+                    if self.failed.insert(s, why).is_none() {
                         tracing::warn!("cannot listen on {}:{}: {e}", s.addr, self.port);
                     }
                 }
             }
         }
+    }
+
+    /// Stops every listener; their port is free when this returns.
+    pub async fn stop(&mut self) {
+        let tasks: Vec<_> = self.tasks.drain().map(|(_, task)| task).collect();
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+    }
+
+    /// The `address:port`s being listened on.
+    pub fn listening(&self) -> Vec<String> {
+        let mut addrs: Vec<_> = self.tasks.keys().map(|s| s.addr).collect();
+        addrs.sort();
+        addrs
+            .into_iter()
+            .map(|a| format!("{a}:{}", self.port))
+            .collect()
+    }
+
+    /// Why each address that should be listened on is not.
+    pub fn errors(&self) -> Vec<String> {
+        let mut why: Vec<_> = self.failed.iter().collect();
+        why.sort_by_key(|(s, _)| s.addr);
+        why.into_iter().map(|(_, e)| e.clone()).collect()
     }
 }
 
@@ -129,6 +197,7 @@ impl Serving {
 struct Guard {
     subnet: Subnet,
     allowed_origins: Arc<Vec<String>>,
+    gate: Gate,
 }
 
 /// The routes for one listener, whose peers must come from `subnet`.
@@ -136,6 +205,7 @@ pub fn router(ctx: Ctx, subnet: Subnet) -> Router {
     let guard = Guard {
         subnet,
         allowed_origins: ctx.allowed_origins.clone(),
+        gate: ctx.gate.clone(),
     };
     Router::new()
         .route("/health", get(health))
@@ -171,6 +241,9 @@ async fn check(
     req: Request,
     next: Next,
 ) -> Response {
+    if g.gate.is_closed() {
+        return gate_closed();
+    }
     if !peer_allowed(peer.ip(), &g.subnet) {
         return forbidden("来源地址不在本网段");
     }
@@ -186,7 +259,7 @@ async fn check(
     }
     match check_origin(origin.as_deref(), host.as_deref(), &g.allowed_origins) {
         OriginCheck::Deny => forbidden("不接受这个来源"),
-        OriginCheck::Allow => next.run(req).await,
+        OriginCheck::Allow => gated(&g.gate, next, req).await,
         OriginCheck::Cors => {
             let Some(origin) = origin.and_then(|o| HeaderValue::from_str(&o).ok()) else {
                 return forbidden("不接受这个来源");
@@ -195,11 +268,30 @@ async fn check(
             let mut res = if preflight {
                 StatusCode::NO_CONTENT.into_response()
             } else {
-                next.run(req).await
+                gated(&g.gate, next, req).await
             };
             cors(res.headers_mut(), origin);
             res
         }
+    }
+}
+
+/// The connection goes too: this Gate stays closed, even once LAN access is on again with a new one.
+fn gate_closed() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        [(header::CONNECTION, "close")],
+        "局域网访问已关闭",
+    )
+        .into_response()
+}
+
+/// The request, unless the Gate closes first: one past the check may still be sending its body, and would otherwise
+/// run whenever that arrives.
+async fn gated(gate: &Gate, next: Next, req: Request) -> Response {
+    tokio::select! {
+        res = next.run(req) => res,
+        _ = gate.closed() => gate_closed(),
     }
 }
 
@@ -269,22 +361,20 @@ async fn rpc(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respons
             return Json(json!({ "error": e })).into_response();
         }
     };
-    Json(
-        match dispatch(&ctx.host, &req.method, req.args, true).await {
-            Ok(result) => json!({ "result": result }),
-            Err(e) => json!({ "error": e }),
-        },
-    )
+    Json(match ctx.host.remote_call(&req.method, req.args).await {
+        Ok(result) => json!({ "result": result }),
+        Err(e) => json!({ "error": e }),
+    })
     .into_response()
 }
 
 /// First `hello`, then every event as it happens; no history.
 async fn events(ws: WebSocketUpgrade, State(ctx): State<Ctx>) -> Response {
     let rx = ctx.events.subscribe();
-    ws.on_upgrade(move |socket| relay(socket, rx))
+    ws.on_upgrade(move |socket| relay(socket, rx, ctx.gate))
 }
 
-async fn relay(mut socket: WebSocket, mut rx: broadcast::Receiver<Utf8Bytes>) {
+async fn relay(mut socket: WebSocket, mut rx: broadcast::Receiver<Utf8Bytes>, gate: Gate) {
     let hello = json!({ "event": "hello", "payload": { "apiVersion": API_VERSION } }).to_string();
     if socket.send(Message::Text(hello.into())).await.is_err() {
         return;
@@ -313,6 +403,15 @@ async fn relay(mut socket: WebSocket, mut rx: broadcast::Receiver<Utf8Bytes>) {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
+            _ = gate.closed() => {
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: 1001,
+                        reason: "closed".into(),
+                    })))
+                    .await;
+                break;
+            }
         }
     }
 }
@@ -323,11 +422,10 @@ mod tests {
     use std::path::Path;
     use std::time::{Duration, Instant};
 
-    use codeck_host::HostConfig;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::fixtures;
+    use crate::{HostConfig, fixtures};
 
     fn copy_dir(src: &Path, dst: &Path) {
         std::fs::create_dir_all(dst).unwrap();
@@ -393,9 +491,14 @@ mod tests {
             stderr: String::new(),
         });
         sink(HostEvent::ConnectState(Box::new(
-            codeck_host::connect::ConnState::new("c1", Some("H1".into())),
+            crate::connect::ConnState::new("c1", Some("H1".into())),
         )));
         sink(HostEvent::ConnectRemoved { conn: "c1".into() });
+        sink(HostEvent::CcrpcRemoteConn {
+            conn: "c1".into(),
+            holder_id: Some("H1".into()),
+        });
+        sink(HostEvent::CcrpcClosing { conn: "c1".into() });
         sink(HostEvent::CcrpcLs { ls: "[]".into() });
         let got: Vec<Value> = std::iter::from_fn(|| rx.try_recv().ok())
             .map(|t| serde_json::from_str(t.as_str()).unwrap())
@@ -478,11 +581,13 @@ mod tests {
             sink,
         )
         .unwrap();
+        let gate = Gate::default();
         let ctx = Ctx {
             host,
             events,
             allowed_origins: Arc::new(vec!["http://localhost:1420".into()]),
             web_dir: web.path().to_path_buf(),
+            gate: gate.clone(),
         };
         let subnet = Subnet {
             addr: Ipv4Addr::LOCALHOST,
@@ -616,5 +721,21 @@ mod tests {
             v,
             json!({ "event": "hello", "payload": { "apiVersion": 1 } })
         );
+
+        // LAN access goes off with the listener still up: the WebSocket is closed, a request refused, and that
+        // request's connection ended by the server (the read below returns only then).
+        gate.close();
+        use tokio_tungstenite::tungstenite::Message as WsMessage;
+        assert!(
+            matches!(ws.next().await.unwrap().unwrap(), WsMessage::Close(Some(f)) if u16::from(f.code) == 1001)
+        );
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(format!("GET /health HTTP/1.1\r\nHost: {addr}\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).await.unwrap();
+        assert!(out.starts_with("HTTP/1.1 403"), "{out}");
+        assert!(out.ends_with("局域网访问已关闭"), "{out}");
     }
 }

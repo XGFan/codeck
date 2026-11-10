@@ -3,7 +3,7 @@
 //! tauri commands (same names, parameters and docs, in this order).
 //!
 //! Each entry is `<scope> fn <name>(<param>: <type>, …) -> <type>;`, the `Host` method of that name
-//! returning `Result<type, AppError>`. `remote` methods are served to the daemon's clients too; `local`
+//! returning `Result<type, AppError>`. `remote` methods are served to the Host's LAN clients too; `local`
 //! ones only to the desktop app (settings, data root, index, Finder, ccrpc setup and logs).
 
 use codeck_core::model::{AppError, ErrorCode};
@@ -79,6 +79,12 @@ macro_rules! for_each_method {
             /// The connection's log directory, `None` once its ccrpc has exited.
             local fn ccrpc_log_dir(conn: String) -> Option<String>;
             remote fn ccrpc_save_image(base64: String, ext: String) -> String;
+            /// The Host's connections as it folds them: a JSON array of Connect states, `[]` on a Host that does not.
+            local fn connect_snapshot() -> String;
+            /// 「局域网访问」: whether it is on, the addresses being served and why one cannot be.
+            local fn lan_status() -> $crate::types::LanStatus;
+            /// Turns LAN access on or off at once and saves that; returns the state after.
+            local fn lan_set_enabled(on: bool) -> $crate::types::LanStatus;
         }
     };
 }

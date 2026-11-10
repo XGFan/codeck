@@ -143,6 +143,59 @@ export function initial(
   };
 }
 
+/** One connection as the Host folded it (`connectSnapshot`; its `fork` is not this window's). */
+export type HostConn = Pick<
+  ConnState,
+  | "conn"
+  | "holderId"
+  | "sessionId"
+  | "cwd"
+  | "claudeVersion"
+  | "ready"
+  | "state"
+  | "waiting"
+  | "mode"
+  | "model"
+  | "effort"
+  | "contextTokens"
+  | "requests"
+  | "progress"
+  | "queue"
+  | "tasks"
+  | "lastTurn"
+  | "procExit"
+  | "sessionExited"
+  | "notices"
+  | "feedbackDraft"
+> & { disconnected: boolean };
+
+/** A connection this window lost track of (Reload), as the Host has it: what is this window's own starts over. */
+export function fromHost(h: HostConn): ConnState {
+  return {
+    ...initial(h.conn, h.holderId),
+    sessionId: h.sessionId,
+    cwd: h.cwd,
+    claudeVersion: h.claudeVersion,
+    ready: h.ready,
+    state: h.state,
+    waiting: h.waiting,
+    mode: h.mode,
+    model: h.model,
+    effort: h.effort,
+    contextTokens: h.contextTokens,
+    requests: h.requests,
+    progress: h.progress,
+    queue: h.queue,
+    tasks: h.tasks,
+    lastTurn: h.lastTurn,
+    procExit: h.procExit,
+    sessionExited: h.sessionExited,
+    // The Host numbers its notices apart from `noticeSeq`: negative, so they never share an id with later ones.
+    notices: h.notices.map((n) => ({ ...n, id: -n.id })),
+    feedbackDraft: h.feedbackDraft,
+  };
+}
+
 let noticeSeq = 0;
 function notice(s: ConnState, text: string): ConnState {
   return { ...s, notices: [...s.notices.slice(-4), { id: ++noticeSeq, text }] };

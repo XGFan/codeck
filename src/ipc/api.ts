@@ -15,6 +15,7 @@ import type {
   LaunchRule,
   SidebarProject,
   JumpTarget,
+  LanStatus,
   LiveChanged,
   ProjectSummary,
   SearchRequest,
@@ -129,4 +130,15 @@ export interface Api {
   onCcrpcLs(cb: (ls: LsEntry[]) => void): Promise<Unlisten>;
   /** `ccrpc ls --json --watch` ended by itself. */
   onCcrpcLsEnded(cb: (message: string) => void): Promise<Unlisten>;
+  /** The Host's connections as it folds them (a JSON array of `HostConn`), for a window that lost its own state. */
+  connectSnapshot(): Promise<string>;
+  /** A client on the LAN started or shared this connection. */
+  onCcrpcRemoteConn(cb: (conn: string, holderId: string | null) => void): Promise<Unlisten>;
+  /** This connection is being closed on purpose by a client on the LAN (or replaced), before its exit. */
+  onCcrpcClosing(cb: (conn: string) => void): Promise<Unlisten>;
+
+  /** 「局域网访问」: whether this Mac is a Host on the LAN, and on which addresses. */
+  lanStatus(): Promise<LanStatus>;
+  /** Turns 「局域网访问」 on or off at once and saves it. */
+  lanSetEnabled(on: boolean): Promise<LanStatus>;
 }

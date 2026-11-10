@@ -30,8 +30,14 @@ describe("remote api", () => {
 
   it("sends each command's method and arg keys", async () => {
     const api = createRemoteApi("http://h:1/") as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
-    // Finder-only commands are rejected locally, never sent.
-    const local = new Set(["revealSessionFile", "ccrpcOpenAnalyzerRecords"]);
+    // Desktop-only commands are rejected locally, never sent.
+    const local = new Set([
+      "revealSessionFile",
+      "ccrpcOpenAnalyzerRecords",
+      "lanStatus",
+      "lanSetEnabled",
+      "connectSnapshot",
+    ]);
     for (const c of commands) {
       if (local.has(c.name)) continue;
       expect(typeof api[c.name], c.name).toBe("function");

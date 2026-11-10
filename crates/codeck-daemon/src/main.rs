@@ -1,19 +1,13 @@
 //! `codeck-host`: CoDeck's headless Host (ADR-0011). Indexes a data root like the desktop app and serves
 //! the Host's `remote` methods and events over HTTP + WebSocket to the LAN, without authentication.
 
-#[cfg(test)]
-#[path = "../../codeck-core/tests/common/fixtures.rs"]
-mod fixtures;
-mod net;
-mod server;
-
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use codeck_host::lan::{DEFAULT_PORT, net, server};
 use codeck_host::{Host, HostConfig};
 
-const DEFAULT_PORT: u16 = 38471;
 /// How often the default listeners are checked against the machine's addresses.
 const NETWORK_POLL: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -160,6 +154,7 @@ fn main() {
             images: Some(state_dir.join("images")),
             data_root: args.data_root,
             track_connect: true,
+            keep_ls_watch: true,
             ..HostConfig::desktop()
         },
         sink,
@@ -175,6 +170,7 @@ fn main() {
         events,
         allowed_origins: Arc::new(args.allow_origin),
         web_dir,
+        gate: server::Gate::default(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

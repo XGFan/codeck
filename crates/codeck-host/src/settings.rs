@@ -27,6 +27,9 @@ pub struct Settings {
     /// opens that dialog by itself).
     #[serde(default)]
     pub sidebar_projects: Option<Vec<SidebarProject>>,
+    /// 「设置 › 通用 › 局域网访问」: the app serves its `remote` methods on the LAN (ADR-0012).
+    #[serde(default)]
+    pub lan_access: bool,
 }
 
 /// A Project added to the sidebar: a directory (usually an indexed Project's path). `nest` gathers the Sessions of
@@ -173,6 +176,7 @@ mod tests {
                 path: "/p".into(),
                 nest: true,
             }]),
+            lan_access: true,
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);

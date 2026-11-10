@@ -678,18 +678,10 @@ dependencies = [
 name = "codeck-daemon"
 version = "0.1.0"
 dependencies = [
- "axum",
  "codeck-core",
  "codeck-host",
  "dirs",
- "futures-util",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
  "tokio",
- "tokio-tungstenite",
- "tower-http",
  "tracing",
  "tracing-subscriber",
 ]
@@ -698,10 +690,12 @@ dependencies = [
 name = "codeck-host"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "chrono",
  "codeck-core",
  "crossbeam-channel",
+ "futures-util",
  "libc",
  "notify",
  "notify-debouncer-full",
@@ -711,6 +705,8 @@ dependencies = [
  "specta",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
+ "tower-http",
  "tracing",
  "ureq",
 ]

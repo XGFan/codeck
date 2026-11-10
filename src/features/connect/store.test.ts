@@ -10,6 +10,10 @@ const SID = "11111111-2222-3333-4444-555555555555";
 
 let line: (conn: string, msg: InMsg) => void;
 let exit: (conn: string, code: number | null, stderr: string) => void;
+let remoteConn: (conn: string, holderId: string | null) => void;
+let closing: (conn: string) => void;
+/** What `connectSnapshot` answers. */
+let snapshot: () => Promise<string>;
 /** What `get_screen` answers. */
 let screen: { lines: string[]; cursor: [number, number] };
 /** Whether a ccrpc exits when disconnected (else it hangs on). */
@@ -57,6 +61,7 @@ beforeEach(async () => {
   exitsOnDisconnect = true;
   answers = true;
   sent = [];
+  snapshot = async () => "[]";
   for (const k of Object.keys(h.api)) delete h.api[k];
   Object.assign(h.api, {
     onCcrpcLine: (cb: typeof line) => ((line = cb), Promise.resolve(() => {})),
@@ -64,6 +69,9 @@ beforeEach(async () => {
     onLiveChanged: () => Promise.resolve(() => {}),
     onCcrpcLs: () => Promise.resolve(() => {}),
     onCcrpcLsEnded: () => Promise.resolve(() => {}),
+    onCcrpcRemoteConn: (cb: typeof remoteConn) => ((remoteConn = cb), Promise.resolve(() => {})),
+    onCcrpcClosing: (cb: typeof closing) => ((closing = cb), Promise.resolve(() => {})),
+    connectSnapshot: () => snapshot(),
     ccrpcGuiLog: async () => {},
     ccrpcSend: async (conn: string, msg: Record<string, unknown>) => {
       sent.push({ conn, msg });
@@ -110,6 +118,134 @@ describe("events that arrive before the connection id", () => {
     id("c1");
     await done;
     expect(state().conns.c1?.procExit).toEqual({ code: 1, stderr: "refused" });
+  });
+});
+
+describe("connections shared with clients on the LAN", () => {
+  /** A connection as the Host's `connectSnapshot` lists it. */
+  const hostConn = (o: Record<string, unknown> = {}) => ({
+    conn: "c1",
+    holderId: "H1",
+    sessionId: SID,
+    cwd: "/w",
+    claudeVersion: "2",
+    ready: true,
+    state: "waiting",
+    waiting: null,
+    mode: "manual",
+    model: null,
+    effort: null,
+    contextTokens: null,
+    requests: [{ type: "permission_request", request_id: "r1" }],
+    progress: null,
+    queue: [],
+    tasks: [],
+    lastTurn: null,
+    procExit: null,
+    sessionExited: false,
+    notices: [],
+    feedbackDraft: null,
+    fork: { session_id: "other" },
+    disconnected: false,
+    ...o,
+  });
+  /** A window that starts over with the Host already holding `list`. */
+  async function restart(list: unknown[]) {
+    snapshot = async () => JSON.stringify(list);
+    vi.resetModules();
+    store = await import("./store");
+    state().start();
+    await flush();
+  }
+
+  it("a connection started elsewhere replays what came before its id", async () => {
+    line("c1", ready("H1", SID));
+    remoteConn("c1", "H1");
+    expect(state().conns.c1).toMatchObject({ ready: true, holderId: "H1", sessionId: SID });
+  });
+
+  it("getting a connection already here keeps its state", async () => {
+    remoteConn("c1", "H1");
+    line("c1", ready("H1", SID));
+    line("c1", { type: "permission_request", request_id: "r1" } as unknown as InMsg);
+    h.api.ccrpcConnect = async () => "c1";
+    await state().connect("H1", SID);
+    remoteConn("c1", "H1");
+    expect(state().conns.c1).toMatchObject({ ready: true, sessionId: SID, requests: [{ request_id: "r1" }] });
+  });
+
+  it("after a Reload the Host's connections are back: ready, cards kept, nothing of theirs that is not this window's", async () => {
+    await restart([hostConn(), hostConn({ conn: "c2", disconnected: true })]);
+    expect(state().conns.c1).toMatchObject({ ready: true, state: "waiting", requests: [{ request_id: "r1" }] });
+    expect(state().conns.c1).not.toHaveProperty("fork");
+    expect(state().conns.c1).not.toHaveProperty("disconnected");
+    expect(state().conns.c2).toBeUndefined();
+    // Live: the next event folds onto it.
+    line("c1", { type: "state", state: "idle" } as unknown as InMsg);
+    expect(state().conns.c1).toMatchObject({ ready: true, state: "idle" });
+  });
+
+  it("what came while the snapshot was read is applied after it", async () => {
+    let answer!: (json: string) => void;
+    snapshot = () => new Promise((r) => (answer = r));
+    vi.resetModules();
+    store = await import("./store");
+    state().start();
+    await flush();
+    // Claimed mid-read, and already `ready` long ago: only the snapshot knows that.
+    remoteConn("c1", "H1");
+    line("c1", { type: "state", state: "idle" } as unknown as InMsg);
+    answer(JSON.stringify([hostConn()]));
+    await flush();
+    expect(state().conns.c1).toMatchObject({ ready: true, sessionId: SID, state: "idle" });
+  });
+
+  it("two starts (StrictMode) read once and keep what happened since", async () => {
+    let reads = 0;
+    snapshot = async () => (reads++, JSON.stringify([hostConn()]));
+    vi.resetModules();
+    store = await import("./store");
+    state().start()();
+    state().start();
+    await flush();
+    expect(reads).toBe(1);
+    expect(state().conns.c1?.ready).toBe(true);
+  });
+
+  it("a Connect waits for the snapshot, and goes on if it fails", async () => {
+    let fail!: (e: unknown) => void;
+    snapshot = () => new Promise((_, r) => (fail = r));
+    vi.resetModules();
+    store = await import("./store");
+    state().start();
+    await flush();
+    const connect = vi.fn(async () => "c1");
+    h.api.ccrpcConnect = connect;
+    const done = state().connect("H1", SID);
+    await flush();
+    expect(connect).not.toHaveBeenCalled();
+    fail({ code: "internal", message: "x" });
+    await done;
+    expect(connect).toHaveBeenCalledOnce();
+    expect(state().conns.c1).toBeDefined();
+  });
+
+  it("closed from elsewhere: its exit leaves no failure", async () => {
+    remoteConn("c1", "H1");
+    line("c1", ready("H1", SID));
+    closing("c1");
+    exit("c1", 0, "");
+    expect(state().conns.c1).toBeUndefined();
+  });
+
+  it("closed from elsewhere after its exit: the failure goes; an unknown connection is ignored", async () => {
+    remoteConn("c1", "H1");
+    exit("c1", 0, "");
+    expect(state().conns.c1?.procExit).toEqual({ code: 0, stderr: "" });
+    closing("c1");
+    expect(state().conns.c1).toBeUndefined();
+    closing("nope");
+    expect(state().conns.nope).toBeUndefined();
   });
 });
 

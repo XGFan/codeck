@@ -3,7 +3,16 @@ import { api } from "@/ipc";
 import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { createCcrpcClient } from "./client";
-import { apply, initial, rewindAnswered, rewindShown, type ConnState, type PendingPrompt } from "./conn";
+import {
+  apply,
+  fromHost,
+  initial,
+  rewindAnswered,
+  rewindShown,
+  type ConnState,
+  type HostConn,
+  type PendingPrompt,
+} from "./conn";
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
 import { addWithdrawn, loadWithdrawn, saveWithdrawn } from "./withdrawn";
 import { createLsWatch } from "./lsWatch";
@@ -278,7 +287,16 @@ export const useConnect = create<ConnectStore>((set, get) => {
     if (useUi.getState().sessionId === conn) select(sessionId);
   };
 
-  /** Adds a connection, then replays what arrived for it before its id came back. */
+  const replayEarly = (conn: string) => {
+    for (const e of client.take(conn)) {
+      if (e.kind === "line") onLine(conn, e.msg);
+      else onExit(conn, e.code, e.stderr);
+    }
+  };
+  /**
+   * Adds a connection, then replays what arrived for it before its id came back. One already here keeps its state: the
+   * Host hands every client the same connection.
+   */
   const addConn = (
     conn: string,
     holderId: string | null,
@@ -286,11 +304,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
     forkOf: string | null = null,
     newIn: string | null = null,
   ) => {
-    set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId, resumeOf, forkOf, newIn) } }));
-    for (const e of client.take(conn)) {
-      if (e.kind === "line") onLine(conn, e.msg);
-      else onExit(conn, e.code, e.stderr);
-    }
+    if (!get().conns[conn])
+      set((s) => ({ conns: { ...s.conns, [conn]: initial(conn, holderId, resumeOf, forkOf, newIn) } }));
+    replayEarly(conn);
   };
   const removeConn = (conn: string) => {
     // Its exit may still come and is then dropped: nothing would answer what waits on it.
@@ -384,6 +400,8 @@ export const useConnect = create<ConnectStore>((set, get) => {
   const attach = async (holderId: string, sessionId: string) => {
     setErr(sessionId, null);
     void api.ccrpcGuiLog(null, `connect ${holderId}`);
+    // From here a connection `ccrpcConnect` returns and this window does not know is a new one: its `ready` is to come.
+    await snapshot;
     // Connections on nothing any more (ccrpc exited, or the Session ended and was resumed since) are
     // replaced; a ccrpc still attached must be gone first, a second attach to the Session is refused.
     const stale = Object.values(get().conns).filter(
@@ -419,6 +437,52 @@ export const useConnect = create<ConnectStore>((set, get) => {
   /** Rewinds being answered (`conn|request_id`): Esc, 「中止」 and the card's buttons send one answer. */
   const answering = new Set<string>();
 
+  /** The Host's connections being read (`start`); settled before a Connect. */
+  let snapshot: Promise<void> = Promise.resolve();
+  /** While they are: what a client on the LAN did, for after them (it may be about a connection they bring). */
+  let afterSnapshot: (() => void)[] | null = null;
+  const onceSnapshotted = (f: () => void) => void (afterSnapshot ? afterSnapshot.push(f) : f());
+
+  /** A client on the LAN started or shared this connection: this window shows it too. */
+  const onRemoteConn = (conn: string, holderId: string | null) => onceSnapshotted(() => addConn(conn, holderId));
+
+  /** A client on the LAN is ending this connection: its exit is not a failure. */
+  const onClosing = (conn: string) =>
+    onceSnapshotted(() => {
+      const c = get().conns[conn];
+      if (!c) return;
+      if (c.procExit) removeConn(conn);
+      else closing.add(conn);
+    });
+
+  /**
+   * Brings in the Host's connections this window does not know (a Reload lost them, and `ready` comes only once). Waits
+   * for the subscriptions, so whatever happens after the Host's reading is held for the connection and replayed. Only
+   * the `start` still running reads: StrictMode's first one is gone by then.
+   */
+  const readSnapshot = async (subscribed: Promise<unknown>[], isGone: () => boolean) => {
+    const held: (() => void)[] = [];
+    afterSnapshot = held;
+    try {
+      await Promise.allSettled(subscribed);
+      if (isGone()) return;
+      const all = JSON.parse(await api.connectSnapshot()) as HostConn[];
+      if (isGone()) return;
+      for (const h of all) {
+        if (h.disconnected || get().conns[h.conn]) continue;
+        set((s) => ({ conns: { ...s.conns, [h.conn]: fromHost(h) } }));
+        replayEarly(h.conn);
+      }
+    } catch (e) {
+      void api.ccrpcGuiLog(null, `connect snapshot failed: ${errorText(e)}`);
+    } finally {
+      if (afterSnapshot === held) {
+        afterSnapshot = null;
+        held.forEach((f) => f());
+      }
+    }
+  };
+
   return {
     info: null,
     infoError: null,
@@ -437,13 +501,17 @@ export const useConnect = create<ConnectStore>((set, get) => {
     start() {
       const offs: (() => void)[] = [];
       let gone = false;
-      const keep = (p: Promise<() => void>) => void p.then((f) => (gone ? f() : offs.push(f)));
+      const subscribed: Promise<unknown>[] = [];
+      const keep = (p: Promise<() => void>) => void subscribed.push(p.then((f) => (gone ? f() : offs.push(f))));
       // Fresh closures: a second `start` (StrictMode) must not share a listener the first one removes.
       keep(api.onCcrpcLine((conn, msg) => onLine(conn, msg)));
       keep(api.onCcrpcExit((conn, code, stderr) => onExit(conn, code, stderr)));
+      keep(api.onCcrpcRemoteConn((conn, holderId) => onRemoteConn(conn, holderId)));
+      keep(api.onCcrpcClosing((conn) => onClosing(conn)));
       keep(api.onLiveChanged((p) => set({ live: p.live })));
       keep(api.onCcrpcLs((ls) => lsWatch.list(ls)));
       keep(api.onCcrpcLsEnded((message) => lsWatch.ended(message)));
+      snapshot = readSnapshot(subscribed, () => gone);
       const onVisible = () => {
         lsWatch.sync();
         if (document.visibilityState === "visible") markSeen();
