@@ -24,7 +24,7 @@
 
 `--project P` 收 Project 的路径，CLI 查索引换成 Project ID。
 
-全局选项 `--cache-dir DIR`：索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`。Linux Host 上指向 daemon 的状态目录。
+全局选项 `--cache-dir DIR`：索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`。daemon 的 Host 上指向 `<状态目录>/cache`。
 
 数据根的确定顺序与桌面相同：设置中的覆盖 → `CLAUDE_CONFIG_DIR` → `~/.claude`。
 
@@ -68,9 +68,9 @@ session 6f0e2b7c  status=idle  turns=2  project=/Users/me/proj
 
 ## `new` 的流程
 
-1. 校验 `--cwd` 是已存在的目录、stdin 的提示词非空。读设置里的启动规则与「新开的 Pane」，用 `launch::args_for` 拼出 claude 参数，和桌面新建 Session 一致。
+1. 校验 `--cwd` 是已存在的目录、stdin 的提示词非空且不以 `!` 开头（ccrpc 会当 TUI 的 shell 命令执行，绕过审批）。读设置里的启动规则与「新开的 Pane」，用 `launch::args_for` 拼出 claude 参数，和桌面新建 Session 一致。
 2. 启动 `ccrpc new [--hidden] --cwd DIR [-- 启动规则的参数]`。ccrpc 的查找顺序同桌面：`CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH。
-3. 读 stdout，等到 `ready`，取 `session_id` 与 `holder_id`。超时 60 秒。
+3. 读 stdout，等到 `ready`，取 `holder_id`；`session_id` 常为 null，这时再等 `session_changed`。超时 60 秒。
 4. 发 `{"type":"prompt","text":…}`，等对应的 `response` 成功。
 5. 关闭 stdin，ccrpc 断开，Session 继续运行。输出 `{"sessionId","holderId","cwd"}`。
 
@@ -78,7 +78,7 @@ session 6f0e2b7c  status=idle  turns=2  project=/Users/me/proj
 
 异常：
 
-- 目录信任框（`ready` 之前的 `choice`，layout 为信任）：这是安全边界，AI 不代答允许。CLI 答「不信任」让这个 claude 退出，不留下空 Session，报错「目录还没有信任，先在终端里用 claude 打开一次」。
+- 目录信任框（`ready` 之前的 `choice`，layout 为信任）：这是安全边界，AI 不代答允许。CLI 答「不信任」让这个 claude 退出，再关掉 Pane，不留下空 Session，报错「目录还没有信任，先在终端里用 claude 打开一次」。
 - `ready` 之前的其他 `choice`、超时、提示词发送失败：关闭 stdin，报错并带上已知的 `holderId`，Pane 留给人处理。
 - ccrpc 启动失败或提前退出（没装 ToH、没装插件等）：报错，一句话说明原因。完整输出不进文案。
 
@@ -86,7 +86,8 @@ session 6f0e2b7c  status=idle  turns=2  project=/Users/me/proj
 
 每秒用 `transcript::live` 读进程文件，判断 `<id>` 的状态：
 
-- `idle` / `waiting` / `ended`（进程文件不在了）立即返回 `{"sessionId","status","waitingFor"}`。
+- `idle` / `waiting` / `ended`（进程文件连续两次读不到）时返回 `{"sessionId","status","waitingFor"}`。
+- 既没有进程文件也没有 transcript 的 id 报 `not_found`。
 - 默认超时 110 秒，低于 Bash 工具默认的 120 秒，超时后返回当前状态与退出码 124，调用方再次调用即可。
 
 ## Skill

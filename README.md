@@ -155,7 +155,14 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 
 索引只读打开，版本或数据目录不一致时报错，不会改动它；桌面没开时索引不更新，结果里的 `indexedAt` 说明数据有多新。`--project P` 收 Project 的路径。全局选项 `--cache-dir DIR` 指定索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`，在 daemon 的 Host 上指向 `<状态目录>/cache`。
 
-`new` 用 ccrpc（查找顺序同上）在 clay 里新建 Session，启动参数与「新开的 Pane」同桌面的设置；目录没有信任过时报错，由人先在终端里打开一次。使用说明在 [crates/codeck-cli/SKILL.md](crates/codeck-cli/SKILL.md)，要装成 Claude Code 的 Skill 时手动复制到 `~/.claude/skills/codeck/`，CLI 不写数据目录。
+`new` 用 ccrpc（查找顺序同上）在 clay 里新建 Session，启动参数与「新开的 Pane」同桌面的设置；目录没有信任过时报错，由人先在终端里打开一次；提示词不能以 `!` 开头。使用说明在 [crates/codeck-cli/SKILL.md](crates/codeck-cli/SKILL.md)，要装成 Claude Code 的 Skill 时手动复制到 `~/.claude/skills/codeck/`，CLI 不写数据目录。
+
+安装：
+
+```sh
+cargo build --release -p codeck-cli
+rm -f ~/.local/bin/codeck && cp target/release/codeck ~/.local/bin/codeck   # 先删再拷，原地覆盖时 macOS 会杀掉新进程
+```
 
 ## 结构
 

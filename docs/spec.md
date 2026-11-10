@@ -222,7 +222,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **轮次**：每条用户输入（人亲手输入的与命令；Subagent Run 里还有上级发来的消息）开始一轮，第一条是第 1 轮；第一条用户输入之前的内容是第 0 轮。Main Line 上的编号在 `search` 与 `show --turn` 里相同。
 - **`show`**：默认 Main Line 的概览，一轮一段（用户输入、工具列表、回答），超过 50 轮时只显示最后 50 轮并写明。`--turn N` 输出这一轮的完整过程（说明、思考、工具）与回答；`--full`（必须带 `--turn`）附上每次工具调用的输入与输出，每段 8000 字、一轮 20 万字为限。`--agent ID` 换成一个 Subagent Run。回答是这一轮最后一次工具调用或思考之后的文字，同界面的按轮折叠。打开被接替的 Session 时转到接替它的 Session（同界面）。Session 的文件列表、Fork 来源、接续与 Subagent 统计来自索引，文件内容总是读最新的；索引没收录时直接读 `projects/*/<id>.jsonl`，头部写 `partial`，没有 Fork 与接续信息，也没有 `project=`。
 - **`wait`**：只读进程文件，每秒一次，`idle` / `waiting` / 结束时立即返回 `{"sessionId","status","waitingFor"}`；默认 110 秒，超时退出码 124，stdout 仍是当前状态。进程文件连续两次读不到才算结束；既没有进程文件也没有 transcript 的 id 报 `not_found`。
-- **`new`**：校验 `--cwd` 是目录、stdin 的提示词非空，用设置里的启动规则与「新开的 Pane」拼 `ccrpc new`，环境同桌面（登录 shell）。等 `ready`，`session_id` 为 null 时再等 `session_changed`（各 60 秒），发 `prompt`，等响应成功后关闭 stdin：ccrpc Disconnect，Session 继续运行，输出 `{"sessionId","holderId","cwd"}`。目录信任框（`choice`，layout `trust_folder`）答「不信任」让 claude 退出，报错 `untrusted_dir`；其他 `choice`、超时、提示词发送失败时关闭 stdin 报错，Pane 留给人处理；ccrpc 启动失败或提前退出时，错误是它 stderr 的最后一行。
+- **`new`**：校验 `--cwd` 是目录、stdin 的提示词非空且不以 `!` 开头（ccrpc 会把它当 TUI 的 shell 命令执行，绕过审批），用设置里的启动规则与「新开的 Pane」拼 `ccrpc new`，环境同桌面（登录 shell）。等 `ready`，`session_id` 为 null 时再等 `session_changed`（各 60 秒），发 `prompt`，等响应成功后关闭 stdin：ccrpc Disconnect，Session 继续运行，输出 `{"sessionId","holderId","cwd"}`。目录信任框（`choice`，layout `trust_folder`）答「不信任」让 claude 退出，再关掉这个 Pane，报错 `untrusted_dir`；其他 `choice`、超时、提示词发送失败时关闭 stdin 报错，Pane 留给人处理；启动画面（`dialog` 事件）可能自己过去，不立即失败，超时的报错写明停在对话框上；ccrpc 启动失败或提前退出时，错误是它 stderr 的最后一行。
 
 ## 测试
 
