@@ -10,7 +10,7 @@ use crate::harness::*;
 
 /// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
 /// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
-/// `MOCK-WRITE <path>` with a Write call,
+/// `MOCK-WRITE <path>` with a Write call, `MOCK-WORKTREE` / `MOCK-EXITWT` with EnterWorktree / ExitWorktree,
 /// `MOCK-ASK` with an AskUserQuestion call (`MOCK-ASKS`: two questions, the second multi-select), `MOCK-BG` with a background `sleep 2`, then `sleep 1`,
 /// then ~8 s of text (the background task ends meanwhile; its notification is answered as slowly);
 /// anything else (tool results too) with text `ok`.
@@ -121,6 +121,10 @@ fn mock_model() -> String {
                         .to_string();
                     let content = format!("v{}\n", called("Write"));
                     Some(("Write", json!({"file_path": path, "content": content})))
+                } else if asked("MOCK-WORKTREE") > called("EnterWorktree") {
+                    Some(("EnterWorktree", json!({"name": "wt"})))
+                } else if asked("MOCK-EXITWT") > called("ExitWorktree") {
+                    Some(("ExitWorktree", json!({"action": "keep"})))
                 } else if asked("MOCK-TOOL") > called("Bash") && has_tool("Bash") {
                     Some((
                         "Bash",
@@ -1157,6 +1161,69 @@ fn mock_model_tools() {
         b["kind"] == "tool_result" && b["content"].as_str().is_some_and(|c| c.contains("Blue"))
     });
     assert!(answered, "AskUserQuestion 的结果里没有答案：{m}");
+}
+
+/// EnterWorktree moves the Session's files to the project folder of the worktree, ExitWorktree
+/// back: ccrpc goes on reading them there and does not report again what it has read, and a ccrpc
+/// that attaches while the Session is in the worktree finds them.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_worktree_moves_the_transcript() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&env.work)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    ]);
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    let holder = ready["holder_id"].as_str().unwrap().to_string();
+    let prompts = |seen: &[Value], text: &str| {
+        seen.iter()
+            .filter(|v| {
+                v["type"] == "block"
+                    && v["kind"] == "user"
+                    && v["text"].as_str().is_some_and(|t| t.contains(text))
+            })
+            .count()
+    };
+
+    run_turn_allowing(&mut rpc, "a", "said before the move");
+    run_turn_allowing(&mut rpc, "w", "MOCK-WORKTREE enter");
+    let inside = run_turn_allowing(&mut rpc, "t", "MOCK-TOOL in the worktree");
+    assert_eq!(prompts(&inside, "in the worktree"), 1, "{inside:?}");
+    assert_eq!(prompts(&inside, "before the move"), 0, "{inside:?}");
+    let m = rpc.call("m1", json!({"type": "get_messages"}));
+    assert!(m.to_string().contains("in the worktree"), "{m}");
+
+    // Attached in the worktree: the check-in still names the old place.
+    let shell_pid = rpc.shell_pid.take();
+    drop(rpc);
+    let mut rpc = Rpc::attach(&env, &[&holder]);
+    rpc.shell_pid = shell_pid;
+    rpc.event("ready", Duration::from_secs(20));
+    let attached = run_turn_allowing(&mut rpc, "t2", "typed after attaching");
+    assert_eq!(prompts(&attached, "after attaching"), 1, "{attached:?}");
+
+    run_turn_allowing(&mut rpc, "x", "MOCK-EXITWT leave");
+    let back = run_turn_allowing(&mut rpc, "b", "said after coming back");
+    assert_eq!(prompts(&back, "after coming back"), 1, "{back:?}");
+    assert_eq!(prompts(&back, "in the worktree"), 0, "{back:?}");
 }
 
 /// A plugin's skill typed by its bare name (`/probe x`) is recorded with the plugin's name

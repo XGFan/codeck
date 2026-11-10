@@ -3,6 +3,16 @@
 
 use super::*;
 
+/// Whether a choice layout may be announced while tools (`tools`: the open requests) wait for
+/// permission. Claude Code's own approvals are numbered and answered as permission requests, so
+/// that one announced as a choice would hide the tool from the caller; only a tool whose approval
+/// is a menu (ExitPlanMode) is announced that way. A menu without numbers is the tool's own, drawn
+/// with no approval behind it (computer use).
+fn choice_during_permission(select: Select, tools: &[&str]) -> bool {
+    select == Select::Cursor
+        || (!tools.is_empty() && tools.iter().all(|t| CHOICE_TOOLS.contains(t)))
+}
+
 /// Rows of the dialog at the bottom of the screen (from the last full-width rule), for telling
 /// one unrecognized dialog from another.
 fn dialog_signature(lines: &[String]) -> String {
@@ -334,23 +344,18 @@ impl Engine {
         let Some((l, opts)) = self.library.find_kind(&s.lines, LayoutKind::Choice) else {
             return false;
         };
-        // While a tool waits for permission, only a tool whose approval is a menu (ExitPlanMode)
-        // may be answered as a choice: anything else would hide the tool from the caller.
         if let State::Waiting {
             kind: WaitKind::Permission,
             ..
         } = &self.state
         {
-            let tools: Vec<&HookRequest> = self
+            let tools: Vec<&str> = self
                 .requests
                 .iter()
-                .filter(|r| r.tool_name != "AskUserQuestion")
+                .map(|r| r.tool_name.as_str())
+                .filter(|t| *t != "AskUserQuestion")
                 .collect();
-            let tools_ok = !tools.is_empty()
-                && tools
-                    .iter()
-                    .all(|r| CHOICE_TOOLS.contains(&r.tool_name.as_str()));
-            if !tools_ok {
+            if !choice_during_permission(l.select, &tools) {
                 return false;
             }
         }
@@ -392,6 +397,14 @@ impl Engine {
             || recognize::ask(&s.lines).is_some()
             || recognize::rewind_picker(&s.lines).is_some()
             || recognize::rewind_confirm(&s.lines).is_some()
+        {
+            return false;
+        }
+        // Learned already and not announced here: learning it again would change nothing.
+        if self
+            .library
+            .find_kind(&s.lines, LayoutKind::Choice)
+            .is_some()
         {
             return false;
         }
@@ -611,5 +624,25 @@ impl Engine {
         } else {
             err("timeout", "作答后 10 秒内状态没有变化")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_choice_while_a_tool_waits_for_permission() {
+        // The tool's own menu, whether or not its call could be tied to the screen.
+        assert!(choice_during_permission(Select::Cursor, &[]));
+        assert!(choice_during_permission(Select::Cursor, &["Bash"]));
+        // A numbered menu: only ExitPlanMode's.
+        assert!(choice_during_permission(Select::Number, &["ExitPlanMode"]));
+        assert!(!choice_during_permission(Select::Number, &["Bash"]));
+        assert!(!choice_during_permission(
+            Select::Number,
+            &["ExitPlanMode", "Bash"]
+        ));
+        assert!(!choice_during_permission(Select::Number, &[]));
     }
 }

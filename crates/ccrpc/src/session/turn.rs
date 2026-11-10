@@ -805,6 +805,9 @@ impl Engine {
             self.hook_mode = Some(mode.to_string());
         }
         let s = |k: &str| i[k].as_str().map(str::to_string);
+        if m.event != "SessionStart" && i["agent_id"].is_null() {
+            self.follow_relocated(s("session_id"), s("transcript_path"));
+        }
         match m.event.as_str() {
             "SessionStart" => {
                 if let (Some(sid), Some(path)) = (s("session_id"), s("transcript_path")) {

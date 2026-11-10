@@ -188,6 +188,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 ### 其他
 
 - hook 进程的父进程就是 claude 进程（进程文件名里的 pid）。
+- `EnterWorktree` / `ExitWorktree`（2.1.319）：Session 的 transcript 与同名目录（`subagents`、`tool-results`）一起移到新 cwd 对应的 project 文件夹；sessionId 不变，不触发 SessionStart，报到不更新；之后的 hook 的 `transcript_path` 是新位置。
 - hook 输入都带 `session_id`、`transcript_path`、`cwd`；除 SessionStart 外还有 `prompt_id`、`permission_mode`（`default` / `plan` / `acceptEdits`）。
 - `/clear`：回车后约 40ms SessionEnd（`reason: "clear"`），随即 SessionStart（`source: "clear"`，带新的 `session_id` 与 `transcript_path`）；进程文件的 `sessionId` 在回车后约 90ms 已换新，与上面 2.1.316 记的约 1.3s 不同。
 

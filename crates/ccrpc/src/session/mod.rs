@@ -477,7 +477,14 @@ impl Engine {
             self.fatal = Some(problem);
             return;
         }
-        let path = PathBuf::from(&c.transcript_path);
+        let mut path = PathBuf::from(&c.transcript_path);
+        // The check-in is written at SessionStart: the files may have moved since (EnterWorktree).
+        if !path.exists() {
+            let cwd = self.pf.as_ref().and_then(|p| p.cwd.as_deref());
+            if let Some(found) = locate::find_transcript(&self.roots, &c.session_id, cwd) {
+                path = found;
+            }
+        }
         if !locate::is_transcript_path(&self.roots, &path) {
             self.fatal = Some(format!(
                 "ccrpc 插件报到的 transcript 不在 Claude Code 的 projects 目录里：{}",
@@ -640,6 +647,27 @@ impl Engine {
         self.history.warm(path);
         self.set_queue(t.queue());
         self.tailer = Some(t);
+    }
+
+    /// Hooks name the transcript where it is now. EnterWorktree and ExitWorktree move the Session's
+    /// files to the project folder of the new directory, with no SessionStart and no new Session.
+    pub(super) fn follow_relocated(&mut self, sid: Option<String>, path: Option<String>) {
+        let (Some(sid), Some(path)) = (sid, path) else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        if self.session_id.as_deref() != Some(sid.as_str())
+            || self.tailer.as_ref().is_none_or(|t| t.main_path() == path)
+            || !path.is_file()
+            || !locate::is_transcript_path(&self.roots, &path)
+        {
+            return;
+        }
+        crate::clog!("transcript moved to {}", path.display());
+        if let Some(t) = self.tailer.as_mut() {
+            t.moved_to(&path);
+        }
+        self.history.warm(&path);
     }
 
     pub fn tick(&mut self) {

@@ -2953,7 +2953,7 @@
       },
       "choice": {
         "title": "choice",
-        "description": "其他编号菜单。",
+        "description": "其他菜单：编号菜单，或工具自己画的无编号菜单。",
         "type": "object",
         "properties": {
           "type": {

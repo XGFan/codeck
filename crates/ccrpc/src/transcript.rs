@@ -589,13 +589,28 @@ impl Tailer {
         self.capped
     }
 
+    /// Claude Code moved the Session's files, its directory with the transcript: what has been
+    /// read of them stays read.
+    pub fn moved_to(&mut self, main: &Path) {
+        let (old, new) = (self.main.with_extension(""), main.with_extension(""));
+        let rebase = |p: &mut PathBuf| {
+            if let Ok(rest) = p.strip_prefix(&old) {
+                *p = new.join(rest);
+            }
+        };
+        self.subs.values_mut().for_each(|s| rebase(&mut s.path));
+        self.persisted.values_mut().for_each(rebase);
+        self.main = main.to_path_buf();
+    }
+
     pub fn poll(&mut self) -> Vec<TxEvent> {
         let mut out = Vec::new();
         self.capped = false;
         // A file that shrank was replaced: what was read from it starts over. What other files
         // gave (Subagent / Workflow progress, the Workflow Runs reported) and the usage already
         // reported carry over, so none of it is reported twice.
-        if std::fs::metadata(&self.main).map(|m| m.len()).unwrap_or(0) < self.offset {
+        // A missing file is not one: it may have moved ([`Tailer::moved_to`]).
+        if std::fs::metadata(&self.main).is_ok_and(|m| m.len() < self.offset) {
             let old = std::mem::replace(self, Tailer::new(&self.main));
             self.copied_from(old.copied);
             self.main_only = old.main_only;
@@ -1941,6 +1956,53 @@ mod tests {
             .collect();
         assert_eq!(popped, ["d", "e"]);
         assert_eq!(t.queue(), [relayed("")]);
+    }
+
+    /// EnterWorktree moves the transcript with its Session directory: what was read stays read
+    /// (pending tools too), only what is written after the move is new, and the Subagent Run
+    /// already being followed is read at its new place.
+    #[test]
+    fn a_moved_transcript_goes_on_where_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let (from, to) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir_all(&from).unwrap();
+        let main = from.join("s.jsonl");
+        let tool_use = json!({"type": "assistant", "uuid": "a1", "parentUuid": "u1",
+            "message": {"id": "m-a1", "role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_grant", "name": "mcp__x__y", "input": {}}]}});
+        write_lines(&main, &[prompt("u1", None, "before the move", 1), tool_use]);
+        let agents = subagents_dir(&main);
+        std::fs::create_dir_all(&agents).unwrap();
+        write_lines(
+            &agents.join("agent-ag1.jsonl"),
+            &[prompt("x1", None, "sub prompt", 1)],
+        );
+        let mut t = Tailer::new(&main);
+        assert!(!blocks(&t.poll()).is_empty());
+
+        std::fs::rename(&from, &to).unwrap();
+        // Polled before anything says where it went: nothing is lost.
+        assert!(t.poll().is_empty());
+        assert_eq!(t.pending().len(), 1);
+
+        let moved = to.join("s.jsonl");
+        t.moved_to(&moved);
+        let mut lines = std::fs::read_to_string(&moved).unwrap();
+        lines.push_str(&format!("{}\n", reply("r1", "a1", "after the move", 2)));
+        std::fs::write(&moved, lines).unwrap();
+        let mut sub =
+            std::fs::read_to_string(subagents_dir(&moved).join("agent-ag1.jsonl")).unwrap();
+        sub.push_str(&format!("{}\n", reply("x2", "x1", "sub after", 2)));
+        std::fs::write(subagents_dir(&moved).join("agent-ag1.jsonl"), sub).unwrap();
+
+        let after = t.poll();
+        let texts: Vec<&str> = blocks(&after)
+            .iter()
+            .filter_map(|b| b.text.as_deref())
+            .collect();
+        assert_eq!(texts, ["after the move", "sub after"], "{after:?}");
+        assert_eq!(t.main_path(), moved);
+        assert_eq!(t.pending().len(), 1);
     }
 
     /// A main file that shrank was replaced: nothing read from the old one is kept (queue,
