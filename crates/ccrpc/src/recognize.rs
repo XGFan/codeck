@@ -588,6 +588,93 @@ pub fn input_text(s: &crate::screen::Screen) -> Option<String> {
     Some(input_box(&s.undimmed).unwrap_or(full))
 }
 
+/// The `/btw` side-question panel, in place of the input box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BtwPanel {
+    /// As the panel shows it: on one row, cut to the width.
+    pub question: String,
+    /// The rows of the answer area, with the panel's left margin.
+    pub rows: Vec<String>,
+    /// Waiting for the answer (retries included).
+    pub answering: bool,
+}
+
+/// The panel's rows, up to its `… Esc to close` footer on the last row: the `/btw <question>` rows
+/// (earlier ones above the current one), a blank row, the answer, a blank row.
+pub fn btw_panel(lines: &[String]) -> Option<BtwPanel> {
+    let foot = lines.iter().rposition(|l| !l.trim().is_empty())?;
+    if !lines[foot].trim_end().ends_with("Esc to close") {
+        return None;
+    }
+    // The answer is indented deeper, so a row of it starting with `/btw ` is not a question.
+    let head = lines[..foot].iter().rposition(|l| {
+        let t = l.trim_start();
+        t.starts_with("/btw ") && l.chars().count() - t.chars().count() <= 4
+    })?;
+    let question = lines[head].trim().strip_prefix("/btw ")?.trim().to_string();
+    if foot < head + 3 {
+        return None;
+    }
+    // Another panel under a `/btw` left in the conversation: its rows are not indented deeper.
+    let indent = |l: &str| l.chars().take_while(|c| *c == ' ').count();
+    if lines[head + 1..foot]
+        .iter()
+        .any(|l| !l.trim().is_empty() && indent(l) <= indent(&lines[head]))
+    {
+        return None;
+    }
+    let rows = lines[head + 2..foot - 1].to_vec();
+    let shown: Vec<&str> = rows
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let answering = shown.len() == 1
+        && (shown[0].ends_with("Answering…") || shown[0].contains("· retrying in "));
+    Some(BtwPanel {
+        question,
+        rows,
+        answering,
+    })
+}
+
+/// `view`, the answer area after scrolling down, added to what was read so far: a press moves it
+/// 3 rows, the last one possibly fewer. The full move is tried first, so that repeated rows are
+/// not taken for a shorter one.
+pub fn btw_merge(read: &mut Vec<String>, view: &[String]) {
+    let least = view.len().saturating_sub(3).max(1);
+    let overlap = (least..=view.len().min(read.len()))
+        .find(|&k| read[read.len() - k..] == view[..k])
+        .unwrap_or(0);
+    read.extend_from_slice(&view[overlap..]);
+}
+
+/// The answer as text: without the panel's margin and the blank rows around it.
+pub fn btw_text(rows: &[String]) -> String {
+    let blank = |l: &String| l.trim().is_empty();
+    let Some(first) = rows.iter().position(|l| !blank(l)) else {
+        return String::new();
+    };
+    let last = rows.iter().rposition(|l| !blank(l)).unwrap_or(first);
+    let body = &rows[first..=last];
+    let margin = body
+        .iter()
+        .filter(|l| !blank(l))
+        .map(|l| l.chars().take_while(|c| *c == ' ').count())
+        .min()
+        .unwrap_or(0);
+    body.iter()
+        .map(|l| {
+            l.chars()
+                .skip(margin)
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The folder trust dialog shown before a Session starts in a folder not trusted yet: an
 /// unnumbered menu (`❯` marks the selected row) confirmed with Enter. `Some(true)` when the cursor
 /// is on "Yes, I trust this folder".
@@ -1233,6 +1320,94 @@ mod tests {
         };
         assert!(q.editing);
         assert_eq!(q.other, Some(3));
+    }
+
+    fn btw_screen(foot: &str) -> Vec<String> {
+        lines(&[
+            "⏺ ok",
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+            "",
+            "    /btw earlier one",
+            "    /btw why is it",
+            "",
+            "      first line",
+            "",
+            "        /btw indented in the answer",
+            "",
+            foot,
+            "",
+        ])
+    }
+
+    #[test]
+    fn btw_panel_reads_the_current_question_and_its_answer() {
+        let p = btw_panel(&btw_screen(
+            "    ↑/↓ to scroll · c to copy · f to fork · Esc to close",
+        ))
+        .unwrap();
+        assert_eq!(p.question, "why is it");
+        assert!(!p.answering);
+        assert_eq!(
+            btw_text(&p.rows),
+            "first line\n\n  /btw indented in the answer"
+        );
+    }
+
+    #[test]
+    fn btw_panel_answering_and_not_a_panel() {
+        let answering = lines(&[
+            "    /btw q",
+            "",
+            "      ✳ Answering…",
+            "",
+            "    Esc to close",
+        ]);
+        assert!(btw_panel(&answering).unwrap().answering);
+        let retry = lines(&[
+            "    /btw q",
+            "",
+            "      ✳ Rate limited · retrying in 3s · attempt 1/10",
+            "",
+            "    Esc to close",
+        ]);
+        assert!(btw_panel(&retry).unwrap().answering);
+        // Another panel's footer, a `/btw` left in the conversation with the input box under it.
+        assert!(btw_panel(&lines(&["  Status", "", "  x", "", "  Esc to close"])).is_none());
+        assert!(
+            btw_panel(&lines(&[
+                "  /btw left above",
+                "",
+                "  Status",
+                "",
+                "  Esc to close"
+            ]))
+            .is_none()
+        );
+        assert!(
+            btw_panel(&lines(&[
+                "❯ /btw q",
+                "",
+                "──",
+                "❯",
+                "──",
+                "  ? for shortcuts"
+            ]))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn btw_merge_keeps_repeated_rows_of_a_scrolled_answer() {
+        let row = |s: &str| s.to_string();
+        let mut read: Vec<String> = ["a", "", "b", "", "c", ""].map(row).to_vec();
+        let view: Vec<String> = ["", "c", "", "d", "", "e"].map(row).to_vec();
+        btw_merge(&mut read, &view);
+        assert_eq!(btw_text(&read), "a\n\nb\n\nc\n\nd\n\ne");
+        // A last press moving one row only.
+        let view: Vec<String> = ["c", "", "d", "", "e", "f"].map(row).to_vec();
+        btw_merge(&mut read, &view);
+        assert_eq!(read.last().map(String::as_str), Some("f"));
+        assert_eq!(read.iter().filter(|l| *l == "e").count(), 1);
     }
 
     #[test]

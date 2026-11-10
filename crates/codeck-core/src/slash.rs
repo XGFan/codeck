@@ -14,6 +14,7 @@ use crate::model::{SlashCommand, SlashSource};
 const BUILTIN: &[(&str, &str, bool)] = &[
     ("add-dir", "添加工作目录", false),
     ("agents", "管理 Subagent", true),
+    ("btw", "问一个旁支问题，不打断当前工作", false),
     ("clear", "清空对话，开始新的 Session", false),
     ("code-review", "审查当前改动", false),
     ("compact", "压缩对话上下文（可附压缩说明）", false),

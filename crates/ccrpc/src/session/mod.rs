@@ -31,6 +31,7 @@ use crate::transcript::{self, BgTask, BlockKind, Tailer, TaskKind, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
 mod announce;
+mod btw;
 mod drive;
 mod fork;
 mod requests;
@@ -207,6 +208,7 @@ pub struct Engine {
     /// the screen.
     feedback: Option<Value>,
     feedback_gone_since: Option<Instant>,
+    btw: btw::BtwWatch,
     /// Screen generation last looked at for the mode line and the spinner, and when.
     looked_gen: u64,
     looked_at: Option<Instant>,
@@ -334,6 +336,7 @@ impl Engine {
             info_sent: None,
             feedback: None,
             feedback_gone_since: None,
+            btw: btw::BtwWatch::default(),
             looked_gen: u64::MAX,
             looked_at: None,
             progress_sent: None,
@@ -738,6 +741,7 @@ impl Engine {
         self.apply_turns(out);
         self.refresh_announcement();
         self.watch_rewind();
+        self.see_btw();
         self.announce_requests();
         self.look_at_screen();
     }
@@ -921,6 +925,8 @@ impl Engine {
             .screen()
             .ok()
             .and_then(|s| recognize::spinner(&s.lines))
+            // The `/btw` panel's own, not the turn's.
+            .filter(|sp| sp.verb != "Answering")
         else {
             return;
         };
@@ -1195,6 +1201,7 @@ impl Engine {
                 Ok(json!({"queued": self.follow_ups.len()}))
             }
             Command::Abort => self.abort(),
+            Command::CloseBtw => self.close_btw(),
             Command::SendNow => self.send_now(),
             Command::EditQueue => self.edit_queue(),
             Command::AnswerPermission {

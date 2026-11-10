@@ -162,12 +162,18 @@ impl Engine {
     /// The prompt input box is on screen (no dialog has it): returns its text.
     pub(super) fn input_box_now(&self) -> std::result::Result<String, CmdErr> {
         let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
+        if recognize::btw_panel(&s.lines).is_some() {
+            return err("btw_open", "/btw 面板还开着，关闭后才能发送");
+        }
         recognize::input_text(&s).ok_or_else(|| self.unrecognized("输入框", Some(&s)))
     }
 
     /// Empties the prompt input box (`ctrl+u` + backspace per line) and leaves shell mode (Backspace
     /// on its empty `!` box), checking the screen.
     pub(super) fn clear_input(&mut self) -> std::result::Result<(), CmdErr> {
+        if self.btw_open() {
+            return err("btw_open", "/btw 面板还开着，关闭后才能发送");
+        }
         // Just after startup the Process File says idle before the TUI is drawn.
         self.await_input_box(Duration::from_secs(2));
         for _ in 0..4 {
@@ -358,6 +364,9 @@ impl Engine {
                 return err("bad_request", "! 命令不能带图片");
             }
             return self.send_bang(cmd.trim());
+        }
+        if btw::is_btw(&clean) {
+            return self.send_btw(&clean, images);
         }
         let paths = Self::image_paths(images)?;
         self.clear_input()?;
@@ -553,6 +562,9 @@ impl Engine {
         self.require(matches!(self.state, State::Busy), "not_busy")?;
         let clean = Self::clean_text(text)?;
         Self::no_bang(&clean)?;
+        if btw::is_btw(&clean) {
+            return self.send_btw(&clean, images);
+        }
         let paths = Self::image_paths(images)?;
         self.clear_input()?;
         self.paste_images(&paths)?;
@@ -580,6 +592,10 @@ impl Engine {
     }
 
     pub(super) fn abort(&mut self) -> CmdResult {
+        // Esc goes to the panel while it is open, as in the terminal: the turn keeps running.
+        if self.btw_open() {
+            return self.close_btw();
+        }
         self.require(
             matches!(self.state, State::Busy | State::Waiting { .. }),
             "not_busy",

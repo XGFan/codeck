@@ -20,6 +20,7 @@ import { useUi } from "@/state/ui";
 import { permissionLabel } from "./answers";
 import type { ConnState, Request } from "./conn";
 import type {
+  BtwEvent,
   ChoiceEvent,
   LayoutSource,
   PermissionRequestEvent,
@@ -35,7 +36,9 @@ import { useAnswer, useNumberKeys } from "./useAnswer";
 
 /** Cards for what the Session waits on, main line first. */
 export function Requests({ c }: { c: ConnState }) {
-  const reqs = [...c.requests].sort((a, b) => Number(isSub(a)) - Number(isSub(b)));
+  // `/btw` last: the first card takes the number keys, and it has nothing to answer.
+  const rank = (r: Request) => (r.type === "btw" ? 2 : Number(isSub(r)));
+  const reqs = [...c.requests].sort((a, b) => rank(a) - rank(b));
   if (reqs.length === 0) {
     // ccrpc is finding the prompt in the terminal's Rewind picker (not a dialog for the analyzer).
     if (c.rewinding)
@@ -85,6 +88,8 @@ function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
       return <ChoiceCard r={r} c={c} focus={focus} />;
     case "rewind":
       return <RewindCard r={r} c={c} focus={focus} />;
+    case "btw":
+      return <BtwCard r={r} c={c} />;
     default:
       return <ScreenCard r={r} c={c} />;
   }
@@ -121,6 +126,50 @@ function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecogn
           关闭（Esc）
         </Button>
         <span className="text-[12px] text-secondary">其他操作需在 Mac Client 的终端里处理。</span>
+        {error && <span className="text-[12px] text-error">{error}</span>}
+      </div>
+    </Shell>
+  );
+}
+
+/** The `/btw` panel's question and answer, which nothing keeps once it closes. */
+function BtwCard({ r, c }: { r: BtwEvent; c: ConnState }) {
+  const command = useConnect((s) => s.command);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const close = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await command(c.conn, { type: "close_btw" });
+    setBusy(false);
+    if (!res.success) setError(`关闭失败：${res.error?.message ?? res.error?.code ?? ""}`);
+  };
+  return (
+    <Shell
+      icon={<MessageCircleQuestionMark size={14} strokeWidth={1.6} />}
+      title={`/btw ${r.question}`}
+      status={r.answering ? "回答中" : "已回答"}
+      testid="btw-card"
+    >
+      {r.text !== null && (
+        <div
+          className="max-h-64 overflow-auto whitespace-pre-wrap text-[13px] leading-[1.6] select-text"
+          data-testid="btw-answer"
+        >
+          {r.text}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void close()}
+          data-testid="btw-close"
+          data-card-answer
+        >
+          关闭（Esc）
+        </Button>
         {error && <span className="text-[12px] text-error">{error}</span>}
       </div>
     </Shell>

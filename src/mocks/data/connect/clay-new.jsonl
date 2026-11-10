@@ -11,3 +11,12 @@
 {"t": 1793700000800, "dir": "send", "msg": {"id": "a1", "type": "abort"}}
 {"t": 1793700000810, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
 {"t": 1793700000820, "dir": "recv", "msg": {"type": "response", "id": "a1", "command": "abort", "success": true, "data": {"state": "idle"}}}
+{"t": 1793700000900, "dir": "send", "msg": {"id": "b1", "type": "slash", "command": "btw 这个端口是谁占的"}}
+{"t": 1793700000910, "dir": "recv", "msg": {"type": "response", "id": "b1", "command": "slash", "success": true, "data": {}}}
+{"t": 1793700000920, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
+{"t": 1793700000930, "dir": "recv", "msg": {"type": "btw", "request_id": "btw", "question": "这个端口是谁占的", "answering": true, "text": null}}
+{"t": 1793700000940, "dir": "recv", "msg": {"type": "btw", "request_id": "btw", "question": "这个端口是谁占的", "answering": false, "text": "是 vite 的开发服务器。\n\n停掉它就能释放 1420。"}}
+{"t": 1793700001000, "dir": "send", "msg": {"id": "b2", "type": "close_btw"}}
+{"t": 1793700001010, "dir": "recv", "msg": {"type": "btw_closed"}}
+{"t": 1793700001020, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700001030, "dir": "recv", "msg": {"type": "response", "id": "b2", "command": "close_btw", "success": true, "data": {}}}

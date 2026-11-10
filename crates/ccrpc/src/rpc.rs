@@ -100,6 +100,8 @@ pub enum Command {
         input: Input,
     },
     Abort,
+    /// Closes the `/btw` panel.
+    CloseBtw,
     /// `ctrl+enter`: interrupt the turn and send what waits in Claude Code's queue now.
     SendNow,
     /// `↑` on the empty input box: take what waits in Claude Code's queue back for editing.
@@ -514,6 +516,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             input: parse_input(obj, kind)?,
         }),
         "abort" => Ok(Command::Abort),
+        "close_btw" => Ok(Command::CloseBtw),
         "send_now" => Ok(Command::SendNow),
         "edit_queue" => Ok(Command::EditQueue),
         "answer_permission" => {
@@ -685,6 +688,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::Steer { .. } => "steer",
         Command::FollowUp { .. } => "follow_up",
         Command::Abort => "abort",
+        Command::CloseBtw => "close_btw",
         Command::SendNow => "send_now",
         Command::EditQueue => "edit_queue",
         Command::AnswerPermission { .. } => "answer_permission",
@@ -1227,6 +1231,7 @@ mod tests {
             "steer",
             "follow_up",
             "abort",
+            "close_btw",
             "send_now",
             "edit_queue",
             "answer_permission",

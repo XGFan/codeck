@@ -110,10 +110,12 @@ impl ConnState {
         self.notices.push(Notice { id, text });
     }
 
-    /// Main-line requests end when the Session stops waiting; a background Subagent's stays.
+    /// Main-line requests end when the Session stops waiting; a background Subagent's stays, and
+    /// the `/btw` card until its panel closes.
     fn drop_main_requests(&mut self) {
-        self.requests
-            .retain(|r| r["agent_id"].as_str().is_some_and(|a| !a.is_empty()));
+        self.requests.retain(|r| {
+            r["type"] == "btw" || r["agent_id"].as_str().is_some_and(|a| !a.is_empty())
+        });
     }
 
     fn upsert_request(&mut self, r: Value) {
@@ -126,8 +128,12 @@ impl ConnState {
             r["type"].as_str(),
             Some("dialog" | "unrecognized" | "choice" | "rewind")
         ) {
-            self.requests
-                .retain(|x| matches!(x["type"].as_str(), Some("permission_request" | "question")));
+            self.requests.retain(|x| {
+                matches!(
+                    x["type"].as_str(),
+                    Some("permission_request" | "question" | "btw")
+                )
+            });
         }
         self.requests.push(r);
     }
@@ -181,9 +187,10 @@ impl ConnState {
                 self.progress = None;
                 self.last_turn = Some(m.clone());
             }
-            "permission_request" | "question" | "choice" | "rewind" => {
+            "permission_request" | "question" | "choice" | "rewind" | "btw" => {
                 self.upsert_request(m.clone())
             }
+            "btw_closed" => self.requests.retain(|r| r["type"] != "btw"),
             "dialog" => {
                 let mut r = m.clone();
                 r["request_id"] =
@@ -378,6 +385,23 @@ mod tests {
             &[json!({ "type": "dialog", "waiting_for": "dialog open", "lines": [] })],
         );
         assert_eq!(ids(&s), ["t1", "dialog:dialog open"]);
+    }
+
+    #[test]
+    fn the_btw_card_stays_until_its_panel_closes() {
+        let ask = |answering: bool, text: Value| json!({ "type": "btw", "request_id": "btw", "question": "q", "answering": answering, "text": text });
+        let s = fold(&[
+            json!({ "type": "state", "state": "busy" }),
+            ask(true, Value::Null),
+            ask(false, json!("a")),
+            json!({ "type": "state", "state": "waiting", "waiting": { "kind": "dialog", "waiting_for": "dialog open" } }),
+            json!({ "type": "dialog", "waiting_for": "x", "lines": [] }),
+            json!({ "type": "state", "state": "idle" }),
+        ]);
+        assert_eq!(types(&s), ["btw"]);
+        assert_eq!(s.requests[0]["text"], "a");
+        let s = fold_on(s, &[json!({ "type": "btw_closed" })]);
+        assert!(s.requests.is_empty());
     }
 
     #[test]

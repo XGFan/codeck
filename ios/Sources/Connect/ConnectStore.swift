@@ -241,7 +241,10 @@ final class ConnectStore {
     /// The cards to show: main line first, those just answered left out.
     func requests(of c: ConnState) -> [ConnRequest] {
         let open = c.requests.filter { !answered.contains("\(c.conn)|\($0.id)") }
-        return open.filter { $0.agentId == nil } + open.filter { $0.agentId != nil }
+        // `/btw` last: the first request is the one answered from the list, and it has nothing to answer.
+        let btw = open.filter { if case .btw = $0 { true } else { false } }
+        let rest = open.filter { r in !btw.contains { $0.id == r.id } }
+        return rest.filter { $0.agentId == nil } + rest.filter { $0.agentId != nil } + btw
     }
 
     private func pruneAnswered() {

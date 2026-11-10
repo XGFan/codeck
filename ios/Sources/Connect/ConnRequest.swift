@@ -8,6 +8,8 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
     case choice(ChoiceRequest)
     /// `dialog` and `unrecognized`: a screen ccrpc cannot read, shown as its lines.
     case screen(ScreenRequest)
+    /// The `/btw` panel: its question and answer.
+    case btw(BtwRequest)
     case other(type: String, requestId: String)
 
     var id: String {
@@ -16,6 +18,7 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
         case .question(let r): r.requestId
         case .choice(let r): r.requestId
         case .screen(let r): r.requestId
+        case .btw(let r): r.requestId
         case .other(_, let id): id
         }
     }
@@ -47,6 +50,8 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
             if let r = try? ChoiceRequest(from: decoder) { self = .choice(r); return }
         case "dialog", "unrecognized":
             if let r = try? ScreenRequest(from: decoder) { self = .screen(r); return }
+        case "btw":
+            if let r = try? BtwRequest(from: decoder) { self = .btw(r); return }
         default:
             break
         }
@@ -156,6 +161,22 @@ struct ChoiceRequest: Decodable, Equatable, Sendable {
         requestId = try c.decode(String.self, forKey: .requestId)
         title = c.lenient(String.self, .title) ?? ""
         options = c.lenient(Lossy<Option>.self, .options)?.items ?? []
+    }
+}
+
+struct BtwRequest: Decodable, Equatable, Sendable {
+    var requestId: String
+    var question: String
+    /// Nil until answered.
+    var text: String?
+
+    enum CodingKeys: String, CodingKey { case requestId = "request_id", question, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requestId = try c.decode(String.self, forKey: .requestId)
+        question = c.lenient(String.self, .question) ?? ""
+        text = c.lenient(String.self, .text)
     }
 }
 

@@ -75,6 +75,15 @@ export interface UnrecognizedEvent {
   lines: string[];
 }
 
+/** The `/btw` panel is open: answering (`text` null) or answered. */
+export interface BtwEvent {
+  type: "btw";
+  request_id: string;
+  question: string;
+  answering: boolean;
+  text: string | null;
+}
+
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
@@ -190,6 +199,8 @@ export type EventMsg =
   | ChoiceEvent
   | DialogEvent
   | UnrecognizedEvent
+  | BtwEvent
+  | { type: "btw_closed" }
   | { type: "follow_up_failed"; text: string; error: { code: string; message: string } }
   /** The TUI's own input queue changed: steers and what the person typed while busy, oldest first. */
   | { type: "queue"; items: string[] }

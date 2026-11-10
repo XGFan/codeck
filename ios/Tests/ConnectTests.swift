@@ -77,6 +77,11 @@ final class ConnStateDecodingTests: XCTestCase {
         XCTAssertEqual(u.context, "cost")
         XCTAssertEqual(u.lines, ["Total cost: $1"])
 
+        let btw = try JSONDecoder().decode(ConnRequest.self, from: Data(#"{"type":"btw","request_id":"btw","question":"q","answering":false,"text":"a"}"#.utf8))
+        guard case .btw(let b) = btw else { return XCTFail("btw") }
+        XCTAssertEqual(b.question, "q")
+        XCTAssertEqual(b.text, "a")
+
         XCTAssertEqual(c.requests[5], .other(type: "rewind", requestId: "rw1"))
         XCTAssertEqual(c.requests[6], .other(type: "teleport", requestId: "t1"))
         // A known type that does not decode is kept as a card without actions.

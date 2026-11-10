@@ -91,6 +91,22 @@ describe("conn reducer", () => {
     expect(s.requests.map((r) => r.type)).toEqual(["permission_request", "unrecognized"]);
   });
 
+  it("keeps the /btw card until its panel closes", () => {
+    const ask = (text: string | null) =>
+      ({ type: "btw", request_id: "btw", question: "q", answering: text === null, text }) as const;
+    let s = fold([
+      { type: "state", state: "busy" },
+      ask(null),
+      ask("a"),
+      { type: "dialog", waiting_for: "x", lines: [] },
+      { type: "state", state: "idle" },
+    ]);
+    expect(s.requests.map((r) => r.type)).toEqual(["btw"]);
+    expect(s.requests[0]).toMatchObject({ text: "a" });
+    s = fold([{ type: "btw_closed" }], s);
+    expect(s.requests).toEqual([]);
+  });
+
   it("keeps the last turn's end and shows progress only while busy", () => {
     let s = fold([{ type: "progress", text: "Thinking…", verb: "Thinking", elapsed_s: 1, tokens: null }]);
     expect(s.progress).toBeNull();

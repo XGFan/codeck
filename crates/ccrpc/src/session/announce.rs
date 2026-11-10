@@ -330,6 +330,10 @@ impl Engine {
                     return;
                 }
                 let s = self.screen().unwrap_or_default();
+                // Claude Code says `dialog open` for the `/btw` panel: reported by `see_btw`.
+                if recognize::btw_panel(&s.lines).is_some() {
+                    return;
+                }
                 if self.announce_choice(&s) || self.grow() || self.analyzing(&s, &waiting_for) {
                     return;
                 }

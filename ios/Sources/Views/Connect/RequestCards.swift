@@ -11,6 +11,7 @@ struct RequestCard: View {
         case .question(let r): QuestionCard(r: r, c: c).id("\(r.requestId)|\(r.questions.count)")
         case .choice(let r): ChoiceCard(r: r, c: c)
         case .screen(let r): ScreenCard(r: r, c: c)
+        case .btw(let r): BtwCard(r: r, c: c)
         case .other(let type, _): OtherRequestCard(type: type, c: c)
         }
     }
@@ -276,6 +277,38 @@ private struct ScreenCard: View {
         error = nil
         let esc: JSONValue = c.isBusy ? ["type": "abort"] : ["type": "send_keys", "keys": ["esc"]]
         let r = await model.connect.command(c.conn, esc)
+        busy = false
+        if !r.success { error = "关闭失败：\(r.errorText)" }
+    }
+}
+
+/// The `/btw` panel's question and answer, which nothing keeps once it closes.
+private struct BtwCard: View {
+    let r: BtwRequest
+    let c: ConnState
+    @Environment(HostModel.self) private var model
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        CardShell(title: "/btw \(r.question)", status: r.text == nil ? "回答中" : "已回答") {
+            if let text = r.text {
+                Text(text).font(.subheadline).textSelection(.enabled)
+            }
+            Button { Task { await close() } } label: {
+                Text("关闭（Esc）").font(.system(size: 15))
+            }
+            .buttonStyle(PillButtonStyle(kind: .neutral, height: 44))
+            .fixedSize()
+            .disabled(busy)
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
+        }
+    }
+
+    private func close() async {
+        busy = true
+        error = nil
+        let r = await model.connect.command(c.conn, ["type": "close_btw"])
         busy = false
         if !r.success { error = "关闭失败：\(r.errorText)" }
     }

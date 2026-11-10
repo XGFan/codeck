@@ -3,6 +3,7 @@
 
 import type {
   ChoiceEvent,
+  BtwEvent,
   DialogEvent,
   FeedbackDraft,
   InMsg,
@@ -24,6 +25,7 @@ export type Request =
   | QuestionEvent
   | ChoiceEvent
   | RewindRequest
+  | BtwEvent
   | (DialogEvent & { request_id: string })
   | (UnrecognizedEvent & { request_id: string });
 
@@ -201,9 +203,9 @@ function notice(s: ConnState, text: string): ConnState {
   return { ...s, notices: [...s.notices.slice(-4), { id: ++noticeSeq, text }] };
 }
 
-/** Main-line requests end when the Session stops waiting; a background Subagent's stays. */
+/** Main-line requests end when the Session stops waiting; a background Subagent's stays, and `/btw` until it closes. */
 function dropMainRequests(s: ConnState): Request[] {
-  return s.requests.filter((r) => "agent_id" in r && r.agent_id);
+  return s.requests.filter((r) => r.type === "btw" || ("agent_id" in r && r.agent_id));
 }
 
 function upsertRequest(s: ConnState, r: Request): ConnState {
@@ -212,7 +214,7 @@ function upsertRequest(s: ConnState, r: Request): ConnState {
   // A dialog / unrecognized screen replaces any other screen-only card.
   const others =
     r.type === "dialog" || r.type === "unrecognized" || r.type === "choice" || r.type === "rewind"
-      ? rest.filter((x) => x.type === "permission_request" || x.type === "question")
+      ? rest.filter((x) => x.type === "permission_request" || x.type === "question" || x.type === "btw")
       : rest;
   return { ...s, requests: [...others, r] };
 }
@@ -289,7 +291,10 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "question":
     case "choice":
     case "rewind":
+    case "btw":
       return upsertRequest(s, m);
+    case "btw_closed":
+      return { ...s, requests: s.requests.filter((r) => r.type !== "btw") };
     case "dialog":
       return upsertRequest(s, { ...m, request_id: `dialog:${m.waiting_for}` });
     case "unrecognized":

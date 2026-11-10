@@ -246,7 +246,9 @@
         "timeout",
         "exited",
         "io",
-        "no_feedback_draft"
+        "no_feedback_draft",
+        "btw_open",
+        "not_found"
       ]
     },
     "choice_option": {
@@ -455,6 +457,9 @@
         },
         {
           "$ref": "#/$defs/commands/abort"
+        },
+        {
+          "$ref": "#/$defs/commands/close_btw"
         },
         {
           "$ref": "#/$defs/commands/send_now"
@@ -727,6 +732,23 @@
         "properties": {
           "type": {
             "const": "abort"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "close_btw": {
+        "title": "close_btw",
+        "description": "关闭 /btw 面板（Esc）；面板开着时可用，任何状态。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "close_btw"
           },
           "id": {
             "$ref": "#/$defs/id"
@@ -1346,14 +1368,13 @@
           "delivered_as": {
             "enum": [
               "prompt",
-              "queued"
+              "queued",
+              "btw"
             ],
-            "description": "prompt：作为新提示词提交；queued：回车前 Claude Code 恰好自己开始了一轮（如后台任务的通知），提示词进了它的队列，之后在工具调用之间或本轮结束后送达。"
+            "description": "prompt：作为新提示词提交；queued：回车前 Claude Code 恰好自己开始了一轮（如后台任务的通知），提示词进了它的队列，之后在工具调用之间或本轮结束后送达。btw：正文是 /btw，答案在面板里，见 btw 事件，uuid 与 prompt_id 不存在。"
           }
         },
         "required": [
-          "uuid",
-          "prompt_id",
           "delivered_as"
         ]
       },
@@ -1365,9 +1386,10 @@
           "delivered_as": {
             "enum": [
               "queued",
-              "prompt"
+              "prompt",
+              "btw"
             ],
-            "description": "queued 为排队送达；本轮恰好结束被当作新提示词时为 prompt。"
+            "description": "queued 为排队送达；本轮恰好结束被当作新提示词时为 prompt。正文是 /btw 时为 btw：答案在面板里，见 btw 事件。"
           }
         },
         "required": [
@@ -1401,6 +1423,12 @@
         "required": [
           "state"
         ]
+      },
+      "close_btw": {
+        "title": "close_btw",
+        "description": "面板已关闭。",
+        "type": "object",
+        "properties": {}
       },
       "send_now": {
         "title": "send_now",
@@ -2056,6 +2084,16 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/abort"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "close_btw"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/close_btw"
             }
           }
         },
@@ -2803,6 +2841,54 @@
           "lines"
         ]
       },
+      "btw": {
+        "title": "btw",
+        "description": "/btw 面板开着：回答中或已读出答案。面板由 close_btw、abort 或终端里的 Esc 关闭。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "btw"
+          },
+          "request_id": {
+            "const": "btw"
+          },
+          "question": {
+            "type": "string",
+            "description": "面板显示的问题（一行，按宽度截断）。"
+          },
+          "answering": {
+            "type": "boolean",
+            "description": "还在等回答。"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "答案（屏幕上的文字，含折行）；回答中为 null。"
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "question",
+          "answering",
+          "text"
+        ]
+      },
+      "btw_closed": {
+        "title": "btw_closed",
+        "description": "/btw 面板关了。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "btw_closed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "follow_up_failed": {
         "title": "follow_up_failed",
         "description": "队列里的 follow_up 发送失败。",
@@ -3228,6 +3314,12 @@
         },
         {
           "$ref": "#/$defs/events/unrecognized"
+        },
+        {
+          "$ref": "#/$defs/events/btw"
+        },
+        {
+          "$ref": "#/$defs/events/btw_closed"
         },
         {
           "$ref": "#/$defs/events/follow_up_failed"

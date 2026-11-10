@@ -1152,6 +1152,20 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   expect(await lastSent(page, "abort")).toBeTruthy();
   await expect(screen).toHaveCount(0);
   await expect(state(page)).toContainText("空闲");
+
+  // `/btw` answers in a panel, nothing in the transcript: its answer shows on a card of its own.
+  await input.fill("/btw 这个端口是谁占的");
+  await input.press("Enter");
+  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "btw 这个端口是谁占的" });
+  const btw = page.getByTestId("btw-card");
+  await expect(btw).toContainText("/btw 这个端口是谁占的");
+  await expect(btw).toContainText("已回答");
+  await expect(btw.getByTestId("btw-answer")).toContainText("停掉它就能释放 1420");
+  await expect(page.getByTestId("screen-card")).toHaveCount(0);
+  await btw.getByTestId("btw-close").click();
+  await expect(btw).toHaveCount(0);
+  expect(await lastSent(page, "close_btw")).toBeTruthy();
+  await expect(state(page)).toContainText("空闲");
 });
 
 test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分析器的 Key、Endpoint、模型可在这里设置", async ({

@@ -8,6 +8,13 @@ use serde_json::{Value, json};
 
 use crate::harness::*;
 
+/// `/btw` answer taller than the panel's scroll area.
+const MOCK_BTW_LONG: [&str; 3] = [
+    "L01\n\nL02\n\nL03\n\nL04\n\nL05\n\nL06\n\nL07\n\nL08\n\nL09\n\nL10\n\n",
+    "L11\n\nL12\n\nL13\n\nL14\n\nL15\n\nL16\n\nL17\n\nL18\n\nL19\n\nL20\n\n",
+    "L21\n\nL22\n\nL23\n\nL24\n\nL25 end",
+];
+
 /// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
 /// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
 /// `MOCK-WRITE <path>` with a Write call, `MOCK-WORKTREE` / `MOCK-EXITWT` with EnterWorktree / ExitWorktree,
@@ -194,6 +201,10 @@ fn mock_model() -> String {
                     (vec!["slow "; 16], 500)
                 } else if text.contains("MOCK-STEERED") {
                     (vec!["STEER-TURN"], 0)
+                } else if text.contains("MOCK-BTWLONG") {
+                    (MOCK_BTW_LONG.to_vec(), 0)
+                } else if text.contains("MOCK-BTW") {
+                    (vec!["BTW-ANSWER first line.\n\nsecond paragraph."], 0)
                 } else {
                     (vec!["ok"], 0)
                 };
@@ -2375,4 +2386,95 @@ fn mock_model_fork() {
         .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("找不到 Session"));
+}
+
+/// `/btw`: answered in a panel with nothing in the transcript. Sent while busy it is confirmed by
+/// the panel; the answer comes out whole, however tall; the panel is not an unrecognized dialog,
+/// and closing it leaves the turn running and the Session usable.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_btw() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    rpc.call("p0", json!({"type": "prompt", "text": "hello"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    settle_idle(&mut rpc);
+
+    // Idle, and taller than the panel.
+    rpc.forget();
+    rpc.call(
+        "i1",
+        json!({"type": "slash", "command": "btw long MOCK-BTWLONG"}),
+    );
+    let a = rpc.until("回答", Duration::from_secs(15), |v| {
+        v["type"] == "btw" && v["answering"] == false
+    });
+    assert_eq!(a["question"], "long MOCK-BTWLONG", "{a}");
+    let want: Vec<String> = (1..=25)
+        .map(|n| format!("L{n:02}"))
+        .chain(["end".to_string()])
+        .collect();
+    let got = a["text"].as_str().unwrap().replace("L25 end", "L25\nend");
+    let got: Vec<&str> = got.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(got, want, "{a}");
+    wait_screen(&mut rpc, "top", |l| {
+        l.iter().any(|r| r.trim() == "L01")
+            && l.iter().any(|r| r.trim_end().ends_with("Esc to close"))
+    });
+    // While it is open nothing can be typed, and the card stays what it is.
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["state"], "waiting", "{st}");
+    std::thread::sleep(Duration::from_secs(1));
+    rpc.call("c1", json!({"type": "close_btw"}));
+    rpc.event("btw_closed", Duration::from_secs(5));
+    wait_state(&mut rpc, "idle", 5);
+    assert!(
+        !rpc.seen
+            .iter()
+            .any(|v| v["type"] == "dialog" || v["type"] == "unrecognized"),
+        "面板被当成了认不出的界面"
+    );
+
+    // Busy: the steer is confirmed by the panel, and the turn is not stopped by closing it.
+    rpc.forget();
+    rpc.call("b0", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    let d = rpc.call("b1", json!({"type": "steer", "text": "/btw busy MOCK-BTW"}));
+    assert_eq!(d["delivered_as"], "btw", "{d}");
+    let a = rpc.until("回答", Duration::from_secs(15), |v| {
+        v["type"] == "btw" && v["answering"] == false
+    });
+    assert_eq!(
+        a["text"], "BTW-ANSWER first line.\n\nsecond paragraph.",
+        "{a}"
+    );
+    rpc.send(json!({"type": "steer", "text": "during the panel", "id": "b2"}));
+    let r = rpc.until("响应", Duration::from_secs(10), |v| {
+        v["type"] == "response" && v["id"] == "b2"
+    });
+    assert!(
+        matches!(r["error"]["code"].as_str(), Some("btw_open" | "not_busy")),
+        "{r}"
+    );
+    rpc.call("b3", json!({"type": "abort"}));
+    rpc.event("btw_closed", Duration::from_secs(5));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["aborted"], false, "{t}");
+    assert!(
+        t["last_text"].as_str().unwrap_or("").contains("slow"),
+        "{t}"
+    );
+    settle_idle(&mut rpc);
+    assert!(
+        !rpc.seen
+            .iter()
+            .any(|v| v["type"] == "dialog" || v["type"] == "unrecognized"),
+        "面板被当成了认不出的界面"
+    );
+    rpc.call("p1", json!({"type": "prompt", "text": "after the panel"}));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["last_text"], "ok", "{t}");
 }
