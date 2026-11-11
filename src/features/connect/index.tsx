@@ -1,6 +1,7 @@
 import { Info, Unplug, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/ipc";
+import { isNotFound } from "@/lib/errors";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useAllSessions, useSession, useSessionList } from "@/queries";
@@ -12,7 +13,7 @@ import { ErrorNotice, NoticeCard } from "./Notice";
 import { arrived, PENDING_MAX_MS } from "./pending";
 import { Requests } from "./Requests";
 import { resumeOffer } from "./resume";
-import { connFor, draftKey, errorKey, lsEntryFor, useConnect, waitingSessions } from "./store";
+import { connFor, draftKey, errorKey, isNewUnprompted, lsEntryFor, useConnect, waitingSessions } from "./store";
 
 export { ConnectButton, ConnectMenuItems, STATE_WORD, useConnectDebugInfo } from "./Header";
 export { arrived, isFresh } from "./pending";
@@ -164,9 +165,9 @@ export function useUnindexed(error: unknown): boolean {
   // while the page moves from the connection's id to the Session's).
   const fresh = useConnect((s) => {
     const c = connFor(s, sessionId);
-    return !!c && c.newIn != null && c.pending == null && c.lastTurn == null;
+    return !!c && isNewUnprompted(c);
   });
-  return fresh || (known && !!error && typeof error === "object" && (error as { code?: unknown }).code === "notFound");
+  return fresh || (known && isNotFound(error));
 }
 
 /** Under the transcript while the open Session is connected: banners, cards, progress, queue, input box. */

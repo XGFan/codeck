@@ -19,7 +19,7 @@ import { createLsWatch } from "./lsWatch";
 import { resumeFailure } from "./resume";
 import { forkTitle } from "./fork";
 import type { ForkEvent, InMsg, LsEntry, ResponseMsg, RewindOption, RewindRequest, Task } from "./protocol";
-import { errorText } from "@/lib/errors";
+import { errorText, isNotFound } from "@/lib/errors";
 import { ALL_SESSIONS } from "@/queries/hooks";
 import { forgetSteers } from "./queue";
 
@@ -136,6 +136,9 @@ export function lsEntryFor(s: Pick<Lookup, "ls">, sessionId: string | null): LsE
 
 /** A 「新建 Session」 connection ccrpc has not named the Session of yet: its page is selected by the connection's id. */
 export const isNewPending = (c: ConnState) => c.newIn != null && c.sessionId == null;
+
+/** A 「新建 Session」 connection before its first prompt: the Session has no transcript file yet. */
+export const isNewUnprompted = (c: ConnState) => c.newIn != null && c.pending == null && c.lastTurn == null;
 
 /** The connection to a CoDeck Session (or a new one's page): a live one first, else the last that exited. */
 export function connFor(s: Lookup, sessionId: string | null): ConnState | null {
@@ -696,6 +699,14 @@ export const useConnect = create<ConnectStore>((set, get) => {
         return "tasks_running";
       }
       if (!r.success) return fail(r);
+      // Closed before any prompt here, the Session may have no transcript (a new one, or one just opened in clay): with
+      // the connection and its Pane gone, nothing is left to show on its page.
+      const now = get().conns[conn] ?? c;
+      const open = useUi.getState().sessionId;
+      if (open != null && [conn, now.sessionId].includes(open) && now.pending == null && now.lastTurn == null) {
+        const gone = isNewUnprompted(now) || (await api.getSession(open).then(() => false, isNotFound));
+        if (gone && useUi.getState().sessionId === open) useUi.getState().selectSession(null);
+      }
       await get().disconnect(conn);
     },
 

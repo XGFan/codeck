@@ -1026,6 +1026,18 @@ test("新建 Session：选目录后选中它，进索引前显示占位且可以
 const NEW_ID = "0e5e0000-0000-4000-8000-0000000000ee";
 const openId = (page: Page) => page.evaluate(() => window.__cvStore!.getState().sessionId);
 
+test("新建 Session：发送提示词前关闭，页面回到未选中，不报找不到", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("new-session").click();
+  await page.getByTestId("new-session-other").click();
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("connect-close").click();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(page.getByTestId("transcript-empty")).toBeVisible();
+  await expect(page.getByTestId("transcript-error")).toHaveCount(0);
+  expect(await openId(page)).toBeNull();
+});
+
 test("新建 Session：点下即打开页面，启动中可以打字，claude 报到后草稿与焦点都还在", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => (window.__cvCcrpc!.newStartMs = 1500));
@@ -1095,6 +1107,18 @@ test("clay 里刚打开、未进索引的 Session 以占位行列在最上方，
   await filterBy("orbit-web");
   await expect(page.getByTestId("session-row").first()).toBeVisible();
   await expect(placeholder).toHaveCount(0);
+});
+
+test("clay 里未进索引的 Session：Connect 后不发提示词就关闭，页面回到未选中，不报找不到", async ({ page }) => {
+  await page.goto("/");
+  await page.locator('[data-testid=session-row][data-session-id="c1a70000-0000-4000-8000-0000000000c1"]').click();
+  await expect(page.getByTestId("transcript-new")).toBeVisible();
+  await pick(page, "connect-button");
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("connect-close").click();
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(page.getByTestId("transcript-empty")).toBeVisible();
+  await expect(page.getByTestId("transcript-error")).toHaveCount(0);
 });
 
 test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash，自定义命令走 prompt，打开的面板可关闭", async ({
