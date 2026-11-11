@@ -129,6 +129,8 @@ export function createRemoteApi(base: string): RemoteApi {
     onSessionsChanged: (cb) => listen("sessions-changed-event", cb),
     onLiveChanged: (cb) => listen("live-changed-event", cb),
     onPricesChanged: (cb) => listen("prices-changed-event", () => cb()),
+    // Links open the desktop app, not this page.
+    onOpenUrl: async () => () => {},
     copyText: async (text) => {
       const native = window.webkit?.messageHandlers?.codeck;
       if (native) native.postMessage({ type: "copyText", text });

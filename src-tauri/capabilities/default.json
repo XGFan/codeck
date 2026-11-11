@@ -12,6 +12,7 @@
     "core:window:allow-set-theme",
     "clipboard-manager:allow-write-text",
     "dialog:allow-open",
+    "deep-link:default",
     "opener:default"
   ]
 }

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use codeck_host::lan::{DEFAULT_PORT, LanConfig, server};
 use codeck_host::{EventSink, Host, HostConfig, HostEvent};
 use tauri::Manager;
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 
 use crate::events::{
@@ -44,9 +45,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
+            // `codeck://` links: the window parses and opens them; a hidden window comes back first.
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_| reveal(&handle));
             let (lan_events, lan_sink) = server::event_channel();
             let window_sink = sink(app.handle().clone());
             let events: EventSink = Arc::new(move |e: HostEvent| {
@@ -106,14 +111,20 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
                 // A click on the Dock icon brings a hidden window back.
-                let _ = handle.show();
-                if let Some(window) = handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                reveal(handle);
             }
             _ => {}
         });
+}
+
+/// Shows the app and its window again, in front.
+fn reveal(handle: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = handle.show();
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// A window in full screen is on a Space of its own: hidden alone it would leave that Space empty, so the whole app

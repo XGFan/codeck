@@ -48,7 +48,7 @@ codeck new --cwd /path/to/project <<'PROMPT'
 PROMPT
 ```
 
-提示词从 stdin 读，成功时输出 `{"sessionId","holderId","cwd"}`，Session 在 CLI 退出后继续运行。
+提示词从 stdin 读，成功时输出 `{"sessionId","holderId","cwd","url"}`，Session 在 CLI 退出后继续运行。`url`（`codeck://session/<sessionId>`）在 CoDeck 桌面应用里打开这个 Session，可以交给用户点。
 
 - 提示词要自成一体：新 Session 看不到你的上下文，要写清目标、相关文件和完成标准。
 - 提示词不能以 `!` 开头，否则会被拒绝：TUI 会把它当 shell 命令直接执行。

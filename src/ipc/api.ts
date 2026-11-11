@@ -69,6 +69,8 @@ export interface Api {
   onSessionsChanged(cb: (payload: SessionsChanged) => void): Promise<Unlisten>;
   onLiveChanged(cb: (payload: LiveChanged) => void): Promise<Unlisten>;
   onPricesChanged(cb: () => void): Promise<Unlisten>;
+  /** `codeck://` links opened in the system, including the one the app was launched with. */
+  onOpenUrl(cb: (urls: string[]) => void): Promise<Unlisten>;
 
   copyText(text: string): Promise<void>;
   /** The window's own theme (title bar, menus, dialogs); null follows the system. */

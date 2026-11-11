@@ -18,6 +18,8 @@ tauri-build.workspace = true
 codeck-core.workspace = true
 codeck-host.workspace = true
 serde.workspace = true
+# `generate_context!` embeds the plugins' config as JSON.
+serde_json.workspace = true
 specta.workspace = true
 tauri.workspace = true
 tauri-specta.workspace = true
@@ -25,8 +27,7 @@ specta-typescript.workspace = true
 tauri-plugin-opener.workspace = true
 tauri-plugin-clipboard-manager.workspace = true
 tauri-plugin-dialog.workspace = true
+tauri-plugin-deep-link.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-[dev-dependencies]
-serde_json.workspace = true

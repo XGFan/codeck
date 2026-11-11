@@ -59,7 +59,7 @@ import { richModelCosts, sessionData } from "@/mocks/data/sessions";
 
 const LATENCY_MS = 30;
 
-type EventName = "sessionsChanged" | "liveChanged" | "indexStatus" | "pricesChanged";
+type EventName = "sessionsChanged" | "liveChanged" | "indexStatus" | "pricesChanged" | "openUrl";
 
 declare global {
   interface Window {
@@ -77,6 +77,8 @@ declare global {
       forkMain(sessionId: string, atNodeId: string, node: Node): void;
       /** `sessionId` was moved to the background and is carried on in `by`, or is shown again (`null`); its sync is reported. */
       supersede(sessionId: string, by: string | null): void;
+      /** The system opens a `codeck://` link. */
+      openUrl(url: string): void;
     };
   }
 }
@@ -167,6 +169,7 @@ const listeners: { [K in EventName]: Set<(p: never) => void> } = {
   liveChanged: new Set(),
   indexStatus: new Set(),
   pricesChanged: new Set(),
+  openUrl: new Set(),
 };
 
 function dispatch(name: EventName, payload: unknown) {
@@ -686,6 +689,9 @@ export function createMockApi(): Api {
         projectsChanged: true,
       } satisfies SessionsChanged);
     },
+    openUrl(url) {
+      dispatch("openUrl", [url]);
+    },
   };
 
   return {
@@ -777,6 +783,7 @@ export function createMockApi(): Api {
     onSessionsChanged: (cb) => subscribe<SessionsChanged>("sessionsChanged", cb),
     onLiveChanged: (cb) => subscribe("liveChanged", cb),
     onPricesChanged: (cb) => subscribe("pricesChanged", cb),
+    onOpenUrl: (cb) => subscribe("openUrl", cb),
     // A browser has no window theme: the page follows `data-theme` alone.
     setWindowTheme: async () => {},
     copyText: async (text) => {

@@ -5,14 +5,14 @@ import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
 import { OverlayScrollbar } from "@/components/OverlayScrollbar";
 import { ConnectTail, RewoundDivider, useRewindView, useShownTranscript, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
-import { useCurrentTranscript } from "@/queries";
+import { useCurrentTranscript, useIndexStatus } from "@/queries";
 import { MAIN_SCOPE, useUi } from "@/state/ui";
 import { useFollowBottom, usePublishTurns, useRows, useScrollRequestConsumer } from "./listHooks";
 import { isContinuation, RowView } from "./nodes";
 import { scrollToNode, TranscriptContext, type TranscriptCtx } from "./nodes/scroll";
 import { peerNames } from "./teammate";
 import { ColumnBox } from "./ColumnBox";
-import { errorText } from "@/lib/errors";
+import { errorText, isNotFound } from "@/lib/errors";
 
 /**
  * Scroll + highlight API for other features (⌘F / T4.2, outline, links):
@@ -44,6 +44,8 @@ export function TranscriptView() {
   const { data, isPlaceholderData, error } = useCurrentTranscript();
   // A Connected or `ccrpc ls` Session not in the index yet: its transcript file appears with the first prompt.
   const unindexed = useUnindexed(error);
+  // A link may name a Session the scan has not reached yet (just started, or the app launched by the link).
+  const scanning = useIndexStatus().data?.phase === "scanning";
   usePendingJump();
 
   if (!sessionId) {
@@ -64,6 +66,16 @@ export function TranscriptView() {
       >
         新 Session，发送第一条提示词后显示对话
         <ConnectTail />
+      </div>
+    );
+  }
+  if (scanning && isNotFound(error) && data?.sessionId !== sessionId) {
+    return (
+      <div
+        data-testid="transcript-scanning"
+        className="flex flex-1 items-center justify-center px-6 text-[13px] text-secondary"
+      >
+        正在更新索引，完成后显示这个 Session
       </div>
     );
   }

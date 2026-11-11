@@ -1,5 +1,6 @@
 import { useUi } from "@/state/ui";
 import { ConnectPanel, ConnectRoot, ElsewhereBanner } from "@/features/connect";
+import { useDeepLinks } from "@/features/deep-link";
 import { FindBar } from "@/features/find";
 import { SidebarResizer, StatsToggle, Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
@@ -19,6 +20,7 @@ export default function App() {
   // The conversation column's width, for the transcript and the input area under it.
   const convWidth = useUi((s) => s.convWidth);
   const sidebarWidth = useUi((s) => s.sidebarWidth);
+  useDeepLinks();
 
   return (
     <div className="grid h-full grid-rows-[1fr]" style={{ "--conv-w": `${convWidth}px` } as React.CSSProperties}>

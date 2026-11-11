@@ -108,7 +108,8 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   - 当前 Session 读取失败时显示一行错误；源文件被删除时回到空状态。
 - Subagent：主对话中显示为卡片（任务 + 结果 + 状态：运行中 / 已完成 / 失败 / 未收到完成通知；同一条消息里派出多个时，上面一行「并行 · N 个 Subagent」，卡片依次排列，不加左侧竖线），teammate（带 `name` 派出、加入 agent team 的，工具结果是 `teammate_spawned`）的卡片另标「Teammate · <名字>」与它的颜色，状态与结果取自它发回主线的消息：结果是它最近一次的报告或一轮结束的 `result`（派出时的工具结果不当作结果），状态为运行中 / 空闲 / 已退出（主线发给它 SendMessage 时转为运行中，在这之前产生、之后才送达的 `idle_notification` 不算；Session 不再活跃、又没见到退出时不写状态）；右侧面板的头部也写状态；后台 agent 以结束通知为准，收到之前不算结束（Session 不再活跃时写「未收到完成通知」），结果取通知里的 `<result>`（没有时取 summary；resume 后再次结束会再通知，状态与结果取最后一次，再次运行期间仍显示上一次的结束），启动时的工具结果不当作结果；fork 执行的 Skill 同样显示为卡片（没有任务一栏），工具结果带 `background: true` 的按后台 agent 处理，否则工具结果就是它的结束（因 API 错误结束的也写已完成）；"查看完整过程"在右侧面板打开，嵌套时显示面包屑；Subagent Run 里派出方后来发来的消息（SendMessage，Claude Code 记为元数据，`origin.kind` 为 `coordinator`）去掉外层套话后显示为「主对话发来的消息」（嵌套时为「上级 Subagent 发来的消息」）卡片，开始新的一轮；后台 agent 的卡片、后台命令的工具调用和结束通知互相链接，被 SendMessage 续接过的 agent 再结束时通知指向那次 SendMessage，通知行的「查看派出位置」仍到最初的 Agent 调用，另有「查看续接位置」；后台任务结束的通知（`<task-notification>`）一行显示，按 summary 的前缀标明是后台 agent、后台命令、Monitor 还是 Workflow，写出描述（没有描述的后台命令写命令本身，过长截断）、状态，以及非 0 的退出码或失败原因，认不出的写「后台任务」加原文；summary 里的 XML 转义（`&gt;` 等）还原后显示；Workflow 显示为一张总卡片。
 - 阅读便利：⌘F（会自动展开折叠的内容，包括工具组内的思考块和截断的工具输出）、`j`/`k` 按轮次跳转（对话框打开时不响应）、轮次大纲、复制消息/代码块/Bash 命令、复制 Session ID 和 `claude --resume <id>`、在 Finder 中显示。
-- 不做：导出、URL scheme、书签和笔记、汇率换算、Connect 以外任何写 Session 的操作。
+- **链接**（ADR-0014）：应用注册 `codeck://`，只用于打开，不新建、不发送、不改动任何东西。`codeck://session/<sessionId>`（id 是 UUID，大小写不限，参数忽略）把窗口带到前面（隐藏的也显示出来），关掉搜索、统计与设置，清除列表筛选，选中这个 Session；同时到达几个时打开最后一个；其他链接忽略，不提示。应用没开时由链接启动，启动后打开它。索引还在扫描、找不到这个 Session 时显示「正在更新索引，完成后显示这个 Session」，扫描完仍找不到才报错。只有打包好的应用才能注册，`pnpm tauri dev` 收不到链接。
+- 不做：导出、书签和笔记、汇率换算、Connect 以外任何写 Session 的操作。
   - 导出为 HTML 评估过，暂不做：对话列表是虚拟列表，导出要另行整页渲染；按需加载的工具输出、图片要一次性取全；Shiki 高亮是异步的，要等全部完成；折叠需改成 `<details>`；保存位置需引入对话框插件。只导出 Main Line、工具保持摘要与预览的首版约 1–2 天，带完整工具输出和 Subagent 过程会更多。
 
 ## 统计面板
@@ -224,7 +225,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **轮次**：每条用户输入（人亲手输入的与命令；Subagent Run 里还有上级发来的消息）开始一轮，第一条是第 1 轮；第一条用户输入之前的内容是第 0 轮。Main Line 上的编号在 `search` 与 `show --turn` 里相同。
 - **`show`**：默认 Main Line 的概览，一轮一段（用户输入、工具列表、回答），超过 50 轮时只显示最后 50 轮并写明。`--turn N` 输出这一轮的完整过程（说明、思考、工具）与回答；`--full`（必须带 `--turn`）附上每次工具调用的输入与输出，每段 8000 字、一轮 20 万字为限。`--agent ID` 换成一个 Subagent Run。回答是这一轮最后一次工具调用或思考之后的文字，同界面的按轮折叠。打开被接替的 Session 时转到接替它的 Session（同界面）。Session 的文件列表、Fork 来源、接续与 Subagent 统计来自索引，文件内容总是读最新的；索引没收录时直接读 `projects/*/<id>.jsonl`，头部写 `partial`，没有 Fork 与接续信息，也没有 `project=`。
 - **`wait`**：只读进程文件，每秒一次，`idle` / `waiting` / 结束时立即返回 `{"sessionId","status","waitingFor"}`；默认 110 秒，超时退出码 124，stdout 仍是当前状态。进程文件连续两次读不到才算结束；既没有进程文件也没有 transcript 的 id 报 `not_found`。
-- **`new`**：校验 `--cwd` 是目录、stdin 的提示词非空且不以 `!` 开头（ccrpc 会把它当 TUI 的 shell 命令执行，绕过审批），用设置里的启动规则与「新开的 Pane」拼 `ccrpc new`，环境同桌面（登录 shell）。等 `ready`，`session_id` 为 null 时再等 `session_changed`（各 60 秒），发 `prompt`，等响应成功后关闭 stdin：ccrpc Disconnect，Session 继续运行，输出 `{"sessionId","holderId","cwd"}`。目录信任框（`choice`，layout `trust_folder`）答「不信任」让 claude 退出，再关掉这个 Pane，报错 `untrusted_dir`；其他 `choice`、超时、提示词发送失败时关闭 stdin 报错，Pane 留给人处理；启动画面（`dialog` 事件）可能自己过去，不立即失败，超时的报错写明停在对话框上；ccrpc 启动失败或提前退出时，错误是它 stderr 的最后一行。
+- **`new`**：校验 `--cwd` 是目录、stdin 的提示词非空且不以 `!` 开头（ccrpc 会把它当 TUI 的 shell 命令执行，绕过审批），用设置里的启动规则与「新开的 Pane」拼 `ccrpc new`，环境同桌面（登录 shell）。等 `ready`，`session_id` 为 null 时再等 `session_changed`（各 60 秒），发 `prompt`，等响应成功后关闭 stdin：ccrpc Disconnect，Session 继续运行，输出 `{"sessionId","holderId","cwd","url"}`，`url` 是在桌面打开它的链接 `codeck://session/<sessionId>`。目录信任框（`choice`，layout `trust_folder`）答「不信任」让 claude 退出，再关掉这个 Pane，报错 `untrusted_dir`；其他 `choice`、超时、提示词发送失败时关闭 stdin 报错，Pane 留给人处理；启动画面（`dialog` 事件）可能自己过去，不立即失败，超时的报错写明停在对话框上；ccrpc 启动失败或提前退出时，错误是它 stderr 的最后一行。
 
 ## 测试
 

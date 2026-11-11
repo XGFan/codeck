@@ -78,6 +78,7 @@ fn sends_the_prompt_once_the_session_is_known_then_lets_go() {
     .unwrap();
     assert_eq!(started.session_id, "S-1");
     assert_eq!(started.holder_id, "H1");
+    assert_eq!(started.url, "codeck://session/S-1");
 
     let args = fs::read_to_string(dir.path().join("args")).unwrap();
     let args: Vec<&str> = args.lines().collect();

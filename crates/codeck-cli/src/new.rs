@@ -40,6 +40,8 @@ pub struct Started {
     pub session_id: String,
     pub holder_id: String,
     pub cwd: String,
+    /// Opens the Session in the desktop app.
+    pub url: String,
 }
 
 pub struct Launch<'a> {
@@ -274,6 +276,7 @@ fn drive(
         }
     }
     Ok(Started {
+        url: format!("codeck://session/{session}"),
         session_id: session,
         holder_id: holder,
         cwd: cwd.display().to_string(),

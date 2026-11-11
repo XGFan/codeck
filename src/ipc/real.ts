@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { InMsg, LsEntry } from "@/features/connect/protocol";
 import type { Api } from "./api";
@@ -32,6 +33,13 @@ export function createRealApi(): Api {
     onSessionsChanged: (cb) => events.sessionsChangedEvent.listen((e) => cb(e.payload)),
     onLiveChanged: (cb) => events.liveChangedEvent.listen((e) => cb(e.payload)),
     onPricesChanged: (cb) => events.pricesChangedEvent.listen(() => cb()),
+    onOpenUrl: async (cb) => {
+      const unlisten = await onOpenUrl(cb);
+      // A link that launched the app came before any listener. (It stays current: a reload opens it again.)
+      const current = await getCurrent();
+      if (current) cb(current);
+      return unlisten;
+    },
     copyText: writeText,
     setWindowTheme: (theme) => getCurrentWindow().setTheme(theme),
     ccrpcInfo: commands.ccrpcInfo,

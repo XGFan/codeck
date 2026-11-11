@@ -9,6 +9,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 - **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork / 转入后台复制的历史不重复计算），统计页汇总总额与 Session 排行（按 Cost）。
 - **Connect**：ToH clay 里装了 ccrpc 插件的 Session，打开时自动 Connect（可在设置里关掉），或在标题栏的「···」菜单里点「Connect」，之后可以直接发提示词（可粘贴截图，图片作为一整块留在光标处，可拖动换位置、悬停预览）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill，输入框里的命令高亮，`/add-dir` 补全目录、`@` 补全文件，支持 `../`）、忙时插话（和终端里一样进 Claude Code 的队列）、回复前按 Esc 撤回刚发的提示词（和终端里一样从对话里拿掉、文字回到输入框）、作答审批 / 提问（也可「先聊聊」）/ 选择、切换权限模式、模型与思考等级、停止后台任务、回退到 Main Line 上某条提示词之前（悬停提示词点「回退」或输入 `/rewind`（`/checkpoint`），可选恢复代码与对话、只恢复对话或只恢复代码）；在侧栏的 Session 行上右键重命名（发送 `/rename`，空闲时可用）；「关闭」结束 Session 并关掉它的 Pane；也可以在侧栏组头点「+」、在 Project 或子 Project 上右键或按 ⌘N 选 Project 新建 Session，或把已结束的 Session 在新 Pane 里 Resume（`claude --resume`）后接着 Connect，或从任一 Session 的某条提示词之前（或整个 Session）Fork 出新 Session（悬停提示词点「Fork」或「···」菜单里的「Fork」，可选只恢复对话或恢复代码与对话），并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：默认看本周期（自定义每周重置时间）的用量，可切到月份或最近 7 / 30 / 90 天，周期和月份可前后翻；输入、输出 token 与缓存命中率，每日用量（全部 / 输入 / 输出 / Cost，后三者按模型）、按时间范围自动分桶的活跃时段、Session 排行，图表可下钻到 Session 列表。
+- **链接**：`codeck://session/<sessionId>` 在 CoDeck 里打开这个 Session（应用没开时先启动它）；`codeck new` 的输出里带这个链接，别的工具新建 Session 后可以把它记下来，之后点一下就跳回来。链接只打开，不新建、不发送任何东西（[ADR-0014](docs/adr/0014-url-scheme-opens-only.md)）。
 - **iPhone**：原生 App 经局域网连到打开了「局域网访问」的 CoDeck，或运行 `codeck-host` 的 Host（Mac 或 Linux），浏览、搜索 Session，阅读 Transcript，并 Connect 运行中的 Session 作答审批、继续对话（见下文「iPhone 与 Host」）。
 
 ## 快捷键
@@ -153,7 +154,7 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 | `codeck search "词" [--project P] [--limit N]` | 全文搜索，语法同 ⌘K，命中带 sessionId 与轮次 |
 | `codeck show <id> [--turn N] [--full] [--agent ID]` | 紧凑文本形式的对话，默认 Main Line |
 | `codeck wait <id> [--timeout 秒]` | 等到 Session 变成 idle、waiting 或结束；超时退出码 124 |
-| `codeck new --cwd DIR` | 新建 Session，提示词从 stdin 读，发出后放手 |
+| `codeck new --cwd DIR` | 新建 Session，提示词从 stdin 读，发出后放手；输出里的 `url` 在 CoDeck 里打开它 |
 
 索引只读打开，版本或数据目录不一致时报错，不会改动它；桌面没开时索引不更新，结果里的 `indexedAt` 说明数据有多新。`--project P` 收 Project 的路径。全局选项 `--cache-dir DIR` 指定索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`，在 daemon 的 Host 上指向 `<状态目录>/cache`。
 
