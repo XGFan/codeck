@@ -653,8 +653,11 @@ fn mock_model_model_and_effort() {
     // Nothing said to Sonnet yet: set at once, the effort from the TUI's mark.
     rpc.forget();
     rpc.call("m2", json!({"type": "set_model", "model": "fable"}));
+    // The alias follows Claude Code's latest Fable (5.1, then 5.2 from 2.1.322): any version.
     let i = rpc.until("fable", Duration::from_secs(10), |v| {
-        v["type"] == "session_info" && v["model"] == "Fable 5.1" && v["effort"].is_string()
+        v["type"] == "session_info"
+            && v["model"].as_str().is_some_and(|m| m.starts_with("Fable "))
+            && v["effort"].is_string()
     });
     assert_ne!(i["effort"], "low", "{i}");
 
@@ -681,7 +684,12 @@ fn mock_model_model_and_effort() {
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["state"], "idle", "{st}");
     // The reply on Fable named its model by id.
-    assert_eq!(st["model"], "claude-fable-5-1", "{st}");
+    assert!(
+        st["model"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("claude-fable-")),
+        "{st}"
+    );
 }
 
 /// `/add-dir` asks before adding a directory: a choice from the built-in layout (no tool call is
