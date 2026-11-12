@@ -10,6 +10,8 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
     case screen(ScreenRequest)
     /// The `/btw` panel: its question and answer.
     case btw(BtwRequest)
+    /// A rewind stopped at its confirm page.
+    case rewind(RewindRequest)
     case other(type: String, requestId: String)
 
     var id: String {
@@ -19,6 +21,7 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
         case .choice(let r): r.requestId
         case .screen(let r): r.requestId
         case .btw(let r): r.requestId
+        case .rewind(let r): r.requestId
         case .other(_, let id): id
         }
     }
@@ -52,6 +55,8 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
             if let r = try? ScreenRequest(from: decoder) { self = .screen(r); return }
         case "btw":
             if let r = try? BtwRequest(from: decoder) { self = .btw(r); return }
+        case "rewind":
+            if let r = try? RewindRequest(from: decoder) { self = .rewind(r); return }
         default:
             break
         }
@@ -177,6 +182,53 @@ struct BtwRequest: Decodable, Equatable, Sendable {
         requestId = try c.decode(String.self, forKey: .requestId)
         question = c.lenient(String.self, .question) ?? ""
         text = c.lenient(String.self, .text)
+    }
+}
+
+/// `rewind`'s answer, or a Fork's own rewind: the terminal stopped at the confirm page of going back to before a Main
+/// Line prompt, answered with `answer_rewind`.
+struct RewindRequest: Decodable, Equatable, Sendable {
+    /// What a rewind restores, in the order the card lists them.
+    enum Option: String, CaseIterable, Sendable {
+        case both, conversation, code
+    }
+
+    var requestId: String
+    /// The prompt's transcript uuid.
+    var uuid: String
+    /// The prompt's full text.
+    var text: String
+    /// The page's sentence on the code (`The code will be unchanged.`).
+    var code: String?
+    /// The page's `⚠` warning when code would be restored.
+    var warning: String?
+    /// The restores the page offers.
+    var options: [Option]
+
+    enum CodingKeys: String, CodingKey { case requestId = "request_id", uuid, text, code, warning, options }
+
+    private struct Offered: Decodable {
+        var option: String
+    }
+
+    init(requestId: String, uuid: String, text: String = "", code: String? = nil, warning: String? = nil, options: [Option]) {
+        self.requestId = requestId
+        self.uuid = uuid
+        self.text = text
+        self.code = code
+        self.warning = warning
+        self.options = options
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requestId = try c.decode(String.self, forKey: .requestId)
+        uuid = try c.decode(String.self, forKey: .uuid)
+        text = c.lenient(String.self, .text) ?? ""
+        code = c.lenient(String.self, .code)
+        warning = c.lenient(String.self, .warning)
+        let offered = Set(c.lenient(Lossy<Offered>.self, .options)?.items.map(\.option) ?? [])
+        options = Option.allCases.filter { offered.contains($0.rawValue) }
     }
 }
 

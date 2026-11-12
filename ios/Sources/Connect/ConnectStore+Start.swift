@@ -43,8 +43,9 @@ extension ConnectStore {
         }
     }
 
-    /// `ccrpc_fork` of the whole Session: its page opens once claude names the new Session.
-    func fork(sessionId: String, cwd: String, title: String) async {
+    /// `ccrpc_fork`: the whole Session, or up to before its Main Line prompt `at` with `restore` (`conversation`,
+    /// or `both` for the code too). Its page opens once claude names the new Session.
+    func fork(sessionId: String, cwd: String, title: String, at: String? = nil, restore: String? = nil) async {
         guard let client, !isForking(sessionId) else { return }
         let kind = StartKind.fork(origin: sessionId)
         pendingStarts.insert(kind)
@@ -52,7 +53,10 @@ extension ConnectStore {
         if errors[sessionId]?.hasPrefix("Fork 失败") == true { errors[sessionId] = nil }
         do {
             let conn = try await client.call(
-                "ccrpc_fork", args: ForkArgs(sessionId: sessionId, cwd: cwd, title: title), as: String.self, timeout: 60
+                "ccrpc_fork",
+                args: ForkArgs(sessionId: sessionId, cwd: cwd, at: at, restore: restore, title: title),
+                as: String.self,
+                timeout: 60
             )
             beginFollowing(conn, kind)
         } catch {
@@ -88,6 +92,8 @@ extension ConnectStore {
                 if let titleError = conns[conn]?.fork?.titleError {
                     errors[sessionId] = "Fork 的标题没有改成：\(titleError)"
                 }
+                // The prompt forked before goes into the Fork's input box here, as on the desktop.
+                if let text = conns[conn]?.fork?.text, !text.isEmpty { restoredPrompts[conn] = text }
                 if forkCardsOpened.remove(conn) == nil { openRequest = OpenRequest(sessionId: sessionId) }
             }
         case .failed(let reason):
@@ -177,9 +183,12 @@ extension ConnectStore {
         if let c = conns[conn] { await disconnect(c) } else { ending.insert(conn) }
     }
 
-    private struct ForkArgs: Encodable, Sendable {
+    struct ForkArgs: Encodable, Sendable {
         var sessionId: String
         var cwd: String
+        /// Nil for the whole Session: no prompt to fork before, nothing to restore.
+        var at: String?
+        var restore: String?
         var title: String
 
         enum CodingKeys: String, CodingKey { case sessionId, cwd, at, restore, title }
@@ -188,9 +197,9 @@ extension ConnectStore {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(sessionId, forKey: .sessionId)
             try c.encode(cwd, forKey: .cwd)
-            // The whole Session: no prompt to fork before, nothing to restore.
-            try c.encodeNil(forKey: .at)
-            try c.encodeNil(forKey: .restore)
+            // The Host's command takes every argument: null, not left out.
+            try c.encode(at, forKey: .at)
+            try c.encode(restore, forKey: .restore)
             try c.encode(title, forKey: .title)
         }
     }

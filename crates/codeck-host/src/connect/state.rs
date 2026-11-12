@@ -42,6 +42,9 @@ pub struct ConnState {
     pub fork: Option<Value>,
     /// A client of this Host disconnected it (its ccrpc's exit is not a failure).
     pub disconnected: bool,
+    /// A `rewind` command of the Host's is under way; true once the Session waited since (conn.ts `rewinding`).
+    #[serde(skip)]
+    rewinding: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -99,7 +102,28 @@ impl ConnState {
             feedback_draft: None,
             fork: None,
             disconnected: false,
+            rewinding: None,
         }
+    }
+
+    /// The Host sent a `rewind` command for a client.
+    pub fn rewind_sent(&mut self) {
+        self.rewinding = Some(false);
+    }
+
+    /// The response to that `rewind` (conn.ts `rewindShown`): stopped at the confirm page, it is the card to answer.
+    /// Not when the Session already stopped waiting (the page was answered or left in the terminal before the
+    /// response came): nothing would remove the card. True when the state changed.
+    pub fn rewind_response(&mut self, r: &Value) -> bool {
+        let waited = self.rewinding.take() == Some(true);
+        if r["success"] != true
+            || r["data"]["type"] != "rewind"
+            || (waited && self.state != "waiting")
+        {
+            return false;
+        }
+        self.upsert_request(r["data"].clone());
+        true
     }
 
     fn notice(&mut self, text: String) {
@@ -170,6 +194,9 @@ impl ConnState {
                 }
                 if state != "busy" {
                     self.progress = None;
+                }
+                if state == "waiting" && self.rewinding.is_some() {
+                    self.rewinding = Some(true);
                 }
                 self.state = state;
             }
@@ -246,6 +273,7 @@ impl ConnState {
                 s.model = self.model.take();
                 s.effort = self.effort.take();
                 s.disconnected = self.disconnected;
+                s.rewinding = self.rewinding;
                 *self = s;
             }
             "session_exit" => {

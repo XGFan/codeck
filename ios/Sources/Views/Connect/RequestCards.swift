@@ -12,6 +12,7 @@ struct RequestCard: View {
         case .choice(let r): ChoiceCard(r: r, c: c)
         case .screen(let r): ScreenCard(r: r, c: c)
         case .btw(let r): BtwCard(r: r, c: c)
+        case .rewind(let r): RewindCard(r: r, c: c)
         case .other(let type, _): OtherRequestCard(type: type, c: c)
         }
     }
@@ -26,7 +27,7 @@ private struct OtherRequestCard: View {
     @State private var error: String?
 
     var body: some View {
-        CardShell(title: type == "rewind" ? "回退确认" : "Claude Code 在等待操作", status: "等待处理") {
+        CardShell(title: "Claude Code 在等待操作", status: "等待处理") {
             Text("这里还不能作答，请在终端里处理").font(.footnote).foregroundStyle(.secondary)
             Button("中止") {
                 Task {
@@ -179,6 +180,58 @@ private struct ChoiceCard: View {
         }
         .disabled(busy)
         .sensoryFeedback(.success, trigger: answered)
+    }
+}
+
+/// Going back to before a prompt (Requests.tsx RewindCard): what the terminal's confirm page says, and its restores.
+/// None is drawn as the one to pick: nothing that restores code is a default.
+private struct RewindCard: View {
+    let r: RewindRequest
+    let c: ConnState
+    @Environment(HostModel.self) private var model
+    @State private var busy = false
+    @State private var error: String?
+    @State private var answered = 0
+
+    var body: some View {
+        CardShell(title: "回退到这条提示词之前", status: "等待确认") {
+            Text(r.text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .padding(.leading, 10)
+                .overlay(alignment: .leading) { Rectangle().fill(Palette.hairline).frame(width: 2) }
+                .padding(.horizontal, 4)
+            Text(RewindWords.codeLine(r.code)).font(.footnote).padding(.horizontal, 4)
+            if r.warning != nil {
+                Text(RewindWords.warning).font(.footnote).foregroundStyle(Palette.warnText).padding(.horizontal, 4)
+            }
+            ForEach(r.options, id: \.self) { option in
+                Button { answer(option) } label: {
+                    VStack(spacing: 1) {
+                        Text(RewindWords.label(option))
+                        if let note = RewindWords.note(option) { Text(note).font(.caption).opacity(0.8) }
+                    }
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(PillButtonStyle(kind: .tinted))
+            }
+            Button("取消") { answer(nil) }
+                .buttonStyle(PillButtonStyle(kind: .neutral, height: 48))
+            if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
+        }
+        .disabled(busy)
+        .sensoryFeedback(.success, trigger: answered)
+    }
+
+    private func answer(_ option: RewindRequest.Option?) {
+        // Before the task starts: a second tap must not answer the page again.
+        busy = true
+        Task {
+            error = await model.connect.answerRewind(c, r, option)
+            busy = false
+            if error == nil { answered += 1 }
+        }
     }
 }
 

@@ -30,9 +30,10 @@ struct ConnectedBar: View {
         VStack(spacing: 0) {
             if requests.isEmpty {
                 VStack(spacing: 8) {
-                    if c.state == .waiting, c.waiting?.kind != "question" {
-                        // Waiting with nothing to show yet: the analyzer may be looking at the screen.
-                        Text("正在识别界面…")
+                    if store.rewinding[c.conn] != nil || c.state == .waiting && c.waiting?.kind != "question" {
+                        // ccrpc is finding the prompt in the terminal's Rewind picker; or waiting with nothing to
+                        // show yet: the analyzer may be looking at the screen.
+                        Text(store.rewinding[c.conn] != nil ? "正在准备回退…" : "正在识别界面…")
                             .font(.footnote)
                             .foregroundStyle(Palette.warnText)
                             .padding(.horizontal, 14)
@@ -91,11 +92,27 @@ struct ConnectedBar: View {
         .onChange(of: c.notices.last?.id) { _, id in
             guard let id, id > seenNotice, let text = c.notices.last?.text else { return }
             seenNotice = id
-            withAnimation { toast = text }
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                if toast == text { withAnimation { toast = nil } }
-            }
+            show(text)
+        }
+        .onChange(of: store.notes[c.conn], initial: true) { _, note in
+            guard let note else { return }
+            store.notes[c.conn] = nil
+            show(note)
+        }
+        .onChange(of: store.restoredPrompts[c.conn], initial: true) { _, prompt in
+            // A rewind or a Fork put this prompt back into Claude Code's input box: into an empty one here, a
+            // draft stays.
+            guard let prompt else { return }
+            store.restoredPrompts[c.conn] = nil
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, images.isEmpty { text = prompt }
+        }
+    }
+
+    private func show(_ text: String) {
+        withAnimation { toast = text }
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            if toast == text { withAnimation { toast = nil } }
         }
     }
 }

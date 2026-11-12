@@ -37,6 +37,15 @@ final class ConnectStore {
     @ObservationIgnored var cardSeenAt: [String: ContinuousClock.Instant] = [:]
     /// Forks whose Session was opened for a card before the Fork was done, by conn id.
     @ObservationIgnored var forkCardsOpened: Set<String> = []
+    /// The prompt whose confirm page a `rewind` sent here is opening, by conn id.
+    var rewinding: [String: String] = [:]
+    /// Where a conversation was rewound to here, by conn id (see `rewound(of:)`).
+    var rewounds: [String: Rewound] = [:]
+    /// A prompt for the input box of a Connect (a rewind or a Fork put it back into Claude Code's), by conn id, until
+    /// the box takes it.
+    var restoredPrompts: [String: String] = [:]
+    /// Something to say briefly on a Connect's page, by conn id, until shown.
+    var notes: [String: String] = [:]
     /// `/clear` and the like took the Connect of an open page to another Session: the new id, by the old one, until
     /// the page follows.
     var moved: [String: String] = [:]
@@ -71,6 +80,10 @@ final class ConnectStore {
         pendingStarts = []
         moved = [:]
         touched = []
+        rewinding = [:]
+        rewounds = [:]
+        restoredPrompts = [:]
+        notes = [:]
     }
 
     // MARK: Snapshot and events
@@ -178,6 +191,9 @@ final class ConnectStore {
         follow(conn, gone: true)
         cardSeenAt[conn] = nil
         forkCardsOpened.remove(conn)
+        rewounds[conn] = nil
+        restoredPrompts[conn] = nil
+        notes[conn] = nil
         if let c = conns[conn], Self.endedByItself(c, ending: ending) {
             answered = answered.filter { !$0.hasPrefix(conn + "|") }
             return
@@ -314,6 +330,11 @@ final class ConnectStore {
         let r = await self.command(c.conn, command)
         if r.success { answered.insert("\(c.conn)|\(requestId)") }
         return r
+    }
+
+    /// A card that is gone from the terminal without the Host's state saying so yet.
+    func hideRequest(_ c: ConnState, requestId: String) {
+        answered.insert("\(c.conn)|\(requestId)")
     }
 
     /// The slash commands available in `cwd`; nil when the Host cannot say (the text then goes as a prompt).

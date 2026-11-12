@@ -10,10 +10,12 @@
 		03C039C1E2A03BF96BEC1C17 /* FloatingHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDC28B44B483AAE488BC4B91 /* FloatingHeader.swift */; };
 		0800620991B5552657A9ACF6 /* StartFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE92D985DB0C10C16B0CB9F9 /* StartFlowTests.swift */; };
 		13564E8013017D6FD3379597 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CD6036A6E8C713DC5A0611A /* WebKit.framework */; };
+		20B31B1837D7782C797656CB /* ConnectStore+Rewind.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED57C1C9146C17B7C73C6420 /* ConnectStore+Rewind.swift */; };
 		27047514635C00E1C2D9B284 /* Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5BC876F88367B5C3A25016A /* Composer.swift */; };
 		2CD581B19B276CE9F4BA3431 /* ConnectMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06622270DD0DEC7C000F5DF9 /* ConnectMenu.swift */; };
 		301F216B4D3F836851D20AB3 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAAD043A299AD7F01E40C86D /* JSONValue.swift */; };
 		36A4BF815D7593E2A7B31E9B /* HostAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9312D8DA5781EB961F467642 /* HostAddress.swift */; };
+		3F15DE49A28CF8D32D2EFCAC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7BAA813CE401CAE301F72D11 /* Assets.xcassets */; };
 		44CE8D370344C40CF34BEACA /* ConnStateGoldenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51B23CA111740AC3A7DF51F3 /* ConnStateGoldenTests.swift */; };
 		48A38857D0D73A80FA6089D2 /* SessionPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A95F12C37B0D308BCCF917B /* SessionPageTests.swift */; };
 		4DB75952471835D62A8CF467 /* Events.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EB227F2BB52C41E7FFD6EE /* Events.swift */; };
@@ -89,6 +91,7 @@
 		66633F21BA21B6059261E31B /* RequestCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestCards.swift; sourceTree = "<group>"; };
 		6DF3B3EE3DA1F0E1298F26E1 /* StartFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartFlow.swift; sourceTree = "<group>"; };
 		71816A0F56920685504EF6C5 /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
+		7BAA813CE401CAE301F72D11 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7CD6036A6E8C713DC5A0611A /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		7F944B4E9C554E17FFA8E849 /* ConnectedBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectedBar.swift; sourceTree = "<group>"; };
 		8087ECA08B6DE7AF26618941 /* Style.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Style.swift; sourceTree = "<group>"; };
@@ -108,6 +111,7 @@
 		E6F1E62237A295E4696664E7 /* ConnectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectStore.swift; sourceTree = "<group>"; };
 		EAD76453ECCDE56E30BC94B4 /* HostAddressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAddressTests.swift; sourceTree = "<group>"; };
 		EB20BFCAD7AB4EE656952F61 /* RelativeTimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelativeTimeTests.swift; sourceTree = "<group>"; };
+		ED57C1C9146C17B7C73C6420 /* ConnectStore+Rewind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConnectStore+Rewind.swift"; sourceTree = "<group>"; };
 		F9DAE950D6CAF44134BFBB79 /* ConnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectTests.swift; sourceTree = "<group>"; };
 		FB9EC7C10D41DE246EA93EF1 /* ConnectStore+Start.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConnectStore+Start.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -214,6 +218,7 @@
 		B5DCDA6E3E2DD95AE1B2469E /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				7BAA813CE401CAE301F72D11 /* Assets.xcassets */,
 				6177892D9C6F2ACC38E5E05F /* App */,
 				F5F6210AD08BFEDB9B0C568F /* Connect */,
 				CF3F26A6FBA55D2C829392CA /* Host */,
@@ -254,6 +259,7 @@
 			isa = PBXGroup;
 			children = (
 				E6F1E62237A295E4696664E7 /* ConnectStore.swift */,
+				ED57C1C9146C17B7C73C6420 /* ConnectStore+Rewind.swift */,
 				FB9EC7C10D41DE246EA93EF1 /* ConnectStore+Start.swift */,
 				07FAD762AD2EDE1AEC88D0FB /* ConnectWords.swift */,
 				4320FAD1EC2E1BB93EDC7B9C /* ConnRequest.swift */,
@@ -272,6 +278,7 @@
 			buildConfigurationList = 16C2787FC0E0DAE44590D27A /* Build configuration list for PBXNativeTarget "CoDeck" */;
 			buildPhases = (
 				B1806CC4ACC8CB3A7CB2D90B /* Sources */,
+				0D43882245B68C525F14E466 /* Resources */,
 				94CD4856C1089D364C00C212 /* Frameworks */,
 			);
 			buildRules = (
@@ -339,6 +346,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0D43882245B68C525F14E466 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3F15DE49A28CF8D32D2EFCAC /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9AC6D91EA38E95CDB4E77EEC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -376,6 +391,7 @@
 				FD22F6EC8BC89808493578B3 /* ConnectBarSlot.swift in Sources */,
 				F0BA42D40B57097B9032F876 /* ConnectControls.swift in Sources */,
 				2CD581B19B276CE9F4BA3431 /* ConnectMenu.swift in Sources */,
+				20B31B1837D7782C797656CB /* ConnectStore+Rewind.swift in Sources */,
 				6585EC801F1F50C5AA4550C8 /* ConnectStore+Start.swift in Sources */,
 				61F7CC48219D1232073DF280 /* ConnectStore.swift in Sources */,
 				78A039347AB4C2401ECECB8D /* ConnectWords.swift in Sources */,

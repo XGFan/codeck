@@ -207,7 +207,8 @@ enum SlashRules {
 
     /// Why `body` is not sent at all: going back to a prompt means picking it in the transcript, not here.
     static func refusedHere(_ body: String) -> String? {
-        body.range(of: #"^/(rewind|checkpoint)(\s|$)"#, options: .regularExpression) == nil ? nil : "iPhone 上不能回退"
+        body.range(of: #"^/(rewind|checkpoint)(\s|$)"#, options: .regularExpression) == nil
+            ? nil : "回退请点对话里提示词下方的「回退」"
     }
 
     /// Why `body` is not sent while busy: a panel opened from the queue would hold the turn until someone closes it.
@@ -257,6 +258,43 @@ enum Answers {
             let written = JSONValue.string(other[i].trimmingCharacters(in: .whitespacesAndNewlines))
             return qs[i].multiSelect && !options.isEmpty ? ["options": optionsValue, "other": written] : ["other": written]
         }
+    }
+}
+
+// MARK: Rewind (rewind.ts)
+
+enum RewindWords {
+    static func label(_ option: RewindRequest.Option) -> String {
+        switch option {
+        case .both: "恢复代码与对话"
+        case .conversation: "只恢复对话"
+        case .code: "只恢复代码"
+        }
+    }
+
+    /// What a restore leaves as it is.
+    static func note(_ option: RewindRequest.Option) -> String? {
+        switch option {
+        case .both: nil
+        case .conversation: "代码保持现状"
+        case .code: "对话保持现状"
+        }
+    }
+
+    /// The confirm page's `⚠` warning, said in Chinese.
+    static let warning = "恢复的文件整份覆盖，之后的改动都会丢失；Bash 对其他文件的改动不会撤销。"
+
+    private static let removed = "这条提示词及之后的对话会被移除"
+
+    /// The confirm page's sentence on the code, in Chinese: `The code will be unchanged.`, `The code will be restored
+    /// <diff> in <files>.`; another sentence as it is.
+    static func codeLine(_ code: String?) -> String {
+        guard let s = code?.trimmingCharacters(in: .whitespacesAndNewlines) else { return removed }
+        if s.wholeMatch(of: #/The code will be unchanged\.?/#) != nil { return "\(removed)；代码不变" }
+        if let m = s.wholeMatch(of: #/The code will be restored (.+?) in (.+?)\.?/#) {
+            return "\(removed)；代码会恢复：\(m.2)（\(m.1.replacing(#/-(?=\d)/#, with: "−"))）"
+        }
+        return s
     }
 }
 

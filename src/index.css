@@ -240,8 +240,8 @@ body {
   max-width: 100%;
   overflow-x: auto;
 }
-/* Fork and rewind start a Connect: native on the phone. */
-.transcript-page [data-testid="fork-button"],
-.transcript-page [data-testid="rewind-button"] {
+/* Fork and rewind are the app's on the phone (`data-native`: its buttons); a browser showing this page has neither. */
+.transcript-page [data-testid="fork-button"]:not([data-native]),
+.transcript-page [data-testid="rewind-button"]:not([data-native]) {
   display: none;
 }

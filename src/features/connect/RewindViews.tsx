@@ -9,6 +9,7 @@ import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import type { Row } from "@/features/transcript/grouping";
 import { MAIN_SCOPE, selectOverlayOpen, useUi } from "@/state/ui";
 import type { ConnState } from "./conn";
+import { askApp, NATIVE_ACTION, type NativeConnect, useNativeConnect } from "./native";
 import { NoticeCard } from "./Notice";
 import { mainLinePrompts, rewindable, rewoundLabel } from "./rewind";
 import { hideNodes, withdrawnPrompt } from "./withdrawn";
@@ -38,7 +39,12 @@ const liveConn = (s: Parameters<typeof connFor>[0], sessionId: string | null) =>
 export function useRewindView(transcript: Transcript | null, rows: Row[]): RewindView | null {
   const sessionId = transcript?.sessionId ?? null;
   const conn = useConnect((s) => liveConn(s, sessionId)?.conn ?? null);
-  const rewound = useConnect((s) => liveConn(s, sessionId)?.rewound ?? null);
+  const own = useConnect((s) => liveConn(s, sessionId)?.rewound ?? null);
+  // On the phone the app holds the Connect.
+  const native = useNativeConnect((s) => s.c);
+  const rewound = native ? native.rewound : own;
+  const connected = native ? native.connected : !!conn;
+  const canFork = native ? native.canFork : true;
   const picking = useConnect((s) => !!liveConn(s, sessionId)?.picking);
   const clearRewound = useConnect((s) => s.clearRewound);
   const main = useMemo(
@@ -47,17 +53,17 @@ export function useRewindView(transcript: Transcript | null, rows: Row[]): Rewin
   );
   const view = useMemo<RewindView | null>(() => {
     if (!main) return null;
-    const ids = conn ? rewindable(main.ids, rewound?.uuid ?? null) : [];
+    const ids = connected ? rewindable(main.ids, rewound?.uuid ?? null) : [];
     // Shown only on the Main Line itself: on another Branch, what follows the prompt is not what was rewound.
     const at =
       rewound && main.wholeMain ? rows.findIndex((r) => r.kind === "prompt" && r.node.id === rewound.uuid) : -1;
     return {
       rewindable: new Set(ids),
-      forkable: new Set(main.ids.slice(1)),
+      forkable: new Set(canFork ? main.ids.slice(1) : []),
       dimFrom: at >= 0 ? at : null,
       label: rewound ? rewoundLabel(rewound.withCode) : "",
     };
-  }, [main, conn, rewound, rows]);
+  }, [main, connected, canFork, rewound, rows]);
   const gone = !!main?.wholeMain && !!rewound && !main.ids.includes(rewound.uuid);
   useEffect(() => {
     if (gone && conn) clearRewound(conn);
@@ -99,6 +105,32 @@ export function useShownTranscript(transcript: Transcript, main: boolean): Trans
 
 /** 「回退」 under a Main Line prompt: on hover, always while picking; only while the Session is idle. */
 export function RewindButton({ nodeId }: { nodeId: string }) {
+  const native = useNativeConnect((s) => s.c);
+  return native ? <NativeRewindButton c={native} nodeId={nodeId} /> : <OwnRewindButton nodeId={nodeId} />;
+}
+
+/** On the phone: the app sends the `rewind` and shows its confirm card. */
+function NativeRewindButton({ c, nodeId }: { c: NativeConnect; nodeId: string }) {
+  const running = c.rewinding === nodeId;
+  return (
+    <button
+      type="button"
+      data-testid="rewind-button"
+      data-native
+      disabled={!c.idle || c.rewinding != null}
+      onClick={(e) => {
+        e.stopPropagation();
+        askApp("rewind", nodeId);
+      }}
+      className={cn(NATIVE_ACTION, running && "text-accent disabled:opacity-100")}
+    >
+      <RotateCcw size={13} strokeWidth={1.8} aria-hidden />
+      {running ? "回退中…" : "回退"}
+    </button>
+  );
+}
+
+function OwnRewindButton({ nodeId }: { nodeId: string }) {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => liveConn(s, sessionId));
   const rewind = useConnect((s) => s.rewind);

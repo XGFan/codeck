@@ -96,7 +96,8 @@ struct Composer: View {
             }
             .accessibilityLabel("中止")
             .buttonStyle(.plain)
-            .disabled(!live)
+            // Not while ccrpc works the terminal's Rewind picker: an Esc would take it out of there.
+            .disabled(!live || model.connect.rewinding[c.conn] != nil)
             .sensoryFeedback(.impact, trigger: sending)
         case .steer:
             // 插话: delivered when the current tool call ends.

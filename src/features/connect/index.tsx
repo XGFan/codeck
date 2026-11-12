@@ -21,6 +21,7 @@ export { hasPreview, OptionPreview } from "./OptionPreview";
 export { QuestionForm } from "./QuestionForm";
 export { RewindButton, RewoundDivider, useRewindView, useShownTranscript, type RewindView } from "./RewindViews";
 export { ForkButton, ForkMenuItem, ForkPending } from "./ForkViews";
+export { installNativeConnect } from "./native";
 export { CcrpcSettings } from "./Settings";
 export { connFor, isLive, lsEntryFor, useConnect } from "./store";
 

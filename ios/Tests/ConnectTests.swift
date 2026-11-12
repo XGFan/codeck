@@ -24,7 +24,9 @@ final class ConnStateDecodingTests: XCTestCase {
          "tool_use_id": null, "layout": "model_switch", "layout_source": "builtin"},
         {"type": "dialog", "request_id": "dialog:trust", "waiting_for": "trust", "lines": ["", "Trust this folder?", ""]},
         {"type": "unrecognized", "request_id": "unrecognized:cost", "context": "cost", "lines": ["Total cost: $1"]},
-        {"type": "rewind", "request_id": "rw1", "uuid": "u", "text": "hi", "code": null, "warning": null, "options": []},
+        {"type": "rewind", "request_id": "rw1", "uuid": "u", "text": "hi", "code": "The code will be unchanged.", "warning": null,
+         "options": [{"option": "conversation", "label": "Restore conversation"}, {"option": "both", "label": "Restore code and conversation"},
+                     {"option": "summarize", "label": "Summarize from here"}]},
         {"type": "teleport", "request_id": "t1"},
         {"type": "permission_request", "request_id": 7}
       ],
@@ -82,7 +84,10 @@ final class ConnStateDecodingTests: XCTestCase {
         XCTAssertEqual(b.question, "q")
         XCTAssertEqual(b.text, "a")
 
-        XCTAssertEqual(c.requests[5], .other(type: "rewind", requestId: "rw1"))
+        // The restores this app knows, in the card's order.
+        XCTAssertEqual(c.requests[5], .rewind(RewindRequest(
+            requestId: "rw1", uuid: "u", text: "hi", code: "The code will be unchanged.", options: [.both, .conversation]
+        )))
         XCTAssertEqual(c.requests[6], .other(type: "teleport", requestId: "t1"))
         // A known type that does not decode is kept as a card without actions.
         guard case .other("permission_request", _) = c.requests[7] else { return XCTFail("malformed permission") }
@@ -158,6 +163,93 @@ final class ConnStateDecodingTests: XCTestCase {
         encoder.outputFormatting = .sortedKeys
         let text = String(decoding: try encoder.encode(cmd), as: UTF8.self)
         XCTAssertEqual(text, #"{"n":2,"parts":[{"text":"看图"},{"image":"\/tmp\/a.jpg"}],"type":"prompt"}"#)
+    }
+}
+
+/// Mirrors src/features/connect/rewind.test.ts, plus what the Transcript page is told.
+@MainActor
+final class RewindTests: XCTestCase {
+    func testCodeLineSaysWhatTheConfirmPageSays() {
+        XCTAssertEqual(RewindWords.codeLine(nil), "这条提示词及之后的对话会被移除")
+        XCTAssertEqual(RewindWords.codeLine("The code will be unchanged."), "这条提示词及之后的对话会被移除；代码不变")
+        XCTAssertEqual(
+            RewindWords.codeLine("The code will be restored +2 -1 in w.txt, a/b.rs."),
+            "这条提示词及之后的对话会被移除；代码会恢复：w.txt, a/b.rs（+2 −1）"
+        )
+        XCTAssertEqual(RewindWords.codeLine("Something else."), "Something else.")
+    }
+
+    func testThePageOffersRewindOnlyOnAConnectAndForkOnlyWhenItCanStart() {
+        var c = ConnState(conn: "c1")
+        c.sessionId = "s1"
+        c.ready = true
+        c.state = .busy
+        let off = PageConnect.of(nil, rewinding: nil, rewound: nil, fork: .disabled("目录 /w 已不存在"), forking: false)
+        XCTAssertEqual(off, PageConnect())
+        let busy = PageConnect.of(c, rewinding: nil, rewound: nil, fork: .enabled, forking: true)
+        XCTAssertEqual(busy, PageConnect(connected: true, idle: false, canFork: true, forking: true))
+        c.state = .idle
+        let idle = PageConnect.of(
+            c, rewinding: "u2", rewound: Rewound(sessionId: "s1", uuid: "u1", withCode: true), fork: .hidden, forking: false
+        )
+        XCTAssertEqual(idle, PageConnect(connected: true, idle: true, rewinding: "u2", rewound: .init(uuid: "u1", withCode: true)))
+        // As the page reads it: what is not there is left out.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        XCTAssertEqual(
+            String(decoding: try! encoder.encode(busy), as: UTF8.self),
+            #"{"canFork":true,"connected":true,"forking":true,"idle":false}"#
+        )
+    }
+
+    func testTheRewoundMarkEndsWithItsSessionOrConnect() {
+        let store = ConnectStore()
+        var c = ConnState(conn: "c1")
+        c.sessionId = "s1"
+        c.ready = true
+        store.apply(c)
+        store.rewounds["c1"] = Rewound(sessionId: "s1", uuid: "u1", withCode: false)
+        XCTAssertEqual(store.rewound(of: c)?.uuid, "u1")
+        // `/clear` took the Connect to another Session.
+        var moved = c
+        moved.sessionId = "s2"
+        XCTAssertNil(store.rewound(of: moved))
+        var ended = c
+        ended.sessionExited = true
+        XCTAssertNil(store.rewound(of: ended))
+        store.ending.insert("c1")
+        store.remove(conn: "c1")
+        XCTAssertNil(store.rewounds["c1"])
+    }
+
+    func testAResumeOnItsWayTakesNoRewind() {
+        let store = ConnectStore()
+        var c = ConnState(conn: "c1")
+        c.sessionId = "s1"
+        c.ready = true
+        store.apply(c)
+        XCTAssertEqual(store.liveConn(for: "s1")?.conn, "c1")
+        store.pendingStarts.insert(.resume(sessionId: "s1"))
+        XCTAssertNil(store.liveConn(for: "s1"))
+        store.pendingStarts = []
+        c.ready = false
+        store.apply(c)
+        XCTAssertNil(store.liveConn(for: "s1"))
+    }
+
+    func testForkArgumentsAreAllThereForTheHost() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let whole = ConnectStore.ForkArgs(sessionId: "s1", cwd: "/w", at: nil, restore: nil, title: "T (Fork)")
+        XCTAssertEqual(
+            String(decoding: try encoder.encode(whole), as: UTF8.self),
+            #"{"at":null,"cwd":"\/w","restore":null,"sessionId":"s1","title":"T (Fork)"}"#
+        )
+        let before = ConnectStore.ForkArgs(sessionId: "s1", cwd: "/w", at: "u2", restore: "both", title: "T (Fork)")
+        XCTAssertEqual(
+            String(decoding: try encoder.encode(before), as: UTF8.self),
+            #"{"at":"u2","cwd":"\/w","restore":"both","sessionId":"s1","title":"T (Fork)"}"#
+        )
     }
 }
 
@@ -448,8 +540,8 @@ final class SlashRulesTests: XCTestCase {
     }
 
     func testGoingBackToAPromptIsRefusedHere() {
-        XCTAssertEqual(SlashRules.refusedHere("/rewind"), "iPhone 上不能回退")
-        XCTAssertEqual(SlashRules.refusedHere("/checkpoint now"), "iPhone 上不能回退")
+        XCTAssertEqual(SlashRules.refusedHere("/rewind"), "回退请点对话里提示词下方的「回退」")
+        XCTAssertEqual(SlashRules.refusedHere("/checkpoint now"), "回退请点对话里提示词下方的「回退」")
         XCTAssertNil(SlashRules.refusedHere("/rewinder"))
         XCTAssertNil(SlashRules.refusedHere("rewind"))
     }

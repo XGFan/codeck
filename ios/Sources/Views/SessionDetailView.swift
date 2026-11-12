@@ -17,6 +17,9 @@ struct SessionDetailView: View {
     @State private var visibleBottom: CGFloat = 0
     @State private var headerBottom: CGFloat = 0
     @State private var slotTop: CGFloat?
+    /// The prompt 「Fork」 was tapped under, while the app asks what to restore.
+    @State private var forkAt: String?
+    @State private var keyboardUp = false
 
     enum Phase: Equatable {
         case loading, ready
@@ -47,6 +50,24 @@ struct SessionDetailView: View {
         return !model.connect.requests(of: c).isEmpty
     }
 
+    private var forkOffer: StartOffer {
+        guard let detail else { return .hidden }
+        return StartOffer.fork(cwd: detail.cwd, cwdMissing: detail.cwdMissing ?? false, ccrpcError: model.connect.lsError)
+    }
+
+    /// What the page's 「回退」 and 「Fork」 buttons show.
+    private var pageConnect: PageConnect {
+        let store = model.connect
+        let c = store.liveConn(for: sessionId)
+        return PageConnect.of(
+            c,
+            rewinding: c.flatMap { store.rewinding[$0.conn] },
+            rewound: c.flatMap(store.rewound(of:)),
+            fork: forkOffer,
+            forking: store.isForking(sessionId)
+        )
+    }
+
     /// How much of the screen, keyboard included, the bottom floats cover.
     private var bottomInset: CGFloat { slotTop.map { max(0, screen.maxY - $0) } ?? 0 }
 
@@ -58,6 +79,9 @@ struct SessionDetailView: View {
                 .ignoresSafeArea()
             if unindexed {
                 ContentUnavailableView("新 Session", systemImage: "text.bubble", description: Text("发送第一条提示词后显示对话"))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: hideKeyboard)
             } else if let url = transcriptURL {
                 TranscriptWebView(
                     url: url,
@@ -67,7 +91,11 @@ struct SessionDetailView: View {
                     onCopy: copy,
                     bottomInset: bottomInset,
                     topInset: headerBottom + 8,
-                    onAtBottom: { atBottom = $0 }
+                    onAtBottom: { atBottom = $0 },
+                    connect: pageConnect,
+                    onRewind: rewind,
+                    onFork: { forkAt = $0 },
+                    onTouch: hideKeyboard
                 )
                 .ignoresSafeArea()
                 .opacity(phase == .ready ? 1 : 0)
@@ -130,6 +158,20 @@ struct SessionDetailView: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }, action: { slotTop = $0 })
         }
         .sensoryFeedback(.success, trigger: copied)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in keyboardUp = false }
+        .confirmationDialog(
+            "从这条提示词之前 Fork",
+            isPresented: Binding(get: { forkAt != nil }, set: { if !$0 { forkAt = nil } }),
+            titleVisibility: .visible,
+            presenting: forkAt
+        ) { at in
+            Button("只恢复对话") { fork(at: at, restore: "conversation") }
+            Button("恢复代码与对话") { fork(at: at, restore: "both") }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("在新的 Pane 里起一个新 Session。恢复代码会把启动目录里的文件恢复到这条提示词之前，Origin Session 也在用这些文件。")
+        }
         .sheet(isPresented: $showingInfo) {
             if let detail { SessionInfoSheet(detail: detail, project: model.project(of: detail.summary)) }
         }
@@ -184,6 +226,28 @@ struct SessionDetailView: View {
         phase = .loading
         reloadToken += 1
         Task { await loadDetail() }
+    }
+
+    /// 「回退」 under a prompt: its confirm page comes up as a card.
+    private func rewind(_ uuid: String) {
+        let store = model.connect
+        guard let c = store.liveConn(for: sessionId) else { return }
+        Task { await store.rewind(c, uuid: uuid) }
+    }
+
+    private func fork(at: String, restore: String) {
+        guard let cwd = detail?.cwd, forkOffer == .enabled else { return }
+        let store = model.connect
+        let title = StartFlow.forkTitle(summary?.title ?? "", taken: model.sessions.map(\.title))
+        Task { await store.fork(sessionId: sessionId, cwd: cwd, title: title, at: at, restore: restore) }
+    }
+
+    /// A touch on the conversation puts the keyboard away (the input box takes a line break on return). Only while
+    /// it is up: the page has no text fields, so the keyboard is a native one's, and without it the first responder
+    /// may be the page's own (a text selection), which stays.
+    private func hideKeyboard() {
+        guard keyboardUp else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func copy(_ text: String) {

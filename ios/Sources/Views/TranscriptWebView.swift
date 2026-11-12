@@ -1,6 +1,37 @@
 import SwiftUI
 import WebKit
 
+/// What the page's 「回退」 and 「Fork」 buttons show (`window.codeckPage.setConnect`, native.ts): the app holds the
+/// Connect, the page only draws the buttons and hands a tap back.
+struct PageConnect: Encodable, Equatable {
+    struct Rewound: Encodable, Equatable {
+        var uuid: String
+        var withCode: Bool
+    }
+
+    /// A Connect that takes commands drives the Session: its Main Line prompts offer 「回退」.
+    var connected = false
+    /// Idle, so a rewind can start.
+    var idle = false
+    /// The prompt whose confirm page a `rewind` is opening.
+    var rewinding: String?
+    var rewound: Rewound?
+    var canFork = false
+    var forking = false
+
+    /// `c`: the Session's Connect while it takes commands.
+    static func of(_ c: ConnState?, rewinding: String?, rewound: CoDeck.Rewound?, fork: StartOffer, forking: Bool) -> PageConnect {
+        PageConnect(
+            connected: c != nil,
+            idle: c?.state == .idle,
+            rewinding: rewinding,
+            rewound: rewound.map { Rewound(uuid: $0.uuid, withCode: $0.withCode) },
+            canFork: fork == .enabled,
+            forking: forking
+        )
+    }
+}
+
 /// The Host's read-only Transcript page (`/web/transcript.html?sessionId=…`) in a WKWebView.
 /// Bumping `reloadToken` reloads it. It runs under the native floats: `bottomInset` and `topInset` tell the page how
 /// much of it they cover.
@@ -13,6 +44,13 @@ struct TranscriptWebView: UIViewRepresentable {
     var bottomInset: CGFloat
     var topInset: CGFloat
     var onAtBottom: (Bool) -> Void
+    var connect = PageConnect()
+    /// 「回退」 was tapped under the prompt with this uuid.
+    var onRewind: (String) -> Void = { _ in }
+    /// 「Fork」 was tapped under the prompt with this uuid.
+    var onFork: (String) -> Void = { _ in }
+    /// The page was tapped or dragged.
+    var onTouch: () -> Void = {}
 
     static let handlerName = "codeck"
 
@@ -29,6 +67,14 @@ struct TranscriptWebView: UIViewRepresentable {
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.allowsBackForwardNavigationGestures = false
         web.navigationDelegate = context.coordinator
+        // Beside the page's own handling of the touch: the app puts its keyboard away.
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.touched))
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.touched))
+        for g in [tap, pan] as [UIGestureRecognizer] {
+            g.cancelsTouchesInView = false
+            g.delegate = context.coordinator
+            web.addGestureRecognizer(g)
+        }
         #if DEBUG
         web.isInspectable = true
         #endif
@@ -42,6 +88,7 @@ struct TranscriptWebView: UIViewRepresentable {
             context.coordinator.load(web, url: url, token: reloadToken)
         }
         context.coordinator.writeInsets(web)
+        context.coordinator.writeConnect(web)
     }
 
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
@@ -50,13 +97,14 @@ struct TranscriptWebView: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIGestureRecognizerDelegate {
         var parent: TranscriptWebView
         var loadedURL: URL?
         var loadedToken = 0
         var readyFallback: Task<Void, Never>?
         private var ready = false
         private var writtenInsets: [CGFloat]?
+        private var writtenConnect: PageConnect?
 
         init(parent: TranscriptWebView) { self.parent = parent }
 
@@ -65,6 +113,7 @@ struct TranscriptWebView: UIViewRepresentable {
             loadedToken = token
             ready = false
             writtenInsets = nil
+            writtenConnect = nil
             readyFallback?.cancel()
             // A load may come from inside a view update: not a place to change state.
             Task { [weak self] in self?.parent.onAtBottom(true) }
@@ -82,6 +131,22 @@ struct TranscriptWebView: UIViewRepresentable {
             web.evaluateJavaScript(js, completionHandler: nil)
         }
 
+        /// Tells the page what its 「回退」 and 「Fork」 buttons show, when that changed; a page takes it only once it
+        /// said `ready` (it has `window.codeckPage` from then on), which writes it again (`force`).
+        func writeConnect(_ web: WKWebView, force: Bool = false) {
+            guard force || parent.connect != writtenConnect, let json = try? JSONEncoder().encode(parent.connect) else { return }
+            writtenConnect = parent.connect
+            web.evaluateJavaScript("window.codeckPage?.setConnect(\(String(decoding: json, as: UTF8.self)))", completionHandler: nil)
+        }
+
+        @objc func touched(_ g: UIGestureRecognizer) {
+            if g.state == .ended || g.state == .began { parent.onTouch() }
+        }
+
+        nonisolated func gestureRecognizer(_: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer) -> Bool {
+            true
+        }
+
         private func markReady() {
             guard !ready else { return }
             ready = true
@@ -95,8 +160,13 @@ struct TranscriptWebView: UIViewRepresentable {
             guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             switch type {
             case "ready":
-                if let web = message.webView { writeInsets(web, force: true) }
+                if let web = message.webView {
+                    writeInsets(web, force: true)
+                    writeConnect(web, force: true)
+                }
                 markReady()
+            case "rewind": if let id = body["nodeId"] as? String { parent.onRewind(id) }
+            case "fork": if let id = body["nodeId"] as? String { parent.onFork(id) }
             case "copyText": if let text = body["text"] as? String { parent.onCopy(text) }
             case "scroll": if let atBottom = body["atBottom"] as? Bool { parent.onAtBottom(atBottom) }
             default: break

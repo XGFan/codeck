@@ -12,6 +12,7 @@ import { useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 import { forkOffer, type ForkOffer } from "./fork";
 import { pill } from "./Header";
+import { askApp, NATIVE_ACTION, useNativeConnect } from "./native";
 import { useConnect } from "./store";
 
 /** Whether the indexed Session `sessionId` can be forked now, and starting it (`at`: the prompt; null: all of it). */
@@ -35,6 +36,28 @@ function useFork(sessionId: string | null) {
  * 对话」. Any indexed Session, Connected or not; one Fork at a time per Session.
  */
 export function ForkButton({ sessionId, nodeId }: { sessionId: string; nodeId: string }) {
+  const native = useNativeConnect((s) => s.c);
+  if (!native) return <OwnForkButton sessionId={sessionId} nodeId={nodeId} />;
+  // On the phone: the app asks which restore, and starts the Fork.
+  return (
+    <button
+      type="button"
+      data-testid="fork-button"
+      data-native
+      disabled={native.forking}
+      onClick={(e) => {
+        e.stopPropagation();
+        askApp("fork", nodeId);
+      }}
+      className={NATIVE_ACTION}
+    >
+      <GitFork size={13} strokeWidth={1.8} aria-hidden />
+      {native.forking ? "Fork 中…" : "Fork"}
+    </button>
+  );
+}
+
+function OwnForkButton({ sessionId, nodeId }: { sessionId: string; nodeId: string }) {
   const { offer, forking, start } = useFork(sessionId);
   const running = forking?.at === nodeId;
   return (

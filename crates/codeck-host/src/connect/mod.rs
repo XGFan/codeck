@@ -231,7 +231,15 @@ impl ConnectHub {
         let Some(p) = inner.pending.remove(id) else {
             return false;
         };
-        if r["success"] == true
+        if p.command == "rewind" {
+            if inner
+                .conns
+                .get_mut(&p.conn)
+                .is_some_and(|e| e.state.rewind_response(&r))
+            {
+                self.changed(&mut inner, &p.conn);
+            }
+        } else if r["success"] == true
             && let Some(e) = inner.conns.get_mut(&p.conn)
         {
             let changed = match p.command.as_str() {
@@ -243,7 +251,7 @@ impl ConnectHub {
                     None => false,
                 },
                 // Answered: the card goes at once (ccrpc ends it on the tool's result), as on the desktop.
-                "answer_permission" | "answer_question" | "answer_choice" => {
+                "answer_permission" | "answer_question" | "answer_choice" | "answer_rewind" => {
                     let before = e.state.requests.len();
                     e.state
                         .requests
@@ -410,8 +418,11 @@ impl ConnectHub {
         let (tx, rx) = oneshot::channel();
         {
             let mut inner = self.inner.lock();
-            if !inner.conns.contains_key(conn) {
+            let Some(e) = inner.conns.get_mut(conn) else {
                 return Err(relay::invalid("没有这个连接，或 ccrpc 已退出"));
+            };
+            if kind == "rewind" {
+                e.state.rewind_sent();
             }
             inner.pending.insert(
                 id.clone(),
@@ -857,6 +868,54 @@ mod tests {
         f.line(json!({ "type": "state", "state": "idle" }));
         f.hub.register("c1", None);
         assert!(f.hub.states().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_clients_rewind_is_a_card_until_answered() {
+        let f = fixture();
+        f.hub.register("c1", Some("H1".into()));
+        f.line(json!({ "type": "state", "state": "idle" }));
+        let request = json!({
+            "type": "rewind", "request_id": "rewind:1", "uuid": "u2", "text": "second", "code": "The code will be unchanged.",
+            "warning": null, "options": [{ "option": "conversation", "label": "Restore conversation" }],
+        });
+        let send = |command: Value| {
+            let hub = f.hub.clone();
+            tokio::spawn(async move { hub.command("c1", command).await })
+        };
+        let respond = |command: &str, data: Value| {
+            let (_, cmd) = f.wrote();
+            assert_eq!(cmd["type"], command);
+            f.line(json!({ "type": "response", "id": cmd["id"], "command": command, "success": true, "data": data }));
+        };
+
+        // The confirm page is up (waiting) when ccrpc answers: the request it returns is the card.
+        let call = send(json!({ "type": "rewind", "uuid": "u2" }));
+        let (_, cmd) = f.wrote();
+        f.line(json!({ "type": "state", "state": "waiting", "waiting": { "kind": "dialog", "waiting_for": "dialog open" } }));
+        f.line(json!({ "type": "response", "id": cmd["id"], "command": "rewind", "success": true, "data": request }));
+        assert_eq!(call.await.unwrap().unwrap()["data"], request);
+        assert_eq!(f.hub.states()[0].requests, vec![request.clone()]);
+
+        let call = send(
+            json!({ "type": "answer_rewind", "request_id": "rewind:1", "option": "conversation" }),
+        );
+        respond(
+            "answer_rewind",
+            json!({ "state": "idle", "text": "second" }),
+        );
+        call.await.unwrap().unwrap();
+        assert!(f.hub.states()[0].requests.is_empty());
+
+        // Answered in the terminal before ccrpc's response came: no card, nothing would take it away.
+        f.line(json!({ "type": "state", "state": "idle" }));
+        let call = send(json!({ "type": "rewind", "uuid": "u2" }));
+        let (_, cmd) = f.wrote();
+        f.line(json!({ "type": "state", "state": "waiting", "waiting": { "kind": "dialog", "waiting_for": "dialog open" } }));
+        f.line(json!({ "type": "state", "state": "idle" }));
+        f.line(json!({ "type": "response", "id": cmd["id"], "command": "rewind", "success": true, "data": request }));
+        call.await.unwrap().unwrap();
+        assert!(f.hub.states()[0].requests.is_empty());
     }
 
     #[test]

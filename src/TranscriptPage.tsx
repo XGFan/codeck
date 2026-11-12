@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { installNativeConnect } from "@/features/connect";
 import { TranscriptView } from "@/features/transcript";
 import { api } from "@/ipc";
 import type { RemoteApi } from "@/ipc/remote";
@@ -11,6 +12,7 @@ export default function TranscriptPage() {
 
   useEffect(() => {
     useUi.getState().selectSession(new URLSearchParams(window.location.search).get("sessionId"));
+    installNativeConnect();
     window.webkit?.messageHandlers?.codeck?.postMessage({ type: "ready" });
   }, []);
 

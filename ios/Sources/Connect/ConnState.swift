@@ -48,13 +48,16 @@ struct ConnState: Decodable, Equatable, Sendable {
         var error: Failure?
         /// Renaming the Fork to its title failed (it still succeeded).
         var titleError: String?
+        /// The prompt forked before, which Claude Code put back into its input box (nil for a whole Session).
+        var text: String?
 
-        enum CodingKeys: String, CodingKey { case sessionId = "session_id", error, titleError = "title_error" }
+        enum CodingKeys: String, CodingKey { case sessionId = "session_id", error, titleError = "title_error", text }
 
-        init(sessionId: String? = nil, error: Failure? = nil, titleError: String? = nil) {
+        init(sessionId: String? = nil, error: Failure? = nil, titleError: String? = nil, text: String? = nil) {
             self.sessionId = sessionId
             self.error = error
             self.titleError = titleError
+            self.text = text
         }
 
         init(from decoder: Decoder) throws {
@@ -62,6 +65,7 @@ struct ConnState: Decodable, Equatable, Sendable {
             sessionId = c.lenient(String.self, .sessionId)
             error = c.lenient(Failure.self, .error)
             titleError = c.lenient(String.self, .titleError)
+            text = c.lenient(String.self, .text)
         }
     }
 
