@@ -79,6 +79,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 < {"type":"ready","protocol":3,"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","claude_version":"2.1.317","state":"idle","size":[120,40]}
 > {"id":"1","type":"prompt","text":"给 src/util.rs 补一个单元测试"}
 < {"type":"state","state":"busy"}
+< {"type":"turn_start","prompt_id":"5d0c…","trigger":"prompt"}
 < {"type":"block","kind":"user","uuid":"2a1f…","index":0,"text":"给 src/util.rs 补一个单元测试"}
 < {"type":"response","id":"1","command":"prompt","success":true,"data":{"uuid":"2a1f…","prompt_id":"5d0c…"}}
 < {"type":"block","kind":"text","uuid":"7c03…","index":0,"text":"先看一下这个文件。"}
@@ -137,6 +138,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `ready` | 连接后的第一条，含 Holder ID、sessionId、cwd、claude 版本与状态 |
 | `state` | 状态变化，`waiting` 时带子类与 `waitingFor` |
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
+| `turn_start` | 一轮开始：`prompt_id`、`trigger`；每个 `turn_end` 之前恰好一个（连接时已在进行的一轮没有） |
 | `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
 | `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id`，后台 Subagent 的带 `agent_id`；`options` 为审批框上的选项（含“总是允许”的全文），`layout_source` 说明是内置识别还是分析器学来的；computer use 的授权框（无编号菜单，按方向键作答）也作为审批发出 |
 | `question` | 挂起的 AskUserQuestion |

@@ -40,6 +40,8 @@ pub(super) struct TurnStats {
     /// Goes on in a background claude (the conversation moved there): ended by its next Stop,
     /// whatever the prompt id.
     pub(super) moved: bool,
+    /// `turn_start` went out (or never will: the turn was running at connect).
+    pub(super) announced: bool,
 }
 
 impl TurnStats {
@@ -301,6 +303,8 @@ pub(super) fn parts_match(recorded: &str, typed: &str, images: Option<usize>) ->
 pub(super) enum TurnOut {
     /// A turn opened: idle time before now is not its.
     Opened,
+    /// A `turn_start` event to emit: always before its turn's `turn_end`, once per turn.
+    Started(Value),
     /// A Stop was taken as the running turn's: the background tasks it lists.
     Stopped(Value),
     /// A `turn_end` event to emit, with the turn's prompt (as the plugin reported it).
@@ -367,6 +371,7 @@ impl TurnTracker {
     pub(super) fn adopt_running(&mut self) {
         self.active = true;
         self.stats = TurnStats::start(None, "prompt");
+        self.stats.announced = true;
     }
 
     /// The conversation moved to a background claude (agents page): a turn running then goes on
@@ -416,6 +421,7 @@ impl TurnTracker {
                 if self.active && self.stats.prompt_id.is_none() && i["agent_id"].is_null() {
                     self.stats.prompt_id = s("prompt_id");
                     self.stats.provisional = false;
+                    return self.started().into_iter().collect();
                 }
                 Vec::new()
             }
@@ -462,7 +468,7 @@ impl TurnTracker {
                 Some(_) => {
                     self.stats.aborted = true;
                     self.stats.prompt_text = None;
-                    out.push(self.end(None, Value::Null));
+                    self.end(&mut out, None, Value::Null);
                 }
             }
         }
@@ -477,6 +483,7 @@ impl TurnTracker {
         self.active = true;
         self.last_text = None;
         out.push(TurnOut::Opened);
+        out.extend(self.started());
         out
     }
 
@@ -508,6 +515,8 @@ impl TurnTracker {
         if self.stats.prompt_id.is_none() {
             self.stats.prompt_id = pid;
         }
+        // A turn opened without UserPromptSubmit runs after all.
+        out.extend(self.started());
         if stop.failure {
             self.stats.error = Some(json!({"kind": stop.error, "message": stop.last_message}));
         } else if let Some(t) = stop.last_message {
@@ -635,7 +644,7 @@ impl TurnTracker {
                 self.stats = TurnStats::default();
             } else {
                 self.stats.aborted = true;
-                out.push(self.end(None, Value::Null));
+                self.end(&mut out, None, Value::Null);
             }
         }
         out
@@ -648,7 +657,7 @@ impl TurnTracker {
         let mut out = Vec::new();
         if self.active {
             self.stats.aborted = true;
-            out.push(self.end(None, Value::Null));
+            self.end(&mut out, None, Value::Null);
         }
         self.pending_steers.clear();
         self.open_provisional();
@@ -668,7 +677,8 @@ impl TurnTracker {
         let Some((_, last, bg)) = self.stop_pending.take() else {
             return Vec::new();
         };
-        let mut out = vec![self.end(last, bg)];
+        let mut out = Vec::new();
+        self.end(&mut out, last, bg);
         // Input queued in it but not delivered within it runs next, with no UserPromptSubmit:
         // open that turn now (its Stop ends it).
         if !self.pending_steers.is_empty() {
@@ -699,7 +709,22 @@ impl TurnTracker {
         self.last_text = None;
     }
 
-    fn end(&mut self, last_text: Option<String>, background_tasks: Value) -> TurnOut {
+    /// The turn's `turn_start` unless it went out already.
+    fn started(&mut self) -> Option<TurnOut> {
+        if self.stats.announced {
+            return None;
+        }
+        self.stats.announced = true;
+        Some(TurnOut::Started(json!({
+            "type": "turn_start",
+            "prompt_id": self.stats.prompt_id,
+            "trigger": self.stats.trigger,
+        })))
+    }
+
+    /// Pushes the turn's `turn_end` onto `out` (its `turn_start` first, if still due).
+    fn end(&mut self, out: &mut Vec<TurnOut>, last_text: Option<String>, background_tasks: Value) {
+        out.extend(self.started());
         self.active = false;
         let mut v = self.stats.to_json();
         v["type"] = json!("turn_end");
@@ -710,7 +735,7 @@ impl TurnTracker {
         };
         let prompt = self.stats.prompt_text.take();
         self.stats = TurnStats::default();
-        TurnOut::End(v, prompt)
+        out.push(TurnOut::End(v, prompt));
     }
 }
 
@@ -770,6 +795,7 @@ impl Engine {
                         self.idle_at = Some(Instant::now());
                     }
                 }
+                TurnOut::Started(v) => self.emit(v),
                 TurnOut::Stopped(bg) => self.note_running_tasks(&bg),
                 TurnOut::End(mut v, prompt) => {
                     v["restored_text"] = json!(self.restored(&v, prompt));
@@ -980,6 +1006,16 @@ mod tests {
         }))
     }
 
+    /// The `turn_start` events among `out`.
+    fn starts(out: &[TurnOut]) -> Vec<&Value> {
+        out.iter()
+            .filter_map(|o| match o {
+                TurnOut::Started(v) => Some(v),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The `turn_end` events among `out`.
     fn ends(out: &[TurnOut]) -> Vec<&Value> {
         out.iter()
@@ -993,7 +1029,15 @@ mod tests {
     #[test]
     fn a_turn_ends_at_its_marker_after_stop_with_what_it_did() {
         let (mut t, now) = (TurnTracker::new(), Instant::now());
-        assert_eq!(submit(&mut t, now, "p1", "hi"), vec![TurnOut::Opened]);
+        assert_eq!(
+            submit(&mut t, now, "p1", "hi"),
+            vec![
+                TurnOut::Opened,
+                TurnOut::Started(
+                    json!({"type": "turn_start", "prompt_id": "p1", "trigger": "prompt"})
+                )
+            ]
+        );
         let usage = ::transcript::pricing::Usage {
             input: 10.0,
             output: 3.0,
@@ -1109,7 +1153,8 @@ mod tests {
         let e = ends(&out);
         assert_eq!(e[0]["prompt_id"], "p1");
         assert_eq!(e[0]["aborted"], true);
-        assert_eq!(out.last(), Some(&TurnOut::Opened));
+        assert!(out.contains(&TurnOut::Opened));
+        assert_eq!(starts(&out)[0]["prompt_id"], "bg-2");
         stop(&mut t, now, "bg-2", "done");
         let out = marker(&mut t, now, 100);
         assert_eq!(ends(&out)[0]["prompt_id"], "bg-2");
@@ -1139,10 +1184,13 @@ mod tests {
         // The steer's Stop, before the transcript wrote the first turn: deferred.
         assert!(stop(&mut t, now, "p2", "STEER-TURN").is_empty());
         let out = marker(&mut t, now, 8000);
-        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out.len(), 4, "{out:?}");
         assert_eq!(ends(&out)[0]["prompt_id"], "p1");
         assert_eq!(out[1], TurnOut::Opened);
-        assert!(matches!(out[2], TurnOut::Stopped(_)));
+        // The steer's turn learns its prompt id from its Stop: its turn_start goes out then.
+        assert_eq!(starts(&out)[0]["prompt_id"], "p2");
+        assert!(matches!(out[2], TurnOut::Started(_)));
+        assert!(matches!(out[3], TurnOut::Stopped(_)));
         assert!(t.active);
         let out = marker(&mut t, now, 100);
         let e = ends(&out);
@@ -1175,9 +1223,12 @@ mod tests {
         };
         assert_eq!(t.on_tx(&bang, now), vec![TurnOut::Opened]);
         assert!(t.active);
-        stop(&mut t, now, "b1", "ok");
+        // Its turn_start waits for its Stop (it may come to nothing).
+        let out = stop(&mut t, now, "b1", "ok");
+        assert_eq!(starts(&out)[0]["prompt_id"], "b1");
         let out = t.poll(now + STOP_CATCH_UP, None);
         assert_eq!(ends(&out).len(), 1);
+        assert!(starts(&out).is_empty());
         assert!(!t.active);
         // A slash command opens nothing.
         let slash = TxEvent::UserPrompt {
@@ -1219,6 +1270,8 @@ mod tests {
         assert_eq!(ends(&out).len(), 1);
         assert!(out.contains(&TurnOut::Opened));
         assert!(t.active);
+        // Its turn_start is not out yet; dropped, it never goes out.
+        assert_eq!(starts(&out).len(), 0, "{out:?}");
         assert!(t.poll(at + ABORT_GRACE / 2, Some(at)).is_empty());
         assert!(t.poll(at + ABORT_GRACE, Some(at)).is_empty());
         assert!(!t.active);
@@ -1239,7 +1292,8 @@ mod tests {
             "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>",
         );
         assert_eq!(ends(&out)[0]["prompt_id"], "p1");
-        assert_eq!(out.last(), Some(&TurnOut::Opened));
+        assert!(out.contains(&TurnOut::Opened));
+        assert_eq!(starts(&out)[0]["trigger"], "task_notification");
         assert!(t.active);
         stop(&mut t, now, "p2", "noted");
         let out = marker(&mut t, now, 5);
@@ -1308,7 +1362,8 @@ mod tests {
         let out = submit(&mut t, now, "p3", "two");
         assert_eq!(ends(&out)[0]["prompt_id"], "p2");
         assert_eq!(ends(&out)[0]["aborted"], true);
-        assert_eq!(out.last(), Some(&TurnOut::Opened));
+        assert!(out.contains(&TurnOut::Opened));
+        assert_eq!(starts(&out)[0]["prompt_id"], "p3");
     }
 
     #[test]
@@ -1324,6 +1379,8 @@ mod tests {
         let out = marker(&mut t, now, 1);
         assert_eq!(ends(&out)[0]["prompt_id"], "px");
         assert!(!out.contains(&TurnOut::Opened));
+        // It started before ccrpc connected: no turn_start.
+        assert!(starts(&out).is_empty());
     }
 
     #[test]
@@ -1334,17 +1391,41 @@ mod tests {
         let out = t.send_now();
         assert_eq!(ends(&out)[0]["aborted"], true);
         assert_eq!(ends(&out)[0]["prompt_id"], "p1");
-        // The queue's turn learns its prompt id from its first tool call (or its Stop).
-        hook(
+        assert!(starts(&out).is_empty());
+        // The queue's turn learns its prompt id from its first tool call (or its Stop): its
+        // turn_start goes out then, once.
+        let out = hook(
             &mut t,
             now,
             "PreToolUse",
             json!({"prompt_id": "p2", "tool_use_id": "t1"}),
         );
-        stop(&mut t, now, "p2", "STEER-TURN");
+        assert_eq!(starts(&out)[0]["prompt_id"], "p2");
+        assert!(starts(&stop(&mut t, now, "p2", "STEER-TURN")).is_empty());
         let out = marker(&mut t, now, 1);
         assert_eq!(ends(&out)[0]["prompt_id"], "p2");
         assert_eq!(ends(&out)[0]["aborted"], false);
+        assert!(starts(&out).is_empty());
+    }
+
+    /// `send_now` while a turn opened without UserPromptSubmit is not confirmed yet: that turn
+    /// still gets its turn_start (prompt id unknown) right before its aborted turn_end.
+    #[test]
+    fn send_now_ending_an_unconfirmed_turn_pairs_its_turn_start() {
+        let (mut t, now) = (TurnTracker::new(), Instant::now());
+        submit(&mut t, now, "p1", "go");
+        submit(&mut t, now, "p1", "steer");
+        stop(&mut t, now, "p1", "ok");
+        let out = marker(&mut t, now, 1);
+        assert_eq!(starts(&out).len(), 0, "{out:?}");
+        assert!(t.active);
+        let out = t.send_now();
+        assert!(
+            matches!(&out[..2], [TurnOut::Started(_), TurnOut::End(..)]),
+            "{out:?}"
+        );
+        assert_eq!(starts(&out)[0]["prompt_id"], Value::Null);
+        assert_eq!(ends(&out)[0]["aborted"], true);
     }
 
     #[test]

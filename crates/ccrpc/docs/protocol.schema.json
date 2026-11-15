@@ -2606,6 +2606,35 @@
           "index"
         ]
       },
+      "turn_start": {
+        "title": "turn_start",
+        "description": "一轮开始：每个发 turn_end 的轮在它之前恰好发一次（连接时已在进行的一轮没有）。UserPromptSubmit 开的轮在插件报来提交时发；没有 UserPromptSubmit 的轮（插话在 Stop 之后自成的一轮、! 命令、send_now 发出的队列）在得知它确实在运行时（主线的第一个工具调用或它的 Stop）发，最迟紧挨在它的 turn_end 之前；什么也没发生就丢掉的轮不发。本轮的 block 可能先于它。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "turn_start"
+          },
+          "prompt_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "插件给的提示词 id，与这一轮 turn_end 的相同；send_now 中断尚未确认的一轮时为 null。"
+          },
+          "trigger": {
+            "enum": [
+              "prompt",
+              "task_notification"
+            ],
+            "description": "同 turn_end。"
+          }
+        },
+        "required": [
+          "type",
+          "prompt_id",
+          "trigger"
+        ]
+      },
       "turn_end": {
         "title": "turn_end",
         "description": "一轮结束。",
@@ -3299,6 +3328,9 @@
         },
         {
           "$ref": "#/$defs/events/block"
+        },
+        {
+          "$ref": "#/$defs/events/turn_start"
         },
         {
           "$ref": "#/$defs/events/turn_end"

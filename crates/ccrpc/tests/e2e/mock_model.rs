@@ -308,6 +308,14 @@ fn mock_model_turns() {
     assert_eq!(st["delivered_as"], "queued", "{st}");
     let t1 = rpc.event("turn_end", Duration::from_secs(60));
     assert_eq!(t1["prompt_id"], first, "{t1}");
+    // Each turn_end has had its turn_start, once (lines before it stay in `seen`).
+    let started = |rpc: &Rpc, pid: &Value| {
+        rpc.seen
+            .iter()
+            .filter(|v| v["type"] == "turn_start" && v["prompt_id"] == *pid)
+            .count()
+    };
+    assert_eq!(started(&rpc, &first), 1, "第一轮的 turn_start 不是恰好一个");
     // Each turn's blocks come before its turn_end (the steer's Stop arrives right after this one's).
     let text_before = |rpc: &Rpc, w: &str| {
         rpc.seen.iter().any(|v| {
@@ -339,10 +347,21 @@ fn mock_model_turns() {
     );
     assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
     assert_eq!(t2["aborted"], false, "{t2}");
+    assert_eq!(
+        started(&rpc, &t2["prompt_id"]),
+        1,
+        "插话那一轮的 turn_start 不是恰好一个"
+    );
 
     rpc.forget();
-    rpc.call("f1", json!({"type": "prompt", "text": "MOCK-FAIL"}));
+    let f = rpc.call("f1", json!({"type": "prompt", "text": "MOCK-FAIL"}));
     let t3 = rpc.event("turn_end", Duration::from_secs(60));
+    assert_eq!(t3["prompt_id"], f["prompt_id"], "{t3}");
+    assert_eq!(
+        started(&rpc, &f["prompt_id"]),
+        1,
+        "报错那一轮没有 turn_start"
+    );
     assert!(t3["error"].is_object(), "{t3}");
     assert!(
         t3["error"]["message"]
