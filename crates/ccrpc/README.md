@@ -168,7 +168,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 - 必须装 ccrpc 插件（[ADR-0003](docs/adr/0003-require-ccrpc-plugin.md)）：只含 hooks，只在 clay Pane 里生效，不占上下文，不改变 Claude Code 的表现（人在 TUI 上看到、能做的与没有插件时一样）。不加 MCP、channel，不用 `-p`。
 - 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录下的文件只读（插件由 `claude plugin` 命令安装），ToH 状态目录里的文件不读，只用 `toh` 命令与 Holder socket。
 - 只服务本机 clay 里的 Session，调用方也只在 Host 本机；与人共用 Pane，读不懂屏幕时才调尺寸（[ADR-0001](docs/adr/0001-share-the-pane-and-resize-only-when-unreadable.md)）。
-- 命令按到达顺序逐条执行；排队只有 `follow_up`。例外：命令等待期间，不写入、不等待的命令（`get_state`、`get_screen` 等）立即作答，`abort` 在那条命令按完最后一个键后立即执行；它们只可能先于正在执行的那条，绝不先于更早收到的命令（见 spec 5 节）。
+- 命令按到达顺序逐条执行；排队只有 `follow_up`。例外：命令等待期间，不写入、不等待的命令（`get_state`、`get_screen`、`get_messages` 等）立即作答（`get_messages` 读好再回，后面的命令不等它），`abort` 在那条命令按完最后一个键后立即执行；它们只可能先于正在执行的那条，绝不先于更早收到的命令（见 spec 5 节）。
 - 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316 / 2.1.317，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
 
 ## 测试

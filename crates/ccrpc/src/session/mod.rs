@@ -193,6 +193,8 @@ pub struct Engine {
     exiting: bool,
     /// `get_messages` pages (its own thread).
     history: HistoryWorker,
+    /// `get_messages` asked and not answered yet, oldest first.
+    pages: VecDeque<PendingPage>,
     /// Main line's last model and context size; the permission mode the plugin last saw.
     model: Option<String>,
     /// The effort level: the TUI's `◉ xhigh · /effort` mark, what `/effort` said it set, else
@@ -296,6 +298,23 @@ pub struct Engine {
     commanded_at: Option<Instant>,
 }
 
+/// A `get_messages` being read on the history thread: answered once the page comes, in the order
+/// the requests came (other commands go on meanwhile).
+struct PendingPage {
+    id: Option<String>,
+    query: history::Query,
+    path: PathBuf,
+    rx: Receiver<Value>,
+    /// Asked again after the Session changed (/clear) while it was read.
+    tries: u8,
+    deadline: Instant,
+    /// The response, once known (sent when every earlier one is out).
+    done: Option<Value>,
+}
+
+/// How long a `get_messages` may take (a transcript of tens of MB is read whole the first time).
+const PAGE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Commands answered even while another one waits: they neither write to the Pane nor wait.
 fn serves_in_wait(c: &Command) -> bool {
     matches!(
@@ -308,6 +327,13 @@ fn serves_in_wait(c: &Command) -> bool {
             | Command::FollowUp { .. }
             | Command::CancelFollowUp { .. }
     )
+}
+
+/// Commands that write nothing to the Pane and wait for nothing: answered while another one
+/// waits. `get_messages` too (its page is answered later), except while a Fork is made (the
+/// transcript may still be the Origin Session's then: [`serves_in_wait`] only).
+fn reads_only(c: &Command) -> bool {
+    serves_in_wait(c) || matches!(c, Command::GetMessages { .. })
 }
 
 impl Engine {
@@ -333,6 +359,7 @@ impl Engine {
             answered_until: None,
             exiting: false,
             history: HistoryWorker::start(wake.clone()),
+            pages: VecDeque::new(),
             model: None,
             effort: None,
             context_tokens: None,
@@ -694,6 +721,8 @@ impl Engine {
     }
 
     pub fn tick(&mut self) {
+        // Pages are answered after the Session ended too (the transcript is still there).
+        self.poll_pages();
         if self.exited {
             return;
         }
@@ -1170,33 +1199,74 @@ impl Engine {
         v
     }
 
-    /// A page of the history, from the history thread (events keep flowing while it reads).
-    fn get_messages(&mut self, q: history::Query) -> CmdResult {
-        // The Session may change while the page is read (/clear): read the new one then.
-        for _ in 0..3 {
-            let Some(path) = self.tailer.as_ref().map(|t| t.main_path().to_path_buf()) else {
-                return Ok(json!({"blocks": [], "cursor": 0, "first": null, "more": false}));
+    /// `get_messages`: the page is read on the history thread and answered by [`poll_pages`]
+    /// once it comes; commands after it do not wait for it.
+    ///
+    /// [`poll_pages`]: Engine::poll_pages
+    fn get_messages(&mut self, id: Option<String>, query: history::Query) {
+        let empty = json!({"blocks": [], "cursor": 0, "first": null, "more": false});
+        let (path, rx, done) = match self.tailer.as_ref().map(|t| t.main_path().to_path_buf()) {
+            Some(path) => {
+                let rx = self.history.page(&path, query);
+                (path, rx, None)
+            }
+            // No transcript yet: nothing to read (still answered after the earlier pages).
+            None => (
+                PathBuf::new(),
+                mpsc::channel().1,
+                Some(rpc::response_ok(id.as_deref(), "get_messages", empty)),
+            ),
+        };
+        self.pages.push_back(PendingPage {
+            id,
+            query,
+            path,
+            rx,
+            tries: 0,
+            deadline: Instant::now() + PAGE_TIMEOUT,
+            done,
+        });
+        self.poll_pages();
+    }
+
+    /// Pages read since: each one answered, in the order asked. The Session may have changed
+    /// while one was read (/clear): it is read again from the new transcript (up to 3 times).
+    fn poll_pages(&mut self) {
+        let current = self.tailer.as_ref().map(|t| t.main_path().to_path_buf());
+        for i in 0..self.pages.len() {
+            let p = &mut self.pages[i];
+            if p.done.is_some() {
+                continue;
+            }
+            let fail = |p: &PendingPage, msg: &str| {
+                rpc::response_err(p.id.as_deref(), "get_messages", "timeout", msg)
             };
-            let rx = self.history.page(&path, history::Query { ..q });
-            let mut got = None;
-            // It writes nothing to the Pane: an `abort` meanwhile need not wait for the page.
-            self.wait_after_keys(Duration::from_secs(120), |_| {
-                if got.is_none() {
-                    got = rx.try_recv().ok();
+            match p.rx.try_recv() {
+                Ok(mut v) if current.as_ref() == Some(&p.path) => {
+                    if let Some(m) = v.as_object_mut() {
+                        m.remove("path");
+                    }
+                    p.done = Some(rpc::response_ok(p.id.as_deref(), "get_messages", v));
                 }
-                got.is_some()
-            });
-            let Some(mut v) = got else {
-                return err("timeout", "120 秒内没读完 transcript");
-            };
-            if self.tailer.as_ref().is_some_and(|t| t.main_path() == path) {
-                if let Some(m) = v.as_object_mut() {
-                    m.remove("path");
+                Ok(_) | Err(TryRecvError::Disconnected) => match &current {
+                    Some(path) if p.tries < 2 => {
+                        p.tries += 1;
+                        p.path = path.clone();
+                        p.rx = self.history.page(path, p.query);
+                    }
+                    _ => p.done = Some(fail(p, "读的期间 Session 一直在换")),
+                },
+                Err(TryRecvError::Empty) if Instant::now() >= p.deadline => {
+                    p.done = Some(fail(p, "120 秒内没读完 transcript"));
                 }
-                return Ok(v);
+                Err(TryRecvError::Empty) => {}
             }
         }
-        err("timeout", "读的期间 Session 一直在换")
+        while self.pages.front().is_some_and(|p| p.done.is_some()) {
+            if let Some(v) = self.pages.pop_front().and_then(|p| p.done) {
+                self.emit(v);
+            }
+        }
     }
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
@@ -1241,17 +1311,8 @@ impl Engine {
             Command::Clear => self.slash("clear"),
             Command::SendKeys { keys } => self.send_keys(keys),
             Command::GetState => Ok(self.get_state()),
-            Command::GetMessages {
-                since,
-                before,
-                limit,
-                subagents,
-            } => self.get_messages(history::Query {
-                since: since.unwrap_or(0),
-                before: *before,
-                limit: *limit,
-                subagents: *subagents,
-            }),
+            // Answered later, by `poll_pages` (see `handle_line`).
+            Command::GetMessages { .. } => err("io", "get_messages 由 handle_line 处理"),
             Command::Exit {
                 close_pane,
                 stop_tasks,
@@ -1460,7 +1521,7 @@ impl Engine {
         }
         for line in fresh {
             let now = self.deferred.is_empty()
-                && !matches!(rpc::parse_line(&line), Ok(r) if !serves_in_wait(&r.command));
+                && !matches!(rpc::parse_line(&line), Ok(r) if !reads_only(&r.command));
             if now {
                 self.handle_line(&line);
             } else {
@@ -1489,11 +1550,27 @@ impl Engine {
         }
         match rpc::parse_line(line) {
             Ok(Request { id, command }) => {
-                if !serves_in_wait(&command) {
+                if !reads_only(&command) {
                     self.commanded_at = Some(Instant::now());
                 }
                 let name = rpc::command_name(&command);
                 crate::clog!("command {name} id={}", id.as_deref().unwrap_or("-"));
+                if let Command::GetMessages {
+                    since,
+                    before,
+                    limit,
+                    subagents,
+                } = command
+                {
+                    let query = history::Query {
+                        since: since.unwrap_or(0),
+                        before,
+                        limit,
+                        subagents,
+                    };
+                    self.get_messages(id, query);
+                    return;
+                }
                 let v = match self.execute(&command) {
                     Ok(data) => rpc::response_ok(id.as_deref(), name, data),
                     Err((code, msg)) => rpc::response_err(id.as_deref(), name, code, &msg),

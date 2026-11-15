@@ -1019,7 +1019,7 @@
       },
       "get_messages": {
         "title": "get_messages",
-        "description": "读取当前 transcript 的内容块（Main Line），任意状态可用；可分页、可带 Subagent Run 的块。",
+        "description": "读取当前 transcript 的内容块（Main Line），任意状态可用；可分页、可带 Subagent Run 的块。页在历史线程上读，后面的命令不等它，响应在读好后发出（可能晚于之后的命令的响应，几条 get_messages 之间按收到的先后）。",
         "type": "object",
         "properties": {
           "type": {

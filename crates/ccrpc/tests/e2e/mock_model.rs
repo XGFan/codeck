@@ -1715,6 +1715,9 @@ fn mock_model_reads_while_waiting() {
     assert_eq!(q["queued"], 1, "{q}");
     let c = rpc.call("c1", json!({"type": "cancel_follow_up"}));
     assert_eq!(c["removed"], 1, "{c}");
+    // get_messages too: its page is answered once read, the prompt still waiting.
+    let m = rpc.call("m1", json!({"type": "get_messages", "limit": 5}));
+    assert!(m["blocks"].is_array(), "{m}");
     assert!(
         t.elapsed() < Duration::from_secs(3),
         "等待中的命令期间只读命令没有立即作答：{:?}",
