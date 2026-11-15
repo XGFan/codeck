@@ -317,18 +317,103 @@ fn opt_bool(obj: &Map<String, Value>, cmd: &str, field: &str) -> Result<bool, St
     }
 }
 
-fn opt_strings(obj: &Map<String, Value>, cmd: &str, field: &str) -> Result<Vec<String>, String> {
-    match obj.get(field) {
+/// `images`: each a path on the Host, or `{"data": base64, "media_type": …}` (stored as a file,
+/// see [`store_image`]).
+fn opt_images(obj: &Map<String, Value>, cmd: &str) -> Result<Vec<String>, String> {
+    match obj.get("images") {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(a)) => a
             .iter()
-            .map(|v| match v {
+            .enumerate()
+            .map(|(i, v)| match v {
                 Value::String(s) if !s.trim().is_empty() => Ok(s.clone()),
-                _ => Err(format!("{cmd} 的 {field} 必须是非空字符串数组")),
+                Value::Object(o) => image_data(o, &format!("{cmd} 的 images[{i}]")),
+                _ => Err(format!(
+                    "{cmd} 的 images[{i}] 必须是图片路径或 {{\"data\", \"media_type\"}}"
+                )),
             })
             .collect(),
-        Some(_) => Err(format!("{cmd} 的 {field} 必须是字符串数组")),
+        Some(_) => Err(format!("{cmd} 的 images 必须是数组")),
     }
+}
+
+/// Image types Claude Code takes, with the file extension stored ones get.
+const IMAGE_TYPES: &[(&str, &str)] = &[
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/gif", "gif"),
+    ("image/webp", "webp"),
+];
+
+/// How long a stored image is kept (the TUI reads it once pasted; a follow-up may wait a while).
+const IMAGE_KEEP: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// `{"data": base64, "media_type": …}`: stored as a file, its path returned.
+fn image_data(o: &Map<String, Value>, what: &str) -> Result<String, String> {
+    let (Some(Value::String(data)), Some(Value::String(media_type)), 2) =
+        (o.get("data"), o.get("media_type"), o.len())
+    else {
+        return Err(format!(
+            "{what} 必须是图片路径或 {{\"data\", \"media_type\"}}"
+        ));
+    };
+    let Some((_, ext)) = IMAGE_TYPES.iter().find(|(t, _)| t == media_type) else {
+        return Err(format!(
+            "{what} 的 media_type 只能是 image/png、image/jpeg、image/gif 或 image/webp"
+        ));
+    };
+    let bytes = BASE64
+        .decode(data.trim())
+        .map_err(|_| format!("{what} 的 data 不是合法 base64"))?;
+    if bytes.is_empty() {
+        return Err(format!("{what} 的 data 为空"));
+    }
+    store_image(&crate::hook::state_dir().join("images"), &bytes, ext)
+        .map(|p| p.display().to_string())
+        .map_err(|e| format!("{what} 存不进文件：{e}"))
+}
+
+/// Writes `bytes` to `<dir>/<hash>.<ext>` (0600; the same image is the same file, so a line read
+/// twice stores it once) and removes stored images older than [`IMAGE_KEEP`].
+pub fn store_image(
+    dir: &std::path::Path,
+    bytes: &[u8],
+    ext: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{Hash, Hasher};
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let old = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > IMAGE_KEEP);
+            if old {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    let path = dir.join(format!("{:016x}-{}.{ext}", h.finish(), bytes.len()));
+    if !path.is_file() {
+        let tmp = dir.join(format!(".{}.tmp", std::process::id()));
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        std::io::Write::write_all(&mut f, bytes)?;
+        std::fs::rename(&tmp, &path)?;
+    }
+    Ok(path)
 }
 
 /// `text` + `images`, or `parts` (then neither of the other two).
@@ -337,7 +422,7 @@ fn parse_input(obj: &Map<String, Value>, cmd: &str) -> Result<Input, String> {
         None | Some(Value::Null) => {
             return Ok(Input::Text {
                 text: req_text(obj, cmd, "text")?,
-                images: opt_strings(obj, cmd, "images")?,
+                images: opt_images(obj, cmd)?,
             });
         }
         Some(Value::Array(a)) => a,
@@ -361,6 +446,9 @@ fn parse_input(obj: &Map<String, Value>, cmd: &str) -> Result<Input, String> {
                 Some((Some(Value::String(t)), None)) => Ok(Part::Text(t.clone())),
                 Some((None, Some(Value::String(p)))) if !p.trim().is_empty() => {
                     Ok(Part::Image(p.clone()))
+                }
+                Some((None, Some(Value::Object(o)))) => {
+                    image_data(o, &format!("{cmd} 的 parts[{i}].image")).map(Part::Image)
                 }
                 _ => Err(format!(
                     "{cmd} 的 parts[{i}] 必须是 {{\"text\": 字符串}} 或 {{\"image\": 图片路径}}"
@@ -1309,6 +1397,42 @@ mod tests {
         assert!(!text.contains(['\u{2028}', '\u{2029}']), "{text}");
         assert!(text.contains("a\\u2028b\\u2029c"), "{text}");
         assert_eq!(serde_json::from_str::<Value>(text.trim_end()).unwrap(), v);
+    }
+
+    #[test]
+    fn stores_an_image_once_and_drops_old_ones() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let a = store_image(d.path(), b"png-bytes", "png").unwrap();
+        let again = store_image(d.path(), b"png-bytes", "png").unwrap();
+        assert_eq!(a, again);
+        assert_eq!(std::fs::read(&a).unwrap(), b"png-bytes");
+        let mode = std::fs::metadata(&a).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let old = d.path().join("old.png");
+        std::fs::write(&old, b"x").unwrap();
+        let f = std::fs::File::options().write(true).open(&old).unwrap();
+        f.set_modified(std::time::SystemTime::now() - IMAGE_KEEP * 2)
+            .unwrap();
+        let b = store_image(d.path(), b"other", "jpg").unwrap();
+        assert_ne!(a, b);
+        assert!(!old.exists(), "过期的图片没删");
+        assert!(a.exists());
+    }
+
+    #[test]
+    fn image_data_must_be_a_known_type_in_base64() {
+        for line in [
+            r#"{"type":"prompt","text":"x","images":[{"data":"aGk=","media_type":"image/bmp"}]}"#,
+            r#"{"type":"prompt","text":"x","images":[{"data":"!!","media_type":"image/png"}]}"#,
+            r#"{"type":"prompt","text":"x","images":[{"data":"","media_type":"image/png"}]}"#,
+            r#"{"type":"prompt","text":"x","images":[{"data":"aGk="}]}"#,
+            r#"{"type":"prompt","text":"x","images":[{"data":"aGk=","media_type":"image/png","x":1}]}"#,
+            r#"{"type":"prompt","text":"x","images":[1]}"#,
+            r#"{"type":"prompt","parts":[{"image":{"data":"aGk=","media_type":"text/plain"}}]}"#,
+        ] {
+            assert_eq!(err(line).code, "bad_request", "{line}");
+        }
     }
 
     #[test]

@@ -448,6 +448,49 @@ fn mock_model_rename() {
     assert_eq!(e["error"]["code"], "bad_request", "{e}");
 }
 
+/// Images given as base64 (`{"data", "media_type"}`, in `images` and in `parts`): stored in
+/// ccrpc's state directory and pasted as files; the prompt carries them.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_image_data() {
+    use base64::Engine as _;
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let img = json!({"data": base64::engine::general_purpose::STANDARD.encode(red_dot_png()),
+        "media_type": "image/png"});
+
+    rpc.forget();
+    let d = rpc.call(
+        "p1",
+        json!({"type": "prompt", "parts": [{"text": "look "}, {"image": img}, {"text": " here"}]}),
+    );
+    let uuid = d["uuid"].as_str().expect("没有 uuid").to_string();
+    let u = rpc.until("user block", Duration::from_secs(10), |v| {
+        v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
+    });
+    assert_eq!(u["images"], json!(["image/png"]), "{u}");
+    rpc.event("turn_end", Duration::from_secs(30));
+    let g = rpc.call("g1", json!({"type": "get_image", "uuid": uuid}));
+    assert_eq!(g["media_type"], "image/png", "{g}");
+    let stored: Vec<_> = std::fs::read_dir(env.state_dir.join("images"))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(stored.len(), 1, "{stored:?}");
+    assert_eq!(std::fs::read(stored[0].path()).unwrap(), red_dot_png());
+
+    let d = rpc.call(
+        "p2",
+        json!({"type": "prompt", "text": "again", "images": [img]}),
+    );
+    let uuid = d["uuid"].as_str().expect("没有 uuid").to_string();
+    let u = rpc.until("user block", Duration::from_secs(10), |v| {
+        v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
+    });
+    assert_eq!(u["images"], json!(["image/png"]), "{u}");
+}
+
 /// Claude Code's own queue, as in the TUI: a steer that cannot be absorbed waits in it (a `queue`
 /// event lists it); `send_now` (`ctrl+enter`) interrupts the turn and runs it at once.
 #[test]

@@ -404,8 +404,32 @@
         }
       ]
     },
+    "image_data": {
+      "type": "object",
+      "description": "图片内容：ccrpc 存进状态目录的 images/（同一张图存一份，0600，保留 24 小时）再按文件粘贴。",
+      "properties": {
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "description": "base64。"
+        },
+        "media_type": {
+          "enum": [
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/webp"
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "media_type"
+      ],
+      "additionalProperties": false
+    },
     "part": {
-      "description": "parts 的一项：一段文字，或 Host 上的一个图片文件。",
+      "description": "parts 的一项：一段文字，或一张图片（Host 上的文件路径，或 base64 内容）。",
       "oneOf": [
         {
           "type": "object",
@@ -424,9 +448,16 @@
           "type": "object",
           "properties": {
             "image": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Host 上的图片文件路径。"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Host 上的图片文件路径。"
+                },
+                {
+                  "$ref": "#/$defs/image_data"
+                }
+              ]
             }
           },
           "required": [
@@ -559,9 +590,17 @@
           "images": {
             "type": "array",
             "items": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "$ref": "#/$defs/image_data"
+                }
+              ]
             },
-            "description": "Host 上的图片文件路径，正文之前逐个粘贴。"
+            "description": "图片：Host 上的文件路径，或 base64 内容（image_data），正文之前逐个粘贴。"
           },
           "parts": {
             "$ref": "#/$defs/parts"
@@ -629,9 +668,17 @@
           "images": {
             "type": "array",
             "items": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "$ref": "#/$defs/image_data"
+                }
+              ]
             },
-            "description": "Host 上的图片文件路径，正文之前逐个粘贴（同 prompt）。"
+            "description": "图片：Host 上的文件路径，或 base64 内容（image_data），正文之前逐个粘贴（同 prompt）。"
           },
           "parts": {
             "$ref": "#/$defs/parts"
@@ -692,9 +739,17 @@
           "images": {
             "type": "array",
             "items": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "$ref": "#/$defs/image_data"
+                }
+              ]
             },
-            "description": "Host 上的图片文件路径；发出时同 prompt，正文之前逐个粘贴。"
+            "description": "图片：Host 上的文件路径，或 base64 内容（image_data）；发出时同 prompt，正文之前逐个粘贴。"
           },
           "parts": {
             "$ref": "#/$defs/parts"
