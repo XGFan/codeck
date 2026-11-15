@@ -107,7 +107,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 
 | 命令 | 说明 |
 |---|---|
-| `prompt {text, images?}` / `prompt {parts}` | `idle` 时写提示词并回车，等 transcript 确认；`images` 为图片文件路径，先粘贴路径；`parts` 为按顺序排列的 `{"text": …}` 与 `{"image": 路径}`，逐项粘贴，图片落在文字中间（不能与 `text`、`images` 同给）；以 `!` 开头的照终端在 shell 模式里运行 |
+| `prompt {text, images?}` / `prompt {parts}` | `idle` 时写提示词并回车，等 transcript 确认；带 `if_busy: "steer" \| "follow_up"` 时忙也不报错，执行时按当时的状态改作 `steer` 或 `follow_up`；`images` 为图片文件路径，先粘贴路径；`parts` 为按顺序排列的 `{"text": …}` 与 `{"image": 路径}`，逐项粘贴，图片落在文字中间（不能与 `text`、`images` 同给）；以 `!` 开头的照终端在 shell 模式里运行 |
 | `steer {text, images?}` / `steer {parts}` | `busy` 时写入，在本轮工具调用之间送达（可带图片，同 `prompt`） |
 | `follow_up {text, images?}` / `follow_up {parts}` | 进 ccrpc 队列，变成 `idle` 后依次按 `prompt` 发出（可带图片） |
 | `abort` | 发 `Esc`，等状态离开 `busy` / `waiting` |

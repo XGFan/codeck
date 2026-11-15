@@ -1201,7 +1201,7 @@ impl Engine {
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
         match c {
-            Command::Prompt { input } => self.send_input(input),
+            Command::Prompt { input, if_busy } => self.prompt_cmd(input, *if_busy),
             Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
             Command::SetMode { mode } => self.set_mode(*mode),
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
@@ -1213,13 +1213,7 @@ impl Engine {
                 self.answer_rewind_cmd(request_id, *option)
             }
             Command::Steer { input } => self.steer_input(input),
-            Command::FollowUp { input } => {
-                self.require(true, "")?;
-                // Checked now, not only when sent after the turn.
-                let input = Self::checked_input(input)?;
-                self.follow_ups.push_back(input);
-                Ok(json!({"queued": self.follow_ups.len()}))
-            }
+            Command::FollowUp { input } => self.queue_follow_up(input),
             Command::Abort => self.abort(),
             Command::CloseBtw => self.close_btw(),
             Command::SendNow => self.send_now(),

@@ -87,10 +87,18 @@ impl Input {
     }
 }
 
+/// What `prompt` does when the Session is busy (instead of failing with `not_idle`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IfBusy {
+    Steer,
+    FollowUp,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Prompt {
         input: Input,
+        if_busy: Option<IfBusy>,
     },
     Steer {
         input: Input,
@@ -455,6 +463,14 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
     match kind {
         "prompt" => Ok(Command::Prompt {
             input: parse_input(obj, kind)?,
+            if_busy: match obj.get("if_busy") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(match v.as_str() {
+                    Some("steer") => IfBusy::Steer,
+                    Some("follow_up") => IfBusy::FollowUp,
+                    _ => return Err("prompt 的 if_busy 只能是 steer 或 follow_up".into()),
+                }),
+            },
         }),
         "cancel_follow_up" => Ok(Command::CancelFollowUp {
             index: match obj.get("index") {
@@ -851,7 +867,8 @@ mod tests {
         assert_eq!(
             r.command,
             Command::Prompt {
-                input: want.clone()
+                input: want.clone(),
+                if_busy: None,
             }
         );
         assert_eq!(want.typed_text(), "AAA ");
@@ -880,7 +897,8 @@ mod tests {
                 input: Input::Text {
                     text: "look".into(),
                     images: vec!["a.png".into()]
-                }
+                },
+                if_busy: None,
             }
         );
         // Not both forms, at least one item, each item exactly one of text / image.
@@ -909,9 +927,27 @@ mod tests {
                 id: Some("1".into()),
                 command: Command::Prompt {
                     input: Input::text("hi"),
+                    if_busy: None,
                 },
             }
         );
+        for (v, want) in [
+            ("\"steer\"", Some(IfBusy::Steer)),
+            ("\"follow_up\"", Some(IfBusy::FollowUp)),
+            ("null", None),
+        ] {
+            assert_eq!(
+                parse(&format!(r#"{{"type":"prompt","text":"hi","if_busy":{v}}}"#)).command,
+                Command::Prompt {
+                    input: Input::text("hi"),
+                    if_busy: want,
+                }
+            );
+        }
+        for v in ["\"queue\"", "1", "true"] {
+            let line = format!(r#"{{"type":"prompt","text":"hi","if_busy":{v}}}"#);
+            assert_eq!(err(&line).code, "bad_request", "{line}");
+        }
         assert_eq!(
             parse(r#"{"type":"steer","text":"stop"}"#),
             Request {

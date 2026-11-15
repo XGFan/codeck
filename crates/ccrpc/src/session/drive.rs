@@ -537,6 +537,33 @@ impl Engine {
         Ok(())
     }
 
+    /// `prompt`: sent now when idle; with `if_busy`, while busy it goes as a steer (waiting: a
+    /// dialog covers the input box, so into the follow-up queue) or into the follow-up queue,
+    /// decided as it runs (no race between reading the state and choosing the command).
+    pub(super) fn prompt_cmd(
+        &mut self,
+        input: &rpc::Input,
+        if_busy: Option<rpc::IfBusy>,
+    ) -> CmdResult {
+        match (if_busy, &self.state) {
+            (Some(rpc::IfBusy::Steer), State::Busy) => self.steer_input(input),
+            (Some(_), State::Busy | State::Waiting { .. }) => {
+                let mut v = self.queue_follow_up(input)?;
+                v["delivered_as"] = json!("follow_up");
+                Ok(v)
+            }
+            _ => self.send_input(input),
+        }
+    }
+
+    /// `follow_up`: into ccrpc's queue, image paths checked now (not only when sent).
+    pub(super) fn queue_follow_up(&mut self, input: &rpc::Input) -> CmdResult {
+        self.require(true, "")?;
+        let input = Self::checked_input(input)?;
+        self.follow_ups.push_back(input);
+        Ok(json!({"queued": self.follow_ups.len()}))
+    }
+
     /// `steer`: `text` after `images`, or `parts` in order.
     pub(super) fn steer_input(&mut self, input: &rpc::Input) -> CmdResult {
         match input {

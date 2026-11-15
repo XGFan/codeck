@@ -373,6 +373,55 @@ fn mock_model_turns() {
     assert_eq!(t3["aborted"], false);
 }
 
+/// `prompt` with `if_busy` while a turn runs: `steer` goes into Claude Code's queue as a steer,
+/// `follow_up` into ccrpc's queue (sent after the turns); without it, `not_idle` as before.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_prompt_if_busy() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.call("p1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    rpc.send(json!({"id": "p2", "type": "prompt", "text": "plain"}));
+    let r = rpc.until("响应 p2", Duration::from_secs(10), |v| {
+        v["type"] == "response" && v["id"] == "p2"
+    });
+    assert_eq!(r["error"]["code"], "not_idle", "{r}");
+    let st = rpc.call(
+        "p3",
+        json!({"type": "prompt", "text": "MOCK-STEERED now", "if_busy": "steer"}),
+    );
+    assert_eq!(st["delivered_as"], "queued", "{st}");
+    let fu = rpc.call(
+        "p4",
+        json!({"type": "prompt", "text": "AFTER-ALL", "if_busy": "follow_up"}),
+    );
+    assert_eq!(fu["delivered_as"], "follow_up", "{fu}");
+    assert_eq!(fu["queued"], 1, "{fu}");
+    // The prompt's turn, the steer's, then the follow-up's; nothing more runs after it.
+    let mut ends = vec![];
+    while ends.len() < 3 {
+        let v = rpc.until("turn_end", Duration::from_secs(90), |v| {
+            v["type"] == "turn_end" || v["type"] == "follow_up_failed"
+        });
+        assert_ne!(v["type"], "follow_up_failed", "{v}");
+        ends.push(v);
+    }
+    assert_eq!(ends[1]["last_text"], "STEER-TURN", "{:?}", ends);
+    assert!(
+        rpc.seen
+            .iter()
+            .any(|v| v["type"] == "block" && v["kind"] == "user" && v["text"] == "AFTER-ALL"),
+        "follow_up 没发出"
+    );
+    rpc.event("settled", Duration::from_secs(10));
+}
+
 /// Claude Code's own queue, as in the TUI: a steer that cannot be absorbed waits in it (a `queue`
 /// event lists it); `send_now` (`ctrl+enter`) interrupts the turn and runs it at once.
 #[test]

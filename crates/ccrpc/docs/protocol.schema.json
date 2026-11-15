@@ -538,7 +538,7 @@
     "commands": {
       "prompt": {
         "title": "prompt",
-        "description": "发送提示词；idle 且上一轮已结束时可用。",
+        "description": "发送提示词；idle 且上一轮已结束时可用。带 if_busy 时 busy / waiting 也可用。",
         "type": "object",
         "properties": {
           "type": {
@@ -561,6 +561,13 @@
           },
           "parts": {
             "$ref": "#/$defs/parts"
+          },
+          "if_busy": {
+            "enum": [
+              "steer",
+              "follow_up"
+            ],
+            "description": "Session 忙时怎么办（执行时判定，缺省报 not_idle）：steer 在 busy 时按 steer 发出（waiting 时对话框盖住输入框，改进 follow_up 队列），follow_up 进 ccrpc 的 follow_up 队列。"
           }
         },
         "required": [
@@ -1348,7 +1355,7 @@
     "response_data": {
       "prompt": {
         "title": "prompt",
-        "description": "提示词对应的用户消息 uuid 与插件给的 prompt id。",
+        "description": "提示词对应的用户消息 uuid 与插件给的 prompt id；if_busy 生效时为 steer 或 follow_up 的结果。",
         "type": "object",
         "properties": {
           "uuid": {
@@ -1356,22 +1363,28 @@
               "string",
               "null"
             ],
-            "description": "transcript 里该用户消息的 uuid；进了 Claude Code 的队列时为 null。"
+            "description": "transcript 里该用户消息的 uuid；进了 Claude Code 的队列、或 if_busy 生效时没有（或为 null）。"
           },
           "prompt_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "插件看到的提交（与该轮 turn_end 的 prompt_id 相同）；没看到或进了队列为 null。"
+            "description": "插件看到的提交（与该轮 turn_end 的 prompt_id 相同）；没看到或进了队列为 null，if_busy 生效时没有。"
           },
           "delivered_as": {
             "enum": [
               "prompt",
               "queued",
-              "btw"
+              "btw",
+              "follow_up"
             ],
-            "description": "prompt：作为新提示词提交；queued：回车前 Claude Code 恰好自己开始了一轮（如后台任务的通知），提示词进了它的队列，之后在工具调用之间或本轮结束后送达。btw：正文是 /btw，答案在面板里，见 btw 事件，uuid 与 prompt_id 不存在。"
+            "description": "prompt：作为新提示词提交；queued：进了 Claude Code 的队列（回车前它恰好自己开始了一轮，或 if_busy: steer 按插话发出），之后在工具调用之间或本轮结束后送达；btw：正文是 /btw，答案在面板里，见 btw 事件，uuid 与 prompt_id 不存在；follow_up：if_busy 生效，进了 ccrpc 的 follow_up 队列。"
+          },
+          "queued": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "delivered_as 为 follow_up 时的 follow_up 队列长度。"
           }
         },
         "required": [
