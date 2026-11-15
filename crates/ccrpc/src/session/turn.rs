@@ -814,7 +814,7 @@ impl Engine {
                     let path = PathBuf::from(path);
                     if locate::is_transcript_path(&self.roots, &path) {
                         let history = path.exists();
-                        self.switch_to(sid, &path, history, HashSet::new());
+                        self.switch_to(sid, &path, history, HashSet::new(), s("cwd"));
                     }
                 }
             }

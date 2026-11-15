@@ -496,7 +496,8 @@ impl Engine {
             return;
         }
         let history = path.exists();
-        self.switch_to(c.session_id, &path, history, HashSet::new());
+        let cwd = Some(c.cwd).filter(|d| !d.is_empty());
+        self.switch_to(c.session_id, &path, history, HashSet::new(), cwd);
     }
 
     /// The Pane's claude moved its conversation to the background (agents page, docs/probes.md):
@@ -589,7 +590,7 @@ impl Engine {
         // the background claude wrote since (the rest of a reply moved mid-turn). Found later
         // (attach), it is history.
         let history = path.exists() && (copied.is_empty() || !self.ready_sent);
-        self.switch_to(sid, &path, history, copied);
+        self.switch_to(sid, &path, history, copied, None);
     }
 
     /// Switches to the Session `sid` whose transcript is `path`. A transcript that already existed
@@ -597,8 +598,16 @@ impl Engine {
     /// commands and pending tools are known. One created afterwards (a new Session's first prompt,
     /// after /clear) is live and read by `tick`.
     /// `copied`: the uuids of the entries it starts with, copied from the Session it continues;
-    /// they produce no events.
-    fn switch_to(&mut self, sid: String, path: &Path, history: bool, copied: HashSet<String>) {
+    /// they produce no events. `cwd`: where claude runs, as the check-in or hook says, for
+    /// `session_changed` while there is no Process File yet (`new`).
+    fn switch_to(
+        &mut self,
+        sid: String,
+        path: &Path,
+        history: bool,
+        copied: HashSet<String>,
+        cwd: Option<String>,
+    ) {
         if self.session_id.as_deref() == Some(sid.as_str()) && self.tailer.is_some() {
             return;
         }
@@ -613,7 +622,11 @@ impl Engine {
         // Also the first one after `ready` (`new`: the plugin checks in after the startup screens).
         if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
             self.rewound = None;
-            self.emit(json!({"type": "session_changed", "session_id": sid, "previous": prev}));
+            let cwd = self.pf.as_ref().and_then(|p| p.cwd.clone()).or(cwd);
+            self.emit(
+                json!({"type": "session_changed", "session_id": sid, "previous": prev,
+                "cwd": cwd}),
+            );
         }
         let mut t = Tailer::new(path);
         t.copied_from(copied);

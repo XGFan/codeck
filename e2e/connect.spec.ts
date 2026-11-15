@@ -1023,6 +1023,17 @@ test("新建 Session：选目录后选中它，进索引前显示占位且可以
   expect((await probe(page)).guiLog).toContain("new /tmp/mock-new");
 });
 
+test("新建 Session：@ 补全相对它的目录——ccrpc 的 ready 早于进程文件、没有 cwd，cwd 随 session_changed 到来", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("new-session").click();
+  await page.getByTestId("new-session-other").click();
+  await expect(state(page)).toContainText("空闲");
+  await page.getByTestId("connect-input").fill("看看 @");
+  await expect(page.getByTestId("path-option")).toHaveText(["src/"]);
+});
+
 const NEW_ID = "0e5e0000-0000-4000-8000-0000000000ee";
 const openId = (page: Page) => page.evaluate(() => window.__cvStore!.getState().sessionId);
 

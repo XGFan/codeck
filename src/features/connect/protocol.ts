@@ -210,7 +210,8 @@ export type EventMsg =
   | ProgressEvent
   /** The feedback draft card above the TUI's input box appeared (a draft) or went away (null). */
   | { type: "feedback_draft"; draft: FeedbackDraft | null }
-  | { type: "session_changed"; session_id: string; previous: string | null }
+  /** `cwd`: where claude runs (`new`'s `ready` comes before claude has a Process File, without it). */
+  | { type: "session_changed"; session_id: string; previous: string | null; cwd?: string | null }
   /** A Fork's rewind stopped at the confirm page with the `⚠` warning (`new --fork-restore both`): answered as `rewind`'s. */
   | RewindRequest
   | ForkEvent

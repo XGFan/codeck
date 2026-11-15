@@ -147,10 +147,12 @@ describe("conn reducer", () => {
     expect(s.requests).toEqual([]);
     expect(s.lastTurn).toBeNull();
 
-    // `new`: `ready` before the plugin checked in; the first sessionId only fills it in.
-    let n = fold([{ ...ready, session_id: null }, perm("t1")]);
-    n = apply(n, { type: "session_changed", session_id: "first", previous: null });
+    // `new`: `ready` before the plugin checked in (and before the Process File); the first sessionId only fills it
+    // in, with the cwd.
+    let n = fold([{ ...ready, session_id: null, cwd: null }, perm("t1")]);
+    n = apply(n, { type: "session_changed", session_id: "first", previous: null, cwd: "/n" });
     expect(n.sessionId).toBe("first");
+    expect(n.cwd).toBe("/n");
     expect(n.requests.map((r) => r.request_id)).toEqual(["t1"]);
   });
 

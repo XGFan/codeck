@@ -1016,6 +1016,8 @@ fn mock_model_session() {
         ch["session_id"].as_str().is_some_and(|s| s.len() == 36),
         "{ch}"
     );
+    // `ready` had no cwd either (no Process File yet).
+    assert_eq!(ch["cwd"], fresh.to_str().unwrap(), "{ch}");
 
     // A few turns: the status line, then progress while one runs slowly.
     for i in 0..3 {

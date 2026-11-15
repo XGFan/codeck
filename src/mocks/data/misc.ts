@@ -120,6 +120,8 @@ const mockPaths = [
   "/work/infra-modules/",
   "/work/notes/",
   "/Users/dev/Downloads/",
+  // Where 「新建 Session」 starts (`new-session.jsonl`).
+  "/tmp/mock-new/src/",
 ];
 
 /** `completePaths` over `mockPaths`, as the Engine does it (relative to `cwd`, `..` up, hidden ones after a `.`). */

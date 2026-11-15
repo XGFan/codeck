@@ -257,15 +257,18 @@ impl ConnState {
             )),
             "session_changed" => {
                 let session_id = text(&m["session_id"]);
+                // `new`'s `ready` comes before claude has a Process File, without the cwd.
+                let cwd = text(&m["cwd"]).or_else(|| self.cwd.take());
                 // The first sessionId after `ready` (`new`): the same Session, nothing to reset.
                 if m["previous"].is_null() {
                     self.session_id = session_id;
+                    self.cwd = cwd;
                     return true;
                 }
                 let mut s = ConnState::new(&self.conn, self.holder_id.take());
                 s.ready = true;
                 s.session_id = session_id;
-                s.cwd = self.cwd.take();
+                s.cwd = cwd;
                 s.claude_version = self.claude_version.take();
                 s.state = std::mem::take(&mut self.state);
                 s.waiting = self.waiting.take();
@@ -466,12 +469,15 @@ mod tests {
         assert!(s.notices.is_empty());
         assert_eq!(s.context_tokens, None);
 
-        // `new`: `ready` before the plugin checked in; the first sessionId only fills it in.
+        // `new`: `ready` before the plugin checked in (and before the Process File); the first
+        // sessionId only fills it in, with the cwd.
         let mut r = ready();
         r["session_id"] = Value::Null;
+        r["cwd"] = Value::Null;
         let mut n = fold(&[r, perm("t1", None)]);
-        n.apply(&json!({ "type": "session_changed", "session_id": "first", "previous": null }));
+        n.apply(&json!({ "type": "session_changed", "session_id": "first", "previous": null, "cwd": "/n" }));
         assert_eq!(n.session_id.as_deref(), Some("first"));
+        assert_eq!(n.cwd.as_deref(), Some("/n"));
         assert_eq!(ids(&n), ["t1"]);
     }
 

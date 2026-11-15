@@ -313,12 +313,12 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       return notice(s, `界面识别失败：${m.error}`);
     case "session_changed":
       // The first sessionId after `ready` (`new`): the same Session, nothing to reset.
-      if (m.previous == null) return { ...s, sessionId: m.session_id };
+      if (m.previous == null) return { ...s, sessionId: m.session_id, cwd: m.cwd ?? s.cwd };
       return {
         ...initial(s.conn, s.holderId),
         ready: true,
         sessionId: m.session_id,
-        cwd: s.cwd,
+        cwd: m.cwd ?? s.cwd,
         claudeVersion: s.claudeVersion,
         state: s.state,
         waiting: s.waiting,
