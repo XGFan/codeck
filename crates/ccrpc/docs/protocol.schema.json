@@ -2734,6 +2734,27 @@
           "api_cost"
         ]
       },
+      "settled": {
+        "title": "settled",
+        "description": "一轮结束后，Session 不会再自己接着跑：idle 已满 1 秒（Claude Code 刚 Stop 时会先为它自己队列里的东西起一轮）、没有进行中的轮、ccrpc 的 follow_up 队列与 Claude Code 的队列都空、1 秒内没有执行过会写入的命令。每段活动之后发一次，下一轮结束后才会再发；连接时就闲着的不发。仍在运行的后台任务结束时会再起一轮（结果通知）。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "settled"
+          },
+          "background_tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/bg_task"
+            },
+            "description": "仍在运行的后台任务（同 get_tasks 里 status 为 running 的项）。"
+          }
+        },
+        "required": [
+          "type",
+          "background_tasks"
+        ]
+      },
       "permission_request": {
         "title": "permission_request",
         "description": "工具审批请求。",
@@ -3334,6 +3355,9 @@
         },
         {
           "$ref": "#/$defs/events/turn_end"
+        },
+        {
+          "$ref": "#/$defs/events/settled"
         },
         {
           "$ref": "#/$defs/events/permission_request"

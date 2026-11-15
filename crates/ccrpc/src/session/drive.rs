@@ -846,6 +846,7 @@ impl Engine {
         let Some(input) = self.follow_ups.pop_front() else {
             return;
         };
+        self.commanded_at = Some(Instant::now());
         if let Err((code, msg)) = self.send_input(&input) {
             self.emit(json!({"type": "follow_up_failed", "text": input.display_text(), "error": {"code": code, "message": msg}}));
         }

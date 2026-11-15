@@ -1590,6 +1590,14 @@ fn mock_model_follow_up() {
         assert_ne!(v["type"], "follow_up_failed", "{v}");
         ends.push(v);
     }
+    // `settled` only once all of it ran: not between the turns (a task and then a follow-up
+    // still to come), once after the last.
+    assert!(
+        !rpc.seen.iter().any(|v| v["type"] == "settled"),
+        "最后一轮之前就发了 settled"
+    );
+    let st = rpc.event("settled", Duration::from_secs(10));
+    assert_eq!(st["background_tasks"], json!([]), "{st}");
     let users: Vec<String> = rpc.call("m1", json!({"type": "get_messages"}))["blocks"]
         .as_array()
         .unwrap()
@@ -1625,6 +1633,11 @@ fn mock_model_follow_up() {
         enqueues.is_empty(),
         "follow_up 进了 Claude Code 的队列：{enqueues:?}"
     );
+    // Reads and nothing new running: no second `settled`.
+    let quiet_until = Instant::now() + Duration::from_secs(3);
+    while let Some(v) = rpc.recv(quiet_until.saturating_duration_since(Instant::now())) {
+        assert_ne!(v["type"], "settled", "又发了一次 settled");
+    }
 }
 
 /// While a command waits (here `prompt` of a slash command that opens a panel and leaves no record,

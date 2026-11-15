@@ -799,6 +799,7 @@ impl Engine {
                 TurnOut::Stopped(bg) => self.note_running_tasks(&bg),
                 TurnOut::End(mut v, prompt) => {
                     v["restored_text"] = json!(self.restored(&v, prompt));
+                    self.settle_armed = true;
                     self.emit(v)
                 }
             }

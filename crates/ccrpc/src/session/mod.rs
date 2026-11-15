@@ -289,6 +289,11 @@ pub struct Engine {
     deferred: VecDeque<String>,
     /// The running command has pressed its last key and only waits: an `abort` may run now.
     abort_point: bool,
+    /// A turn ended since the last `settled`: one goes out once the Session stays quiet.
+    settle_armed: bool,
+    /// When a command that may write to the Pane last ran (a follow-up sent included): a turn it
+    /// starts may not show yet.
+    commanded_at: Option<Instant>,
 }
 
 /// Commands answered even while another one waits: they neither write to the Pane nor wait.
@@ -386,6 +391,8 @@ impl Engine {
             input: None,
             deferred: VecDeque::new(),
             abort_point: false,
+            settle_armed: false,
+            commanded_at: None,
         })
     }
 
@@ -1384,6 +1391,7 @@ impl Engine {
                     // A SIGTERM during the tick: no queued prompt goes out after it.
                     if !startup::terminated() {
                         self.drain_follow_ups();
+                        self.check_settled();
                     }
                     self.wake.wait(seen, IDLE_TICK);
                 }
@@ -1392,6 +1400,32 @@ impl Engine {
         }
         self.conn.detach();
         Ok(())
+    }
+
+    /// `settled` once nothing more runs by itself after a turn ended: idle for
+    /// [`FOLLOW_UP_SETTLE`] (Claude Code starts a turn for what waits in its own queue right after
+    /// Stop), no turn open, both queues empty, no command lately. Only between commands (a
+    /// follow-up being sent has left the queue but not opened its turn yet).
+    fn check_settled(&mut self) {
+        let quiet = |t: Option<Instant>| t.is_none_or(|t| t.elapsed() >= FOLLOW_UP_SETTLE);
+        if !self.settle_armed
+            || self.state != State::Idle
+            || self.turns.active()
+            || !self.follow_ups.is_empty()
+            || !self.queue.is_empty()
+            || !self.deferred.is_empty()
+            || self.idle_at.is_none_or(|t| t.elapsed() < FOLLOW_UP_SETTLE)
+            || !quiet(self.commanded_at)
+        {
+            return;
+        }
+        self.settle_armed = false;
+        let running: Vec<_> = self
+            .tasks()
+            .into_iter()
+            .filter(|t| t.status == "running")
+            .collect();
+        self.emit(json!({"type": "settled", "background_tasks": running}));
     }
 
     /// First observation without events (they would describe the past); a turn already running
@@ -1461,6 +1495,9 @@ impl Engine {
         }
         match rpc::parse_line(line) {
             Ok(Request { id, command }) => {
+                if !serves_in_wait(&command) {
+                    self.commanded_at = Some(Instant::now());
+                }
                 let name = rpc::command_name(&command);
                 crate::clog!("command {name} id={}", id.as_deref().unwrap_or("-"));
                 let v = match self.execute(&command) {

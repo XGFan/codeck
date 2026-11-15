@@ -140,6 +140,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
 | `turn_start` | 一轮开始：`prompt_id`、`trigger`；每个 `turn_end` 之前恰好一个（连接时已在进行的一轮没有） |
 | `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
+| `settled` | 一轮结束后不会再自己接着跑（idle 满 1 秒、没有进行中的轮、两个队列都空）时发一次，带仍在运行的后台任务 |
 | `permission_request` | 挂起的审批，`request_id` 是 `tool_use_id`，后台 Subagent 的带 `agent_id`；`options` 为审批框上的选项（含“总是允许”的全文），`layout_source` 说明是内置识别还是分析器学来的；computer use 的授权框（无编号菜单，按方向键作答）也作为审批发出 |
 | `question` | 挂起的 AskUserQuestion |
 | `btw` / `btw_closed` | `/btw` 面板的问题与答案 / 面板关了（`close_btw` 关闭） |
