@@ -65,6 +65,10 @@ const STOP_CATCH_UP: Duration = Duration::from_secs(2);
 /// Code starts a turn of its own for what it queued (a background task's notification), and a
 /// prompt typed then lands in its queue instead.
 const FOLLOW_UP_SETTLE: Duration = Duration::from_secs(1);
+/// How long `compact` waits for the compact boundary (a long conversation takes a while to sum up).
+const COMPACT_TIMEOUT: Duration = Duration::from_secs(600);
+/// Idle this long without a compact boundary: the compaction failed or was aborted.
+const COMPACT_IDLE: Duration = Duration::from_secs(5);
 /// `edit_queue` is done this long after the last item `↑` took back (all are written at once).
 const POP_SETTLE: Duration = Duration::from_millis(300);
 /// `input needed` without an AskUserQuestion from the plugin becomes `dialog` after this long.
@@ -296,6 +300,10 @@ pub struct Engine {
     deferred: VecDeque<String>,
     /// The running command has pressed its last key and only waits: an `abort` may run now.
     abort_point: bool,
+    /// Compactions the transcript recorded since ccrpc connected, and what the last one said
+    /// (`compact`'s result).
+    compactions: u64,
+    compacted: Option<Value>,
     /// A turn ended since the last `settled`: one goes out once the Session stays quiet.
     settle_armed: bool,
     /// When a command that may write to the Pane last ran (a follow-up sent included): a turn it
@@ -426,6 +434,8 @@ impl Engine {
             input: None,
             deferred: VecDeque::new(),
             abort_point: false,
+            compactions: 0,
+            compacted: None,
             settle_armed: false,
             commanded_at: None,
         })
@@ -1331,10 +1341,7 @@ impl Engine {
             Command::Rename { title } => self.rename(title),
             Command::SetModel { model } => self.slash(&format!("model {model}")),
             Command::SetEffort { level } => self.slash(&format!("effort {level}")),
-            Command::Compact { instructions } => match instructions {
-                Some(i) => self.slash(&format!("compact {i}")),
-                None => self.slash("compact"),
-            },
+            Command::Compact { instructions } => self.compact(instructions.as_deref()),
             Command::Clear => self.slash("clear"),
             Command::SendKeys { keys } => self.send_keys(keys),
             Command::GetState => Ok(self.get_state()),

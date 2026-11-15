@@ -29,6 +29,7 @@
 - rewind 到命令（2.1.318）：选择器与确认页把斜杠命令写作 `/名字 参数`（项目自定义命令 `/greet world`、`/add-dir <目录>`），`!` 命令写作 `! echo bang`，与 transcript 的 `<command-name>` / `<bash-input>` 一致。恢复对话后，斜杠命令回到输入框（`❯ /greet world`）；`!` 命令回到输入框时是 shell 模式：输入框那行以 `!` 代替 `❯`（`! echo bang`，下方 `! for shell mode`），`ctrl+u` 清空后仍是 `!`，空的 shell 模式里按退格回到 `❯`。普通模式下粘贴以 `!` 开头的文字同样进 shell 模式（回车即运行）。
 - `!` 命令（2.1.318）：粘贴 `! echo pasted` 后输入框为 shell 模式的 `!  echo pasted`，transcript 记为 `<bash-input> echo pasted</bash-input>`（开头多一个空格）、`<bash-stdout>`；运行后 Claude Code 把命令与输出发给模型，模型回一条，Stop hook 与 `turn_duration` 照常，没有 UserPromptSubmit（进程文件 busy → idle）。长命令运行中显示 `⎿  Running…`、模式行 `esc to interrupt`，输入框回到 `❯`。命令很快时 Stop 可能先于 transcript 里的 `<bash-input>` 到。
 - 输出太大的工具结果（约 30KB 起）存进 `<sessionId>/tool-results/<id>.txt`，tool_result 只留 `<persisted-output>` 包着的说明与约 2KB 预览，模型看到的也只有这些。
+- `/compact`（2.1.325，`mock_model_compact`）：进程文件 `busy` 一闪即回 `idle`；插件的 PreCompact 先到（`trigger: "manual"`），transcript 随后写 `{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":13,"postTokens":2883,…}}`，接着是摘要的 user 条目（`This session is being continued from a previous conversation…`）与 `/compact` 的本地命令记录；sessionId 不变，同一 transcript 文件接着写。
 
 ## 写入
 

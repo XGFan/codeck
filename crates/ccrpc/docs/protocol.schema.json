@@ -243,6 +243,7 @@
         "unrecognized_screen",
         "input_not_empty",
         "delivered",
+        "compact_failed",
         "timeout",
         "exited",
         "io",
@@ -965,7 +966,7 @@
       },
       "compact": {
         "title": "compact",
-        "description": "即 slash compact；idle 时可用。",
+        "description": "压缩对话（/compact）；idle 时可用。等 transcript 记下压缩完成才返回。",
         "type": "object",
         "properties": {
           "type": {
@@ -1568,10 +1569,36 @@
       },
       "compact": {
         "title": "compact",
-        "description": "空对象。",
+        "description": "压缩的结果（同 compaction_end）。",
         "type": "object",
-        "properties": {},
-        "required": []
+        "properties": {
+          "trigger": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "manual。"
+          },
+          "pre_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "压缩前的上下文 token 数。"
+          },
+          "post_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "压缩后的上下文 token 数。"
+          }
+        },
+        "required": [
+          "trigger",
+          "pre_tokens",
+          "post_tokens"
+        ]
       },
       "clear": {
         "title": "clear",
@@ -3271,6 +3298,64 @@
           "error"
         ]
       },
+      "compaction_start": {
+        "title": "compaction_start",
+        "description": "开始压缩对话（compact 命令、在 TUI 里输入的 /compact，或上下文快满时的自动压缩）：插件的 PreCompact。之前装的插件没有这个 hook，要重新 ccrpc plugin install 并重启 claude 才有。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "compaction_start"
+          },
+          "trigger": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "manual（/compact）或 auto（自动压缩）。"
+          }
+        },
+        "required": [
+          "type",
+          "trigger"
+        ]
+      },
+      "compaction_end": {
+        "title": "compaction_end",
+        "description": "压缩完成：transcript 记下了 compact_boundary。压缩失败或被中止时没有。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "compaction_end"
+          },
+          "trigger": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "manual 或 auto。"
+          },
+          "pre_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "压缩前的上下文 token 数（Claude Code 记的）。"
+          },
+          "post_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "压缩后的上下文 token 数（Claude Code 记的，含系统提示词等）。"
+          }
+        },
+        "required": [
+          "type",
+          "trigger",
+          "pre_tokens",
+          "post_tokens"
+        ]
+      },
       "session_changed": {
         "title": "session_changed",
         "description": "Session 换了。",
@@ -3482,6 +3567,12 @@
         },
         {
           "$ref": "#/$defs/events/analysis_failed"
+        },
+        {
+          "$ref": "#/$defs/events/compaction_start"
+        },
+        {
+          "$ref": "#/$defs/events/compaction_end"
         },
         {
           "$ref": "#/$defs/events/session_changed"

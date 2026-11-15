@@ -31,6 +31,7 @@ const EVENTS: &[(&str, Option<&str>)] = &[
     ("StopFailure", None),
     ("SubagentStart", None),
     ("SubagentStop", None),
+    ("PreCompact", None),
 ];
 
 /// `$XDG_DATA_HOME/ccrpc/plugin`, else `~/.local/share/ccrpc/plugin`: the marketplace root.

@@ -117,6 +117,13 @@ pub enum TxEvent {
     TurnEnd {
         duration_ms: Option<u64>,
     },
+    /// `system` / `compact_boundary` in the main file: the conversation was compacted (`trigger`:
+    /// `manual` or `auto`), with the context size before and after.
+    Compacted {
+        trigger: Option<String>,
+        pre_tokens: Option<u64>,
+        post_tokens: Option<u64>,
+    },
     /// One assistant message's token counts (once per message id; main line or Subagent Run).
     Usage {
         /// From the main file (not a Subagent Run).
@@ -1000,6 +1007,15 @@ impl Tailer {
                 self.pending.retain(|_, p| p.agent_id.is_some());
                 out.push(TxEvent::TurnEnd {
                     duration_ms: e.duration_ms.map(|d| d.max(0.0) as u64),
+                });
+            }
+            "system" if agent.is_none() && e.subtype.as_deref() == Some("compact_boundary") => {
+                let m = e.compact_metadata.clone().unwrap_or_default();
+                let tokens = |t: Option<f64>| t.map(|t| t.max(0.0) as u64);
+                out.push(TxEvent::Compacted {
+                    trigger: m.trigger,
+                    pre_tokens: tokens(m.pre_tokens),
+                    post_tokens: tokens(m.post_tokens),
                 });
             }
             // Newer Claude Code records a local slash command (`/rename`, `/model x`) this way.

@@ -427,6 +427,8 @@ pub struct RawCompactMetadata {
     pub trigger: Option<String>,
     #[serde(default, deserialize_with = "lenient::number")]
     pub pre_tokens: Option<f64>,
+    #[serde(default, deserialize_with = "lenient::number")]
+    pub post_tokens: Option<f64>,
 }
 
 /// Subset of an object-shaped `toolUseResult`.

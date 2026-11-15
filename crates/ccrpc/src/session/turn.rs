@@ -753,6 +753,17 @@ impl Engine {
                 self.emit(v);
             }
             TxEvent::TurnEnd { .. } | TxEvent::ApiError { .. } => {}
+            TxEvent::Compacted {
+                trigger,
+                pre_tokens,
+                post_tokens,
+            } => {
+                self.compactions += 1;
+                self.emit(json!({"type": "compaction_end", "trigger": trigger,
+                    "pre_tokens": pre_tokens, "post_tokens": post_tokens}));
+                self.compacted = Some(json!({"trigger": trigger, "pre_tokens": pre_tokens,
+                    "post_tokens": post_tokens}));
+            }
             TxEvent::Setting { model, effort } => self.note_setting(model, effort),
             TxEvent::Usage {
                 main,
@@ -887,6 +898,11 @@ impl Engine {
                     }
                     self.resolve(&id);
                 }
+            }
+            // Compaction (`/compact`, or automatic when the context fills up) begins: its end is the
+            // transcript's compact boundary.
+            "PreCompact" if i["agent_id"].is_null() => {
+                self.emit(json!({"type": "compaction_start", "trigger": s("trigger")}));
             }
             "SubagentStart" | "SubagentStop" => {
                 // Its Subagent Run file appears / is complete: look for it now.

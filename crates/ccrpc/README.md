@@ -116,7 +116,8 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项、自由文本，多选题可两者一起）；带 `chat: true` 时是对话框的 Chat about this（先聊聊），已答的题一并带上 |
 | `slash {command}` | 输入 `/<command>` 后回车 |
 | `rename {title}` | `/rename <title>`，等 transcript 记下新标题再返回 |
-| `set_model {model}` / `set_effort {level}` / `compact {instructions?}` / `clear` | 分别等于对应的 slash 命令（`/model`、`/effort` 也会改新 Session 的默认；中途切换的确认以 `choice` 出现） |
+| `compact {instructions?}` | `/compact`，等压缩完成再返回压缩前后的上下文 token 数 |
+| `set_model {model}` / `set_effort {level}` / `clear` | 分别等于对应的 slash 命令（`/model`、`/effort` 也会改新 Session 的默认；中途切换的确认以 `choice` 出现） |
 | `send_keys {keys}` | 依次写命名按键、`{"text":…}` 或 `{"bytes":…}` |
 | `get_state` | 立即返回状态、挂起的请求、队列长度 |
 | `get_messages {since?, before?, limit?, subagents?}` | 返回 Main Line 上的内容块与游标，可从最新往回分页、可带 Subagent Run 的块（后台线程增量读取） |
@@ -155,6 +156,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `session_info` | 权限模式、模型、思考等级、上下文大小、标题变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
 | `feedback_draft` | 模型起草了产品反馈（输入框上方的卡片）出现 / 消失，带 SendFeedback 的标题与全文 |
+| `compaction_start` / `compaction_end` | 开始压缩对话（含自动压缩）/ 压缩完成（带压缩前后的上下文 token 数） |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |
 
 响应两种：

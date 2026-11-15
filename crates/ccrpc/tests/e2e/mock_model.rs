@@ -2598,3 +2598,41 @@ fn mock_model_btw() {
     let t = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t["last_text"], "ok", "{t}");
 }
+
+/// `compact` waits for the compaction: answered with the compact boundary's trigger and context
+/// sizes; `compaction_start` (the plugin's PreCompact) and `compaction_end` (the boundary) frame
+/// it. The Session takes prompts afterwards.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_compact() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    rpc.call("p1", json!({"type": "prompt", "text": "hello"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    rpc.forget();
+    let c = rpc.call(
+        "c1",
+        json!({"type": "compact", "instructions": "keep it short"}),
+    );
+    assert_eq!(c["trigger"], "manual", "{c}");
+    assert!(c["pre_tokens"].is_u64() && c["post_tokens"].is_u64(), "{c}");
+    let start = rpc
+        .seen
+        .iter()
+        .position(|v| v["type"] == "compaction_start")
+        .expect("没有 compaction_start");
+    assert_eq!(rpc.seen[start]["trigger"], "manual");
+    let end = rpc
+        .seen
+        .iter()
+        .position(|v| v["type"] == "compaction_end")
+        .expect("compact 返回前没有 compaction_end");
+    assert!(start < end, "compaction_start 在 compaction_end 之后");
+    assert_eq!(rpc.seen[end]["pre_tokens"], c["pre_tokens"]);
+
+    rpc.call("p2", json!({"type": "prompt", "text": "again"}));
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["last_text"], "ok", "{t}");
+}

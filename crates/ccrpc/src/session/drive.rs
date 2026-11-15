@@ -718,6 +718,39 @@ impl Engine {
         Ok(json!({}))
     }
 
+    /// `compact`: `/compact [instructions]`, done once the transcript records the compact boundary;
+    /// fails when the Session went idle without one for [`COMPACT_IDLE`] (it failed, or was
+    /// aborted). An `abort` may run meanwhile.
+    pub(super) fn compact(&mut self, instructions: Option<&str>) -> CmdResult {
+        let before = self.compactions;
+        match instructions {
+            Some(i) => self.slash(&format!("compact {i}"))?,
+            None => self.slash("compact")?,
+        };
+        let mut idle_since: Option<Instant> = None;
+        let done = self.wait_after_keys(COMPACT_TIMEOUT, |e| {
+            if e.compactions > before {
+                return true;
+            }
+            match e.state {
+                State::Idle => {
+                    idle_since.get_or_insert_with(Instant::now).elapsed() >= COMPACT_IDLE
+                }
+                _ => {
+                    idle_since = None;
+                    false
+                }
+            }
+        });
+        if self.compactions > before {
+            return Ok(self.compacted.clone().unwrap_or_else(|| json!({})));
+        }
+        if done {
+            return err("compact_failed", "压缩没有完成（Session 已回到 idle）");
+        }
+        err("timeout", "10 分钟内压缩没有完成")
+    }
+
     /// `rename`: `/rename <title>`, done once the transcript has the title.
     pub(super) fn rename(&mut self, title: &str) -> CmdResult {
         let clean = Self::clean_text(title)?;
