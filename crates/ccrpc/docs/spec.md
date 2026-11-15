@@ -76,6 +76,7 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 
 每行一个 JSON 对象，`type` 区分种类。
 
+- 分帧：只按 LF（`\n`）切行（输入行尾的 `\r` 去掉）。输出里的 U+2028 / U+2029 写成 ` ` / ` `，按 Unicode 行分隔符切行的读法（如 Node 的 `readline`）也不会切断一条记录。调用方要持续读 stdout：不读时写入会阻塞，事件与命令都停下。
 - 命令：`{"id":"7","type":"prompt","text":"…"}`，`id` 可选，字符串或数字。
 - 响应：`{"type":"response","id":"7","command":"prompt","success":true,"data":{…}}`；失败为 `"success":false,"error":{"code":"…","message":"…"}`。
 - 事件：`{"type":"<事件名>",…}`，没有 `id`。

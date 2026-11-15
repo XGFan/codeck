@@ -761,18 +761,41 @@ impl Out {
         }
     }
 
-    /// 紧凑 JSON + `\n`，写完 flush；写失败静默忽略。
+    /// 紧凑 JSON + `\n`，写完 flush；写失败静默忽略。U+2028 / U+2029 写成 `\u2028` / `\u2029`：
+    /// 按 Unicode 行分隔符切行的读法（如 Node 的 readline）不会把一条记录切断。
     pub fn send(&self, v: &Value) {
-        let mut line = match serde_json::to_vec(v) {
-            Ok(line) => line,
-            Err(_) => return,
+        let Ok(json) = serde_json::to_vec(v) else {
+            return;
         };
+        let mut line = escape_line_separators(json);
         line.push(b'\n');
         if let Ok(mut w) = self.writer.lock() {
             let _ = w.write_all(&line);
             let _ = w.flush();
         }
     }
+}
+
+/// U+2028（E2 80 A8）与 U+2029（E2 80 A9）换成 JSON 转义；在紧凑 JSON 里它们只会出现在字符串中。
+fn escape_line_separators(json: Vec<u8>) -> Vec<u8> {
+    if !json.windows(2).any(|w| w == [0xE2, 0x80]) {
+        return json;
+    }
+    let mut out = Vec::with_capacity(json.len() + 8);
+    let mut i = 0;
+    while i < json.len() {
+        match json[i..] {
+            [0xE2, 0x80, 0xA8, ..] => out.extend_from_slice(b"\\u2028"),
+            [0xE2, 0x80, 0xA9, ..] => out.extend_from_slice(b"\\u2029"),
+            _ => {
+                out.push(json[i]);
+                i += 1;
+                continue;
+            }
+        }
+        i += 3;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1213,6 +1236,19 @@ mod tests {
         assert_eq!(text.lines().count(), 1);
         let value: Value = serde_json::from_str(text.trim_end()).unwrap();
         assert_eq!(value, json!({"type": "ready", "protocol": 1}));
+    }
+
+    #[test]
+    fn out_escapes_unicode_line_separators() {
+        let shared = Shared::default();
+        let out = Out::new(Box::new(shared.clone()));
+        let v = json!({"type": "block", "text": "a\u{2028}b\u{2029}c — 中文", "k\u{2028}": 1});
+        out.send(&v);
+        let bytes = shared.0.lock().unwrap().clone();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains(['\u{2028}', '\u{2029}']), "{text}");
+        assert!(text.contains("a\\u2028b\\u2029c"), "{text}");
+        assert_eq!(serde_json::from_str::<Value>(text.trim_end()).unwrap(), v);
     }
 
     #[test]
