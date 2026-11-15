@@ -148,6 +148,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `btw` / `btw_closed` | `/btw` 面板的问题与答案 / 面板关了（`close_btw` 关闭） |
 | `dialog` | 其余对话框与启动界面 |
 | `unrecognized` | 屏幕认不出，此时不按任何键 |
+| `bash_output` | `!` 命令跑完后的输出（stdout、stderr），带它那条记录的 uuid |
 | `follow_up_failed` | 队列里的 `follow_up` 发不出去 |
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |

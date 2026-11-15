@@ -753,6 +753,24 @@ impl Engine {
                 self.emit(v);
             }
             TxEvent::TurnEnd { .. } | TxEvent::ApiError { .. } => {}
+            TxEvent::BashOutput {
+                parent_uuid,
+                stdout,
+                stderr,
+            } => {
+                // The `! command` it ran, as recorded (`input_uuid` is its record's).
+                let command = parent_uuid.as_deref().and_then(|p| {
+                    self.marks
+                        .prompts
+                        .iter()
+                        .find(|(_, u, t, _)| u == p && t.starts_with("! "))
+                        .map(|(_, _, t, _)| t.clone())
+                });
+                self.emit(
+                    json!({"type": "bash_output", "input_uuid": command.as_ref().and(parent_uuid),
+                    "command": command, "stdout": stdout, "stderr": stderr}),
+                );
+            }
             TxEvent::Compacted {
                 trigger,
                 pre_tokens,

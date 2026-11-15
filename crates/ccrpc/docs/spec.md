@@ -135,6 +135,7 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 | `btw_closed` | 面板关了（屏幕上消失 500ms） |
 | `dialog` | `waiting_for`（进程文件原值；启动界面为 `startup`）、`lines`（屏幕）。启动界面每出现一个不同画面发一次 |
 | `unrecognized` | `context`、`lines`；屏幕识别失败时发，不按任何键（PTY 不是 120×40 时随即调成 120×40，见第 7 节） |
+| `bash_output` | `!` 命令的输出（ccrpc 发出的与终端里输入的都算）：transcript 记下 `<bash-stdout>` / `<bash-stderr>` 时发，命令跑完才有。`input_uuid`（它的 `<bash-input>` 记录的 uuid，即 `prompt` 响应的 `uuid`）、`command`（`! 命令`；对不上时这两项为 null）、`stdout`、`stderr`（Claude Code 记下的原文，超过 100KB 截断） |
 | `follow_up_failed` | `text`、`error` |
 | `queue` | `items`：Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的，先入在前；不含任务通知与 Teammate 消息），按 transcript 的 `queue-operation` 维护（`enqueue` 入队，`remove` 按正文移除，`dequeue` 取走最早的，`popAll` 按正文移除——`↑` 每取回一条记一个，不带正文的清空）；变化时发。`ready` 与 `get_state` 也带 `queue` |
 | `branch` | Main Line 换到了另一个 Branch（rewind、编辑重发）。`at_uuid` 是此前发出的 block 里最后一个仍在 Main Line 上的 `uuid`，在它之后发出的 block 都已作废；为 null 时此前发出的全部作废。在新 Branch 的第一个 block 之前发。只由人发的提示词触发：它沿父条目往上（跳过附件等不产生 block 的条目）碰到的不是最后发出的那个条目时，按 transcript 库的规则以它为 Main Line 重算；后台结果通知、teammate 消息、compact 边界、父条目还没写出的条目不算。原样重发同一条提示词且没有回复（中止说明不算回复）的不发 |

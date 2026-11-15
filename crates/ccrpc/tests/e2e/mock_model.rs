@@ -1032,6 +1032,12 @@ fn mock_model_rewind() {
     let r = rpc.call("c2", json!({"type": "prompt", "text": "! echo bang"}));
     assert!(r["uuid"].is_string(), "{r}");
     assert!(r["prompt_id"].is_null(), "{r}");
+    // Its output, under its record.
+    let o = rpc.event("bash_output", Duration::from_secs(30));
+    assert_eq!(o["input_uuid"], r["uuid"], "{o}");
+    assert_eq!(o["command"], "! echo bang", "{o}");
+    assert_eq!(o["stdout"], "bang", "{o}");
+    assert_eq!(o["stderr"], "", "{o}");
     rpc.event("turn_end", Duration::from_secs(30));
     settle_idle(&mut rpc);
     let entry_uuid = |marker: &str| -> String {

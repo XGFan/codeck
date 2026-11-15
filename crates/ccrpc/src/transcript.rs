@@ -117,6 +117,13 @@ pub enum TxEvent {
     TurnEnd {
         duration_ms: Option<u64>,
     },
+    /// A `!` command's output in the main file (`<bash-stdout>` / `<bash-stderr>`), under its
+    /// `<bash-input>` record (`parent_uuid`).
+    BashOutput {
+        parent_uuid: Option<String>,
+        stdout: String,
+        stderr: String,
+    },
     /// `system` / `compact_boundary` in the main file: the conversation was compacted (`trigger`:
     /// `manual` or `auto`), with the context size before and after.
     Compacted {
@@ -1158,6 +1165,17 @@ impl Tailer {
                                     text,
                                     images: 0,
                                 });
+                            } else if agent.is_none() {
+                                let t = s.trim_start();
+                                if t.starts_with("<bash-stdout>") || t.starts_with("<bash-stderr>")
+                                {
+                                    let part = |name| cap(prompt::tag(t, name).unwrap_or_default());
+                                    out.push(TxEvent::BashOutput {
+                                        parent_uuid: e.parent_uuid.clone(),
+                                        stdout: part("bash-stdout"),
+                                        stderr: part("bash-stderr"),
+                                    });
+                                }
                             }
                             return;
                         }
@@ -1867,6 +1885,34 @@ mod tests {
                 (Some("claude-fable-5-1".into()), Some("high".into())),
             ]
         );
+    }
+
+    #[test]
+    fn a_bang_command_s_output_follows_its_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let input = json!({"type": "user", "uuid": "b1", "message": {"role": "user",
+            "content": "<bash-input> echo hi</bash-input>"}});
+        let output = json!({"type": "user", "uuid": "b2", "parentUuid": "b1", "message": {"role": "user",
+            "content": "<bash-stdout>hi</bash-stdout><bash-stderr></bash-stderr>"}});
+        write_lines(&main, &[input, output]);
+        let evs = Tailer::new(&main).poll();
+        assert!(
+            !evs.iter().any(|e| matches!(e, TxEvent::Block(_))),
+            "{evs:?}"
+        );
+        let outs: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match e {
+                TxEvent::BashOutput {
+                    parent_uuid,
+                    stdout,
+                    stderr,
+                } => Some((parent_uuid.clone(), stdout.clone(), stderr.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outs, vec![(Some("b1".into()), "hi".into(), String::new())]);
     }
 
     #[test]
