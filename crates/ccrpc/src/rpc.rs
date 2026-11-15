@@ -348,7 +348,13 @@ const IMAGE_TYPES: &[(&str, &str)] = &[
 /// How long a stored image is kept (the TUI reads it once pasted; a follow-up may wait a while).
 const IMAGE_KEEP: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 
-/// `{"data": base64, "media_type": …}`: stored as a file, its path returned.
+/// Starts an image given by its content (`{"data", "media_type"}`) where a path would be:
+/// `\0<media_type>;<base64>`. No path has a control character (they are refused), so it cannot be
+/// mistaken for one; it becomes a file only when the command runs ([`stored_image`]), not each
+/// time its line is parsed.
+pub const IMAGE_DATA: char = '\0';
+
+/// `{"data": base64, "media_type": …}`, checked and kept as [`IMAGE_DATA`] (stored when used).
 fn image_data(o: &Map<String, Value>, what: &str) -> Result<String, String> {
     let (Some(Value::String(data)), Some(Value::String(media_type)), 2) =
         (o.get("data"), o.get("media_type"), o.len())
@@ -357,20 +363,41 @@ fn image_data(o: &Map<String, Value>, what: &str) -> Result<String, String> {
             "{what} 必须是图片路径或 {{\"data\", \"media_type\"}}"
         ));
     };
-    let Some((_, ext)) = IMAGE_TYPES.iter().find(|(t, _)| t == media_type) else {
+    if !IMAGE_TYPES.iter().any(|(t, _)| t == media_type) {
         return Err(format!(
             "{what} 的 media_type 只能是 image/png、image/jpeg、image/gif 或 image/webp"
         ));
-    };
-    let bytes = BASE64
-        .decode(data.trim())
-        .map_err(|_| format!("{what} 的 data 不是合法 base64"))?;
-    if bytes.is_empty() {
+    }
+    let data = data.trim();
+    if data.is_empty() {
         return Err(format!("{what} 的 data 为空"));
     }
-    store_image(&crate::hook::state_dir().join("images"), &bytes, ext)
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("{what} 存不进文件：{e}"))
+    if !data
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+    {
+        return Err(format!("{what} 的 data 不是合法 base64"));
+    }
+    Ok(format!("{IMAGE_DATA}{media_type};{data}"))
+}
+
+/// An [`IMAGE_DATA`] image stored as a file in ccrpc's state directory (`images/`): its path.
+/// `None` for an image given by its path. Errors are `(code, message)`.
+pub fn stored_image(image: &str) -> Option<Result<String, (&'static str, String)>> {
+    let (media_type, data) = image.strip_prefix(IMAGE_DATA)?.split_once(';')?;
+    let ext = IMAGE_TYPES
+        .iter()
+        .find(|(t, _)| *t == media_type)
+        .map_or("img", |(_, e)| e);
+    let bytes = match BASE64.decode(data) {
+        Ok(b) if !b.is_empty() => b,
+        _ => return Some(Err(("bad_request", "图片的 data 不是合法 base64".into()))),
+    };
+    Some(
+        store_image(&crate::hook::state_dir().join("images"), &bytes, ext)
+            .map(|p| p.display().to_string())
+            .map_err(|e| ("io", format!("图片存不进文件：{e}"))),
+    )
 }
 
 /// Writes `bytes` to `<dir>/<hash>.<ext>` (0600; the same image is the same file, so a line read
@@ -402,7 +429,12 @@ pub fn store_image(
     let mut h = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut h);
     let path = dir.join(format!("{:016x}-{}.{ext}", h.finish(), bytes.len()));
-    if !path.is_file() {
+    if path.is_file() {
+        // Used again: kept another IMAGE_KEEP from now.
+        if let Ok(f) = std::fs::File::options().write(true).open(&path) {
+            let _ = f.set_modified(std::time::SystemTime::now());
+        }
+    } else {
         let tmp = dir.join(format!(".{}.tmp", std::process::id()));
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -1414,6 +1446,21 @@ mod tests {
         let f = std::fs::File::options().write(true).open(&old).unwrap();
         f.set_modified(std::time::SystemTime::now() - IMAGE_KEEP * 2)
             .unwrap();
+        // Used again: its age starts over.
+        std::fs::File::options()
+            .write(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - IMAGE_KEEP / 2 * 3)
+            .unwrap();
+        store_image(d.path(), b"png-bytes", "png").unwrap();
+        let age = std::fs::metadata(&a)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .elapsed()
+            .unwrap();
+        assert!(age < IMAGE_KEEP, "复用的图片没刷新时间");
         let b = store_image(d.path(), b"other", "jpg").unwrap();
         assert_ne!(a, b);
         assert!(!old.exists(), "过期的图片没删");
@@ -1433,6 +1480,23 @@ mod tests {
         ] {
             assert_eq!(err(line).code, "bad_request", "{line}");
         }
+        // A good one is kept as its content (stored only when the command runs).
+        let r = parse(
+            r#"{"type":"prompt","parts":[{"image":{"data":"aGk=","media_type":"image/png"}}]}"#,
+        );
+        let Command::Prompt {
+            input: Input::Parts(parts),
+            ..
+        } = r.command
+        else {
+            panic!("{r:?}")
+        };
+        assert_eq!(parts, vec![Part::Image("\0image/png;aGk=".into())]);
+        assert!(stored_image("/tmp/a.png").is_none());
+        assert_eq!(
+            stored_image("\0image/png;abc").map(|r| r.map_err(|e| e.0)),
+            Some(Err("bad_request"))
+        );
     }
 
     #[test]

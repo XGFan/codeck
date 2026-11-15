@@ -261,6 +261,11 @@ impl Engine {
     pub(super) fn image_paths(images: &[String]) -> std::result::Result<Vec<String>, CmdErr> {
         let mut paths = Vec::new();
         for p in images {
+            // Given by its content: stored now, as the command runs (or is queued).
+            if let Some(stored) = rpc::stored_image(p) {
+                paths.push(stored?);
+                continue;
+            }
             if p.chars().any(char::is_control) {
                 return Err(("bad_request", format!("图片路径里有控制字符：{p:?}")));
             }

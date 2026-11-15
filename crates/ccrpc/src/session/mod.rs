@@ -1487,6 +1487,14 @@ impl Engine {
                 Err(TryRecvError::Disconnected) => break,
             }
         }
+        // Pages asked before stdin closed (or SIGTERM) are still answered.
+        while !self.pages.is_empty() {
+            let seen = self.wake.seen();
+            self.tick();
+            if !self.pages.is_empty() {
+                self.wake.wait(seen, TICK);
+            }
+        }
         self.conn.detach();
         Ok(())
     }
@@ -1553,9 +1561,18 @@ impl Engine {
                 fresh.push(line);
             }
         }
+        // While a Fork is made, `get_messages` waits for it (the transcript is not the Fork's yet).
+        let forking = self.fork_unfinished();
+        let early = |c: &Command| {
+            if forking {
+                serves_in_wait(c)
+            } else {
+                reads_only(c)
+            }
+        };
         for line in fresh {
             let now = self.deferred.is_empty()
-                && !matches!(rpc::parse_line(&line), Ok(r) if !reads_only(&r.command));
+                && !matches!(rpc::parse_line(&line), Ok(r) if !early(&r.command));
             if now {
                 self.handle_line(&line);
             } else {
@@ -1565,10 +1582,11 @@ impl Engine {
         if self.abort_point
             && !self.fork_unfinished()
             && matches!(self.state, State::Busy | State::Waiting { .. })
-            && self
-                .deferred
-                .front()
-                .is_some_and(|l| rpc::parse_line(l).is_ok_and(|r| r.command == Command::Abort))
+            && self.deferred.front().is_some_and(|l| {
+                // Checked every tick while a command waits: a long line (an image) is parsed only
+                // when it may be an abort.
+                l.contains("abort") && rpc::parse_line(l).is_ok_and(|r| r.command == Command::Abort)
+            })
             && let Some(line) = self.deferred.pop_front()
         {
             // Its own wait is no abort point: a second abort waits for it.

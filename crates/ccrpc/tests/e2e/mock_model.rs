@@ -489,6 +489,19 @@ fn mock_model_image_data() {
         v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
     });
     assert_eq!(u["images"], json!(["image/png"]), "{u}");
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    // A page asked right before stdin closes is still answered.
+    rpc.send(json!({"id": "m1", "type": "get_messages"}));
+    rpc.stdin.take();
+    let m = rpc.until("响应 m1", Duration::from_secs(10), |v| v["id"] == "m1");
+    assert_eq!(m["success"], true, "{m}");
+    assert!(
+        m["data"]["blocks"]
+            .as_array()
+            .is_some_and(|b| !b.is_empty()),
+        "{m}"
+    );
 }
 
 /// Claude Code's own queue, as in the TUI: a steer that cannot be absorbed waits in it (a `queue`
@@ -2684,4 +2697,20 @@ fn mock_model_compact() {
     rpc.call("p2", json!({"type": "prompt", "text": "again"}));
     let t = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t["last_text"], "ok", "{t}");
+
+    // A slow summary (the Session stays busy throughout): `abort` runs during the wait, and
+    // `compact` reports that no compaction was made.
+    rpc.forget();
+    rpc.send(json!({"id": "c2", "type": "compact", "instructions": "MOCK-SLOW"}));
+    rpc.event("compaction_start", Duration::from_secs(10));
+    wait_state(&mut rpc, "busy", 10);
+    std::thread::sleep(Duration::from_secs(1));
+    let a = rpc.call("a1", json!({"type": "abort"}));
+    assert_eq!(a["state"], "idle", "{a}");
+    let r = rpc.until("响应 c2", Duration::from_secs(20), |v| v["id"] == "c2");
+    assert_eq!(r["error"]["code"], "compact_failed", "{r}");
+    assert!(
+        !rpc.seen.iter().any(|v| v["type"] == "compaction_end"),
+        "中止的压缩发了 compaction_end"
+    );
 }
