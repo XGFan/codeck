@@ -132,6 +132,9 @@ pub enum Command {
     Slash {
         command: String,
     },
+    Rename {
+        title: String,
+    },
     SetModel {
         model: String,
     },
@@ -589,6 +592,13 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
                 answers,
             })
         }
+        "rename" => {
+            let title = req_text(obj, kind, "title")?.trim().to_string();
+            if title.contains(['\n', '\r']) {
+                return Err("rename 的 title 必须是单行".into());
+            }
+            Ok(Command::Rename { title })
+        }
         "slash" => {
             let raw = req_text(obj, kind, "command")?;
             let command = raw.trim().trim_start_matches('/').to_string();
@@ -710,6 +720,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::AnswerPermission { .. } => "answer_permission",
         Command::AnswerQuestion { .. } | Command::ChatAboutQuestion { .. } => "answer_question",
         Command::Slash { .. } => "slash",
+        Command::Rename { .. } => "rename",
         Command::SetModel { .. } => "set_model",
         Command::SetEffort { .. } => "set_effort",
         Command::Compact { .. } => "compact",
@@ -1036,6 +1047,19 @@ mod tests {
             }
         );
         assert_eq!(
+            parse(r#"{"type":"rename","title":" 新标题 "}"#).command,
+            Command::Rename {
+                title: "新标题".into()
+            }
+        );
+        for line in [
+            r#"{"type":"rename"}"#,
+            r#"{"type":"rename","title":"  "}"#,
+            r#"{"type":"rename","title":"a\nb"}"#,
+        ] {
+            assert_eq!(err(line).code, "bad_request", "{line}");
+        }
+        assert_eq!(
             parse(r#"{"type":"slash","command":"/model sonnet"}"#),
             Request {
                 id: None,
@@ -1309,6 +1333,7 @@ mod tests {
             "answer_permission",
             "answer_question",
             "slash",
+            "rename",
             "set_model",
             "set_effort",
             "compact",

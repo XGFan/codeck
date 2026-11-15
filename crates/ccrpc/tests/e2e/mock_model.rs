@@ -422,6 +422,32 @@ fn mock_model_prompt_if_busy() {
     rpc.event("settled", Duration::from_secs(10));
 }
 
+/// `rename`: `/rename`, answered once the transcript has the title; `session_info` and
+/// `get_state` carry it. Before the first prompt too (the transcript is written by it).
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_rename() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    let r = rpc.call("r1", json!({"type": "rename", "title": "第一个 标题"}));
+    assert_eq!(r["title"], "第一个 标题", "{r}");
+    rpc.until("session_info", Duration::from_secs(5), |v| {
+        v["type"] == "session_info" && v["title"] == "第一个 标题"
+    });
+    rpc.call("p1", json!({"type": "prompt", "text": "hello"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    let r = rpc.call("r2", json!({"type": "rename", "title": " renamed again "}));
+    assert_eq!(r["title"], "renamed again", "{r}");
+    let st = rpc.call("g1", json!({"type": "get_state"}));
+    assert_eq!(st["title"], "renamed again", "{st}");
+    rpc.send(json!({"id": "r3", "type": "rename", "title": "a\nb"}));
+    let e = rpc.until("响应 r3", Duration::from_secs(5), |v| v["id"] == "r3");
+    assert_eq!(e["error"]["code"], "bad_request", "{e}");
+}
+
 /// Claude Code's own queue, as in the TUI: a steer that cannot be absorbed waits in it (a `queue`
 /// event lists it); `send_now` (`ctrl+enter`) interrupts the turn and runs it at once.
 #[test]

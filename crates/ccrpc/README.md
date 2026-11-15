@@ -115,6 +115,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `answer_permission {request_id, decision, message?}` | 作答审批（经插件；后台 Subagent 的审批按屏幕选项键），`message` 只能配 `deny`，作为反馈交给模型 |
 | `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项、自由文本，多选题可两者一起）；带 `chat: true` 时是对话框的 Chat about this（先聊聊），已答的题一并带上 |
 | `slash {command}` | 输入 `/<command>` 后回车 |
+| `rename {title}` | `/rename <title>`，等 transcript 记下新标题再返回 |
 | `set_model {model}` / `set_effort {level}` / `compact {instructions?}` / `clear` | 分别等于对应的 slash 命令（`/model`、`/effort` 也会改新 Session 的默认；中途切换的确认以 `choice` 出现） |
 | `send_keys {keys}` | 依次写命名按键、`{"text":…}` 或 `{"bytes":…}` |
 | `get_state` | 立即返回状态、挂起的请求、队列长度 |
@@ -151,7 +152,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
 | `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框、`/add-dir` 的确认框，以及工具自己画的无编号菜单），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
-| `session_info` | 权限模式、模型、思考等级、上下文大小变了 |
+| `session_info` | 权限模式、模型、思考等级、上下文大小、标题变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
 | `feedback_draft` | 模型起草了产品反馈（输入框上方的卡片）出现 / 消失，带 SendFeedback 的标题与全文 |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |

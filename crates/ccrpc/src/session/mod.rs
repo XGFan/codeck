@@ -206,6 +206,11 @@ pub struct Engine {
     screen_mode: Option<String>,
     /// `session_info` last sent.
     info_sent: Option<Value>,
+    /// The Session's title (the transcript's last `custom-title`, else `ai-title`), read on as
+    /// the transcript grows (`len`: its length when last read).
+    title: Option<String>,
+    title_tail: ::transcript::assemble::skeleton::TitleTail,
+    title_len: Option<u64>,
     /// The feedback draft card last reported (`feedback_draft`), and since when it has been off
     /// the screen.
     feedback: Option<Value>,
@@ -366,6 +371,9 @@ impl Engine {
             hook_mode: None,
             screen_mode: None,
             info_sent: None,
+            title: None,
+            title_tail: Default::default(),
+            title_len: None,
             feedback: None,
             feedback_gone_since: None,
             btw: btw::BtwWatch::default(),
@@ -662,6 +670,9 @@ impl Engine {
                 "cwd": cwd}),
             );
         }
+        self.title_tail = Default::default();
+        self.title_len = None;
+        self.title = None;
         let mut t = Tailer::new(path);
         t.copied_from(copied);
         if history {
@@ -759,6 +770,7 @@ impl Engine {
         for ev in evs {
             self.on_tx(ev);
         }
+        self.read_title();
         while let Some(m) = self.hooks.as_ref().and_then(HookServer::try_recv) {
             self.on_hook(m);
         }
@@ -930,7 +942,21 @@ impl Engine {
     }
 
     fn session_info(&self) -> Value {
-        json!({"mode": self.mode(), "model": self.model, "effort": self.effort, "context_tokens": self.context_tokens})
+        json!({"mode": self.mode(), "model": self.model, "effort": self.effort,
+            "context_tokens": self.context_tokens, "title": self.title})
+    }
+
+    /// The title, once the transcript grew (titles are appended like everything else).
+    fn read_title(&mut self) {
+        let Some(path) = self.tailer.as_ref().map(|t| t.main_path().to_path_buf()) else {
+            return;
+        };
+        let len = std::fs::metadata(&path).ok().map(|m| m.len());
+        if len.is_none() || len == self.title_len {
+            return;
+        }
+        self.title_len = len;
+        self.title = self.title_tail.read(&path);
     }
 
     /// On a new screen: `session_info` when mode / model / context changed, `progress` while
@@ -1192,7 +1218,7 @@ impl Engine {
         v["queue"] = json!(self.queue);
         v["size"] = json!([self.size.0, self.size.1]);
         let info = self.session_info();
-        for k in ["mode", "model", "effort", "context_tokens"] {
+        for k in ["mode", "model", "effort", "context_tokens", "title"] {
             v[k] = info[k].clone();
         }
         v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
@@ -1302,6 +1328,7 @@ impl Engine {
                 answers,
             } => self.chat_about_question(request_id, answers),
             Command::Slash { command } => self.slash(command),
+            Command::Rename { title } => self.rename(title),
             Command::SetModel { model } => self.slash(&format!("model {model}")),
             Command::SetEffort { level } => self.slash(&format!("effort {level}")),
             Command::Compact { instructions } => match instructions {
@@ -1372,7 +1399,7 @@ impl Engine {
         // Seen by the first look, before events went out.
         v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
         let info = self.session_info();
-        for k in ["mode", "model", "effort", "context_tokens"] {
+        for k in ["mode", "model", "effort", "context_tokens", "title"] {
             v[k] = info[k].clone();
         }
         let mut warnings = Vec::new();

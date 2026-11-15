@@ -477,6 +477,9 @@
           "$ref": "#/$defs/commands/slash"
         },
         {
+          "$ref": "#/$defs/commands/rename"
+        },
+        {
           "$ref": "#/$defs/commands/set_model"
         },
         {
@@ -888,6 +891,29 @@
         "required": [
           "type",
           "command"
+        ],
+        "additionalProperties": false
+      },
+      "rename": {
+        "title": "rename",
+        "description": "给 Session 改名（/rename）；idle 时可用。transcript 记下新标题后才返回。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "rename"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "新标题，单行；首尾空白去掉。"
+          }
+        },
+        "required": [
+          "type",
+          "title"
         ],
         "additionalProperties": false
       },
@@ -1512,6 +1538,20 @@
         "properties": {},
         "required": []
       },
+      "rename": {
+        "title": "rename",
+        "description": "改成的标题。",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "transcript 里记下的新标题。"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
       "set_model": {
         "title": "set_model",
         "description": "空对象。",
@@ -1679,6 +1719,13 @@
               "null"
             ],
             "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Session 的标题：transcript 里最后一条 custom-title（/rename 或 rename 设的），没有则最后一条 ai-title；都没有为 null。"
           },
           "queue": {
             "type": "array",
@@ -2163,6 +2210,16 @@
         {
           "properties": {
             "command": {
+              "const": "rename"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/rename"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
               "const": "set_model"
             },
             "data": {
@@ -2494,6 +2551,13 @@
               "null"
             ],
             "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Session 的标题：transcript 里最后一条 custom-title（/rename 或 rename 设的），没有则最后一条 ai-title；都没有为 null。"
           },
           "queue": {
             "type": "array",
@@ -3251,7 +3315,7 @@
       },
       "session_info": {
         "title": "session_info",
-        "description": "权限模式、模型、思考等级或上下文大小变了。",
+        "description": "权限模式、模型、思考等级、上下文大小或标题变了。",
         "type": "object",
         "properties": {
           "type": {
@@ -3284,6 +3348,13 @@
               "null"
             ],
             "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Session 的标题：transcript 里最后一条 custom-title（/rename 或 rename 设的），没有则最后一条 ai-title；都没有为 null。"
           }
         },
         "required": [
@@ -3291,7 +3362,8 @@
           "mode",
           "model",
           "effort",
-          "context_tokens"
+          "context_tokens",
+          "title"
         ]
       },
       "progress": {

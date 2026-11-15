@@ -718,6 +718,19 @@ impl Engine {
         Ok(json!({}))
     }
 
+    /// `rename`: `/rename <title>`, done once the transcript has the title.
+    pub(super) fn rename(&mut self, title: &str) -> CmdResult {
+        let clean = Self::clean_text(title)?;
+        let want = clean.trim().to_string();
+        self.slash(&format!("rename {want}"))?;
+        if !self.wait_until(Duration::from_secs(5), |e| {
+            e.title.as_deref() == Some(want.as_str())
+        }) {
+            return err("timeout", "5 秒内没在 transcript 里看到新标题");
+        }
+        Ok(json!({"title": want}))
+    }
+
     pub(super) fn send_keys(&mut self, keys: &[rpc::Key]) -> CmdResult {
         self.require(true, "")?;
         for k in keys {
