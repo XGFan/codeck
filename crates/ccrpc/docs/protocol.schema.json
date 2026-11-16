@@ -411,7 +411,7 @@
         "data": {
           "type": "string",
           "minLength": 1,
-          "description": "base64。"
+          "description": "标准 base64（带 = 补齐，首尾空白去掉），解码后不超过 20 MB；不合法或过大报 bad_request。"
         },
         "media_type": {
           "enum": [

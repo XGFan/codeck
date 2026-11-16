@@ -348,6 +348,10 @@ const IMAGE_TYPES: &[(&str, &str)] = &[
 /// How long a stored image is kept (the TUI reads it once pasted; a follow-up may wait a while).
 const IMAGE_KEEP: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 
+/// Largest image given by its content, decoded: past it is a mistake, not a picture (Claude Code
+/// scales images down itself).
+const IMAGE_MAX: usize = 20 << 20;
+
 /// Starts an image given by its content (`{"data", "media_type"}`) where a path would be:
 /// `\0<media_type>;<base64>`. No path has a control character (they are refused), so it cannot be
 /// mistaken for one; it becomes a file only when the command runs ([`stored_image`]), not each
@@ -372,11 +376,22 @@ fn image_data(o: &Map<String, Value>, what: &str) -> Result<String, String> {
     if data.is_empty() {
         return Err(format!("{what} 的 data 为空"));
     }
+    // Checked as decoding would (STANDARD: whole quanta, at most two `=` and only at the end, no
+    // spare bits set in the last quantum) without decoding all of it.
+    let len = data.len();
+    let pad = data.bytes().rev().take_while(|&b| b == b'=').count();
     if !data
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+        || len % 4 != 0
+        || pad > 2
+        || data[..len - pad].contains('=')
+        || BASE64.decode(&data[len - 4..]).is_err()
     {
         return Err(format!("{what} 的 data 不是合法 base64"));
+    }
+    if len / 4 * 3 - pad > IMAGE_MAX {
+        return Err(format!("{what} 超过 {} MB", IMAGE_MAX >> 20));
     }
     Ok(format!("{IMAGE_DATA}{media_type};{data}"))
 }
@@ -1492,6 +1507,35 @@ mod tests {
             panic!("{r:?}")
         };
         assert_eq!(parts, vec![Part::Image("\0image/png;aGk=".into())]);
+        // Checked as decoding would, without decoding it.
+        let with = |data: &str| {
+            format!(
+                r#"{{"type":"prompt","text":"x","images":[{{"data":"{data}","media_type":"image/png"}}]}}"#
+            )
+        };
+        for bad in [
+            "aGk", "a=Gk", "aGk==", "aGl=", "aG==", "a===", "====", "aGk=aGk=",
+        ] {
+            assert_eq!(err(&with(bad)).code, "bad_request", "{bad}");
+        }
+        for good in ["aGk=", "aA==", "aGVsbG8=", " aGVsbG8h "] {
+            assert!(
+                matches!(parse(&with(good)).command, Command::Prompt { .. }),
+                "{good}"
+            );
+        }
+        // Up to IMAGE_MAX bytes once decoded.
+        let quanta = IMAGE_MAX / 3;
+        let at_max = format!("{}AAA=", "A".repeat(quanta * 4));
+        assert_eq!(at_max.len() / 4 * 3 - 1, IMAGE_MAX);
+        assert!(matches!(
+            parse(&with(&at_max)).command,
+            Command::Prompt { .. }
+        ));
+        let over = "A".repeat((quanta + 1) * 4);
+        let e = err(&with(&over));
+        assert_eq!(e.code, "bad_request");
+        assert!(e.message.contains("20 MB"), "{}", e.message);
         assert!(stored_image("/tmp/a.png").is_none());
         assert_eq!(
             stored_image("\0image/png;abc").map(|r| r.map_err(|e| e.0)),
