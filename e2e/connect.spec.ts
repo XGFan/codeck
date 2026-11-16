@@ -827,8 +827,11 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await expect(page.getByTestId("image-chip")).toHaveCount(1);
   await page.getByTestId("connect-input").press("Enter");
   await expect
-    .poll(() => lastSent(page, "steer"))
-    .toMatchObject({ parts: [{ text: "做完再跑一下测试" }, { image: "/mock/Caches/dev.joy.codeck/images/1.png" }] });
+    .poll(() => lastSent(page, "prompt"))
+    .toMatchObject({
+      parts: [{ text: "做完再跑一下测试" }, { image: "/mock/Caches/dev.joy.codeck/images/1.png" }],
+      if_busy: "steer",
+    });
   await expect(page.getByTestId("image-chip")).toHaveCount(0);
   await expect(page.getByTestId("connect-input")).toHaveValue("");
   // The TUI's own queue, as the terminal shows it; sent at once on request (ctrl+enter there). A message from another
@@ -866,7 +869,7 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
 
   // ⌘Enter: queued, then sent at once.
   await send(page, "顺便把标题也改了", "Meta");
-  await expect.poll(() => lastSent(page, "steer")).toMatchObject({ text: "顺便把标题也改了" });
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "顺便把标题也改了", if_busy: "steer" });
   await expect.poll(async () => (await probe(page)).sent.filter((s) => s.msg.type === "send_now").length).toBe(2);
   expect(await lastSent(page, "follow_up")).toBeUndefined();
 
@@ -1497,9 +1500,23 @@ test("只有图片、没有文字也能发出", async ({ page }) => {
     .toEqual({
       type: "prompt",
       parts: [{ image: "/mock/Caches/dev.joy.codeck/images/1.png" }],
+      if_busy: "steer",
       id: expect.any(String),
     });
   await expect(page.getByTestId("image-chip")).toHaveCount(0);
+});
+
+test("显示工作中时这一轮其实刚结束：照样作为提示词发出，不报发送失败", async ({ page }) => {
+  await connectTo(page, TURNS);
+  await expect(state(page)).toContainText("空闲");
+  // The app still shows the turn running; ccrpc finds the Session idle when the line comes.
+  await page.evaluate(() => window.__cvCcrpc!.emit({ type: "state", state: "busy" }));
+  await expect(state(page)).toContainText("工作中");
+  await send(page, "MOCK-SLOW please");
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "MOCK-SLOW please", if_busy: "steer" });
+  expect(await lastSent(page, "steer")).toBeUndefined();
+  await expect(page.getByTestId("connect-input")).toHaveValue("");
+  await expect(page.getByText(/发送失败/)).toHaveCount(0);
 });
 
 test("图片标记是一整块：光标跳过、⌫ 整块删掉，拖到别处后按新位置重新编号", async ({ page }) => {

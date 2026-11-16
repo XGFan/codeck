@@ -590,8 +590,11 @@ export function createMockCcrpc(): CcrpcApi {
         probe.failNext = undefined;
         return void setTimeout(() => respond(id, msg, null, "mock 拒绝"), 300);
       }
+      // `prompt` with `if_busy: "steer"` goes as a prompt or a steer by the state ccrpc finds as it runs: here, as the
+      // recording has it next (whatever the app was showing).
       const next = c.fx.lines[c.cursor];
-      if (next?.dir === "send" && next.msg?.type === msg.type) {
+      const as = msg.type === "prompt" && msg.if_busy === "steer" && next?.msg?.type === "steer" ? "steer" : msg.type;
+      if (next?.dir === "send" && next.msg?.type === as) {
         c.cursor++;
         replay(id, { from: next.msg?.id, to: msg.id });
         return;

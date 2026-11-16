@@ -146,7 +146,9 @@ struct Composer: View {
         if type == "steer", let refused = SlashRules.refusedWhileBusy(body, list) {
             return model.connect.setError(sessionId, refused)
         }
-        var cmd: [String: JSONValue] = ["type": .string(type)]
+        // Words go as `prompt` with `if_busy: "steer"` from either button: ccrpc picks prompt or steer by the state as
+        // it runs (a background task's notice may start a turn, or the turn end, just before).
+        var cmd: [String: JSONValue] = ["type": "prompt", "if_busy": "steer"]
         if type == "prompt", let command = SlashRules.slashCommand(body, withImages: !paths.isEmpty, list) {
             cmd = ["type": "slash", "command": .string(command)]
         } else if paths.isEmpty {

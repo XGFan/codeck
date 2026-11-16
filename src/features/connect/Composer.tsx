@@ -306,21 +306,24 @@ export function Composer({ c }: { c: ConnState }) {
       list = await commandList();
       setSending(false);
     }
+    // Words go as `prompt` with `if_busy: "steer"` either way: ccrpc picks prompt or steer by the state as it runs
+    // (a background task's notice may start a turn, or the turn end, just before).
     if (state === "idle") {
       const command = slashCommand(body, images.length > 0, list);
-      msg = command != null ? { type: "slash", command } : { type: "prompt", ...content };
+      msg = command != null ? { type: "slash", command } : { type: "prompt", ...content, if_busy: "steer" };
     } else if (state === "busy") {
       // A panel opened from the queue would hold the turn until someone closes it in the terminal.
       const panel = commandOf(body, list);
       if (panel?.source === "builtin" && panel.interactive)
         return setError(`/${panel.name} 会在终端里打开界面，等空闲时再发`);
-      msg = { type: "steer", ...content };
+      msg = { type: "prompt", ...content, if_busy: "steer" };
     } else return setError("Session 还没准备好");
     setSending(true);
     setError(null);
     // Sent: to the end of the transcript (its placeholder, the queue, the reply), as a chat app does.
     scrollToBottom();
-    const prompt = msg.type === "prompt";
+    // Meant as a new prompt (idle when sent): its placeholder and the box cleared at once.
+    const prompt = msg.type === "prompt" && state === "idle";
     const sent = images;
     const gone = new Set(sent.map((i) => i.path));
     const at = Date.now();
@@ -344,21 +347,23 @@ export function Composer({ c }: { c: ConnState }) {
       }
       return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
     }
-    if (prompt) {
-      // Into Claude Code's queue (the turn had not quite ended): shown in the queue card, not as a prompt yet.
-      const uuid = r.data?.delivered_as !== "queued" && typeof r.data?.uuid === "string" ? r.data.uuid : null;
-      if (uuid) markFresh(uuid);
-      setPending(c.conn, uuid ? { uuid, at } : null);
+    // How ccrpc delivered it: a new prompt (also when sent while busy and the turn had ended meanwhile), or into
+    // Claude Code's queue (a steer, or the turn had not quite ended): shown in the queue card, not as a prompt yet.
+    const queued = r.data?.delivered_as === "queued";
+    const uuid = !queued && typeof r.data?.uuid === "string" ? r.data.uuid : null;
+    if (uuid) markFresh(uuid);
+    if (prompt) setPending(c.conn, uuid ? { uuid, at } : null);
+    if (prompt || uuid) {
       // A new prompt: what was rewound becomes another Branch (the marker goes once that is indexed).
       rewoundSent(c.conn);
       // It is in the transcript by now: indexed at once, not after the watcher's debounce.
       if (c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
-      return;
     }
+    if (prompt) return;
     // Its images, should ↑ take it back (the queue has only `[Image #n]` for them).
-    if (msg.type === "steer" && r.data?.delivered_as === "queued") rememberSteer(c.conn, { text: body, images: sent });
+    if (queued) rememberSteer(c.conn, { text: body, images: sent });
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
-    if (now && msg.type === "steer" && r.data?.delivered_as === "queued") void sendNow();
+    if (now && queued) void sendNow();
     // Keep what was typed while it was being sent; only the images that went with it go (an image pasted meanwhile
     // keeps its place).
     update((d) => (d.text.trim() === body ? { text: "", images: [] } : dropImages(d.text, d.images, gone)));
