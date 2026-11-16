@@ -149,7 +149,7 @@ test("「···」菜单：clay 里的 Session 不论是否 Connect 都可隐藏
   await inMenu(page, "pane-visibility", (b) => expect(b).toHaveCount(0));
 });
 
-test("Session 行右键「重命名」：未 Connect 时置灰，Connected 且空闲时发 /rename；失败时留在对话框写原因", async ({
+test("Session 行右键「重命名」：未 Connect 时置灰，Connected 且空闲时发 rename；失败时留在对话框写原因", async ({
   page,
 }) => {
   await page.goto("/");
@@ -172,7 +172,7 @@ test("Session 行右键「重命名」：未 Connect 时置灰，Connected 且�
   await page.keyboard.type("第一次");
   await expect(input).toHaveValue("第一次");
 
-  await page.evaluate(() => ((window.__cvCcrpc as unknown as { failNext: string }).failNext = "slash"));
+  await page.evaluate(() => ((window.__cvCcrpc as unknown as { failNext: string }).failNext = "rename"));
   await input.press("Enter");
   await expect(dialog.getByTestId("rename-error")).toContainText("重命名失败");
   await expect(input).toHaveValue("第一次");
@@ -180,7 +180,7 @@ test("Session 行右键「重命名」：未 Connect 时置灰，Connected 且�
   await input.fill("  登录页\t重构 ");
   await input.press("Enter");
   await expect(dialog).toBeHidden();
-  expect(await lastSent(page, "slash")).toMatchObject({ command: "rename 登录页 重构" });
+  expect(await lastSent(page, "rename")).toMatchObject({ title: "登录页 重构" });
 
   // The window is usable after the dialog opened from a menu closed.
   expect(await page.evaluate(() => document.body.style.pointerEvents)).not.toBe("none");

@@ -8,7 +8,8 @@ import { isComposingKey, keepOpenWhileComposing } from "@/lib/hotkeys";
 import { useUi, type RenameTarget } from "@/state/ui";
 import { BUTTON } from "./AddProjectDialog";
 
-/** 「重命名」 of a Connected Session: `/rename <title>`, so the name is Claude Code's own. */
+/** 「重命名」 of a Connected Session: ccrpc's `rename` (`/rename <title>`, answered once the transcript has it), so the
+ * name is Claude Code's own. */
 export function RenameDialog() {
   const target = useUi((s) => s.renaming);
   const setRenaming = useUi((s) => s.setRenaming);
@@ -33,7 +34,7 @@ function RenameForm({ target, onClose }: { target: RenameTarget; onClose: () => 
   const [text, setText] = useState(target.title);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  // ccrpc takes a slash command on one line only.
+  // ccrpc takes a title on one line only.
   const title = text.replace(/\s+/g, " ").trim();
 
   const submit = async () => {
@@ -43,9 +44,9 @@ function RenameForm({ target, onClose }: { target: RenameTarget; onClose: () => 
     if (!c || !isLive(c)) return setError("重命名失败：Session 已断开");
     setSending(true);
     setError(null);
-    const r = await command(c.conn, { type: "slash", command: `rename ${title}` });
+    const r = await command(c.conn, { type: "rename", title });
     if (r.success && c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
-    // Cancelled while it was sent (up to 3 s): the dialog may be open for another Session by now.
+    // Cancelled while it was sent (up to 5 s): the dialog may be open for another Session by now.
     if (useUi.getState().renaming !== target) return;
     setSending(false);
     if (!r.success) return setError(`重命名失败：${r.error?.message ?? r.error?.code ?? ""}`);
