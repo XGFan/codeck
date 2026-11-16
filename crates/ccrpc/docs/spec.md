@@ -31,7 +31,7 @@ ccrpc debug replay <transcript.jsonl>…      # 逐行回放 transcript：实时
 ccrpc debug screen|keys|paste <Holder ID> … # 调试：打印屏幕、写按键、写 bracketed paste
 ```
 
-- RPC 循环：stdin 每行一条命令，stdout 每行一条响应或事件；stderr 只写错误。stdin 关闭即断开（发 Detach），Session 不受影响。收到 SIGTERM 时同样断开，但等正在执行的命令做完（不会停在按键序列中间）；连上 Session 之前（attach / new 启动期间）收到则直接结束。
+- RPC 循环：stdin 每行一条命令，stdout 每行一条响应或事件；stderr 只写错误。stdin 关闭即断开（发 Detach），Session 不受影响。收到 SIGTERM 时同样断开，但等正在执行的命令做完（不会停在按键序列中间），还没回的 `get_messages` 最多再等 5 秒（到时报 `timeout`；stdin 关闭时照常等它读完）；连上 Session 之前（attach / new 启动期间）收到则直接结束。
 - PTY 尺寸：连上不改尺寸，VT 跟随 Holder 报来的 PTY 尺寸（谁设的都行，变了就重新要一次 Snapshot）；人在 Client 上用这个 Pane 时 ccrpc 照常写入（输入框照旧先清空）。屏幕读不懂时调成 120×40，之后不调回去，人的 Client 下次抢尺寸（切到前台、按键）就换回它的尺寸（见 7 节）。`ready` 与 `get_state` 的 `size` 是 PTY 此刻的尺寸。
 - Holder 不报 PTY 尺寸（ToH 升级前就开着的 Pane）时 `attach` 报错退出：关掉 Pane 重开。
 - `debug` 子命令只看、只写，不改 PTY 尺寸。
@@ -103,7 +103,7 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 | `set_model {model}` / `set_effort {level}` / `clear` | idle | 即 `slash` 的 `model X` / `effort X` / `clear`（`level` 只能是一个字母数字词）。`/model X`、`/effort X` 也会成为新 Session 的默认（Claude Code 的行为）；对话中途第一次切换时 Claude Code 先问一句「历史要重新读一遍」，以内置布局的 `choice`（`Switch model?` / `Change effort level?`）出现，`answer_choice` 作答 | `{}` |
 | `send_keys {keys}` | 除 exited | 依次写入，间隔见第 6 节。元素：命名按键（`enter` `esc` `tab` `shift+tab` `backspace` `space` `up` `down` `left` `right` `home` `end` `pageup` `pagedown` `delete` `ctrl+c` `ctrl+d` `ctrl+u` `ctrl+l` `ctrl+o` `ctrl+r` `ctrl+t`）、`{"text":"…"}`（原样）、`{"bytes":"<base64>"}` | `{}` |
 | `get_state` | 任意 | — | `state`、`waiting`、`request`（挂起的请求：`request_id`、`tool_name`、`input`、`agent_id`；挂起的 choice 为它的 `choice` 事件，挂起的回退为 `rewind` 的响应）、`holder_id`、`session_id`、`cwd`、`follow_up_queue`、`follow_ups`、`size`（同 `ready`）、`mode`（输入框下模式行最后一次看到的，没看到过取插件报来的 `permission_mode`）、`model`（主线最后一条 assistant 的模型）、`context_tokens`（它的 input + cache_read + cache_creation）、`title`（同 `session_info`）、`feedback_draft`（同 `feedback_draft` 事件，没有卡片时为 null） |
-| `get_messages {since?, before?, limit?, subagents?}` | 任意 | 当前 transcript 的 Main Line 内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）。由单独的线程维护：第一次（连接或切换 Session 时就开始）读完整个文件，之后只读新追加的部分，读的期间事件照常发出。`since`：只要这个游标之后写入的块（上次的 `cursor`）；`before`：只要这个游标之前的（上一页的 `first`）；`limit`：范围内最新的这么多块；`subagents`：另给本页 Agent / Workflow 调用下的 Subagent Run 内容块。游标是不透明的数（文件偏移），Main Line 变了也有效。读的期间 Session 换了（`/clear`）就从新的 transcript 重读，换了 3 次仍没读成、或 120 秒没读完报 `timeout`；Session 结束后照常作答 | `blocks`、`cursor`、`first`（本页第一个块的游标，没有块为 null；同一条 transcript 条目的块总在同一页，页可能比 `limit` 略多）、`more`（范围内还有更早的块）；`subagents` 时另有 `subagent_blocks` |
+| `get_messages {since?, before?, limit?, subagents?}` | 任意 | 当前 transcript 的 Main Line 内容块，与从头跟随事件得到的一致（`branch` 作废的块不在其中）。由单独的线程维护：第一次（连接或切换 Session 时就开始）读完整个文件，之后只读新追加的部分，读的期间事件照常发出。`since`：只要这个游标之后写入的块（上次的 `cursor`）；`before`：只要这个游标之前的（上一页的 `first`）；`limit`：范围内最新的这么多块；`subagents`：另给本页 Agent / Workflow 调用下的 Subagent Run 内容块。游标是不透明的数（文件偏移），Main Line 变了也有效。读的期间 Session 换了（`/clear`）就从新的 transcript 重读，换了 3 次仍没读成、或 120 秒没读完报 `timeout`（收到 SIGTERM 后最多再等 5 秒）；Session 结束后照常作答 | `blocks`、`cursor`、`first`（本页第一个块的游标，没有块为 null；同一条 transcript 条目的块总在同一页，页可能比 `limit` 略多）、`more`（范围内还有更早的块）；`subagents` 时另有 `subagent_blocks` |
 | `get_screen` | 任意 | — | `lines`（每行去尾部空白）、`cursor`（`[行, 列]`，0 起） |
 | `cancel_follow_up {index?}` | 任意 | 撤销 follow_up 队列里第 `index` 条（0 起），不带则全部撤销 | `removed`、`follow_ups`（剩下的） |
 | `set_mode {mode}` | idle / busy | `manual` / `accept_edits` / `plan` / `auto`：按 shift+tab，每次等输入框下的模式行变化，直到显示目标模式；转一圈没有则 `not_offered` | `mode` |

@@ -321,12 +321,17 @@ struct PendingPage {
     /// Asked again after the Session changed (/clear) while it was read.
     tries: u8,
     deadline: Instant,
+    /// The deadline was cut short by a SIGTERM.
+    quitting: bool,
     /// The response, once known (sent when every earlier one is out).
     done: Option<Value>,
 }
 
 /// How long a `get_messages` may take (a transcript of tens of MB is read whole the first time).
 const PAGE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long pages still being read may hold up leaving after a SIGTERM.
+const QUIT_PAGE_WAIT: Duration = Duration::from_secs(5);
 
 /// Commands answered even while another one waits: they neither write to the Pane nor wait.
 fn serves_in_wait(c: &Command) -> bool {
@@ -1260,6 +1265,7 @@ impl Engine {
             rx,
             tries: 0,
             deadline: Instant::now() + PAGE_TIMEOUT,
+            quitting: false,
             done,
         });
         self.poll_pages();
@@ -1293,7 +1299,12 @@ impl Engine {
                     _ => p.done = Some(fail(p, "读的期间 Session 一直在换")),
                 },
                 Err(TryRecvError::Empty) if Instant::now() >= p.deadline => {
-                    p.done = Some(fail(p, "120 秒内没读完 transcript"));
+                    let msg = if p.quitting {
+                        "收到 SIGTERM，5 秒内没读完 transcript"
+                    } else {
+                        "120 秒内没读完 transcript"
+                    };
+                    p.done = Some(fail(p, msg));
                 }
                 Err(TryRecvError::Empty) => {}
             }
@@ -1487,8 +1498,20 @@ impl Engine {
                 Err(TryRecvError::Disconnected) => break,
             }
         }
-        // Pages asked before stdin closed (or SIGTERM) are still answered.
+        // Pages asked before stdin closed (or SIGTERM) are still answered; after a SIGTERM (also
+        // one coming while they are read) only those read within QUIT_PAGE_WAIT.
+        let mut hurried = false;
         while !self.pages.is_empty() {
+            if !hurried && startup::terminated() {
+                hurried = true;
+                let by = Instant::now() + QUIT_PAGE_WAIT;
+                for p in &mut self.pages {
+                    if p.deadline > by {
+                        p.deadline = by;
+                        p.quitting = true;
+                    }
+                }
+            }
             let seen = self.wake.seen();
             self.tick();
             if !self.pages.is_empty() {

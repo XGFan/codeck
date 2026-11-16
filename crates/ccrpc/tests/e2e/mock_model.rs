@@ -1995,9 +1995,12 @@ fn mock_model_sigterm_detaches() {
     let ready = start_session(&mut rpc, &env);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     let pid = rpc.child.id();
+    // A page asked just before: answered before ccrpc goes, and held up for at most 5 s.
+    rpc.send(json!({"id": "m1", "type": "get_messages"}));
+    std::thread::sleep(Duration::from_millis(300));
     // SAFETY: plain kill(2) on this test's own ccrpc child, not reaped yet.
     unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(8);
     let status = loop {
         if let Some(s) = rpc.child.try_wait().unwrap() {
             break s;
@@ -2006,6 +2009,16 @@ fn mock_model_sigterm_detaches() {
         std::thread::sleep(Duration::from_millis(50));
     };
     assert!(status.success(), "{status:?}");
+    let m = rpc.until("响应 m1", Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "m1"
+    });
+    assert!(
+        m["success"] == true
+            || m["error"]["message"]
+                .as_str()
+                .is_some_and(|s| s.contains("SIGTERM")),
+        "{m}"
+    );
     let shell_pid = rpc.shell_pid.take();
     drop(rpc);
     let mut next = Rpc::attach(&env, &[&holder]);
