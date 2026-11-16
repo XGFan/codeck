@@ -422,6 +422,43 @@ fn mock_model_prompt_if_busy() {
     rpc.event("settled", Duration::from_secs(10));
 }
 
+/// `prompt` with `if_busy: "follow_up"` while idle but with follow-ups still waiting to go out:
+/// queued after them instead of going first.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_prompt_if_busy_keeps_the_follow_up_order() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    rpc.call("p1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    rpc.call("f1", json!({"type": "follow_up", "text": "FIRST-QUEUED"}));
+    wait_state(&mut rpc, "idle", 90);
+    // The follow-up goes out once idle for 1 s: this comes before that.
+    let r = rpc.call(
+        "p2",
+        json!({"type": "prompt", "text": "SECOND-QUEUED", "if_busy": "follow_up"}),
+    );
+    assert_eq!(r["delivered_as"], "follow_up", "{r}");
+    assert_eq!(r["queued"], 2, "{r}");
+    let mut order = vec![];
+    while order.len() < 2 {
+        let v = rpc.until("user block", Duration::from_secs(60), |v| {
+            (v["type"] == "block"
+                && v["kind"] == "user"
+                && matches!(v["text"].as_str(), Some("FIRST-QUEUED" | "SECOND-QUEUED")))
+                || v["type"] == "follow_up_failed"
+        });
+        assert_ne!(v["type"], "follow_up_failed", "{v}");
+        order.push(v["text"].as_str().unwrap().to_string());
+    }
+    assert_eq!(order, ["FIRST-QUEUED", "SECOND-QUEUED"]);
+}
+
 /// `rename`: `/rename`, answered once the transcript has the title; `session_info` and
 /// `get_state` carry it. Before the first prompt too (the transcript is written by it).
 #[test]

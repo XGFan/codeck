@@ -544,7 +544,8 @@ impl Engine {
 
     /// `prompt`: sent now when idle; with `if_busy`, while busy it goes as a steer (waiting: a
     /// dialog covers the input box, so into the follow-up queue) or into the follow-up queue,
-    /// decided as it runs (no race between reading the state and choosing the command).
+    /// decided as it runs (no race between reading the state and choosing the command). A
+    /// follow-up also queues while idle when others still wait to go out (it goes after them).
     pub(super) fn prompt_cmd(
         &mut self,
         input: &rpc::Input,
@@ -552,6 +553,11 @@ impl Engine {
     ) -> CmdResult {
         match (if_busy, &self.state) {
             (Some(rpc::IfBusy::Steer), State::Busy) => self.steer_input(input),
+            (Some(rpc::IfBusy::FollowUp), State::Idle) if !self.follow_ups.is_empty() => {
+                let mut v = self.queue_follow_up(input)?;
+                v["delivered_as"] = json!("follow_up");
+                Ok(v)
+            }
             (Some(_), State::Busy | State::Waiting { .. }) => {
                 let mut v = self.queue_follow_up(input)?;
                 v["delivered_as"] = json!("follow_up");

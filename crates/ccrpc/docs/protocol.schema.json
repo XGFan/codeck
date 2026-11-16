@@ -610,7 +610,7 @@
               "steer",
               "follow_up"
             ],
-            "description": "Session 忙时怎么办（执行时判定，缺省报 not_idle）：steer 在 busy 时按 steer 发出（waiting 时对话框盖住输入框，改进 follow_up 队列），follow_up 进 ccrpc 的 follow_up 队列。"
+            "description": "Session 忙时怎么办（执行时判定，缺省报 not_idle）：steer 在 busy 时按 steer 发出（waiting 时对话框盖住输入框，改进 follow_up 队列），follow_up 进 ccrpc 的 follow_up 队列（idle 但队列不空时也进，排在已有的后面）。"
           }
         },
         "required": [
