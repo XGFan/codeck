@@ -46,6 +46,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(codeck_term::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
@@ -88,6 +89,10 @@ pub fn run() {
             let tauri::WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
+            // Only the main window stays for LAN access; other windows (the terminal window) just close.
+            if window.label() != "main" {
+                return;
+            }
             let app = window.app_handle();
             if !app
                 .try_state::<Arc<Host>>()

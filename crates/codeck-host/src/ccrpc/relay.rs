@@ -852,7 +852,7 @@ pub(crate) fn spawn(cmd: &mut Command) -> std::io::Result<std::process::Child> {
     cmd.spawn()
 }
 
-fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
+pub fn output_within(mut cmd: Command, timeout: Duration) -> std::io::Result<Output> {
     use std::os::unix::process::CommandExt;
     let deadline = std::time::Instant::now() + timeout;
     cmd.stdin(Stdio::null())

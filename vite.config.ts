@@ -18,5 +18,16 @@ export default defineConfig(({ mode }) => ({
     base: "/web/",
     build: { outDir: "dist-web", rollupOptions: { input: path.resolve(import.meta.dirname, "transcript.html") } },
   }),
+  // The desktop build: the main window and the terminal window (ADR-0015).
+  ...(mode !== "host" && {
+    build: {
+      rollupOptions: {
+        input: {
+          main: path.resolve(import.meta.dirname, "index.html"),
+          terminal: path.resolve(import.meta.dirname, "terminal.html"),
+        },
+      },
+    },
+  }),
   test: { include: ["src/**/*.test.ts", "src/**/*.test.tsx"] },
 }));

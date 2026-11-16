@@ -6,6 +6,7 @@ members = [
     "crates/codeck-daemon",
     "crates/ccrpc",
     "crates/codeck-cli",
+    "crates/codeck-term",
     "src-tauri",
 ]
 resolver = "3"
@@ -19,6 +20,7 @@ license = "AGPL-3.0-or-later"
 [workspace.dependencies]
 codeck-core = { path = "crates/codeck-core" }
 codeck-host = { path = "crates/codeck-host" }
+codeck-term = { path = "crates/codeck-term" }
 transcript = { path = "crates/transcript" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }

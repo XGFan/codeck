@@ -6,6 +6,7 @@ import {
   ScanSearch,
   ShieldQuestionMark,
   Sparkles,
+  Terminal,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,9 @@ import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import { toolKey } from "@/features/transcript/keys";
 import { PendingText, ToolCallView } from "@/features/transcript/tools";
 import type { ToolCall } from "@/ipc/bindings";
-import { useCurrentTranscript } from "@/queries";
+import { termAvailable } from "@/features/terminal/bridge";
+import { openTerminalWindow } from "@/features/terminal/windows";
+import { useCurrentTranscript, useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 import { permissionLabel } from "./answers";
 import type { ConnState, Request } from "./conn";
@@ -97,12 +100,17 @@ function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
 
 /**
  * A screen ccrpc cannot read (a panel such as `/cost`'s, an unknown dialog): shown as is; Esc closes it
- * (`abort` while busy / waiting; otherwise ccrpc refuses it, so the key itself).
+ * (`abort` while busy / waiting; otherwise ccrpc refuses it, so the key itself). Anything else is done in the
+ * Pane's terminal window (desktop only, ADR-0015).
  */
 function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecognized" }>; c: ConnState }) {
   const command = useConnect((s) => s.command);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const title = useSession(c.sessionId).data?.summary.title ?? c.cwd?.split("/").pop() ?? "";
+  const holderId = termAvailable ? c.holderId : null;
+  const openTerminal = (id: string) =>
+    openTerminalWindow(id, title).catch((e: unknown) => setError(`打开终端窗口失败：${String(e)}`));
   const close = async () => {
     setBusy(true);
     setError(null);
@@ -125,7 +133,12 @@ function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecogn
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void close()} data-testid="screen-close">
           关闭（Esc）
         </Button>
-        <span className="text-[12px] text-secondary">其他操作需在 Mac Client 的终端里处理。</span>
+        {holderId && (
+          <Button size="sm" variant="outline" onClick={() => void openTerminal(holderId)} data-testid="screen-terminal">
+            <Terminal size={13} strokeWidth={1.8} />
+            在终端窗口中处理
+          </Button>
+        )}
         {error && <span className="text-[12px] text-error">{error}</span>}
       </div>
     </Shell>

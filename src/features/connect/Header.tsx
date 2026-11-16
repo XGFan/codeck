@@ -1,4 +1,4 @@
-import { ChevronDown, Eye, EyeOff, Power, RotateCcw, ShieldCheck, ShipWheel, Unlink } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Power, RotateCcw, ShieldCheck, ShipWheel, Terminal, Unlink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -9,8 +9,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { termAvailable } from "@/features/terminal/bridge";
+import { openTerminalWindow } from "@/features/terminal/windows";
 import { api } from "@/ipc";
 import { cn } from "@/lib/cn";
+import { errorText } from "@/lib/errors";
 import { formatTokens } from "@/lib/format";
 import { useUi } from "@/state/ui";
 import type { ConnState } from "./conn";
@@ -137,8 +140,9 @@ export function ConnectButton({
  * The header 「···」 menu's items for a Session running in a clay Pane (`ccrpc ls`), then a separator when `separated`:
  * 「Connect」 when not connected (disabled until its ccrpc plugin has reported; not offered while its Holder is
  * connected for another Session, after `/clear` there), 「Disconnect」 while connected (closes ccrpc's stdin; the
- * Session keeps running), and 「隐藏 Pane」/「显示 Pane」, which hides the Pane on the ToH Mac Client (its hidden
- * window) or shows it again — iOS and web list it either way; not offered when ccrpc is too old to say.
+ * Session keeps running), 「隐藏 Pane」/「显示 Pane」, which hides the Pane on the ToH Mac Client (its hidden
+ * window) or shows it again — iOS and web list it either way; not offered when ccrpc is too old to say — and
+ * 「在终端窗口中打开」 (desktop only, ADR-0015).
  */
 export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: string; separated?: boolean }) {
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
@@ -147,12 +151,14 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
   const connect = useConnect((s) => s.connect);
   const disconnect = useConnect((s) => s.disconnect);
   const setPaneHidden = useConnect((s) => s.setPaneHidden);
+  const setError = useConnect((s) => s.setError);
   const resuming = useConnect((s) => !!s.resuming[sessionId]);
   const connecting = useConnect((s) => !!s.connecting[sessionId]);
   const live = c && isLive(c) ? c : null;
   const canConnect = !live && entry && !taken && !resuming;
   const pane = entry && entry.hidden != null ? { holder: entry.holder_id, hidden: entry.hidden } : null;
-  if (!live && !canConnect && !pane) return null;
+  const terminal = termAvailable && entry ? entry : null;
+  if (!live && !canConnect && !pane && !terminal) return null;
   return (
     <>
       {live && (
@@ -197,6 +203,20 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
             <EyeOff size={13} strokeWidth={1.5} aria-hidden />
           )}
           {pane.hidden ? "显示 Pane" : "隐藏 Pane"}
+        </DropdownMenuItem>
+      )}
+      {terminal && (
+        <DropdownMenuItem
+          data-testid="pane-terminal"
+          title="在 CoDeck 的窗口里打开这个 Pane 的终端"
+          onSelect={() =>
+            void openTerminalWindow(terminal.holder_id, terminal.title ?? terminal.cwd?.split("/").pop() ?? "").catch(
+              (e: unknown) => setError(sessionId, `打开终端窗口失败：${errorText(e)}`),
+            )
+          }
+        >
+          <Terminal size={13} strokeWidth={1.5} aria-hidden />
+          在终端窗口中打开
         </DropdownMenuItem>
       )}
       {separated && <DropdownMenuSeparator />}

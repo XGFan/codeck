@@ -1,0 +1,11 @@
+"$schema" = "schemas/schema.json"
+
+[[set]]
+identifier = "main-window"
+description = "What the main window uses: open, close and list terminal windows, and tell one what the Session is doing."
+permissions = ["allow-open-window", "allow-close-window", "allow-set-status", "allow-windows"]
+
+[[set]]
+identifier = "terminal-window"
+description = "What a terminal window uses: attach to its Pane's Holder and type into it."
+permissions = ["allow-attach", "allow-input"]

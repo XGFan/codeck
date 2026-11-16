@@ -908,7 +908,7 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await send(page, "重写第一条");
   const screen = page.getByTestId("screen-card");
   await expect(screen).toContainText("Something new");
-  await expect(screen).toContainText("Mac Client");
+  await expect(screen.getByTestId("screen-terminal")).toHaveText("在终端窗口中处理");
   await page.getByTestId("connect-input").press("Escape");
   expect(await lastSent(page, "abort")).toBeTruthy();
 
@@ -1205,6 +1205,95 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   await expect(btw).toHaveCount(0);
   expect(await lastSent(page, "close_btw")).toBeTruthy();
   await expect(state(page)).toContainText("空闲");
+});
+
+test("认不出的界面：「在终端窗口中处理」打开这个 Pane 的终端窗口，键入直达；回到输入框时窗口提示，Disconnect 后窗口关闭", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator('[data-testid=session-row][data-session-id="c1a70000-0000-4000-8000-0000000000c1"]').click();
+  await pick(page, "connect-button");
+  await expect(state(page)).toContainText("空闲");
+  // The recording (clay-new) answers commands in its order: a prompt first, then `/cost`.
+  const input = page.getByTestId("connect-input");
+  await input.fill("/release v1");
+  await input.press("Enter");
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "/release v1" });
+  await expect(state(page)).toContainText("空闲");
+  await input.fill("/cost");
+  await input.press("Enter");
+  const screen = page.getByTestId("screen-card");
+  await expect(screen).toContainText("Total cost");
+  await expect(screen).not.toContainText("Mac Client");
+
+  // The mock Pane (src/features/terminal/bridge.ts) shows the same panel, at its own size.
+  const [popup] = await Promise.all([page.waitForEvent("popup"), screen.getByTestId("screen-terminal").click()]);
+  await expect(popup).toHaveTitle(/^终端 · /);
+  const term = popup.getByTestId("terminal-screen");
+  await expect(term).toContainText("Total cost");
+  await expect(popup.getByTestId("terminal-size")).toHaveText("80×24");
+  await expect(popup.getByTestId("terminal-back")).toHaveCount(0);
+
+  // Typing goes to the Pane as it is (the mock Pane echoes it).
+  await term.click();
+  await popup.keyboard.type("zq9");
+  await expect(term).toContainText("zq9");
+  expect((await popup.evaluate(() => window.__termInput ?? [])).join("")).toBe("zq9");
+  // Esc once; also when an input method is on, where WebKit gives it only a keyup.
+  await popup.keyboard.press("Escape");
+  await popup.evaluate(() =>
+    document.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", bubbles: true })),
+  );
+  await expect.poll(() => popup.evaluate(() => window.__termInput ?? [])).toEqual(["z", "q", "9", "\x1b", "\x1b"]);
+  // An Esc that closes the input method's candidates is not sent.
+  await popup.evaluate(() => {
+    const t = document.querySelector("textarea")!;
+    t.dispatchEvent(new CompositionEvent("compositionend", { data: "" }));
+    t.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", bubbles: true }));
+  });
+  await popup.waitForTimeout(200);
+  expect(await popup.evaluate(() => window.__termInput ?? [])).toEqual(["z", "q", "9", "\x1b", "\x1b"]);
+
+  // Clicked again: the window already open, no second one.
+  await screen.getByTestId("screen-terminal").click();
+  await page.waitForTimeout(300);
+  expect(page.context().pages()).toHaveLength(2);
+
+  // Claude Code back at its input box: the window says so.
+  await screen.getByTestId("screen-close").click();
+  await expect(screen).toHaveCount(0);
+  await expect(state(page)).toContainText("空闲");
+  await expect(popup.getByTestId("terminal-back")).toHaveText("Claude Code 已回到输入框");
+
+  // Disconnect: the Session runs on in its Pane, so the window stays (without the status).
+  await pick(page, "connect-disconnect");
+  await expect(popup.getByTestId("terminal-back")).toHaveCount(0);
+  expect(popup.isClosed()).toBe(false);
+
+  // 「···」 › 「在终端窗口中打开」, also without a connection: the window already open.
+  await pick(page, "pane-terminal");
+  await page.waitForTimeout(300);
+  expect(page.context().pages()).toHaveLength(2);
+
+  // The Pane closed (「关闭」 ends the Session and its Pane): the window closes.
+  await pick(page, "connect-button");
+  await expect(state(page)).toContainText("空闲");
+  const closed = popup.waitForEvent("close");
+  await page.getByTestId("connect-close").click();
+  await closed;
+});
+
+test("「···」›「在终端窗口中打开」：没有 Connect 也能打开 clay 里 Session 的终端窗口", async ({ page }) => {
+  await page.goto("/");
+  await open(page, RICH);
+  await inMenu(page, "pane-terminal", (b) => expect(b).toHaveText("在终端窗口中打开"));
+  const [popup] = await Promise.all([page.waitForEvent("popup"), pick(page, "pane-terminal")]);
+  await expect(popup.getByTestId("terminal-screen")).toContainText("Total cost");
+  await expect(popup.getByTestId("terminal-back")).toHaveCount(0);
+  // Not in clay (not in `ccrpc ls`): no such item.
+  await open(page, NOT_LISTED);
+  await page.getByTestId("header-more").click();
+  await expect(page.getByTestId("header-menu").getByTestId("pane-terminal")).toHaveCount(0);
 });
 
 test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分析器的 Key、Endpoint、模型可在这里设置", async ({

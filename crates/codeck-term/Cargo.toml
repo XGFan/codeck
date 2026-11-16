@@ -1,0 +1,23 @@
+[package]
+name = "codeck-term"
+description = "CoDeck's terminal window (transitional, ADR-0015): a tauri plugin that shows a Connected Session's Pane in a window of its own, attached straight to its ToH Holder."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+# tauri-plugin's build script requires `links` to equal the package name.
+links = "codeck-term"
+
+[dependencies]
+codeck-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+toh-proto.workspace = true
+
+[build-dependencies]
+tauri-plugin = { version = "2.7.1", features = ["build"] }
+
+[dev-dependencies]
+tempfile.workspace = true

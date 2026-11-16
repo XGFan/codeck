@@ -185,11 +185,12 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
   | `permission_request` | 工具名 + 工具输入（用对话记录的工具渲染，展开显示，状态为「等待审批」）；后台 Subagent 的标出 agent。computer use 的授权框（`request_access`）也是这张卡片 | 按 `options`：允许 / 总是允许（按钮显示审批框原文）/ 拒绝；允许不是单纯的 `Yes…` 时按钮也显示原文（computer use 的 `Allow for this session (4 apps)`：窄窗格下列不下的应用不在这次授权里）；选项下方常显一行「拒绝，并告诉 Claude：」输入框，写了字回车即拒绝并带上说明（`deny` + `message`）。`options` 为 null 时没有「总是允许」 |
   | `question` | 主线的提问直接在对话里那张「向你提问」卡片上作答（header 标签与题目、整行的选项、「其他」行，单选 / 多选；单选为圆点、多选为方框，「其他」行同样带标记。单选题里所选项与「其他」互斥：在「其他」里输入会取消已选项，再点选项则「其他」里的字保留但划掉、不随回答发出，点回输入框重新启用；多选题里「其他」是又一个勾选框，可与选项一起勾选、一起发出，点它的方框取消则字保留但划掉；选项的 preview 排在右侧，显示鼠标所在或键盘焦点所在的那项的，否则是最后选中的、都没有时是第一项的；「提交」旁是「先聊聊」（Claude Code 的 Chat about this）：不提交，带上已答的题发出，Claude 接着问想澄清什么，焦点回到输入框；每道题都已作答时不能先聊聊（与终端相同：单题选了即是提交）），卡片在对话记录里看得见（露出至少 48px，或整张）时输入区什么也不显示，看不见时显示一行提示与「跳到提问」；后台 Subagent 的提问不在主线对话里，在输入区显示同样式的卡片 | `answer_question`，先聊聊带 `chat: true`（接入前就弹出的提问由 ccrpc 按屏幕作答） |
   | `choice` | 标题 + 选项（有说明时写在选项文字后） | `answer_choice`（按 label） |
-  | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里），注明其他操作需在 Mac Client 的终端里处理 | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失 |
+  | `dialog` / `unrecognized` | 只读等宽显示屏幕原文（`/cost` 这类面板也在这里） | 「关闭（Esc）」：busy / waiting 时 `abort`，否则 `send_keys` Esc；状态离开 waiting 即消失。「在终端窗口中处理」（只在桌面）：打开这个 Pane 的终端窗口（见下方「终端窗口」） |
   | `btw` | `/btw` 的问题与答案（回答中只有问题）；忙时发出也不算插话。答案不进对话记录，关闭即消失 | 「关闭（Esc）」：`close_btw`；面板关掉（含在终端里关）即消失 |
   | `feedback_draft` | 输入框上方的卡片：「Claude 起草了一条产品反馈：<标题>」，注明草稿只存在本机、在终端里按 2 才会发送；「查看全文」展开草稿（Markdown） | 「不发送」：`dismiss_feedback_draft`，只在空闲时可点（本轮进行中终端隐藏这张卡片）；草稿留在 `/feedback` 里；CoDeck 不提供发送 |
   | `rewind` 的响应 | 「回退到这条提示词之前」（见下方「回退」） | 「恢复代码与对话」/「只恢复对话 · 代码保持现状」/「只恢复代码 · 对话保持现状」（只列确认页上有的，依次编号）：`answer_rewind {option}`；「取消（Esc）」：`answer_rewind {cancel}` |
 
+  - **终端窗口**（过渡用，ADR-0015）：认不出的界面卡片上的「在终端窗口中处理」，或「···」菜单的「在终端窗口中打开」（Session 在 clay 里时都有，不需要 Connect），打开一个独立窗口，里面只有这个 Pane 的终端（直连 ToH 的 Holder，与 ToH 客户端里是同一个画面），键入、粘贴、Esc 直接发给 Claude Code；Claude Code 开着鼠标上报，滚轮与点击也交给它，按住 ⌥ 拖动才是选中文字。一个 Pane 一个窗口，再点即带到前面；标题「终端 · <Session 标题>」。尺寸跟着 Pane：从不改 Pane 的尺寸，窗口按 Pane 的列×行、13px 打开，之后字号随窗口缩放；打开时带上最近 2000 行历史。底栏写尺寸与「按住 ⌥ 拖动选中文字」；已连接、Claude Code 回到输入框（空闲或工作中、没有认不出的界面）时写「Claude Code 已回到输入框」。窗口不依赖连接：卡片消失、Disconnect 或 ccrpc 退出时都不关；Pane 里不再有 Session（claude 退出、Pane 关掉，即不在 `ccrpc ls` 里且没有连着的连接）时自动关闭，主窗口关闭时一起关。只在桌面：iPhone 与局域网页面没有这个按钮。
   - `layout_source` 为 `learned` 的卡片标「AI 识别」。waiting 但还没有请求（分析器在分析）时显示「正在识别界面…」。
   - 多个请求竖向叠放，主线在上；作答成功即收起该卡片。
   - 数字键 1/2/3 选第一张卡片的选项，只在焦点位于输入区内且不在输入框里时（例如 waiting 时在输入框按 Enter，焦点移到卡片之后）；焦点在对话记录、Subagent 面板等处时按数字键不作答——卡片不是主视图，读对话时误按不能批准工具调用。

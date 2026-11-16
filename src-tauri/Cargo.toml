@@ -17,6 +17,8 @@ tauri-build.workspace = true
 [dependencies]
 codeck-core.workspace = true
 codeck-host.workspace = true
+# The terminal window (ADR-0015); transitional, removable as a unit.
+codeck-term.workspace = true
 serde.workspace = true
 # `generate_context!` embeds the plugins' config as JSON.
 serde_json.workspace = true

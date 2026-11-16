@@ -13,6 +13,7 @@ CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude
 | `ios` | iPhone App（SwiftUI，xcodegen） | 本文件「ios」 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
 | `crates/codeck-cli` | 命令行 `codeck`：给 AI 查询 Session 与新建 Session（ADR-0013） | 本文件「架构」 |
+| `crates/codeck-term` | 终端窗口的 tauri 插件：认不出的界面直接在 Pane 的终端里处理（过渡用，ADR-0015） | 本文件「架构」 |
 
 一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的 Connect 功能（ADR-0007）。Connect E2E 的 wire fixture 在 `src/mocks/data/connect/`，`tools.jsonl` 用 `scripts/record-connect-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
 
@@ -100,6 +101,11 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 - 尺寸：`index.css` 把根字号设为 13px，Tailwind 按 rem 的尺寸类会跟着缩小（`h-8` 是 26px、`h-7` 是 22.75px）；要和像素对齐的地方（侧栏的行高、和计算挂钩的高度、图片块）写成 `h-[28px]` 这样的像素值。
 - 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
 - `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的状态在 `features/connect/store.ts`，ccrpc 连接的命令与事件分发在 `client.ts`（可注入 api 与计时器，单测见 `store.test.ts`），`ccrpc ls --watch` 的启停在 `lsWatch.ts`，草稿持久化在 `drafts.ts`；输入框里的图片块是文本框里带不可见起止符的一小段文字（`imageTokens.ts`，纯函数：编号、拆成 `parts`、清理残缺块），由文本框下面的副本画成整块、悬停与拖动在 `ImageChips.tsx`。侧栏（Live / Project / Recent）在 `features/sessions/`：分组、展开、定位与高度分配是 `groups.ts` 里的纯函数，组件在 `Sidebar.tsx`，已添加的 Project 存在 settings.json 的 `sidebarProjects`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`。
+
+### 终端窗口（过渡用，ADR-0015）
+
+- 认不出的界面卡片上的「在终端窗口中处理」与「···」菜单的「在终端窗口中打开」打开 `term-<Holder ID>` 窗口（`terminal.html`，前端 `features/terminal`，入口 `src/terminal-main.tsx`），xterm.js 经 `crates/codeck-term`（tauri 插件，命令 `plugin:codeck-term|…`，权限在 `capabilities/terminal.json` 与主窗口的 `codeck-term:main-window`）直连 Holder 的 unix socket；带 `size_events` 附着，从不发 `Resize`。不进 `Api` 与 bindings，mock 模式下是 `window.open` 的弹窗回放固定屏幕。主窗口按 Connect 状态给它推状态、在 Pane 没了（不在 `ccrpc ls` 里、也没有连接）时关掉它（`features/terminal/windows.ts`）。
+- 整块可删：crate、`src-tauri` 里的 `.plugin(codeck_term::init())`、两处 capability、`terminal.html` 与 vite 的 input、`features/terminal`、`App.tsx` 的 `useTerminalWindows()`、ScreenCard 的按钮与 `ConnectMenuItems` 的一项。
 
 ### codeck-cli
 

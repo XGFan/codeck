@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "terminal",
+  "description": "Terminal windows (ADR-0015): attach to their own Pane, hear the Session's status, fit themselves to the Pane's size",
+  "windows": ["term-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-size",
+    "codeck-term:terminal-window"
+  ]
+}

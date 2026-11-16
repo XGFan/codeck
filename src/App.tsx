@@ -11,6 +11,7 @@ import { SettingsButton, SettingsDialog } from "@/features/settings";
 import { StatsDialog } from "@/features/stats";
 import { StatusBar } from "@/features/statusbar";
 import { SubagentPanel } from "@/features/subagent-panel";
+import { useTerminalWindows } from "@/features/terminal/windows";
 import { TranscriptView } from "@/features/transcript";
 import { cn } from "@/lib/cn";
 
@@ -21,6 +22,7 @@ export default function App() {
   const convWidth = useUi((s) => s.convWidth);
   const sidebarWidth = useUi((s) => s.sidebarWidth);
   useDeepLinks();
+  useTerminalWindows();
 
   return (
     <div className="grid h-full grid-rows-[1fr]" style={{ "--conv-w": `${convWidth}px` } as React.CSSProperties}>
