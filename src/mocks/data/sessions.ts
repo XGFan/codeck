@@ -1,6 +1,7 @@
 import type { LiveState, Node, SessionSummary, TitleSource, TokenTotals } from "@/ipc/bindings";
 import { asstNode, call, costOf, DAY, HOUR, MIN, NOW, sumTok, tok, userNode } from "./builders";
 import { HOMELAB, LUMEN, ORBIT } from "./projects";
+import { CODE_MODE_ID, CODE_MODE_TITLE, codeModeNodes } from "./codeMode";
 import { RICH_ID, richMain, richSubagents } from "./rich";
 
 const sid = (n: number) =>
@@ -17,6 +18,7 @@ export const IDS = {
   homelabFlux: sid(8),
   homelabLonghorn: sid(9),
   untitled: sid(10),
+  codeMode: CODE_MODE_ID,
 };
 
 interface Turn {
@@ -262,6 +264,19 @@ const defs: Def[] = [
     ],
   },
   {
+    id: IDS.codeMode,
+    projectId: HOMELAB,
+    title: CODE_MODE_TITLE,
+    titleSource: "ai",
+    createdAgo: 14 * DAY,
+    lastActiveAgo: 14 * DAY - 5 * MIN,
+    gitBranch: "main",
+    live: null,
+    model: "claude-haiku-4-5",
+    tokens: tok(10, 790, 100_000, 2_500),
+    turns: [],
+  },
+  {
     id: IDS.untitled,
     projectId: ORBIT,
     title: "（无标题）",
@@ -339,6 +354,8 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
   let forkOf: MockSessionData["forkOf"];
   if (d.id === IDS.rich) {
     nodes = richMain;
+  } else if (d.id === IDS.codeMode) {
+    nodes = codeModeNodes(created);
   } else if (d.forkOf) {
     const inheritedNodes = turnNodes("fo", NOW - originDef.createdAgo, originDef.turns).slice(
       0,
@@ -372,7 +389,9 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     toolCallCount:
       d.id === IDS.rich
         ? 27
-        : nodes.filter((n) => n.body.kind === "assistant" && n.body.blocks.some((b) => b.kind === "toolCall")).length,
+        : d.id === IDS.codeMode
+          ? 7
+          : nodes.filter((n) => n.body.kind === "assistant" && n.body.blocks.some((b) => b.kind === "toolCall")).length,
     subagentCount: d.id === IDS.rich ? richSubagents.length : (d.subagentCount ?? 0),
     tokens: d.id === IDS.rich ? richTokens : d.tokens,
     ...(d.id === IDS.rich

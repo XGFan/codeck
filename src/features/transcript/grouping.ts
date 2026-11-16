@@ -1,4 +1,12 @@
-import type { AssistantBlock, BranchPoint, InheritedRange, Node, SubagentRun, WorkflowRun } from "@/ipc/bindings";
+import type {
+  AssistantBlock,
+  BranchPoint,
+  InheritedRange,
+  Node,
+  SubagentRun,
+  ToolCall,
+  WorkflowRun,
+} from "@/ipc/bindings";
 import { compactKey, foldKey, groupKey, INHERITED_KEY, thinkingKey, toolKey } from "./keys";
 import { parseJson } from "./util";
 
@@ -9,6 +17,9 @@ import { parseJson } from "./util";
  */
 
 export type ToolCallBlock = Extract<AssistantBlock, { kind: "toolCall" }>;
+
+/** The calls a call stands for: Claude's code (Code Mode's `REPL`) for the calls it made, any other call for itself. */
+export const callsOf = (c: ToolCall): ToolCall[] => (c.code ? c.code.calls : [c]);
 type Body<K extends Node["body"]["kind"]> = Extract<Node["body"], { kind: K }>;
 
 /** Role line ("Claude · 10:42") shown on the first row of an assistant run. */
@@ -112,8 +123,10 @@ export interface Grouping {
   index: Map<string, number>;
   /** `nodeId|toolUseId` → expansion key of the group holding that call; `thinking:<nodeId>` → group holding that thinking. */
   groupOf: Map<string, string>;
-  /** `toolUseId` → node id of the assistant message holding the call. */
+  /** `toolUseId` → node id of the assistant message holding the call (a call Claude's code made: its `REPL` call's). */
   toolNode: Map<string, string>;
+  /** Code Mode: `toolUseId` of a call Claude's code made → `toolUseId` of its `REPL` call (shown inside that card). */
+  codeOf: Map<string, string>;
   /** Tool calls rendered as Subagent / Workflow cards (they have no `tool:` expansion). */
   cardCalls: Set<string>;
   /** Fork-inherited node ids. */
@@ -150,6 +163,14 @@ export function buildRows(input: GroupingInput): Grouping {
   const index = new Map<string, number>();
   const groupOf = new Map<string, string>();
   const toolNode = new Map<string, string>();
+  const codeOf = new Map<string, string>();
+  const noteCall = (call: ToolCallBlock, nodeId: string) => {
+    toolNode.set(call.toolUseId, nodeId);
+    for (const c of call.code?.calls ?? []) {
+      toolNode.set(c.toolUseId, nodeId);
+      codeOf.set(c.toolUseId, call.toolUseId);
+    }
+  };
   const cardCalls = new Set<string>();
   const compactKeyOf = new Map<string, string>();
 
@@ -227,7 +248,8 @@ export function buildRows(input: GroupingInput): Grouping {
         const first = g.calls[0]!;
         const key = groupKey(first.node.id, first.call.toolUseId);
         const counts = new Map<string, number>();
-        for (const { call } of g.calls) counts.set(call.name, (counts.get(call.name) ?? 0) + 1);
+        const calls = g.calls.flatMap(({ call }) => callsOf(call));
+        for (const call of calls) counts.set(call.name, (counts.get(call.name) ?? 0) + 1);
         const anchors: Array<[string, string?]> = [];
         for (const it of g.items) {
           if (it.type === "call") {
@@ -245,8 +267,10 @@ export function buildRows(input: GroupingInput): Grouping {
             turn,
             items: g.items,
             counts: [...counts.entries()].sort((a, b) => b[1] - a[1]),
-            callCount: g.calls.length,
-            failedCount: g.calls.filter(({ call }) => call.result?.isError === true).length,
+            callCount: calls.length,
+            failedCount:
+              calls.filter((call) => call.result?.isError === true).length +
+              g.calls.filter(({ call }) => call.code?.outcome?.isError === true).length,
             role: takeRole(),
           },
           anchors,
@@ -277,7 +301,7 @@ export function buildRows(input: GroupingInput): Grouping {
     const blocks = body.blocks;
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i]!;
-      if (b.kind === "toolCall") toolNode.set(b.toolUseId, node.id);
+      if (b.kind === "toolCall") noteCall(b, node.id);
       switch (b.kind) {
         case "text":
           if (!b.text.trim()) break;
@@ -387,8 +411,7 @@ export function buildRows(input: GroupingInput): Grouping {
       }
       if (!inheritedExpanded) {
         mark(node.id, bannerAt);
-        if (b.kind === "assistant")
-          for (const blk of b.blocks) if (blk.kind === "toolCall") toolNode.set(blk.toolUseId, node.id);
+        if (b.kind === "assistant") for (const blk of b.blocks) if (blk.kind === "toolCall") noteCall(blk, node.id);
         continue;
       }
     } else if (bannerAt >= 0 && !dividerDone) {
@@ -459,7 +482,7 @@ export function buildRows(input: GroupingInput): Grouping {
     push({ kind: "finalResult", key: `final:${agent.agentId}`, turn, run: agent, text: agent.finalText });
 
   const liveFold = markAnswers(rows);
-  return { rows, index, groupOf, toolNode, cardCalls, inheritedIds, compactKeyOf, liveFold };
+  return { rows, index, groupOf, toolNode, codeOf, cardCalls, inheritedIds, compactKeyOf, liveFold };
 }
 
 // Work in a turn; the text after the last of it is the turn's answer (a system line after the answer is not work).
@@ -512,9 +535,12 @@ const SEARCH_TOOLS = new Set(["Grep", "Glob", "WebSearch", "WebFetch", "ToolSear
 
 /**
  * What a run of tool calls did, in words — 「读取 1 个文件、编辑 2 个文件、运行 1 条命令」 (files edited counted
- * once per path; other tools as 「等 N 次工具调用」) — and what it touched: file names, commands, patterns.
+ * once per path; other tools as 「等 N 次工具调用」; Claude's code by the calls it made, plus 「执行 N 段代码」) —
+ * and what it touched: file names, commands, patterns.
  */
-export function describeCalls(calls: ToolCallBlock[]): { text: string; targets: string[] } {
+export function describeCalls(given: ToolCall[]): { text: string; targets: string[] } {
+  const runs = given.filter((c) => c.code).length;
+  const calls = given.flatMap(callsOf);
   let read = 0;
   let commands = 0;
   let searches = 0;
@@ -550,6 +576,7 @@ export function describeCalls(calls: ToolCallBlock[]): { text: string; targets: 
     edited.size && `编辑 ${edited.size} 个文件`,
     commands && `运行 ${commands} 条命令`,
     searches && `搜索 ${searches} 次`,
+    runs && `执行 ${runs} 段代码`,
   ].filter(Boolean);
   const text = parts.length
     ? parts.join("、") + (other ? ` 等 ${calls.length} 次工具调用` : "")
@@ -631,8 +658,11 @@ export function locate(
     expand.push(thinkingKey(nodeId));
   }
   if (toolUseId) {
-    const g = grouping.groupOf.get(anchorKey(nodeId, toolUseId));
+    // A call Claude's code made opens inside its `REPL` card: that card (and its group) opens too.
+    const code = grouping.codeOf.get(toolUseId);
+    const g = grouping.groupOf.get(anchorKey(nodeId, code ?? toolUseId));
     if (g) expand.push(g);
+    if (code) expand.push(toolKey(nodeId, code));
     if (!grouping.cardCalls.has(toolUseId)) expand.push(toolKey(nodeId, toolUseId));
   }
   return { expand };
@@ -649,7 +679,8 @@ export function isGroupOpen(row: Extract<Row, { kind: "group" }>, expanded: Reco
   );
 }
 
-/** Row index for a node / call, preferring the exact call row. */
+/** Row index for a node / call, preferring the exact call row (a call Claude's code made: its `REPL` call's row). */
 export function rowIndexOf(grouping: Grouping, nodeId: string, toolUseId?: string | null): number | undefined {
-  return (toolUseId ? grouping.index.get(anchorKey(nodeId, toolUseId)) : undefined) ?? grouping.index.get(nodeId);
+  const call = toolUseId ? (grouping.codeOf.get(toolUseId) ?? toolUseId) : null;
+  return (call ? grouping.index.get(anchorKey(nodeId, call)) : undefined) ?? grouping.index.get(nodeId);
 }

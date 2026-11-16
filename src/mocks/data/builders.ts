@@ -111,6 +111,7 @@ export function call(
     subagentId: null,
     workflowRunId: null,
     notificationNodeId: null,
+    code: null,
     ...o,
   };
 }

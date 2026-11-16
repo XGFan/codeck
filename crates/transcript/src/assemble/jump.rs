@@ -4,7 +4,7 @@
 //! `.txt` hit, which is located by `tool_use_id`) maps to its display node (a merged assistant message's first fragment). Branch choices
 //! select every Branch head on the target's root path that the default path does not follow.
 
-use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, skeleton, tree};
+use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, code_mode, skeleton, tree};
 use crate::error::{TranscriptError, TranscriptResult};
 use crate::model::{BranchChoice, JumpRequest, JumpTarget, TranscriptScope};
 use crate::parse;
@@ -14,7 +14,7 @@ const MAX_AGENT_DEPTH: usize = 64;
 
 pub fn jump(s: &AssembledSession, r: &JumpRequest) -> TranscriptResult<JumpTarget> {
     let Some(agent_id) = &r.agent_id else {
-        let t = locate(&s.skeleton, r)?;
+        let t = locate(&s.skeleton, &s.main_files, r)?;
         return Ok(JumpTarget {
             session_id: s.session_id.clone(),
             scope: TranscriptScope::Main,
@@ -44,7 +44,7 @@ pub fn jump(s: &AssembledSession, r: &JumpRequest) -> TranscriptResult<JumpTarge
         records: parse::read_entries(path, 0)?.records,
     };
     let sk = skeleton::build(std::slice::from_ref(&file));
-    let t = locate(&sk, r)?;
+    let t = locate(&sk, std::slice::from_ref(&file), r)?;
     Ok(JumpTarget {
         session_id: s.session_id.clone(),
         scope: TranscriptScope::Subagent {
@@ -90,7 +90,11 @@ struct Located {
     hidden: bool,
 }
 
-fn locate(sk: &SessionSkeleton, r: &JumpRequest) -> TranscriptResult<Located> {
+fn locate(
+    sk: &SessionSkeleton,
+    files: &[LoadedFile],
+    r: &JumpRequest,
+) -> TranscriptResult<Located> {
     let by_tool = |t: &String| {
         sk.results_for
             .get(t)
@@ -117,11 +121,24 @@ fn locate(sk: &SessionSkeleton, r: &JumpRequest) -> TranscriptResult<Located> {
             on = at;
         }
     }
+    let choices = choices_for(sk, on);
+    // A call Claude's code made (Code Mode) is shown in its `REPL` call (attributed as the
+    // transcript does, along the path that leads to it).
+    if sk.nodes[on].is_virtual {
+        let order = tree::display_entries(sk, &tree::root_path(sk, on));
+        let runs = code_mode::collect(sk, files, &order);
+        if let Some(&at) = runs.owner.get(&on).and_then(|id| sk.tool_use_at.get(id)) {
+            if tool_use_id.is_none() {
+                tool_use_id = sk.nodes[on].tool_uses.first().map(|(id, _)| id.clone());
+            }
+            on = at;
+        }
+    }
     let display = sk.display_index(on);
     Ok(Located {
         node_id: sk.nodes[display].uuid.clone(),
         tool_use_id,
-        choices: choices_for(sk, on),
+        choices,
         hidden: sk.nodes[display].hidden_by_default(),
     })
 }

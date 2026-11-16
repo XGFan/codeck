@@ -281,6 +281,7 @@ fn node_of(
             None
         },
         is_api_error: e.is_api_error_message == Some(true),
+        is_virtual: e.is_virtual == Some(true),
         tool_uses,
         tool_results,
         entry_type,
@@ -365,8 +366,10 @@ fn index_messages(s: &mut SessionSkeleton) {
     }
     for i in 0..s.nodes.len() {
         let n = &s.nodes[i];
+        // A call Claude's code made (Code Mode) is recorded as a message of its own: not a reply.
         let head = n.is_human
             || (n.is_assistant()
+                && !n.is_virtual
                 && match &n.message_id {
                     Some(m) => s.fragments[m][0] == i,
                     None => true,

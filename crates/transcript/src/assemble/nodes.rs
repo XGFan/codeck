@@ -9,10 +9,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
+use super::code_mode::{self, CodeRuns};
 use super::{EntryKind, LoadedFile, SessionSkeleton, content, prompt};
 use crate::model::{
-    AgentId, AssistantBlock, ImageRef, Node, NodeBody, NodeId, PersistedRef, PromptOrigin,
-    TokenTotals, ToolCall, ToolResult,
+    AgentId, AssistantBlock, CodeOutcome, CodeRun, ImageRef, Node, NodeBody, NodeId, PersistedRef,
+    PromptOrigin, TokenTotals, ToolCall, ToolResult,
 };
 use crate::raw::{RawBlock, RawEntry, decode_str};
 
@@ -57,9 +58,13 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
     let mut emitted_messages: HashSet<&str> = HashSet::new();
     let mut nodes = Vec::with_capacity(display.len());
     let mut hidden_count = 0u32;
+    let runs = code_mode::collect(s, ctx.files, display);
 
     for (pos, &i) in display.iter().enumerate() {
         let n = &s.nodes[i];
+        if runs.owner.contains_key(&i) {
+            continue; // a call Claude's code made: shown in its `REPL` call
+        }
         if n.entry_type == EntryKind::User
             && n.is_tool_result
             && !n.is_compact_summary
@@ -93,7 +98,10 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     None => std::slice::from_ref(&display[pos]),
                 };
                 id_idx = frags[0];
-                assistant_body(ctx, frags, &shown)
+                match assistant_body(ctx, frags, &shown, &runs) {
+                    Some(body) => body,
+                    None => continue,
+                }
             }
             EntryKind::User if n.is_compact_summary => NodeBody::CompactSummary {
                 text: prompt::user_text(e),
@@ -187,7 +195,14 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
     }
 }
 
-fn assistant_body(ctx: &RenderCtx<'_>, frags: &[usize], shown: &[bool]) -> NodeBody {
+/// `None` when the message held only `Poll` calls, which are not shown (their result is a `REPL`
+/// call's outcome).
+fn assistant_body(
+    ctx: &RenderCtx<'_>,
+    frags: &[usize],
+    shown: &[bool],
+    runs: &CodeRuns,
+) -> Option<NodeBody> {
     let s = ctx.skeleton;
     let node_id = &s.nodes[frags[0]].uuid;
     let mut blocks = Vec::new();
@@ -195,6 +210,7 @@ fn assistant_body(ctx: &RenderCtx<'_>, frags: &[usize], shown: &[bool]) -> NodeB
     let mut usage: Option<TokenTotals> = None;
     let mut is_api_error = false;
     let mut message_id = None;
+    let mut polls = false;
     for &f in frags {
         let n = &s.nodes[f];
         let e = s.entry(ctx.files, f);
@@ -220,9 +236,10 @@ fn assistant_body(ctx: &RenderCtx<'_>, frags: &[usize], shown: &[bool]) -> NodeB
                     }
                 }
                 "redacted_thinking" => {}
-                "tool_use" => {
-                    blocks.push(AssistantBlock::ToolCall(tool_call(ctx, b, shown, node_id)))
-                }
+                "tool_use" if b.name.as_deref() == Some(code_mode::POLL) => polls = true,
+                "tool_use" => blocks.push(AssistantBlock::ToolCall(tool_call(
+                    ctx, b, shown, node_id, runs,
+                ))),
                 other => {
                     let (path, offset) = s.location(ctx.files, f);
                     blocks.push(AssistantBlock::Unknown {
@@ -235,16 +252,25 @@ fn assistant_body(ctx: &RenderCtx<'_>, frags: &[usize], shown: &[bool]) -> NodeB
             }
         }
     }
-    NodeBody::Assistant {
+    if polls && blocks.is_empty() {
+        return None;
+    }
+    Some(NodeBody::Assistant {
         message_id,
         model,
         blocks,
         usage,
         is_api_error,
-    }
+    })
 }
 
-fn tool_call(ctx: &RenderCtx<'_>, b: &RawBlock, shown: &[bool], node_id: &str) -> ToolCall {
+fn tool_call(
+    ctx: &RenderCtx<'_>,
+    b: &RawBlock,
+    shown: &[bool],
+    node_id: &str,
+    runs: &CodeRuns,
+) -> ToolCall {
     let s = ctx.skeleton;
     let id = b.id.clone().unwrap_or_default();
     let name = b.name.clone().unwrap_or_default();
@@ -255,10 +281,38 @@ fn tool_call(ctx: &RenderCtx<'_>, b: &RawBlock, shown: &[bool], node_id: &str) -
     let result = s
         .tool_result_block(ctx.files, &id, Some(shown))
         .map(|(_, e, block)| tool_result(e, block, &name, node_id, &id));
+    // Not on the `REPL` pair Code Mode adds for an error the code threw (it is virtual).
+    let is_code = name == code_mode::REPL
+        && s.tool_use_at
+            .get(&id)
+            .is_some_and(|&at| !s.nodes[at].is_virtual);
+    let code = is_code.then(|| CodeRun {
+        calls: runs
+            .calls
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .flat_map(|&v| s.entry(ctx.files, v).blocks())
+            .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(code_mode::REPL))
+            .map(|b| tool_call(ctx, b, shown, node_id, runs))
+            .collect(),
+        // A call that failed itself (rejected, interrupted, invalid input) ran no code: its
+        // result is the error.
+        outcome: runs.outcome.get(&id).cloned().or_else(|| {
+            result.as_ref().filter(|r| r.is_error).map(|r| CodeOutcome {
+                is_error: true,
+                text: r.text.clone(),
+                log: String::new(),
+                truncated: r.truncated,
+                duration_ms: None,
+            })
+        }),
+    });
     ToolCall {
         subagent_id: ctx.subagent_by_tool.get(&id).cloned(),
         workflow_run_id: ctx.workflow_by_tool.get(&id).cloned(),
         notification_node_id: ctx.notification_by_tool.get(&id).cloned(),
+        code,
         tool_use_id: id,
         name,
         input_json,
@@ -275,7 +329,7 @@ pub fn tool_result(
     node_id: &str,
     tool_use_id: &str,
 ) -> ToolResult {
-    let (full, images) = result_content(block.content.as_deref());
+    let (full, images) = result_full(e, block);
     let (text, truncated) = cap_text(&full, RESULT_BYTES, RESULT_LINES);
     ToolResult {
         is_error: block.is_error == Some(true),
@@ -344,6 +398,20 @@ struct ImageSource<'a> {
     media_type: Option<String>,
     #[serde(default, borrow)]
     data: Option<Cow<'a, str>>,
+}
+
+/// Full text and images of the tool_result `block` of `e`. A call Claude's code made (Code Mode)
+/// usually has empty content: its text comes from `toolUseResult` ([`code_mode::virtual_output`]).
+pub fn result_full(e: &RawEntry, block: &RawBlock) -> (String, Vec<(String, f64)>) {
+    let (text, images) = result_content(block.content.as_deref());
+    if text.is_empty()
+        && images.is_empty()
+        && e.is_virtual == Some(true)
+        && let Some(t) = code_mode::virtual_output(e.tool_use_result.as_deref())
+    {
+        return (t, images);
+    }
+    (text, images)
 }
 
 /// Full text (text items joined by `\n`) and images `(media_type, bytes)` of a tool_result

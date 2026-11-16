@@ -2,6 +2,7 @@
 //! (rules in docs/spec.md「数据模型」). The engine loads files and sidecars; this module only computes.
 
 pub mod branch;
+pub mod code_mode;
 pub mod content;
 pub mod find;
 pub mod jump;
@@ -137,6 +138,8 @@ pub struct SkeletonNode {
     pub model: Option<String>,
     pub usage: Option<TokenTotals>,
     pub is_api_error: bool,
+    /// `isVirtual`: a tool call Claude's code made in Code Mode, or its result (see [`code_mode`]).
+    pub is_virtual: bool,
     /// `(tool_use id, tool name)` of every tool_use block.
     pub tool_uses: Vec<(String, String)>,
     /// tool_use ids of every tool_result block.

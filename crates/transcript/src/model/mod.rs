@@ -40,6 +40,7 @@ mod tests {
             subagent_id: None,
             workflow_run_id: None,
             notification_node_id: None,
+            code: None,
         });
         let v = serde_json::to_value(&block).unwrap();
         assert_eq!(v["kind"], "toolCall");

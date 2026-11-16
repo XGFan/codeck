@@ -11,6 +11,7 @@ import {
 } from "./renderers";
 import { parseJson } from "../util";
 import { useToolCtx } from "./data";
+import { CodeRunView } from "./code";
 
 export { ImageMarker, ImageRefs, ImageThumb, PendingText, verbOf } from "./parts";
 export { requestFullOutput } from "./data";
@@ -59,6 +60,15 @@ export function ToolCallView({ nodeId, call, startMs, sessionId, scope }: ToolCa
       return <TaskView {...p} />;
     case "SendMessage":
       return <SendMessageView {...p} />;
+    case "REPL":
+      return (
+        <CodeRunView
+          {...p}
+          renderCall={(c) => (
+            <ToolCallView nodeId={nodeId} call={c} startMs={null} sessionId={sessionId} scope={scope} />
+          )}
+        />
+      );
     case "Grep":
     case "Glob":
     case "WebFetch":

@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openRich, openSession, reveal as revealIn } from "./helpers";
 
+const CODE_MODE_TITLE = "Code Mode：把重试上限改成 5";
+
 /** Scrolls the transcript down from the top, opening collapsed tool groups, until `target` is rendered. */
 const reveal = (page: Page, target: Locator) => revealIn(page.getByTestId("transcript"), target, "top");
 
@@ -191,4 +193,74 @@ test("AskUserQuestion 选择先聊聊时不显示为失败，标出已答的问�
   await expect(ask.getByTestId("ask-status")).toHaveText(/^你 · \d\d:\d\d 选择先聊聊$/);
   await expect(ask.locator("[data-chosen]")).toHaveText("API key");
   await expect(ask).not.toContainText("The user doesn't want to proceed");
+});
+
+test("Code Mode：「执行代码」一张卡片，代码里调用的工具收在里面", async ({ page }) => {
+  await openSession(page, CODE_MODE_TITLE);
+  const repl = (summary: string) => page.locator('[data-tool="REPL"]').filter({ hasText: summary });
+
+  // Collapsed: what it is for, what it called, how long it ran.
+  const run = repl("把重试上限改成 5 并跑重试测试");
+  await reveal(page, run);
+  await expect(run).toContainText("执行代码");
+  await expect(run).toContainText("编辑 2 个文件、运行 2 条命令");
+  await expect(run).toContainText("9 秒");
+  await expect(run.getByTestId("tool-body")).toHaveCount(0);
+
+  // Opened: the code, the calls it made (each opens as usual), what it returned.
+  await run.getByRole("button").first().click();
+  await expect(run.getByTestId("code-view").first()).toContainText('rg -l "max_attempts: 3" src');
+  const calls = run.getByTestId("code-calls").getByTestId("tool-call");
+  await expect(calls).toHaveCount(4);
+  await expect(run).toContainText("调用的工具（4）");
+  await expect(run.getByTestId("code-outcome")).toContainText("edited: [ 'src/client/retry.rs'");
+  const rg = calls.filter({ hasText: "rg -l" });
+  await rg.getByRole("button").first().click();
+  await expect(rg.getByTestId("terminal")).toContainText("src/middleware/upstream.rs");
+
+  // The code threw: the row is red and says so; the error is where the result goes.
+  const threw = repl("读出配置里的重试参数");
+  await reveal(page, threw);
+  await expect(threw).toHaveAttribute("data-failed", "true");
+  await expect(threw).toContainText("出错");
+  await threw.getByRole("button").first().click();
+  await expect(threw).toContainText("错误");
+  await expect(threw.getByTestId("code-outcome")).toContainText("TypeError: Cannot read properties of undefined");
+
+  // A call inside failed (the code went on).
+  const partial = repl("并行跑 clippy 与重试测试");
+  await reveal(page, partial);
+  await expect(partial).toContainText("1 失败");
+  await expect(partial).not.toHaveAttribute("data-failed", "true");
+
+  // The call itself was rejected: no code ran, its result is the error.
+  const refused = repl("清掉构建缓存");
+  await reveal(page, refused);
+  await expect(refused).toHaveAttribute("data-failed", "true");
+  await expect(refused).toContainText("出错");
+  await expect(refused).not.toContainText("执行中");
+  await refused.getByRole("button").first().click();
+  await expect(refused.getByTestId("code-outcome")).toContainText("doesn't want to proceed");
+
+  // Still running: nothing sent back yet.
+  const running = repl("跑重试路径的基准测试");
+  await reveal(page, running);
+  await expect(running).toContainText("执行中…");
+});
+
+test("Code Mode：按轮折叠只数代码里调用的工具", async ({ page }) => {
+  await openSession(page, CODE_MODE_TITLE, { folded: true });
+  // Three code runs made 4 + 1 + 2 calls; the runs themselves are not counted.
+  await expect(page.getByTestId("turn-fold").first()).toContainText("7 次工具调用");
+});
+
+test("Code Mode：⌘F 找到代码里调用的工具的输出，打开它所在的卡片", async ({ page }) => {
+  await openSession(page, CODE_MODE_TITLE, { folded: true });
+  await page.keyboard.press("Meta+f");
+  await page.keyboard.type("port = 8080");
+  const read = page
+    .locator('[data-tool="REPL"]')
+    .filter({ hasText: "读出配置里的重试参数" })
+    .locator('[data-tool="Read"]');
+  await expect(read.getByTestId("code-view")).toContainText("port = 8080");
 });

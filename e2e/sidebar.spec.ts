@@ -37,9 +37,9 @@ test("侧栏三块：Live 列出 Live Session，Project 按添加的顺序分组
   await expect(live.nth(2).getByTestId("waiting-tag")).toHaveText("等待作答");
   const waitingRow = page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" });
   await expect(waitingRow.getByTestId("waiting-tag")).toBeVisible();
-  // One row per Session in the groups; 「Recent」 has the 8 that are not Live.
+  // One row per Session in the groups; 「Recent」 has the 9 that are not Live.
   await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toHaveCount(1);
-  await expect(page.getByTestId("recent-toggle")).toContainText("8");
+  await expect(page.getByTestId("recent-toggle")).toContainText("9");
   await expect(page.getByTestId("recent-row").filter({ hasText: RICH_TITLE })).toHaveCount(0);
   await expect(page.getByTestId("recent-row").first()).toContainText("认证模块重构");
 
@@ -268,7 +268,7 @@ test("Recent 高度：拖动上边缘按整行调节，最少 1 行，重启后�
   const recent = page.getByTestId("recent");
   const rows = async () => Math.round(((await recent.boundingBox())!.height - 37) / 28);
   await expect(page.getByTestId("recent-row").first()).toBeVisible();
-  // 8 Sessions, 6 shown at first.
+  // 9 Sessions, 6 shown at first.
   expect(await rows()).toBe(6);
   const drag = async (dy: number) => {
     const h = (await page.getByTestId("recent-resize").boundingBox())!;
@@ -395,5 +395,5 @@ test("首次启动自动打开「添加 Project」；取消后没有组，Sessio
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId("sidebar-group")).toHaveCount(0);
   await expect(page.getByTestId("live-row")).toHaveCount(3);
-  await expect(page.getByTestId("recent-toggle")).toContainText("8");
+  await expect(page.getByTestId("recent-toggle")).toContainText("9");
 });

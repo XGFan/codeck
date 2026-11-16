@@ -44,6 +44,9 @@ pub struct RawEntry {
     pub is_compact_summary: Option<bool>,
     #[serde(default, deserialize_with = "lenient::boolean")]
     pub is_api_error_message: Option<bool>,
+    /// Code Mode: a tool call Claude's code made (and its result), recorded as its own message.
+    #[serde(default, deserialize_with = "lenient::boolean")]
+    pub is_virtual: Option<bool>,
     /// Assistant entries: the effort level the reply ran at (`low` … `max`; newer versions only).
     #[serde(default, deserialize_with = "lenient::string")]
     pub effort: Option<String>,

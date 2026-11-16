@@ -35,8 +35,13 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
             last = Some(last.map_or(t, |l| l.max(t)));
         }
         humans += u32::from(n.is_human);
-        tool_calls += n.tool_uses.len() as u32;
-        if !n.is_assistant() {
+        // Code Mode: the calls Claude's code made count, not the `REPL` / `Poll` calls around them.
+        tool_calls += n
+            .tool_uses
+            .iter()
+            .filter(|(_, name)| !super::code_mode::is_plumbing(name))
+            .count() as u32;
+        if !n.is_assistant() || n.is_virtual {
             continue;
         }
         if n.message_id.is_none() {
@@ -60,7 +65,13 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
     for u in per_message.values() {
         tokens.add(u);
     }
-    let message_count = humans + s.fragments.len() as u32 + no_id_assistants;
+    // A call Claude's code made is recorded as a message of its own; it is not a reply.
+    let replies = s
+        .fragments
+        .values()
+        .filter(|f| !s.nodes[f[0]].is_virtual)
+        .count() as u32;
+    let message_count = humans + replies + no_id_assistants;
 
     let mut model_list: Vec<(&str, (u32, usize))> = models.into_iter().collect();
     // Most messages first; ties: most recently used.

@@ -251,6 +251,27 @@ export type CcrpcRemoteConnEvent = {
 	holderId: string | null,
 };
 
+export type CodeOutcome = {
+	/**  The code threw: `text` is the error. */
+	isError: boolean,
+	/**  The returned value (as the REPL prints it) or the error; capped at 2 KB / 40 lines. */
+	text: string,
+	/**  `<log>` lines; capped like `text`. */
+	log: string,
+	/**  `text` or `log` was capped. */
+	truncated: boolean,
+	/**  How long the code ran. */
+	durationMs: number | null,
+};
+
+/**  What a `REPL` call's code did (Code Mode, docs/spec.md「Code Mode」). */
+export type CodeRun = {
+	/**  The tool calls the code made, in order (never a `REPL` call). */
+	calls: ToolCall[],
+	/**  What the code returned or threw; `None` until it is sent back. */
+	outcome: CodeOutcome | null,
+};
+
 export type DailyModelTokens = {
 	day: string,
 	model: string,
@@ -801,6 +822,8 @@ export type ToolCall = {
 	subagentId: string | null,
 	workflowRunId: string | null,
 	notificationNodeId: string | null,
+	/**  Code Mode: set on a `REPL` call (Claude's code), with the calls the code made. */
+	code: CodeRun | null,
 };
 
 export type ToolDetail = {

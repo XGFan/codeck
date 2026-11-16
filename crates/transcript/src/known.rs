@@ -35,6 +35,8 @@ pub const ENTRY_TYPES: &[&str] = &[
     "api-request",
     "api-request-blob",
     "api-request-shape",
+    // Code Mode (2.1.32x): whether the Session runs in it; nothing to show.
+    "repl-mode",
 ];
 
 /// Entry types matched by prefix (e.g. `artifact-autoreact-ledger`).
@@ -121,6 +123,9 @@ pub const TOOLS: &[&str] = &[
     "DesignSync",
     "ReportFindings",
     "SendFeedback",
+    // Code Mode: Claude's code, and the wait for what it sends back.
+    "REPL",
+    "Poll",
 ];
 
 /// Tools that spawn a Subagent Run.

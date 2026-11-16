@@ -27,6 +27,7 @@ pub const SCENARIOS: &[&str] = &[
     "workflow",
     "persisted_and_images",
     "live",
+    "code_mode",
 ];
 
 /// Pids rendered into the `live` sessions dir.

@@ -211,6 +211,34 @@ pub struct ToolCall {
     pub subagent_id: Option<AgentId>,
     pub workflow_run_id: Option<String>,
     pub notification_node_id: Option<NodeId>,
+    /// Code Mode: set on a `REPL` call (Claude's code), with the calls the code made.
+    pub code: Option<CodeRun>,
+}
+
+/// What a `REPL` call's code did (Code Mode, docs/spec.md「Code Mode」).
+#[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeRun {
+    /// The tool calls the code made, in order (never a `REPL` call).
+    pub calls: Vec<ToolCall>,
+    /// What the code returned or threw; `None` until it is sent back.
+    pub outcome: Option<CodeOutcome>,
+}
+
+#[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeOutcome {
+    /// The code threw: `text` is the error.
+    pub is_error: bool,
+    /// The returned value (as the REPL prints it) or the error; capped at 2 KB / 40 lines.
+    pub text: String,
+    /// `<log>` lines; capped like `text`.
+    pub log: String,
+    /// `text` or `log` was capped.
+    pub truncated: bool,
+    /// How long the code ran.
+    #[specta(type = Option<Number>)]
+    pub duration_ms: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]

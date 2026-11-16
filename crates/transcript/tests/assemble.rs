@@ -1571,3 +1571,221 @@ fn local_commands_recorded_as_system_entries_show_as_commands() {
         "1 prompt + 2 commands + 1 assistant message"
     );
 }
+
+// ---- Code Mode ----
+
+/// uuid of the `n`-th entry of the code_mode fixture (see its README section).
+fn cm(n: u32) -> String {
+    format!("c0de{n:04}-0000-4000-8000-{n:012}")
+}
+
+fn code_of<'a>(t: &'a Transcript, id: &str) -> &'a transcript::model::CodeRun {
+    call(t, id).code.as_ref().expect("REPL call has a code run")
+}
+
+#[test]
+fn code_mode_nests_the_calls_the_code_made() {
+    let s = open("code_mode", ids::CODE_MODE_DIR, ids::CODE_MODE);
+    let t = main_t(&s, true);
+    // The virtual entries are not nodes of their own, and Poll is not shown.
+    let virtual_ids: Vec<String> = (7..=14).chain(19..=22).chain(29..=32).map(cm).collect();
+    assert!(t.nodes.iter().all(|n| !virtual_ids.contains(&n.id)));
+    assert!(tool_calls(&t).iter().all(|c| c.name != "Poll"));
+    let names = |c: &transcript::model::CodeRun| -> Vec<(String, String)> {
+        c.calls
+            .iter()
+            .map(|c| (c.tool_use_id.clone(), c.name.clone()))
+            .collect()
+    };
+
+    // Run 1: four calls, result delivered in a poll_events attachment.
+    let r1 = code_of(&t, "toolu_c0de_r1");
+    assert_eq!(
+        names(r1),
+        [
+            ("repl_c0de-v1", "Bash"),
+            ("repl_c0de-v2", "Edit"),
+            ("repl_c0de-v3", "Edit"),
+            ("repl_c0de-v4", "Bash")
+        ]
+        .map(|(a, b)| (a.to_owned(), b.to_owned()))
+    );
+    let o1 = r1.outcome.as_ref().expect("outcome");
+    assert!(!o1.is_error);
+    assert_eq!(
+        o1.text,
+        "{ edited: [ 'src/client/retry.rs', 'src/middleware/upstream.rs' ], exit: 0 }"
+    );
+    assert_eq!(o1.duration_ms, Some(9123.0));
+    let rg = r1.calls[0].result.as_ref().unwrap();
+    assert_eq!(rg.text, "src/client/retry.rs\nsrc/middleware/upstream.rs");
+    assert!(rg.extra_json.as_deref().unwrap().contains("\"stdout\""));
+    assert!(
+        r1.calls[1]
+            .result
+            .as_ref()
+            .unwrap()
+            .extra_json
+            .as_deref()
+            .unwrap()
+            .contains("structuredPatch")
+    );
+
+    // Run 2: the code threw; the virtual REPL error pair is not one of its calls.
+    let r2 = code_of(&t, "toolu_c0de_r2");
+    assert_eq!(names(r2), [("repl_c0de-v5".to_owned(), "Read".to_owned())]);
+    assert_eq!(
+        r2.calls[0].result.as_ref().unwrap().text,
+        "     1\t[server]\n     2\tport = 8080"
+    );
+    let o2 = r2.outcome.as_ref().unwrap();
+    assert!(o2.is_error);
+    assert_eq!(
+        o2.text,
+        "TypeError: Cannot read properties of undefined (reading 'max_attempts')\n    at repl:2:11"
+    );
+
+    // Run 3: delivered as the Poll result (the quoted event is ignored); a call inside failed.
+    let r3 = code_of(&t, "toolu_c0de_r3");
+    assert_eq!(names(r3).len(), 2);
+    assert!(r3.calls[0].result.as_ref().unwrap().is_error);
+    let o3 = r3.outcome.as_ref().unwrap();
+    assert_eq!(
+        (o3.text.as_str(), o3.log.as_str(), o3.duration_ms),
+        ("{ clippy: 101, test: 0 }", "clippy: 1 error", Some(14210.0))
+    );
+    let a3 = t.nodes.iter().find(|n| n.id == cm(23)).unwrap();
+    let NodeBody::Assistant { blocks, .. } = &a3.body else {
+        panic!("assistant")
+    };
+    assert_eq!(blocks.len(), 2, "text + REPL; Poll dropped");
+
+    // Run 4: still running when the file ends.
+    let r4 = code_of(&t, "toolu_c0de_r4");
+    assert!(r4.calls.is_empty() && r4.outcome.is_none());
+    // A call that is not REPL has no code run.
+    assert!(r1.calls.iter().all(|c| c.code.is_none()));
+    // Hidden entries shown or not, the code runs are the same.
+    let plain = main_t(&s, false);
+    assert_eq!(code_of(&plain, "toolu_c0de_r1"), r1);
+    assert_eq!(code_of(&plain, "toolu_c0de_r3"), r3);
+}
+
+#[test]
+fn code_mode_counts_the_calls_not_the_plumbing() {
+    let s = open("code_mode", ids::CODE_MODE_DIR, ids::CODE_MODE);
+    let a = summarize(&s.skeleton);
+    // 8 virtual tool_uses minus the virtual REPL error marker; REPL × 4 and Poll are not counted.
+    assert_eq!(a.tool_call_count, 7);
+    // 2 prompts + 5 replies; the 8 virtual messages are not replies.
+    assert_eq!(a.message_count, 7);
+}
+
+#[test]
+fn code_mode_outputs_are_found_and_jumped_to() {
+    let s = open("code_mode", ids::CODE_MODE_DIR, ids::CODE_MODE);
+    let d = content::tool_detail(
+        &s,
+        &ToolDetailRequest {
+            session_id: ids::CODE_MODE.into(),
+            scope: TranscriptScope::Main,
+            tool_use_id: "repl_c0de-v5".into(),
+            part: ToolPart::Output,
+        },
+        None,
+    )
+    .unwrap();
+    assert!(d.text.contains("port = 8080"), "{}", d.text);
+    let f = find::find(
+        &s,
+        &FindRequest {
+            session_id: ids::CODE_MODE.into(),
+            scope: TranscriptScope::Main,
+            branch_choices: Vec::new(),
+            include_hidden: false,
+            query: "port = 8080".into(),
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(f.total, 1);
+    assert_eq!(f.matches[0].node_id, cm(15));
+    assert_eq!(
+        f.matches[0].location,
+        FindLocation::ToolOutput {
+            tool_use_id: "repl_c0de-v5".into()
+        }
+    );
+    // The code's outcome is searched as the REPL call's output.
+    let f = find::find(
+        &s,
+        &FindRequest {
+            session_id: ids::CODE_MODE.into(),
+            scope: TranscriptScope::Main,
+            branch_choices: Vec::new(),
+            include_hidden: false,
+            query: "clippy: 101".into(),
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        f.matches.iter().map(|m| &m.location).collect::<Vec<_>>(),
+        [&FindLocation::ToolOutput {
+            tool_use_id: "toolu_c0de_r3".into()
+        }]
+    );
+    // A search hit on a virtual entry lands on its REPL call's node.
+    let j = transcript::assemble::jump::jump(
+        &s,
+        &transcript::model::JumpRequest {
+            session_id: ids::CODE_MODE.into(),
+            node_id: cm(20),
+            agent_id: None,
+            tool_use_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        (j.node_id.as_str(), j.tool_use_id.as_deref()),
+        (cm(15).as_str(), Some("repl_c0de-v5"))
+    );
+    assert!(!j.needs_hidden && j.branch_choices.is_empty());
+    let j = transcript::assemble::jump::jump(
+        &s,
+        &transcript::model::JumpRequest {
+            session_id: ids::CODE_MODE.into(),
+            node_id: cm(19),
+            agent_id: None,
+            tool_use_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        (j.node_id.as_str(), j.tool_use_id.as_deref()),
+        (cm(15).as_str(), Some("repl_c0de-v5"))
+    );
+}
+
+#[test]
+fn code_mode_call_that_failed_itself_has_its_error_as_outcome() {
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"1"}}]}}"#,
+        r#"{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","is_error":true,"content":"<tool_use_error>InputValidationError</tool_use_error>"}]}}"#,
+    ]);
+    let s = assemble(
+        "s",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    let t = main_t(&s, false);
+    let o = code_of(&t, "r1").outcome.as_ref().expect("outcome");
+    assert!(o.is_error);
+    assert_eq!(
+        o.text,
+        "<tool_use_error>InputValidationError</tool_use_error>"
+    );
+    assert_eq!(o.duration_ms, None);
+}

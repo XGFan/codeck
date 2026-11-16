@@ -606,6 +606,7 @@ test("进行中的一轮：连续的工具调用合成一组，组头写汇总�
     subagentId: null,
     workflowRunId: null,
     notificationNodeId: null,
+    code: null,
   });
   const append = (id: string, blocks: unknown[]) =>
     page.evaluate(
@@ -689,6 +690,7 @@ test("提问卡片：题目很长折行时，第二行从标签下方的最左�
             subagentId: null,
             workflowRunId: null,
             notificationNodeId: null,
+            code: null,
           },
         ],
       },

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
-use super::nodes::{persisted_ref, result_content};
+use super::nodes::{persisted_ref, result_full};
 use super::{AssembledSession, LoadedFile, SessionSkeleton, skeleton};
 use crate::error::{TranscriptError, TranscriptResult};
 use crate::model::{
@@ -143,7 +143,7 @@ pub fn tool_detail(
                     source: DetailSource::Missing,
                 });
             };
-            let (inline, _) = result_content(block.content.as_deref());
+            let (inline, _) = result_full(e, block);
             if let Some(p) = persisted_ref(e, &inline)
                 && let Some(path) = s.persisted_file(&p.file_name)
             {

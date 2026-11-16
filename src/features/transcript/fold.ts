@@ -4,7 +4,7 @@
 // grouped again (they still are where nothing folds, as in a Subagent's panel). The running turn is the exception:
 // its process is open while it grows, so its runs of calls stay groups (`live`, saying what runs now).
 
-import { anchorKey, type Grouping, type Row } from "./grouping";
+import { anchorKey, callsOf, type Grouping, type Row } from "./grouping";
 
 const rowTime = (r: Row | undefined): number | null => {
   if (!r) return null;
@@ -12,11 +12,12 @@ const rowTime = (r: Row | undefined): number | null => {
   return "node" in r ? (r.node.timestampMs ?? null) : null;
 };
 
-/** Tool calls a run of rows holds (Subagent / Workflow / question cards count as calls). */
+/** Tool calls a run of rows holds (Subagent / Workflow / question cards count as calls; Claude's code, the calls it made). */
 function callCount(rows: Row[]): number {
   let n = 0;
   for (const r of rows) {
-    if (r.kind === "tool" || r.kind === "subagent" || r.kind === "workflow" || r.kind === "ask") n++;
+    if (r.kind === "tool") n += callsOf(r.call).length;
+    else if (r.kind === "subagent" || r.kind === "workflow" || r.kind === "ask") n++;
     else if (r.kind === "group") n += r.callCount;
     else if (r.kind === "parallel") n += r.cards.length;
   }

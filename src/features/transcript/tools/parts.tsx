@@ -35,6 +35,7 @@ const VERB: Record<string, string> = {
   TaskCreate: "新建任务",
   TaskUpdate: "更新任务",
   TaskList: "任务列表",
+  REPL: "执行代码",
 };
 
 /** A call's verb (「运行」「读取」), or its name for a tool without one. */
@@ -53,6 +54,7 @@ export function Shell({
   summary,
   status,
   failed,
+  durationMs,
   children,
 }: {
   nodeId: string;
@@ -65,6 +67,8 @@ export function Shell({
   /** Replaces the default status (nothing when done, 失败, or what a call without a result does). */
   status?: ReactNode;
   failed: boolean;
+  /** Replaces the duration from the call's start to its result (`null`: none). */
+  durationMs?: number | null;
   children: ReactNode;
 }) {
   const key = toolKey(nodeId, call.toolUseId);
@@ -73,9 +77,11 @@ export function Shell({
   const pendingText = useContext(PendingText);
   const result = call.result;
   const dur =
-    result?.timestampMs != null && startMs != null && result.timestampMs >= startMs
-      ? result.timestampMs - startMs
-      : null;
+    durationMs !== undefined
+      ? durationMs
+      : result?.timestampMs != null && startMs != null && result.timestampMs >= startMs
+        ? result.timestampMs - startMs
+        : null;
   return (
     <div
       data-testid="tool-call"

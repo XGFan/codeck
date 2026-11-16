@@ -48,6 +48,9 @@ pub mod ids {
     pub const LIVE_DEAD: &str = "6c8546d4-6e10-5c8d-9cc3-b6e13f66eef1";
     pub const LIVE_REUSED: &str = "1fc71c8b-e8ea-52c0-83bd-ad683944a26c";
     pub const LIVE_DIR: &str = "-Users-dev-code-orbit-web";
+    /// code_mode: Claude's code (`REPL`) with the calls it made recorded as `isVirtual` messages
+    pub const CODE_MODE: &str = "c0de5e55-0000-4000-8000-00000000c0de";
+    pub const CODE_MODE_DIR: &str = "-Users-dev-code-lumen-api";
 }
 
 /// Path of a scenario inside the repo (read-only; never write here).

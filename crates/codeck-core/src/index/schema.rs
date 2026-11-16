@@ -1,7 +1,7 @@
 //! DDL and schema version.
 
 /// `PRAGMA user_version`; any mismatch deletes and recreates the index.
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 
 /// `files.role`.
 pub const ROLE_MAIN: i64 = 0;

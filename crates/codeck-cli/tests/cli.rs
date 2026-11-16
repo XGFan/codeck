@@ -178,3 +178,28 @@ fn a_full_turn_includes_tool_input_and_output() {
     assert!(page.contains("--- 工具 1："), "{page}");
     assert!(page.contains("输入：") && page.contains("输出："), "{page}");
 }
+
+#[test]
+fn code_mode_lists_the_code_and_the_calls_it_made() {
+    let env = indexed(&["code_mode"]);
+    let page = text(&env, &["show", ids::CODE_MODE, "--turn", "1"]);
+    assert!(
+        page.contains("工具：执行代码 Raise the retry limit to 5 and run the retry tests\n    工具：运行 rg -l \"max_attempts: 3\" src"),
+        "{page}"
+    );
+    assert!(
+        page.contains("工具：执行代码 Read the retry settings from the config（出错）"),
+        "{page}"
+    );
+    assert!(
+        page.contains("工具：读取 /Users/dev/code/lumen-api/config/default.toml"),
+        "{page}"
+    );
+    assert!(!page.contains("Poll"), "{page}");
+    let full = text(&env, &["show", ids::CODE_MODE, "--turn", "1", "--full"]);
+    assert!(
+        full.contains("输出：\n{ edited: [ 'src/client/retry.rs'"),
+        "{full}"
+    );
+    assert!(full.contains("port = 8080"), "{full}");
+}

@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use super::content;
-use super::nodes::{persisted_ref, result_content};
+use super::nodes::{persisted_ref, result_full};
 use super::{AssembledSession, LoadedFile, SessionSkeleton, branch, skeleton, tree};
 use crate::error::TranscriptResult;
 use crate::model::{
@@ -76,19 +76,33 @@ pub fn find(
                             m.add(FindLocation::Text, count(raw_json))
                         }
                         AssistantBlock::ToolCall(tc) => {
-                            let id = &tc.tool_use_id;
-                            m.add(
-                                FindLocation::ToolInput {
-                                    tool_use_id: id.clone(),
-                                },
-                                count(&tool_input(&sk, files, id)),
-                            );
-                            m.add(
-                                FindLocation::ToolOutput {
-                                    tool_use_id: id.clone(),
-                                },
-                                count(&tool_output(s, &sk, files, &shown, id)),
-                            );
+                            // A `REPL` call's own output is its code's outcome; the calls the code
+                            // made follow it, under the same node.
+                            let calls = std::iter::once(tc)
+                                .chain(tc.code.iter().flat_map(|c| c.calls.iter()));
+                            for c in calls {
+                                let id = &c.tool_use_id;
+                                m.add(
+                                    FindLocation::ToolInput {
+                                        tool_use_id: id.clone(),
+                                    },
+                                    count(&tool_input(&sk, files, id)),
+                                );
+                                let output = match &c.code {
+                                    Some(code) => code
+                                        .outcome
+                                        .as_ref()
+                                        .map(|o| format!("{}\n{}", o.log, o.text))
+                                        .unwrap_or_default(),
+                                    None => tool_output(s, &sk, files, &shown, id),
+                                };
+                                m.add(
+                                    FindLocation::ToolOutput {
+                                        tool_use_id: id.clone(),
+                                    },
+                                    count(&output),
+                                );
+                            }
                         }
                     }
                 }
@@ -165,7 +179,7 @@ fn tool_output(
     let Some((_, e, block)) = sk.tool_result_block(files, id, Some(shown)) else {
         return String::new();
     };
-    let (inline, _) = result_content(block.content.as_deref());
+    let (inline, _) = result_full(e, block);
     persisted_ref(e, &inline)
         .and_then(|p| s.persisted_file(&p.file_name))
         .and_then(|path| content::read_capped(&path).ok())

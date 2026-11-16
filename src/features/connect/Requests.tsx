@@ -311,6 +311,7 @@ function ToolInput({ r, sessionId }: { r: PermissionRequestEvent; sessionId: str
       subagentId: null,
       workflowRunId: null,
       notificationNodeId: null,
+      code: null,
     }),
     [r.request_id, r.tool_name, r.input],
   );

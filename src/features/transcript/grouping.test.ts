@@ -327,3 +327,56 @@ describe("API retries", () => {
     expect(pending.rows[1]).toMatchObject({ kind: "apiRetry", recovered: false });
   });
 });
+
+describe("Code Mode", () => {
+  const inner = (id: string, name: string, input: unknown, isError = false) => {
+    const { kind: _, ...c } = call(id, name, input, { text: "", isError }) as Extract<
+      ReturnType<typeof call>,
+      { kind: "toolCall" }
+    >;
+    return c;
+  };
+  const repl = (id: string, calls: ReturnType<typeof inner>[], threw = false) =>
+    call(
+      id,
+      "REPL",
+      { code: "x" },
+      { text: "(dispatched #1)" },
+      {
+        code: {
+          calls,
+          outcome: { isError: threw, text: "r", log: "", truncated: false, durationMs: 5 },
+        },
+      },
+    );
+
+  it("a group counts and describes Claude's code by the calls it made, and counts code that threw", () => {
+    const { rows } = buildRows(
+      input([
+        userNode("u1", 1, "go"),
+        asstNode("a1", 2, [
+          repl("r1", [inner("v1", "Bash", { command: "ls" }), inner("v2", "Read", { file_path: "/a/b.rs" }, true)]),
+          repl("r2", [], true),
+        ]),
+      ]),
+    );
+    const [g] = groups(rows);
+    expect(g!.callCount).toBe(2);
+    expect(g!.failedCount).toBe(2);
+    const calls = g!.items.flatMap((it) => (it.type === "call" ? [it.call] : []));
+    expect(describeCalls(calls)).toEqual({
+      text: "读取 1 个文件、运行 1 条命令、执行 2 段代码",
+      targets: ["ls", "b.rs"],
+    });
+  });
+
+  it("a call Claude's code made is found in its REPL card, which opens with it", () => {
+    const g = buildRows(
+      input([userNode("u1", 1, "go"), asstNode("a1", 2, [repl("r1", [inner("v1", "Bash", { command: "ls" })])])]),
+    );
+    expect(g.codeOf.get("v1")).toBe("r1");
+    expect(g.toolNode.get("v1")).toBe("a1");
+    expect(rowIndexOf(g, "a1", "v1")).toBe(rowIndexOf(g, "a1", "r1"));
+    expect(locate(g, "a1", "v1")?.expand).toEqual(["fold:u1", "tool:a1|r1", "tool:a1|v1"]);
+  });
+});

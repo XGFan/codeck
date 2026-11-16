@@ -185,7 +185,13 @@ fn tool_calls<'a>(turn: &'a Turn<'_>) -> Vec<&'a ToolCall> {
             AssistantBlock::ToolCall(c) => Some(c),
             _ => None,
         })
+        .flat_map(with_code_calls)
         .collect()
+}
+
+/// A call, then (Code Mode) the calls its code made.
+fn with_code_calls(c: &ToolCall) -> impl Iterator<Item = &ToolCall> {
+    std::iter::once(c).chain(c.code.iter().flat_map(|r| r.calls.iter()))
 }
 
 /// The text after the turn's last tool call or thinking: what the viewer calls its answer.
@@ -282,9 +288,11 @@ fn write_process(out: &mut String, turn: &Turn<'_>, shape: &dyn Fn(&str, usize) 
                 let _ = writeln!(out, "    思考：{}", shape(text, TURN_TEXT_CHARS));
             }
             AssistantBlock::ToolCall(c) => {
-                tools += 1;
-                if tools <= TURN_TOOLS {
-                    let _ = writeln!(out, "    工具：{}", describe(c));
+                for c in with_code_calls(c) {
+                    tools += 1;
+                    if tools <= TURN_TOOLS {
+                        let _ = writeln!(out, "    工具：{}", describe(c));
+                    }
                 }
             }
             _ => {}
@@ -315,6 +323,19 @@ fn describe(c: &ToolCall) -> String {
         "Grep" | "Glob" => format!("搜索 {}", field("pattern")),
         "WebFetch" => format!("抓取 {}", field("url")),
         "WebSearch" => format!("网络搜索 {}", field("query")),
+        "REPL" => {
+            let summary = match field("description") {
+                d if d.is_empty() => field("code"),
+                d => d,
+            };
+            let mut s = format!("执行代码 {summary}");
+            match c.code.as_ref().and_then(|r| r.outcome.as_ref()) {
+                Some(o) if o.is_error => s.push_str("（出错）"),
+                Some(_) => {}
+                None => s.push_str("（未返回）"),
+            }
+            return s;
+        }
         "Agent" | "Task" => match &c.subagent_id {
             Some(id) => format!("Subagent {}（--agent {id}）", field("description")),
             None => format!("Subagent {}", field("description")),
@@ -353,6 +374,16 @@ fn write_full(
             c.tool_use_id
         );
         for (part, label) in [(ToolPart::Input, "输入"), (ToolPart::Output, "输出")] {
+            // Code Mode: the code's output is what it returned or threw.
+            if let (ToolPart::Output, Some(run)) = (part, &c.code) {
+                let body = match &run.outcome {
+                    Some(o) if o.log.is_empty() => cap(&o.text, FULL_PART_CHARS),
+                    Some(o) => cap(&format!("{}\n{}", o.log, o.text), FULL_PART_CHARS),
+                    None => "（未返回）".to_owned(),
+                };
+                let _ = writeln!(out, "{label}：\n{body}");
+                continue;
+            }
             let body = match engine.get_tool_detail(&ToolDetailRequest {
                 session_id: id.to_owned(),
                 scope: scope.clone(),

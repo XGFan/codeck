@@ -157,6 +157,10 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
                             .entry((DIAG_TOOL, name.clone(), version.clone()))
                             .or_default() += 1;
                     }
+                    // Code Mode: the calls Claude's code made count, not the `REPL` / `Poll` calls.
+                    if transcript::assemble::code_mode::is_plumbing(name) {
+                        continue;
+                    }
                     rows.tool_calls.push(ToolCallRow {
                         tool_use_id: id.clone(),
                         name: name.clone(),
@@ -165,6 +169,10 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
                     });
                 }
                 let Some(ts) = ts else { continue };
+                // A call Claude's code made (Code Mode) is recorded as a message; it is not a reply.
+                if e.is_virtual == Some(true) {
+                    continue;
+                }
                 let Some(key) = msg.id.clone().or_else(|| e.uuid.clone()) else {
                     continue;
                 };
@@ -927,6 +935,20 @@ mod tests {
         assert_eq!(m1.logged_cost, None);
         assert!(!m2.fast);
         assert_eq!(m2.logged_cost, Some(0.25));
+    }
+
+    #[test]
+    fn code_mode_rows_are_the_calls_the_code_made() {
+        let lines = [
+            r#"{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"1"}},{"type":"tool_use","id":"p1","name":"Poll","input":{}}]}}"#,
+            r#"{"type":"assistant","uuid":"v1","timestamp":"2026-01-01T00:00:02Z","isVirtual":true,"message":{"id":"vm1","model":"<synthetic>","content":[{"type":"tool_use","id":"repl_1","name":"Bash","input":{"command":"ls"}}]}}"#,
+        ];
+        let buf = lines.join("\n") + "\n";
+        let rows = extract_rows(&parse_bytes(buf.as_bytes(), 0).records);
+        let names: Vec<&str> = rows.tool_calls.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Bash"]);
+        assert_eq!(rows.messages.len(), 1, "the virtual message is not a reply");
+        assert!(rows.diag.is_empty(), "{:?}", rows.diag);
     }
 
     #[test]

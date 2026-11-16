@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 /// (path relative to tests/fixtures, non-empty lines, lines that fail to parse)
 const FILES: &[(&str, usize, usize)] = &[
     (
+        "code_mode/projects/-Users-dev-code-lumen-api/c0de5e55-0000-4000-8000-00000000c0de.jsonl",
+        40,
+        0,
+    ),
+    (
         "basic/projects/-Users-dev-code-lumen-api/86d20d64-9fdd-5e64-aae4-93895b13068d.jsonl",
         77,
         1,
@@ -180,6 +185,16 @@ type FactRow = (
     [u64; 4],
 );
 const FACTS: &[FactRow] = &[
+    (
+        "code_mode/projects/-Users-dev-code-lumen-api/c0de5e55-0000-4000-8000-00000000c0de.jsonl",
+        36,
+        0,
+        2,
+        13,
+        13,
+        2,
+        [10, 790, 100000, 2500],
+    ),
     (
         "basic/projects/-Users-dev-code-lumen-api/86d20d64-9fdd-5e64-aae4-93895b13068d.jsonl",
         66,

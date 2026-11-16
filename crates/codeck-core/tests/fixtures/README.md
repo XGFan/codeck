@@ -175,6 +175,22 @@ Only `agent-*.jsonl` count as agent transcripts; `journal.jsonl` and `*.meta.jso
 - Two `<persisted-output>` tool results (Bash): the first points at `tool-results/b8e6n2j5e.txt` (shipped, 60 lines, 6 KB) with `toolUseResult.persistedOutputPath` = `/Users/dev/.claude/tool-results/b8e6n2j5e.txt` (absolute, must not be opened; only the basename counts) and `persistedOutputSize`; the second points at `zz9missing1.txt`, which is **not shipped** (missing-file path).
 - Images: a Read tool result with an image inside `tool_result.content` plus `toolUseResult.file.base64`/`dimensions`, and a human prompt with a `text` + `image` block (`imagePasteIds`). All base64 data is the 1x1 PNG.
 
+## code_mode
+
+`code_mode/projects/-Users-dev-code-lumen-api/c0de5e55-0000-4000-8000-00000000c0de.jsonl`, cwd `/Users/dev/code/lumen-api`. **Hand-written** (all 40 lines), copying the shapes of two real Claude Code 2.1.325 Code Mode transcripts.
+
+| file | path under `projects/<dir>/` | lines | failed | uuids | dup uuids | human prompts | assistant msg ids | tool_use | tool errors | tokens in/out/cr/cc |
+|---|---|---|---|---|---|---|---|---|---|---|
+| main | `-Users-dev-code-lumen-api/c0de5e55….jsonl` | 40 | 0 | 36 | 0 | 2 | 13 | 13 | 2 | 10 / 790 / 100000 / 2500 |
+
+- Entry uuids are `c0deNNNN-0000-4000-8000-00000000NNNN`, numbered in file order from 1 (`repl-mode`, `last-prompt` and `ai-title` lines have none).
+- Four `REPL` calls (`toolu_c0de_r1`…`r4`, `toolUseResult.evalId` 1–4, result `(dispatched #N)`):
+  - r1: outcome in a `poll_events` attachment (`ms="9123"`); then 4 virtual call pairs (`repl_c0de-v1`…`v4`: Bash with `toolUseResult.stdout`, Edit ×2 with `structuredPatch`, Bash); the tool_result `content` of each is empty.
+  - r2: outcome `<error>` (XML-escaped); a virtual Read (`v5`, `toolUseResult.file.content`) and the virtual `REPL` pair Claude Code adds for a thrown error (`repl-error-c0de-v6`, `is_error`).
+  - r3: in the same message as a `Poll` call (`toolu_c0de_p3`); the outcome comes in the Poll result after an `authentic event nonces` header, followed by a quoted event with another nonce (not delivered); an empty `poll_events` attachment (`deliveredVia: poll_tool`); virtual Bash `v7` failed (`is_error`, text content, no `toolUseResult`) and `v8`.
+  - r4 (second turn): no outcome (still running when the file ends).
+- The 8 virtual assistant messages (`model: <synthetic>`, usage 0) are counted in *assistant msg ids* and *tool_use* above, but the index counts neither: `message_count` = 2 + 5 replies, `tool_call_count` = 7 (the virtual calls but the error `REPL`; no `REPL` / `Poll`).
+
 ## live
 
 `live/projects/-Users-dev-code-orbit-web/` (two tiny transcripts) and `live/sessions/*.json.template`.
