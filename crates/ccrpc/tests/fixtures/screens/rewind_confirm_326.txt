@@ -1,0 +1,40 @@
+
+✻ Baked for 0s · done 2:06 AM
+
+❯ MOCK-WRITE /private/tmp/proj/w.txt now
+
+⏺ Write(w.txt)
+  ⎿  Wrote 1 line to w.txt
+      1 v0
+  ⎿  Allowed by PermissionRequest hook
+
+⏺ ok
+
+✻ Baked for 0s · done 2:06 AM
+
+❯ continue
+
+⏺ ok
+
+✻ Sautéed for 0s · done 2:06 AM
+
+❯ continue
+
+⏺ ok
+
+✻ Baked for 0s · done 2:06 AM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Restore to the point before you sent this message:
+
+   │ continue
+   │ (3s ago)
+
+   The conversation goes back to before this message.
+   The code will be unchanged.
+
+   ❯ 1. Restore conversation
+     2. Summarize from here
+     3. Summarize up to here
+     4. Never mind

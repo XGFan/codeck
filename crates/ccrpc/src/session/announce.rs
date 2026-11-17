@@ -157,13 +157,17 @@ impl Engine {
         let Some(a) = &self.announced else {
             return;
         };
-        if !matches!(
-            self.state,
-            State::Waiting {
-                kind: WaitKind::Permission | WaitKind::Question,
-                ..
-            }
-        ) {
+        let kind = match &self.state {
+            State::Waiting { kind, .. } => kind,
+            _ => return,
+        };
+        // In a `dialog open` wait only a choice can end without the wait ending: one dialog
+        // replaced by the next (2.1.326's `/add-dir` asks to trust the folder, then to add it).
+        let watched = match kind {
+            WaitKind::Permission | WaitKind::Question => true,
+            WaitKind::Dialog => matches!(a, Announced::Choice { .. }),
+        };
+        if !watched {
             return;
         }
         match a {
@@ -334,7 +338,15 @@ impl Engine {
                 if recognize::btw_panel(&s.lines).is_some() {
                     return;
                 }
-                if self.announce_choice(&s) || self.grow() || self.analyzing(&s, &waiting_for) {
+                if self.announce_choice(&s) {
+                    return;
+                }
+                // A known choice whose menu is not drawn yet: 2.1.326's `/add-dir` dialog first
+                // paints its options without `❯`.
+                if self.waiting_age() < MATCH_GRACE && self.library.choice_title_on(&s.lines) {
+                    return;
+                }
+                if self.grow() || self.analyzing(&s, &waiting_for) {
                     return;
                 }
                 self.announced = Some(Announced::Dialog(waiting_for.clone()));

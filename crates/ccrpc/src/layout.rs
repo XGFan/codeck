@@ -419,6 +419,13 @@ impl Library {
             .find_map(|l| l.match_screen(lines).map(|o| (l, o)))
     }
 
+    /// Whether some choice layout's title is on `lines` (its menu may still be drawing).
+    pub fn choice_title_on(&self, lines: &[String]) -> bool {
+        self.layouts
+            .iter()
+            .any(|l| l.kind == LayoutKind::Choice && l.title_rows(lines).is_some())
+    }
+
     /// Stores a learned layout (one file per layout, owner-only: it holds a whole screen) and uses
     /// it from now on.
     pub fn save(&mut self, mut layout: Layout) -> Result<PathBuf> {

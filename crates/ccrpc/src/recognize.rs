@@ -623,7 +623,15 @@ pub fn btw_panel(lines: &[String]) -> Option<BtwPanel> {
     {
         return None;
     }
-    let rows = lines[head + 2..foot - 1].to_vec();
+    let mut rows = lines[head + 2..foot - 1].to_vec();
+    // 2.1.326 marks a scrolled answer in the right-hand column: `↑` on its first row when there
+    // is more above, `↓` on its last when there is more below.
+    let last = rows.len().saturating_sub(1);
+    for (i, arrow) in [(0, '↑'), (last, '↓')] {
+        if let Some(r) = rows.get_mut(i) {
+            *r = without_scroll_mark(r, arrow);
+        }
+    }
     let shown: Vec<&str> = rows
         .iter()
         .map(|l| l.trim())
@@ -636,6 +644,20 @@ pub fn btw_panel(lines: &[String]) -> Option<BtwPanel> {
         rows,
         answering,
     })
+}
+
+/// `row` without a scroll mark `arrow` drawn at its right end, apart from the text (a row of the
+/// answer itself ending in an arrow keeps it).
+fn without_scroll_mark(row: &str, arrow: char) -> String {
+    let Some(before) = row.strip_suffix(arrow) else {
+        return row.to_string();
+    };
+    let text = before.trim_end();
+    if text.is_empty() || before.len() - text.len() >= 4 {
+        text.to_string()
+    } else {
+        row.to_string()
+    }
 }
 
 /// `view`, the answer area after scrolling down, added to what was read so far: a press moves it
@@ -813,6 +835,8 @@ const REWIND_PICKER_SUB: &str = "Restore the code and/or conversation to the poi
 const REWIND_PICKER_FOOT: &str = "Enter to continue · Esc to cancel";
 const REWIND_CONFIRM_SUB: &str =
     "Confirm you want to restore to the point before you sent this message:";
+/// [`REWIND_CONFIRM_SUB`] as 2.1.326 writes it (`tests/fixtures/screens/rewind_confirm_326.txt`).
+const REWIND_CONFIRM_SUB_326: &str = "Restore to the point before you sent this message:";
 /// The same page when the code cannot be restored (a Session with no file history, such as one
 /// started with `-p`): only the conversation is offered.
 const REWIND_CONFIRM_SUB_CONVERSATION: &str =
@@ -936,6 +960,7 @@ impl RewindConfirm {
 
 pub fn rewind_confirm(lines: &[String]) -> Option<RewindConfirm> {
     let start = rewind_screen(lines, REWIND_CONFIRM_SUB)
+        .or_else(|| rewind_screen(lines, REWIND_CONFIRM_SUB_326))
         .or_else(|| rewind_screen(lines, REWIND_CONFIRM_SUB_CONVERSATION))?;
     let mut c = RewindConfirm {
         quote: Vec::new(),
@@ -1396,6 +1421,65 @@ mod tests {
         );
     }
 
+    /// The panel of 2.1.326 scrolled to show answer rows `from..=to` (`L01`…, a blank row
+    /// between them), with its scroll marks at column 118.
+    fn btw_scrolled(from: usize, to: usize, above: bool, below: bool) -> Vec<String> {
+        let mut answer: Vec<String> = Vec::new();
+        for n in from..=to {
+            answer.push(format!("     L{n:02}"));
+            if n < to {
+                answer.push(String::new());
+            }
+        }
+        let mark = |r: &mut String, a: char| {
+            let pad = 118usize.saturating_sub(r.chars().count());
+            r.push_str(&" ".repeat(pad));
+            r.push(a);
+        };
+        if above {
+            answer.insert(0, String::new());
+            mark(&mut answer[0], '↑');
+        }
+        if below {
+            mark(answer.last_mut().unwrap(), '↓');
+        } else {
+            // The view's last row, below the answer's end.
+            answer.push(String::new());
+        }
+        let mut l = vec![
+            "⏺ ok".to_string(),
+            "▔▔▔▔".into(),
+            "   /btw q".into(),
+            String::new(),
+        ];
+        l.extend(answer);
+        l.extend([
+            String::new(),
+            "   ↑/↓ to scroll · c to copy · f to fork · Esc to close".into(),
+        ]);
+        l
+    }
+
+    #[test]
+    fn btw_panel_leaves_out_the_scroll_marks() {
+        let p = btw_panel(&btw_scrolled(3, 15, true, true)).unwrap();
+        assert_eq!(p.rows.first().map(String::as_str), Some(""));
+        assert_eq!(p.rows.last().map(String::as_str), Some("     L15"));
+        let mut read = btw_panel(&btw_scrolled(1, 13, false, false)).unwrap().rows;
+        btw_merge(&mut read, &p.rows);
+        assert_eq!(
+            btw_text(&read)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>(),
+            (1..=15).map(|n| format!("L{n:02}")).collect::<Vec<_>>()
+        );
+        // An answer row that itself ends with an arrow keeps it.
+        let mut own = btw_scrolled(1, 2, false, false);
+        own[4].push_str(" ↑");
+        assert_eq!(btw_text(&btw_panel(&own).unwrap().rows), "L01 ↑\n\nL02");
+    }
+
     #[test]
     fn btw_merge_keeps_repeated_rows_of_a_scrolled_answer() {
         let row = |s: &str| s.to_string();
@@ -1770,6 +1854,25 @@ mod tests {
                 (2, "Summarize from here"),
                 (3, "Summarize up to here"),
                 (4, "Never mind"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewind_confirm_as_326_words_it() {
+        let c = rewind_confirm(&screen("rewind_confirm_326.txt")).unwrap();
+        assert_eq!(c.quote, ["continue"]);
+        assert_eq!(c.ago.as_deref(), Some("3s ago"));
+        assert_eq!(c.code.as_deref(), Some("The code will be unchanged."));
+        let labels: Vec<(u32, &str, bool)> =
+            c.options.iter().map(|o| (o.0, o.1.as_str(), o.2)).collect();
+        assert_eq!(
+            labels,
+            [
+                (1, "Restore conversation", true),
+                (2, "Summarize from here", false),
+                (3, "Summarize up to here", false),
+                (4, "Never mind", false),
             ]
         );
     }

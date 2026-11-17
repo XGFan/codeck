@@ -880,7 +880,9 @@ fn mock_model_model_and_effort() {
 }
 
 /// `/add-dir` asks before adding a directory: a choice from the built-in layout (no tool call is
-/// pending, so it is not a tool approval), answered with `answer_choice`.
+/// pending, so it is not a tool approval), answered with `answer_choice`. Since 2.1.326 a folder
+/// the Session has not worked in is first asked to be trusted (a menu without numbers), then
+/// added: two choices, one after the other in the same `dialog open` wait.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_add_dir() {
@@ -898,7 +900,7 @@ fn mock_model_add_dir() {
         v["type"] == "choice" || v["type"] == "dialog"
     });
     assert_eq!(c["type"], "choice", "{c}");
-    assert_eq!(c["title"], "Add directory to workspace", "{c}");
+    assert_eq!(c["title"], "Adding a new directory:", "{c}");
     assert_eq!(c["layout_source"], "builtin", "{c}");
     assert!(c["tool_use_id"].is_null(), "{c}");
     let labels: Vec<&str> = c["options"]
@@ -907,17 +909,18 @@ fn mock_model_add_dir() {
         .iter()
         .filter_map(|o| o["label"].as_str())
         .collect();
-    assert_eq!(
-        labels,
-        [
-            "Yes, for this session",
-            "Yes, and remember this directory",
-            "No"
-        ],
-        "{c}"
-    );
+    assert_eq!(labels, ["No, leave it out", "Yes, add it"], "{c}");
     rpc.call(
         "c1",
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, add it"}),
+    );
+    // Then the dialog it asked before 2.1.326 (the folder is trusted now).
+    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+        v["type"] == "choice" || v["type"] == "dialog"
+    });
+    assert_eq!(c["title"], "Add directory to workspace", "{c}");
+    rpc.call(
+        "c2",
         json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, for this session"}),
     );
     rpc.until("idle", Duration::from_secs(10), |v| {
@@ -2262,9 +2265,17 @@ fn mock_model_follows_the_background_session() {
     let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
         v["type"] == "choice" || v["type"] == "dialog"
     });
-    assert_eq!(c["title"], "Add directory to workspace", "{c}");
+    assert_eq!(c["title"], "Adding a new directory:", "{c}");
     rpc.call(
         "c1",
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, add it"}),
+    );
+    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+        v["type"] == "choice" || v["type"] == "dialog"
+    });
+    assert_eq!(c["title"], "Add directory to workspace", "{c}");
+    rpc.call(
+        "c2",
         json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, for this session"}),
     );
     wait_state(&mut rpc, "idle", 10);
