@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { openRich, openSession, reveal as revealIn } from "./helpers";
+import { openRich, openSession, reveal as revealIn, settled } from "./helpers";
 
 const CODE_MODE_TITLE = "Code Mode：把重试上限改成 5";
 
@@ -78,6 +78,7 @@ test("你的消息里的 [Image #n] 显示成图片块：悬停预览、点击�
   });
   expect(label[0]).toBeCloseTo(next[0], 0);
   expect(label[1]).toBeCloseTo(next[1], 0);
+  await settled(chip);
   await chip.hover();
   await expect(page.getByTestId("prompt-image-preview").locator("img")).toBeVisible();
   await chip.click();
@@ -89,12 +90,23 @@ test("对话记录里的图片块离顶端太近时，预览出现在下方，�
   const transcript = page.getByTestId("transcript");
   const chip = page.getByTestId("user-bubble").filter({ hasText: "PVC" }).getByTestId("prompt-image");
   const preview = page.getByTestId("prompt-image-preview");
-  // Room above: the preview above the block.
+  // Puts the block `y` below the transcript's top edge, once the list has stopped moving it.
   const top = await transcript.evaluate((e) => e.getBoundingClientRect().top);
-  await chip.evaluate((e, top) => {
-    const s = e.closest("[data-testid=transcript]")!;
-    s.scrollTop += e.getBoundingClientRect().top - top - 300;
-  }, top);
+  const place = (y: number) =>
+    expect(async () => {
+      await chip.evaluate(
+        (e, { top, y }) => {
+          const s = e.closest("[data-testid=transcript]")!;
+          s.scrollTop += e.getBoundingClientRect().top - top - y;
+        },
+        { top, y },
+      );
+      await settled(chip);
+      const at = (await chip.evaluate((e) => e.getBoundingClientRect().top)) - top;
+      expect(Math.abs(at - y)).toBeLessThan(40);
+    }).toPass();
+  // Room above: the preview above the block.
+  await place(300);
   await chip.hover();
   await expect(preview.locator("img")).toBeVisible();
   await expect(preview).not.toHaveAttribute("data-below");
@@ -102,11 +114,7 @@ test("对话记录里的图片块离顶端太近时，预览出现在下方，�
   // Right under the top edge (a short window, so the transcript scrolls that far): below it, and drawn over what
   // follows.
   await page.setViewportSize({ width: 1280, height: 420 });
-  await chip.evaluate((e, top) => {
-    const s = e.closest("[data-testid=transcript]")!;
-    s.scrollTop += e.getBoundingClientRect().top - top - 20;
-  }, top);
-  expect((await chip.evaluate((e) => e.getBoundingClientRect().top)) - top).toBeLessThan(80);
+  await place(20);
   await chip.hover();
   await expect(preview).toHaveAttribute("data-below", "true");
   await expect(preview.locator("img")).toBeVisible();

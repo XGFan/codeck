@@ -37,6 +37,30 @@ export const scrollBy = (scroller: Locator, dy: number) =>
   );
 
 /**
+ * Resolves once `target` has stayed put on screen for a few frames: a list that is still measuring rows, following
+ * its bottom or adjusting to a resize moves it, and a pointer placed on it before then ends up elsewhere.
+ */
+export const settled = (target: Locator) =>
+  target.evaluate(
+    (e) =>
+      new Promise<void>((done, fail) => {
+        let last = "";
+        let still = 0;
+        const started = performance.now();
+        const tick = () => {
+          const r = e.getBoundingClientRect();
+          const at = `${r.top},${r.left},${r.height}`;
+          still = at === last ? still + 1 : 0;
+          last = at;
+          if (still >= 5) return done();
+          if (performance.now() - started > 5000) return fail(new Error("still moving after 5s"));
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+
+/**
  * Scrolls a virtualized list until `target` is rendered: up from the bottom (`from: "bottom"`), or down from the top
  * opening collapsed tool groups on the way (`from: "top"`).
  */
