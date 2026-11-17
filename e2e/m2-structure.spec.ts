@@ -200,12 +200,29 @@ test("你的消息里 ` 与 ``` 包着的内容显示为代码，反引号不显
   const bubble = t.getByTestId("user-bubble").filter({ hasText: "接下来把限流参数" });
   await reveal(t, bubble);
   await expect(bubble.getByTestId("prompt-code")).toHaveText("[rate_limit] per_minute");
-  await expect(bubble.getByTestId("prompt-code-block")).toHaveText("[rate_limit]\nper_minute = 120");
+  await expect(bubble.getByTestId("prompt-code-block")).toHaveText(/\[rate_limit\]\nper_minute = 120$/);
   await expect(bubble).not.toContainText("`");
   await expect(bubble).toContainText("没配置时沿用 120。");
   expect(await bubble.getByTestId("prompt-code-block").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(
     /mono/i,
   );
+});
+
+test("代码块里的长行自动换行，不出现横向滚动", async ({ page }) => {
+  await openSession(page, RICH_TITLE);
+  const t = page.getByTestId("transcript");
+  const prompt = t.getByTestId("user-bubble").filter({ hasText: "接下来把限流参数" }).getByTestId("prompt-code-block");
+  const reply = t.locator("pre:not([data-testid])").filter({ hasText: "令牌按秒均匀补充" });
+  for (const pre of [prompt, reply]) {
+    await reveal(t, pre);
+    const m = await pre.evaluate((el) => ({
+      overflow: el.scrollWidth - el.clientWidth,
+      lines: el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight),
+    }));
+    expect(m.overflow).toBe(0);
+    // 3 source lines; the long comment takes at least two.
+    expect(m.lines).toBeGreaterThan(4);
+  }
 });
 
 test("折叠行的箭头大小不随摘要长短变化", async ({ page }) => {

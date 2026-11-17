@@ -156,7 +156,7 @@ function PromptText({ text, node, body }: { text: string; node: Node; body: User
       <pre
         key={i}
         data-testid="prompt-code-block"
-        className="my-1.5 overflow-x-auto rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] whitespace-pre"
+        className="my-1.5 rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] break-words whitespace-pre-wrap"
       >
         <code>
           <HighlightedCode code={p.text} lang={p.lang} />

@@ -31,7 +31,7 @@ const components: Components = {
     return (
       <div className="group/copy relative my-2">
         <pre
-          className="overflow-x-auto rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] whitespace-pre"
+          className="rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] break-words whitespace-pre-wrap"
           {...rest}
         />
         <CopyButton text={raw.replace(/\n$/, "")} className="absolute top-1.5 right-1.5 bg-code/90" />
