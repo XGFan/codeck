@@ -58,11 +58,11 @@ const rnd = (i: number) => {
   return x - Math.floor(x);
 };
 
-const models = ["claude-sonnet-5-5", "claude-opus-4-7"];
+const models = ["claude-sonnet-5-5", "claude-opus-4-7", "claude-fable-5-1"];
 const daily = Array.from({ length: 30 }, (_, i) => 29 - i).flatMap((back) =>
   models.map((model, m) => {
-    const k = back * 2 + m;
-    const scale = m === 0 ? 1 : 0.4;
+    const k = m < 2 ? back * 2 + m : 1000 + back;
+    const scale = [1, 0.4, 0.25][m];
     const input = Math.round(rnd(k) * 40_000 * scale) + 2_000;
     const output = Math.round(rnd(k + 100) * 180_000 * scale) + 5_000;
     const cacheRead = Math.round(rnd(k + 200) * 4_000_000 * scale) + 100_000;

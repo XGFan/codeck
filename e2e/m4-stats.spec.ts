@@ -125,6 +125,17 @@ test("点击模型图例按模型下钻会话列表", async ({ page }) => {
   await expect.poll(() => page.getByTestId("session-row").count()).toBeGreaterThanOrEqual(filtered);
 });
 
+test("Fable 在按模型的图例里单独一类，排在 opus 前，点击按 Fable 模型下钻", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("nav-stats").click();
+  const daily = page.getByTestId("stats-daily");
+  await daily.getByRole("button", { name: "Cost", exact: true }).click();
+  await expect(daily.getByTestId("legend-item")).toHaveText(["fable", "opus", "sonnet"]);
+  await daily.getByTestId("legend-item").filter({ hasText: "fable" }).click();
+  await expect(page.getByTestId("stats")).toHaveCount(0);
+  await expect(page.getByTestId("drill-chip")).toContainText("模型 claude-fable-5-1");
+});
+
 test("下钻带上统计的时间范围", async ({ page }) => {
   await page.goto("/");
   const review = page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }); // last active 8 days ago

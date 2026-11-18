@@ -20,6 +20,7 @@ export const sumTok = (...t: TokenTotals[]): TokenTotals =>
 
 /** USD per MTok: input, output, cache read, cache write (5-minute). */
 const RATES: Record<string, [number, number, number, number]> = {
+  "claude-fable-5-1": [10, 50, 1, 12.5],
   "claude-opus-4-7": [5, 25, 0.5, 6.25],
   "claude-sonnet-5-5": [2, 10, 0.1, 2.5],
   "claude-haiku-4-5": [1, 5, 0.1, 1.25],

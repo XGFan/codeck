@@ -2,7 +2,7 @@ import type { Activity, ActivityBucket, DailyModelTokens } from "@/ipc/bindings"
 import type { ChartOption } from "@/lib/echarts";
 import { formatCost, formatTokens } from "@/lib/format";
 
-/** Reference dataviz palette (validated): categorical slots 1-3 + 7. */
+/** Reference dataviz palette (validated): categorical slots 1-3 + 7, plus a raspberry/magenta for fable. */
 export interface Theme {
   surface: string;
   ink: string;
@@ -14,8 +14,8 @@ export interface Theme {
   ioInput: string;
   ioOutput: string;
 }
-export type ModelFamily = "opus" | "sonnet" | "haiku" | "other";
-export const FAMILIES: ModelFamily[] = ["opus", "sonnet", "haiku", "other"];
+export type ModelFamily = "fable" | "opus" | "sonnet" | "haiku" | "other";
+export const FAMILIES: ModelFamily[] = ["fable", "opus", "sonnet", "haiku", "other"];
 
 export const themes: Record<"light" | "dark", Theme> = {
   light: {
@@ -25,7 +25,7 @@ export const themes: Record<"light" | "dark", Theme> = {
     grid: "#e1e0d9",
     axis: "#c3c2b7",
     tooltipBg: "#ffffff",
-    series: { opus: "#2a78d6", sonnet: "#eb6834", haiku: "#1baf7a", other: "#4a3aa7" },
+    series: { fable: "#b01870", opus: "#2a78d6", sonnet: "#eb6834", haiku: "#1baf7a", other: "#4a3aa7" },
     ioInput: "#86b6ef",
     ioOutput: "#1c5cab",
   },
@@ -36,13 +36,14 @@ export const themes: Record<"light" | "dark", Theme> = {
     grid: "#2c2c2a",
     axis: "#383835",
     tooltipBg: "#2c2c2f",
-    series: { opus: "#3987e5", sonnet: "#d95926", haiku: "#199e70", other: "#9085e9" },
+    series: { fable: "#c020a0", opus: "#3987e5", sonnet: "#d95926", haiku: "#199e70", other: "#9085e9" },
     ioInput: "#256abf",
     ioOutput: "#b7d3f6",
   },
 };
 
 export const FAMILY_LABEL: Record<ModelFamily, string> = {
+  fable: "fable",
   opus: "opus",
   sonnet: "sonnet",
   haiku: "haiku",
@@ -51,7 +52,7 @@ export const FAMILY_LABEL: Record<ModelFamily, string> = {
 
 export function family(model: string): ModelFamily {
   const m = model.toLowerCase();
-  return m.includes("opus") ? "opus" : m.includes("sonnet") ? "sonnet" : m.includes("haiku") ? "haiku" : "other";
+  return FAMILIES.find((f) => f !== "other" && m.includes(f)) ?? "other";
 }
 
 export type Metric = "all" | "input" | "output" | "cost";

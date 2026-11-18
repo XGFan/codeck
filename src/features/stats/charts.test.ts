@@ -32,7 +32,7 @@ describe("activityTitle", () => {
 });
 
 describe("dailyOption", () => {
-  it("Cost 按模型堆叠，纵轴与悬停提示显示美元", () => {
+  it("Cost 按模型堆叠（fable 单独一组、排在 opus 前），纵轴与悬停提示显示美元", () => {
     const row = (day: string, model: string, cost: number) => ({
       day,
       model,
@@ -47,6 +47,7 @@ describe("dailyOption", () => {
         row("2026-10-20", "claude-opus-4-7", 1.5),
         row("2026-10-20", "claude-opus-4-8", 0.5),
         row("2026-10-21", "claude-sonnet-5-5", 3),
+        row("2026-10-21", "claude-fable-5-1", 4),
         row("2026-10-21", "no-price", 0),
       ],
       "cost",
@@ -59,6 +60,7 @@ describe("dailyOption", () => {
       };
     };
     expect(option.series.map((s) => [s.name, s.data])).toEqual([
+      ["fable", [0, 4]],
       ["opus", [2, 0]],
       ["sonnet", [0, 3]],
     ]);
