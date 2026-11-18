@@ -128,6 +128,14 @@ target/release/codeck-host --web-dir dist-web    # 默认端口 38471；--listen
 
 daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动输入 Host 的局域网 IPv4，iOS 会询问是否允许访问本地网络。
 
+不开 Xcode、用 Ad Hoc 证书装机时运行装机脚本：无签名 Release 构建，按证书组重签，经 devicectl 的网络通道安装（手机与 Mac 已配对即可，不用数据线）：
+
+```sh
+ios/tools/install-device.sh [--cert <证书组>] [Release] [设备名或 UDID]   # 默认设备「iPhone 18 Pro Max」
+```
+
+证书组是一个目录，放一份描述文件（`*.mobileprovision`）与 `entitlements.plist`，签名证书要已导入钥匙串；`--cert` 给目录路径，或 `IOS_CERT_ROOT`（默认 `~/Developer/Joy/ios-cert`）下的目录名，不给时用脚本里 `CERT_GROUP` 的缺省值。只支持 Release，Debug 构建装不上。手机上已有别的团队签的 CoDeck 时先在手机上卸载（已保存的 Host 随之丢失），否则装不上。
+
 ## 构建
 
 ```sh
