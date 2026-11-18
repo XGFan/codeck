@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 
 use super::nodes::{self, PREVIEW_BYTES, RESULT_BYTES, RESULT_LINES};
-use super::{EntryKind, LoadedFile, SessionSidecar, SessionSkeleton, prompt};
+use super::{EntryKind, LoadedFile, SessionSidecar, SessionSkeleton, code_mode, prompt};
 use crate::known::{AGENT_TOOLS, RUN_STARTING_TOOLS};
 use crate::model::{AgentId, NodeId, PromptOrigin, SubagentRun};
 use crate::raw::{RawToolUseResult, lenient};
@@ -17,8 +17,21 @@ pub struct Links {
     pub orphans: Vec<AgentId>,
     /// Main-file tool_use id → agent id.
     pub by_tool: HashMap<String, AgentId>,
+    /// `REPL` tool_use id → the Agent calls its code made that the main file has no record of.
+    pub unrecorded: HashMap<String, Vec<UnrecordedCall>>,
     /// tool_use id → task-notification prompt uuid.
     pub notification_by_tool: HashMap<String, NodeId>,
+}
+
+/// An Agent call Claude's code made (Code Mode) that left no virtual entries in the main file: the
+/// code ended without waiting for it. The run's meta still names the call (`toolUseId`) and the
+/// `REPL` call whose code made it (`enclosingToolUseId`).
+#[derive(Debug, Clone)]
+pub struct UnrecordedCall {
+    pub tool_use_id: String,
+    pub agent_id: AgentId,
+    /// `{subagent_type, description}` from the meta.
+    pub input_json: String,
 }
 
 /// `agent-<id>.meta.json`; every field optional, unknown fields ignored.
@@ -39,6 +52,12 @@ pub struct AgentMeta {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "lenient::string")]
     pub model: Option<String>,
+    /// Code Mode: the `REPL` call whose code made the Agent call.
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub enclosing_tool_use_id: Option<String>,
+    /// `background` for a run started in the background.
+    #[serde(default, deserialize_with = "lenient::string")]
+    pub request_shape: Option<String>,
 }
 
 pub fn parse_meta(json: Option<&str>) -> AgentMeta {
@@ -415,9 +434,10 @@ fn outcome(
     notes: &Notices,
     tool_use_id: &str,
     agent_id: &str,
+    launched_async: bool,
 ) -> (bool, Option<String>, Option<String>) {
     let result_status = results.status.get(tool_use_id).cloned();
-    let is_async = result_status.as_deref() == Some("async_launched");
+    let is_async = launched_async || result_status.as_deref() == Some("async_launched");
     let note = notes.get(Some(tool_use_id), agent_id);
     let note_status = note.and_then(|n| n.status.clone());
     if is_async {
@@ -462,7 +482,7 @@ pub fn nested_outcomes(
             continue;
         };
         (run.is_async, run.status, run.final_text) =
-            outcome(s, files, &results, &notes, tool, agent);
+            outcome(s, files, &results, &notes, tool, agent, false);
         if let Some(n) = notes.by_task.get(agent) {
             links
                 .entry(tool.clone())
@@ -518,6 +538,41 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
                         .and_then(|n| results.by_name.get(n).cloned())
                 })
         };
+        // Code Mode: the code ended without waiting for its Agent call, so the main file has no
+        // record of the call; it belongs to the `REPL` call the meta names.
+        let unrecorded = main_tool.is_none()
+            && !nested
+            && m.workflow_run_id.is_none()
+            && meta.tool_use_id.is_some()
+            && meta
+                .enclosing_tool_use_id
+                .as_deref()
+                .is_some_and(|e| is_code_call(s, e));
+        let main_tool = if unrecorded {
+            meta.tool_use_id.clone()
+        } else {
+            main_tool
+        };
+        if unrecorded && let (Some(t), Some(e)) = (&meta.tool_use_id, &meta.enclosing_tool_use_id) {
+            let mut input = serde_json::Map::new();
+            for (k, v) in [
+                ("subagent_type", &meta.agent_type),
+                ("description", &meta.description),
+            ] {
+                if let Some(v) = v {
+                    input.insert(k.to_owned(), v.clone().into());
+                }
+            }
+            links
+                .unrecorded
+                .entry(e.clone())
+                .or_default()
+                .push(UnrecordedCall {
+                    tool_use_id: t.clone(),
+                    agent_id: m.agent_id.clone(),
+                    input_json: serde_json::Value::Object(input).to_string(),
+                });
+        }
         let linked = main_tool.is_some() || nested || m.workflow_run_id.is_some();
         if !linked {
             links.orphans.push(m.agent_id.clone());
@@ -532,7 +587,15 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
             .clone()
             .or_else(|| meta.tool_use_id.clone().filter(|_| nested));
         let (is_async, mut status, mut final_text) = match main_tool.as_deref() {
-            Some(t) => outcome(s, files, &results, &notes, t, &m.agent_id),
+            Some(t) => outcome(
+                s,
+                files,
+                &results,
+                &notes,
+                t,
+                &m.agent_id,
+                unrecorded && meta.request_shape.as_deref() == Some("background"),
+            ),
             None => (false, None, None),
         };
         // A teammate's tool_result only says it was spawned: how it is doing is in the
@@ -591,6 +654,17 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
         });
     }
     links
+}
+
+/// `id` is a `REPL` call in the main file (not the virtual pair Code Mode adds for an error).
+fn is_code_call(s: &SessionSkeleton, id: &str) -> bool {
+    s.tool_use_at.get(id).is_some_and(|&at| {
+        let n = &s.nodes[at];
+        !n.is_virtual
+            && n.tool_uses
+                .iter()
+                .any(|(t, name)| t == id && name == code_mode::REPL)
+    })
 }
 
 /// Inside an agent file (Subagent scope): tool_use id → nested run, by the run's `toolUseId`,

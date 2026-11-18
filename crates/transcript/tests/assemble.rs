@@ -1671,6 +1671,72 @@ fn code_mode_nests_the_calls_the_code_made() {
     assert_eq!(code_of(&plain, "toolu_c0de_r3"), r3);
 }
 
+/// Code Mode code that does not wait for its Agent call ends before the call is recorded: no
+/// virtual entries. The run's meta names the call and the `REPL` call it came from, so the card
+/// still lists it and the run is not an orphan; a meta naming a call that is not a `REPL` stays one.
+#[test]
+fn code_mode_agent_call_the_code_did_not_wait_for_is_listed_under_its_code() {
+    let project = fixture_dir("code_mode")
+        .join("projects")
+        .join(ids::CODE_MODE_DIR);
+    let main = load(
+        &project.join(format!("{}.jsonl", ids::CODE_MODE)),
+        FileRole::Main,
+        None,
+    );
+    let meta = |agent: &str, tool: &str, enclosing: &str| SubagentMetaFile {
+        agent_id: agent.to_owned(),
+        role: FileRole::Subagent,
+        workflow_run_id: None,
+        transcript_path: None,
+        meta_json: Some(format!(
+            r#"{{"agentType":"critic","description":"Critique the plan","toolUseId":"{tool}","enclosingToolUseId":"{enclosing}","requestShape":"background"}}"#
+        )),
+    };
+    let sidecar = SessionSidecar {
+        subagent_metas: vec![
+            meta("acafe", "repl_c0de-agent", "toolu_c0de_r1"),
+            meta("aelse", "repl_c0de-other", "toolu_c0de_missing"),
+        ],
+        ..SessionSidecar::default()
+    };
+    let s = assemble(
+        ids::CODE_MODE,
+        &project.join(ids::CODE_MODE),
+        vec![main],
+        sidecar,
+    );
+    let t = main_t(&s, false);
+    assert_eq!(t.orphan_subagent_ids, ["aelse"]);
+    let r1 = code_of(&t, "toolu_c0de_r1");
+    assert_eq!(
+        r1.calls.len(),
+        5,
+        "the four recorded calls, then the Agent call"
+    );
+    let agent = r1.calls.last().unwrap();
+    assert_eq!(
+        (agent.tool_use_id.as_str(), agent.name.as_str()),
+        ("repl_c0de-agent", "Agent")
+    );
+    assert_eq!(agent.subagent_id.as_deref(), Some("acafe"));
+    assert_eq!(
+        agent.input_json,
+        r#"{"description":"Critique the plan","subagent_type":"critic"}"#
+    );
+    assert!(agent.result.as_ref().is_some_and(|r| !r.is_error));
+    let run = t.subagents.iter().find(|r| r.agent_id == "acafe").unwrap();
+    assert_eq!(run.tool_use_id.as_deref(), Some("repl_c0de-agent"));
+    assert!(run.is_async);
+    // Other code runs are as before.
+    assert!(
+        code_of(&t, "toolu_c0de_r3")
+            .calls
+            .iter()
+            .all(|c| c.name != "Agent")
+    );
+}
+
 #[test]
 fn code_mode_counts_the_calls_not_the_plumbing() {
     let s = open("code_mode", ids::CODE_MODE_DIR, ids::CODE_MODE);

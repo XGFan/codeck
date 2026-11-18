@@ -10,6 +10,7 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 
 use super::code_mode::{self, CodeRuns};
+use super::subagent::UnrecordedCall;
 use super::{EntryKind, LoadedFile, SessionSkeleton, content, prompt};
 use crate::model::{
     AgentId, AssistantBlock, CodeOutcome, CodeRun, ImageRef, Node, NodeBody, NodeId, PersistedRef,
@@ -35,6 +36,8 @@ pub struct RenderCtx<'a> {
     pub subagent_by_tool: &'a HashMap<String, AgentId>,
     pub workflow_by_tool: &'a HashMap<String, String>,
     pub notification_by_tool: &'a HashMap<String, NodeId>,
+    /// `REPL` tool_use id → Agent calls its code made that the main file has no record of.
+    pub unrecorded_calls: &'a HashMap<String, Vec<UnrecordedCall>>,
     /// Fork fallback from the index (no `forkedFrom`): display entries up to this node are fork-inherited.
     pub fork_point: Option<usize>,
 }
@@ -295,6 +298,13 @@ fn tool_call(
             .flat_map(|&v| s.entry(ctx.files, v).blocks())
             .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(code_mode::REPL))
             .map(|b| tool_call(ctx, b, shown, node_id, runs))
+            .chain(
+                ctx.unrecorded_calls
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .map(|u| unrecorded_call(ctx, u)),
+            )
             .collect(),
         // A call that failed itself (rejected, interrupted, invalid input) ran no code: its
         // result is the error.
@@ -318,6 +328,31 @@ fn tool_call(
         input_json,
         input_truncated,
         result,
+    }
+}
+
+/// An Agent call the code made that left no record ([`UnrecordedCall`]): launched, with an empty
+/// result like the virtual pair of one the code waited for.
+fn unrecorded_call(ctx: &RenderCtx<'_>, u: &UnrecordedCall) -> ToolCall {
+    ToolCall {
+        tool_use_id: u.tool_use_id.clone(),
+        name: "Agent".to_owned(),
+        input_json: u.input_json.clone(),
+        input_truncated: false,
+        result: Some(ToolResult {
+            is_error: false,
+            timestamp_ms: None,
+            text: String::new(),
+            images: Vec::new(),
+            total_bytes: 0.0,
+            truncated: false,
+            persisted: None,
+            extra_json: None,
+        }),
+        subagent_id: Some(u.agent_id.clone()),
+        workflow_run_id: None,
+        notification_node_id: ctx.notification_by_tool.get(&u.tool_use_id).cloned(),
+        code: None,
     }
 }
 

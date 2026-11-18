@@ -385,6 +385,8 @@ pub struct AssembledSession {
     pub workflow_by_tool: HashMap<String, String>,
     /// tool_use id → uuid of the task-notification prompt that reports it.
     pub notification_by_tool: HashMap<String, NodeId>,
+    /// `REPL` tool_use id → Agent calls its code made that the main file has no record of.
+    pub unrecorded_calls: HashMap<String, Vec<subagent::UnrecordedCall>>,
 }
 
 impl AssembledSession {
@@ -437,6 +439,7 @@ pub fn assemble(
         subagent_by_tool: links.by_tool,
         workflow_by_tool,
         notification_by_tool: links.notification_by_tool,
+        unrecorded_calls: links.unrecorded,
     }
 }
 
@@ -469,6 +472,7 @@ pub fn transcript(
                 subagent_by_tool: &s.subagent_by_tool,
                 workflow_by_tool: &s.workflow_by_tool,
                 notification_by_tool: &s.notification_by_tool,
+                unrecorded_calls: &s.unrecorded_calls,
                 fork_point,
             };
             let rendered = nodes::render(&ctx, &display);
@@ -504,6 +508,7 @@ pub fn transcript(
             let by_tool = subagent::nested_links(&sk, files, &nested);
             let notifications = subagent::nested_outcomes(&sk, files, &mut nested, &by_tool);
             let no_workflows = HashMap::new();
+            let no_calls = HashMap::new();
             let ctx = nodes::RenderCtx {
                 skeleton: &sk,
                 files,
@@ -511,6 +516,7 @@ pub fn transcript(
                 subagent_by_tool: &by_tool,
                 workflow_by_tool: &no_workflows,
                 notification_by_tool: &notifications,
+                unrecorded_calls: &no_calls,
                 fork_point: None,
             };
             let rendered = nodes::render(&ctx, &display);
