@@ -337,6 +337,9 @@ pub struct Tailer {
     keep_offsets: bool,
     /// Claude Code's input queue as the main file's `queue-operation` entries leave it.
     queue: Vec<String>,
+    /// The item the last `dequeue` was taken to have taken (the oldest), until a main-line user
+    /// entry after it shows what it took or the next `queue-operation` ([`Tailer::settle_dequeue`]).
+    dequeued: Option<String>,
     /// The main line's last `SendFeedback` call `(tool_use id, input)`: the draft behind the card
     /// Claude Code shows above the input box.
     last_feedback: Option<(String, Value)>,
@@ -380,6 +383,7 @@ impl Tailer {
             teammate_names: HashMap::new(),
             monitors: HashSet::new(),
             queue: Vec::new(),
+            dequeued: None,
             last_feedback: None,
             copied: HashSet::new(),
             in_copy: false,
@@ -425,6 +429,48 @@ impl Tailer {
         if let Some(i) = i {
             self.queue.remove(i);
         }
+    }
+
+    /// A `dequeue` names nothing, so it is first taken to have taken the oldest item. A main-line
+    /// user entry after it carries what it took: the prompt, or the Poll result that delivered a
+    /// harness event, which need not be the oldest (a Poll takes the event it waits for; older
+    /// ones are `remove`d later). Entries are not written in order, so other tool results may come
+    /// first: the first entry that carries the guess or another queued item settles it, and when
+    /// it is another item, that one is what left and the oldest goes back to the front. A queued
+    /// tag (a harness event, a notification) counts when a tool result contains it; a plain prompt
+    /// only as a prompt entry of its own, since a tool output may happen to contain its words.
+    /// True when the queue changed.
+    fn settle_dequeue(&mut self, e: &RawEntry) -> bool {
+        let Some(guess) = self.dequeued.take() else {
+            return false;
+        };
+        let results: Vec<String> = e
+            .blocks()
+            .iter()
+            .filter(|b| b.block_type() == "tool_result")
+            .map(|b| nodes::result_content(b.content.as_deref()).0)
+            .collect();
+        let prompt = results.is_empty().then(|| prompt::user_text(e));
+        let carries = |item: &str| {
+            let item = item.trim();
+            !item.is_empty()
+                && (prompt.as_deref().is_some_and(|p| p.trim() == item)
+                    || (item.starts_with('<') && results.iter().any(|r| r.contains(item))))
+        };
+        if carries(&guess) {
+            return false;
+        }
+        // The longest one carried: a short queued prompt may also appear inside a Poll result.
+        let Some(i) = (0..self.queue.len())
+            .filter(|&i| carries(&self.queue[i]))
+            .max_by_key(|&i| self.queue[i].trim().len())
+        else {
+            self.dequeued = Some(guess);
+            return false;
+        };
+        self.queue.remove(i);
+        self.queue.insert(0, guess);
+        true
     }
 
     /// Background tasks seen so far.
@@ -1008,6 +1054,9 @@ impl Tailer {
         if agent.is_none() {
             self.note_teammate_messages(e);
             self.note_teammate_calls(e);
+            if e.entry_type() == "user" && self.settle_dequeue(e) {
+                out.push(TxEvent::Queue(self.queue.clone()));
+            }
         }
         match e.entry_type() {
             "system" if agent.is_none() && e.subtype.as_deref() == Some("turn_duration") => {
@@ -1043,6 +1092,7 @@ impl Tailer {
                 let content =
                     prompt::unwrap_pasted(&decode_str(e.content.as_deref()).unwrap_or_default());
                 let before = self.queue.len();
+                self.dequeued = None;
                 match e.operation.as_deref() {
                     Some("enqueue") => {
                         self.queue.push(content.clone());
@@ -1052,9 +1102,9 @@ impl Tailer {
                     // its text with the opening tag's attributes left out (a relayed message is
                     // enqueued with a `hop-chain` attribute that its `remove` does not carry).
                     Some("remove") => self.unqueue(&content),
-                    // Taken to run as a turn: the oldest.
+                    // Taken to run: the oldest, until the entry after it shows otherwise.
                     Some("dequeue") if !self.queue.is_empty() => {
-                        self.queue.remove(0);
+                        self.dequeued = Some(self.queue.remove(0));
                     }
                     // `↑` in the TUI takes what can be edited back into the input box, one record
                     // per item (2.1.318); one without its text took all of it.
@@ -2065,6 +2115,73 @@ mod tests {
         assert_eq!(texts, ["after the move", "sub after"], "{after:?}");
         assert_eq!(t.main_path(), moved);
         assert_eq!(t.pending().len(), 1);
+    }
+
+    /// A Poll takes the harness event it waits for, not the oldest queued one (14:01:20 of a real
+    /// Session: `dequeue` took the newer event, the older was `remove`d after): the Poll result
+    /// shows which one left, so the queue ends empty rather than keeping the newer one for good.
+    /// A dequeued prompt is the oldest, as before.
+    #[test]
+    fn a_dequeue_is_settled_by_the_entry_that_carries_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("s.jsonl");
+        let op = |op: &str, content: Option<&str>| {
+            let mut v = json!({"type": "queue-operation", "operation": op});
+            if let Some(c) = content {
+                v["content"] = json!(c);
+            }
+            v
+        };
+        let event = |nonce: &str, eval: u32| {
+            format!(
+                "<event nonce=\"{nonce}\" kind=\"repl-eval\" eval=\"{eval}\" status=\"settled\">\n<result>ok {eval}</result>\n</event>"
+            )
+        };
+        let (older, newer) = (event("dl4j1wAU", 55), event("QQNj8dxd", 56));
+        let poll_result = json!({"type": "user", "uuid": "u2", "parentUuid": "a1",
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_poll",
+                "content": format!("<system>authentic event nonces for this delivery: QQNj8dxd</system>\n{newer}")}]}});
+        write_lines(
+            &main,
+            &[
+                op("enqueue", Some(&older)),
+                op("enqueue", Some(&newer)),
+                op("dequeue", None),
+                // Written before the Poll result that carries what left (entries are not in order).
+                json!({"type": "user", "uuid": "u1", "parentUuid": "a0",
+                    "message": {"role": "user", "content": [{"type": "tool_result",
+                        "tool_use_id": "toolu_repl", "content": "(dispatched #57)"}]}}),
+                poll_result,
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        t.poll();
+        assert_eq!(t.queue(), std::slice::from_ref(&older));
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&main)
+            .unwrap();
+        std::io::Write::write_all(
+            &mut f,
+            format!("{}\n", op("remove", Some(&older))).as_bytes(),
+        )
+        .unwrap();
+        t.poll();
+        assert!(t.queue().is_empty(), "{:?}", t.queue());
+
+        let main = dir.path().join("p.jsonl");
+        write_lines(
+            &main,
+            &[
+                op("enqueue", Some("first")),
+                op("enqueue", Some("second")),
+                op("dequeue", None),
+                prompt("u1", None, "first", 1),
+            ],
+        );
+        let mut t = Tailer::new(&main);
+        t.poll();
+        assert_eq!(t.queue(), ["second"]);
     }
 
     /// A main file that shrank was replaced: nothing read from the old one is kept (queue,
