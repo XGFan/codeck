@@ -1238,6 +1238,21 @@ mod tests {
         assert!(
             matches!(tasks_panel(&details), Some(TasksPanel::Details(t)) if t.contains("sleep 25"))
         );
+        // 2.1.327: a Monitor's details start below the panel's top edge, without a title; the
+        // conversation above the edge is not part of them.
+        let monitor = lines(&[
+            "⏺ Shown in the details",
+            "▔▔▔▔▔▔▔▔▔▔",
+            "  probe events",
+            "  monitor",
+            "",
+            "  Status:   running",
+            "  Script:   sleep 3; echo ping; sleep 300",
+            "",
+            "  ← to go back · x to stop · Enter/Space to close · Esc to close",
+        ]);
+        assert!(matches!(tasks_panel(&monitor), Some(TasksPanel::Details(t))
+                if t.starts_with("  probe events") && t.contains("Status:   running")));
         // Nothing left to stop: still the panel (to be closed).
         let done = lines(&[
             "   Background",
@@ -2128,10 +2143,20 @@ pub fn tasks_panel(lines: &[String]) -> Option<TasksPanel> {
             .collect();
         return Some(TasksPanel::List(rows));
     }
-    let title = lines[..hint]
+    // The panel's top edge (`▔▔▔…`): what is above it is the conversation.
+    let edge = lines[..hint].iter().rposition(|l| {
+        let t = l.trim();
+        !t.is_empty() && t.chars().all(|c| c == '▔')
+    });
+    let from = edge.map_or(0, |e| e + 1);
+    let title = lines[from..hint]
         .iter()
-        .rposition(|l| l.trim().ends_with("details"))?;
-    Some(TasksPanel::Details(lines[title..hint].join("\n")))
+        .rposition(|l| l.trim().ends_with("details"))
+        .map(|i| from + i);
+    // 2.1.327: a Monitor's details have no title line; they start below the edge (its
+    // description, then `monitor`).
+    let start = title.or(edge.map(|e| e + 1))?;
+    Some(TasksPanel::Details(lines[start..hint].join("\n")))
 }
 
 /// A panel row's text without its leading status glyphs (`⏺`, `◯`, `✔`, …), whitespace collapsed.
