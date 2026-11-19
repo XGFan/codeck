@@ -118,13 +118,10 @@ test("⌘↵ 把 Project 设为搜索范围，三段都只在其中；输入为�
   await expect(sessions(page).filter({ hasText: "优化首页首屏加载" })).toHaveCount(1);
 });
 
-test("点「只搜这个 Project」后焦点仍在输入框，可以直接打字", async ({ page }) => {
+test("点 Project 范围的 × 后焦点仍在输入框，可以直接打字", async ({ page }) => {
   await openSearch(page);
   await input(page).fill("lumen");
-  await page
-    .getByTestId("search-project")
-    .getByRole("button", { name: /只搜这个 Project/ })
-    .click();
+  await page.keyboard.press("Meta+Enter");
   await expect(page.getByTestId("search-scope")).toContainText("lumen-api");
   await page.keyboard.type("zod");
   await expect(input(page)).toHaveValue("zod");

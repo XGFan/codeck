@@ -41,17 +41,7 @@ export function Kbd({ children }: { children: ReactNode }) {
   );
 }
 
-export function ProjectItem({
-  p,
-  terms,
-  onFilter,
-  onScope,
-}: {
-  p: ProjectSummary;
-  terms: string[];
-  onFilter: () => void;
-  onScope: () => void;
-}) {
+export function ProjectItem({ p, terms, onFilter }: { p: ProjectSummary; terms: string[]; onFilter: () => void }) {
   return (
     <Command.Item value={`p:${p.id}`} onSelect={onFilter} data-testid="search-project" className={cn(ITEM, "py-2")}>
       <Folder
@@ -66,22 +56,6 @@ export function ProjectItem({
       <span className="min-w-0 flex-1 truncate text-[12px] text-secondary">
         <Marked text={p.path} terms={terms} /> · {p.missing ? "已不存在 · " : ""}
         {p.sessionCount} 个 Session
-      </span>
-      <span className="hidden shrink-0 gap-1.5 group-data-[selected=true]:flex">
-        <button type="button" className="flex h-6 items-center gap-1 rounded-md bg-accent px-2 text-[12px] text-white">
-          <Kbd>↵</Kbd> 筛选 Session 列表
-        </button>
-        <button
-          type="button"
-          onMouseDown={keepFocus}
-          onClick={(e) => {
-            e.stopPropagation();
-            onScope();
-          }}
-          className="flex h-6 items-center gap-1 rounded-md border border-accent-border bg-ground px-2 text-[12px] text-accent"
-        >
-          <Kbd>⌘↵</Kbd> 只搜这个 Project
-        </button>
       </span>
     </Command.Item>
   );

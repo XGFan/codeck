@@ -294,13 +294,7 @@ export function SearchOverlay() {
             {projectHits.length > 0 && (
               <Command.Group heading={<div className={SECTION}>Project</div>}>
                 {projectHits.map((p) => (
-                  <ProjectItem
-                    key={p.id}
-                    p={p}
-                    terms={parsed.include}
-                    onFilter={() => filterProject(p.id)}
-                    onScope={() => scopeTo(p.id)}
-                  />
+                  <ProjectItem key={p.id} p={p} terms={parsed.include} onFilter={() => filterProject(p.id)} />
                 ))}
               </Command.Group>
             )}
