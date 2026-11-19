@@ -250,6 +250,15 @@ test("Code Mode：「执行代码」一张卡片，代码里调用的工具收�
   await refused.getByRole("button").first().click();
   await expect(refused.getByTestId("code-outcome")).toContainText("doesn't want to proceed");
 
+  // A question the code asked: its 「向你提问」 card among the calls, the answer marked.
+  const asked = repl("问要跑哪些基准");
+  await reveal(page, asked);
+  await asked.getByRole("button").first().click();
+  const ask = asked.getByTestId("code-calls").getByTestId("ask");
+  await expect(ask).toContainText("跑哪些基准？");
+  await expect(ask.getByTestId("ask-status")).toContainText("已回答");
+  await expect(ask.locator("[data-chosen]")).toHaveText(/只跑 retry/);
+
   // Still running: nothing sent back yet.
   const running = repl("跑重试路径的基准测试");
   await reveal(page, running);

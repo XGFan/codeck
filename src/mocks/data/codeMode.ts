@@ -39,6 +39,16 @@ function repl(
   );
 }
 
+const benchQuestion = {
+  question: "跑哪些基准？",
+  header: "基准",
+  multiSelect: false,
+  options: [
+    { label: "只跑 retry", description: "重试路径" },
+    { label: "全部", description: "约 20 分钟" },
+  ],
+};
+
 const ok = (text: string, durationMs: number, log = ""): CodeOutcome => ({
   isError: false,
   text,
@@ -163,6 +173,27 @@ export function codeModeNodes(start: number): Node[] {
       text("已完成：两处重试上限都改成 5，重试测试通过；clippy 在 `ratelimit.rs` 报了 1 个错。"),
     ]),
     userNode("cm-u1", at(3), "跑一下重试路径的基准测试。"),
+    // A question asked from the code: its call is among the code's, its answer in `toolUseResult`.
+    asstNode("cm-a6", at(3.02), [
+      repl(
+        "cm-r6",
+        6,
+        "问要跑哪些基准",
+        "await tools.AskUserQuestion({ questions: [{ question: '跑哪些基准？', header: '基准', options: [...] }] })",
+        [
+          inner(
+            "cm-v9",
+            "AskUserQuestion",
+            { questions: [benchQuestion] },
+            {
+              text: "",
+              extraJson: JSON.stringify({ questions: [benchQuestion], answers: { "跑哪些基准？": "只跑 retry" } }),
+            },
+          ),
+        ],
+        ok("{ answers: { '跑哪些基准？': '只跑 retry' } }", 41_000),
+      ),
+    ]),
     // Rejected: the call failed and no code ran.
     asstNode("cm-a5", at(3.05), [
       call(

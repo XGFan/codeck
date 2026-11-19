@@ -1,5 +1,5 @@
 import { Check, MessageCircleQuestionMark } from "lucide-react";
-import type { Node } from "@/ipc/bindings";
+import type { Node, ToolCall } from "@/ipc/bindings";
 import { useState } from "react";
 import { hasPreview, OptionPreview, QuestionForm, useQuestionRequest } from "@/features/connect";
 import { cn } from "@/lib/cn";
@@ -43,6 +43,17 @@ export function clarifyAnswers(text: string): AskResult {
 
 /** AskUserQuestion: one card with every question and option; the user's picks are marked in place. */
 export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; role: RoleInfo | null }) {
+  return (
+    <AssistantSegment role={role}>
+      <Anchor nodeId={node.id} toolUseId={call.toolUseId} className="w-full">
+        <AskCard call={call} />
+      </Anchor>
+    </AssistantSegment>
+  );
+}
+
+/** The 「向你提问」 card of an AskUserQuestion call: on its own row, or among the calls Claude's code made. */
+export function AskCard({ call }: { call: ToolCall }) {
   const result = call.result;
   // "Chat about this" is recorded as a rejection, but it is the user's choice, not a failure.
   const clarify = result?.isError === true && result.text.includes(CLARIFY);
@@ -60,51 +71,47 @@ export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; 
   const pending = useQuestionRequest(call.toolUseId);
   const answering = !result && pending;
   return (
-    <AssistantSegment role={role}>
-      <Anchor nodeId={node.id} toolUseId={call.toolUseId} className="w-full">
-        <div
-          data-testid="ask"
-          data-failed={failed || undefined}
-          data-answering={answering ? "" : undefined}
-          className={cn(
-            "w-full overflow-hidden rounded-lg border",
-            failed ? "border-error/30" : answering ? "border-live-waiting/60 shadow-sm" : "border-border",
-          )}
+    <div
+      data-testid="ask"
+      data-failed={failed || undefined}
+      data-answering={answering ? "" : undefined}
+      className={cn(
+        "w-full overflow-hidden rounded-lg border",
+        failed ? "border-error/30" : answering ? "border-live-waiting/60 shadow-sm" : "border-border",
+      )}
+    >
+      <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
+        <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
+        <span className="font-semibold">向你提问</span>
+        {questions.length > 1 && <span className="text-secondary">{questions.length} 个问题</span>}
+        <span
+          data-testid="ask-status"
+          className={cn("ml-auto", failed ? "text-error" : answering ? "text-live-waiting" : "text-secondary")}
         >
-          <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
-            <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
-            <span className="font-semibold">向你提问</span>
-            {questions.length > 1 && <span className="text-secondary">{questions.length} 个问题</span>}
-            <span
-              data-testid="ask-status"
-              className={cn("ml-auto", failed ? "text-error" : answering ? "text-live-waiting" : "text-secondary")}
-            >
-              {status}
-            </span>
-          </div>
-          <div className="flex flex-col gap-3 bg-ground px-3 py-2.5">
-            {answering ? (
-              <QuestionForm r={answering.r} c={answering.c} />
-            ) : (
-              questions.map((q, i) => (
-                <QuestionView
-                  key={`${i}|${q.question}`}
-                  q={q}
-                  answer={answers[q.question]}
-                  note={notes[q.question]?.notes}
-                />
-              ))
-            )}
-            {fallback && <div className="text-[12px] whitespace-pre-wrap text-secondary">{fallback}</div>}
-          </div>
-          {failed && (
-            <div className="border-t border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">
-              {result.text}
-            </div>
-          )}
+          {status}
+        </span>
+      </div>
+      <div className="flex flex-col gap-3 bg-ground px-3 py-2.5">
+        {answering ? (
+          <QuestionForm r={answering.r} c={answering.c} />
+        ) : (
+          questions.map((q, i) => (
+            <QuestionView
+              key={`${i}|${q.question}`}
+              q={q}
+              answer={answers[q.question]}
+              note={notes[q.question]?.notes}
+            />
+          ))
+        )}
+        {fallback && <div className="text-[12px] whitespace-pre-wrap text-secondary">{fallback}</div>}
+      </div>
+      {failed && (
+        <div className="border-t border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">
+          {result.text}
         </div>
-      </Anchor>
-    </AssistantSegment>
+      )}
+    </div>
   );
 }
 
