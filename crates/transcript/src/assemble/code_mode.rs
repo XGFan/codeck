@@ -265,6 +265,10 @@ pub fn collect(sk: &SessionSkeleton, files: &[LoadedFile], order: &[usize]) -> C
             .find(|(t, _)| t == id)
             .map(|(_, n)| n.as_str())
     };
+    let mut in_order = vec![false; sk.nodes.len()];
+    for &i in order {
+        in_order[i] = true;
+    }
     // eval number → the latest `REPL` call (so far along the path) that was given it.
     let mut eval_owner: HashMap<u32, String> = HashMap::new();
     let mut current: Option<String> = None;
@@ -278,6 +282,17 @@ pub fn collect(sk: &SessionSkeleton, files: &[LoadedFile], order: &[usize]) -> C
                 }
             }
             EntryKind::Assistant => {
+                // A `REPL` call's result can hang off the call, beside the `Poll` made with it, whose
+                // result (on the path) carries the outcome: read it here so its eval number is known.
+                for (id, _) in n.tool_uses.iter().filter(|(_, t)| t == REPL) {
+                    let rs = sk.results_for.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                    if !rs.iter().any(|&r| in_order[r])
+                        && let Some(&r) = rs.first()
+                    {
+                        let e = sk.entry(files, r);
+                        take_result(&mut runs, &mut current, &mut eval_owner, e, id, REPL);
+                    }
+                }
                 if let Some((id, _)) = n.tool_uses.iter().rev().find(|(_, t)| t == REPL) {
                     current = Some(id.clone());
                 }
@@ -286,23 +301,9 @@ pub fn collect(sk: &SessionSkeleton, files: &[LoadedFile], order: &[usize]) -> C
                 let e = sk.entry(files, i);
                 for id in &n.tool_results {
                     let Some(name) = tool_name(id) else { continue };
-                    if name != REPL && name != POLL {
-                        continue;
+                    if name == REPL || name == POLL {
+                        take_result(&mut runs, &mut current, &mut eval_owner, e, id, name);
                     }
-                    let Some(block) = e
-                        .blocks()
-                        .iter()
-                        .find(|b| b.tool_use_id.as_deref() == Some(id))
-                    else {
-                        continue;
-                    };
-                    let (text, _) = result_content(block.content.as_deref());
-                    if name == REPL
-                        && let Some(n) = eval_number(e, &text)
-                    {
-                        eval_owner.insert(n, id.clone());
-                    }
-                    deliver(&mut runs, &mut current, &eval_owner, parse_events(&text));
                 }
             }
             EntryKind::Attachment => {
@@ -325,6 +326,32 @@ pub fn collect(sk: &SessionSkeleton, files: &[LoadedFile], order: &[usize]) -> C
         }
     }
     runs
+}
+
+/// A `REPL` or `Poll` result (tool_use `id` in entry `e`): a `REPL` result names its eval number;
+/// either may deliver outcomes.
+fn take_result(
+    runs: &mut CodeRuns,
+    current: &mut Option<String>,
+    eval_owner: &mut HashMap<u32, String>,
+    e: &RawEntry,
+    id: &str,
+    name: &str,
+) {
+    let Some(block) = e
+        .blocks()
+        .iter()
+        .find(|b| b.tool_use_id.as_deref() == Some(id))
+    else {
+        return;
+    };
+    let (text, _) = result_content(block.content.as_deref());
+    if name == REPL
+        && let Some(n) = eval_number(e, &text)
+    {
+        eval_owner.insert(n, id.to_owned());
+    }
+    deliver(runs, current, eval_owner, parse_events(&text));
 }
 
 fn deliver(

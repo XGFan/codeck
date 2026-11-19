@@ -1833,6 +1833,38 @@ fn code_mode_outputs_are_found_and_jumped_to() {
     );
 }
 
+/// The `REPL` result can hang off the call instead of lying on the path: the `Poll` made with it and
+/// its result (carrying the outcome) are on the path, the virtual entries after them (claude 2.1.327,
+/// `tools.AskUserQuestion`). The outcome is still the code's.
+#[test]
+fn code_mode_outcome_found_when_the_repl_result_is_off_the_path() {
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"ask me"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"await tools.AskUserQuestion({})"}}]}}"#,
+        r#"{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"p1","name":"Poll","input":{}}]}}"#,
+        r#"{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"(dispatched #48)"}]},"toolUseResult":{"evalId":48,"asyncDispatched":true}}"#,
+        r#"{"type":"user","uuid":"u3","parentUuid":"a2","timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"p1","content":"<event kind=\"repl-eval\" eval=\"48\" ms=\"97120\" status=\"settled\">\n<result>{ answers: {} }</result>\n</event>"}]}}"#,
+        r#"{"type":"assistant","uuid":"v1","parentUuid":"u3","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{"id":"mv","model":"<synthetic>","content":[{"type":"tool_use","id":"repl_q","name":"AskUserQuestion","input":{"questions":[]}}]}}"#,
+        r#"{"type":"user","uuid":"v2","parentUuid":"v1","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"repl_q","content":""}]},"toolUseResult":{"questions":[],"answers":{}}}"#,
+        r#"{"type":"assistant","uuid":"a3","parentUuid":"v2","timestamp":"2026-01-01T00:01:05Z","message":{"id":"m2","model":"x","content":[{"type":"text","text":"thanks"}]}}"#,
+    ]);
+    let s = assemble(
+        "s",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    let t = main_t(&s, false);
+    let run = code_of(&t, "r1");
+    assert_eq!(run.calls.len(), 1);
+    assert_eq!(run.calls[0].name, "AskUserQuestion");
+    let o = run.outcome.as_ref().expect("outcome");
+    assert_eq!(
+        (o.text.as_str(), o.duration_ms),
+        ("{ answers: {} }", Some(97120.0))
+    );
+}
+
 #[test]
 fn code_mode_call_that_failed_itself_has_its_error_as_outcome() {
     let f = from_lines(&[
