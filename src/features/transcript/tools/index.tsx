@@ -12,7 +12,6 @@ import {
 import { parseJson } from "../util";
 import { useToolCtx } from "./data";
 import { CodeRunView } from "./code";
-import { AskCard } from "../nodes/Ask";
 
 export { ImageMarker, ImageRefs, ImageThumb, PendingText, verbOf } from "./parts";
 export { requestFullOutput } from "./data";
@@ -61,18 +60,8 @@ export function ToolCallView({ nodeId, call, startMs, sessionId, scope }: ToolCa
       return <TaskView {...p} />;
     case "SendMessage":
       return <SendMessageView {...p} />;
-    // Only among the calls Claude's code made: a call of the model's own has a row of its own (`AskRow`).
-    case "AskUserQuestion":
-      return <AskCard call={call} />;
     case "REPL":
-      return (
-        <CodeRunView
-          {...p}
-          renderCall={(c) => (
-            <ToolCallView nodeId={nodeId} call={c} startMs={null} sessionId={sessionId} scope={scope} />
-          )}
-        />
-      );
+      return <CodeRunView {...p} />;
     case "Grep":
     case "Glob":
     case "WebFetch":

@@ -63,7 +63,7 @@ export function RowView({ row }: { row: Row }) {
         </AssistantSegment>
       );
     case "ask":
-      return <AskRow node={row.node} call={row.call} role={row.role} />;
+      return <AskRow node={row.node} call={row.call} code={row.code} role={row.role} />;
     case "compact":
       return <CompactRow boundary={row.boundary} summary={row.summary} />;
     case "apiRetry":

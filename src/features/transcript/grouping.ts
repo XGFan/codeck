@@ -18,8 +18,8 @@ import { parseJson } from "./util";
 
 export type ToolCallBlock = Extract<AssistantBlock, { kind: "toolCall" }>;
 
-/** The calls a call stands for: Claude's code (Code Mode's `REPL`) for the calls it made, any other call for itself. */
-export const callsOf = (c: ToolCall): ToolCall[] => (c.code ? c.code.calls : [c]);
+/** The calls a call stands for: itself; Claude's code (Code Mode's `REPL`) none, the calls it made have rows of their own. */
+export const callsOf = (c: ToolCall): ToolCall[] => (c.code ? [] : [c]);
 type Body<K extends Node["body"]["kind"]> = Extract<Node["body"], { kind: K }>;
 
 /** Role line ("Claude · 10:42") shown on the first row of an assistant run. */
@@ -81,7 +81,8 @@ export type Row = RowBase &
     | ({ kind: "subagent"; role: RoleInfo | null } & AgentCardData)
     | { kind: "parallel"; node: Node; cards: AgentCardData[]; role: RoleInfo | null }
     | { kind: "workflow"; node: Node; call: ToolCallBlock; run: WorkflowRun; role: RoleInfo | null }
-    | { kind: "ask"; node: Node; call: ToolCallBlock; role: RoleInfo | null }
+    /** `code`: the code that asked (Code Mode), when it did nothing else: it has no row of its own. */
+    | { kind: "ask"; node: Node; call: ToolCallBlock; code?: ToolCallBlock; role: RoleInfo | null }
     | { kind: "unknownBlock"; node: Node; blockType: string; rawJson: string; role: RoleInfo | null }
     | { kind: "compact"; boundary: Node; summary: Node | null }
     /** Consecutive API retries Claude Code wrote (`system/api_error`); `recovered` when Claude went on after them. */
@@ -125,8 +126,6 @@ export interface Grouping {
   groupOf: Map<string, string>;
   /** `toolUseId` → node id of the assistant message holding the call (a call Claude's code made: its `REPL` call's). */
   toolNode: Map<string, string>;
-  /** Code Mode: `toolUseId` of a call Claude's code made → `toolUseId` of its `REPL` call (shown inside that card). */
-  codeOf: Map<string, string>;
   /** Tool calls rendered as Subagent / Workflow cards (they have no `tool:` expansion). */
   cardCalls: Set<string>;
   /** Fork-inherited node ids. */
@@ -163,13 +162,9 @@ export function buildRows(input: GroupingInput): Grouping {
   const index = new Map<string, number>();
   const groupOf = new Map<string, string>();
   const toolNode = new Map<string, string>();
-  const codeOf = new Map<string, string>();
   const noteCall = (call: ToolCallBlock, nodeId: string) => {
     toolNode.set(call.toolUseId, nodeId);
-    for (const c of call.code?.calls ?? []) {
-      toolNode.set(c.toolUseId, nodeId);
-      codeOf.set(c.toolUseId, call.toolUseId);
-    }
+    for (const c of call.code?.calls ?? []) toolNode.set(c.toolUseId, nodeId);
   };
   const cardCalls = new Set<string>();
   const compactKeyOf = new Map<string, string>();
@@ -298,9 +293,9 @@ export function buildRows(input: GroupingInput): Grouping {
       inRun = true;
       pendingRole = { node, branch, retries: retriesBefore.get(node.id) };
     }
-    const blocks = body.blocks;
-    for (let i = 0; i < blocks.length; i++) {
-      const b = blocks[i]!;
+    const flat = flatBlocks(body.blocks);
+    for (let p = 0; p < flat.length; p++) {
+      const { b, i, code } = flat[p]!;
       if (b.kind === "toolCall") noteCall(b, node.id);
       switch (b.kind) {
         case "text":
@@ -335,9 +330,9 @@ export function buildRows(input: GroupingInput): Grouping {
           if (run) {
             // Consecutive Agent calls of one assistant message ran in parallel.
             const cards: AgentCardData[] = [{ node, call: b, run }];
-            let j = i + 1;
-            for (; j < blocks.length; j++) {
-              const nb = blocks[j]!;
+            let j = p + 1;
+            for (; j < flat.length; j++) {
+              const nb = flat[j]!.b;
               if (nb.kind === "text" && !nb.text.trim()) continue;
               if (nb.kind === "thinking" && !nb.text.trim()) continue;
               if (nb.kind !== "toolCall") break;
@@ -346,7 +341,7 @@ export function buildRows(input: GroupingInput): Grouping {
               toolNode.set(nb.toolUseId, node.id);
               cards.push({ node, call: nb, run: nr });
             }
-            i = j - 1;
+            p = j - 1;
             flushGroup();
             for (const c of cards) cardCalls.add(c.call.toolUseId);
             const anchors = cards.map((c): [string, string] => [node.id, c.call.toolUseId]);
@@ -371,9 +366,12 @@ export function buildRows(input: GroupingInput): Grouping {
             // Shown on its own as the question and the user's answer, never folded into a tool group.
             flushGroup();
             cardCalls.add(b.toolUseId);
-            push({ kind: "ask", key: `${node.id}|${b.toolUseId}`, turn, node, call: b, role: takeRole() }, [
-              [node.id, b.toolUseId],
-            ]);
+            const anchors: Array<[string, string]> = [[node.id, b.toolUseId]];
+            if (code) anchors.push([node.id, code.toolUseId]);
+            push(
+              { kind: "ask", key: `${node.id}|${b.toolUseId}`, turn, node, call: b, code, role: takeRole() },
+              anchors,
+            );
           } else if (group) {
             group.items.push(...heldThinking, { type: "call", node, call: b });
             heldThinking = [];
@@ -482,7 +480,7 @@ export function buildRows(input: GroupingInput): Grouping {
     push({ kind: "finalResult", key: `final:${agent.agentId}`, turn, run: agent, text: agent.finalText });
 
   const liveFold = markAnswers(rows);
-  return { rows, index, groupOf, toolNode, codeOf, cardCalls, inheritedIds, compactKeyOf, liveFold };
+  return { rows, index, groupOf, toolNode, cardCalls, inheritedIds, compactKeyOf, liveFold };
 }
 
 // Work in a turn; the text after the last of it is the turn's answer (a system line after the answer is not work).
@@ -539,7 +537,8 @@ const SEARCH_TOOLS = new Set(["Grep", "Glob", "WebSearch", "WebFetch", "ToolSear
  * and what it touched: file names, commands, patterns.
  */
 export function describeCalls(given: ToolCall[]): { text: string; targets: string[] } {
-  const runs = given.filter((c) => c.code).length;
+  // Claude's code by the calls it made (rows of their own); code that called nothing as 「执行 N 段代码」.
+  const runs = given.filter((c) => c.code && c.code.calls.length === 0).length;
   const calls = given.flatMap(callsOf);
   let read = 0;
   let commands = 0;
@@ -586,6 +585,22 @@ export function describeCalls(given: ToolCall[]): { text: string; targets: strin
 
 const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 const baseName = (p: string | null) => (p ? (p.split("/").pop() ?? p) : null);
+
+/**
+ * The blocks of an assistant message with Claude's code (Code Mode's `REPL`) followed by the calls it made, each a
+ * call of its own (its question and Subagent cards, its place in a tool group); `i` is the block's index in the
+ * message (a call the code made: its code's). Code that only asked questions (and did not throw) is left out: its
+ * question cards carry it (`code`).
+ */
+function flatBlocks(blocks: AssistantBlock[]): Array<{ b: AssistantBlock; i: number; code?: ToolCallBlock }> {
+  return blocks.flatMap((b, i) => {
+    if (b.kind !== "toolCall" || !b.code) return [{ b, i }];
+    const calls = b.code.calls.map((c): ToolCallBlock => ({ ...c, kind: "toolCall" }));
+    const asksOnly =
+      calls.length > 0 && calls.every((c) => c.name === "AskUserQuestion") && b.code.outcome?.isError !== true;
+    return [...(asksOnly ? [] : [{ b, i }]), ...calls.map((c) => ({ b: c, i, code: asksOnly ? b : undefined }))];
+  });
+}
 
 /** Linked Subagent Run of an Agent/Task call (calls without a resolvable run render as plain tool calls). */
 function agentRun(b: AssistantBlock, runs: Map<string, SubagentRun>): SubagentRun | undefined {
@@ -658,11 +673,8 @@ export function locate(
     expand.push(thinkingKey(nodeId));
   }
   if (toolUseId) {
-    // A call Claude's code made opens inside its `REPL` card: that card (and its group) opens too.
-    const code = grouping.codeOf.get(toolUseId);
-    const g = grouping.groupOf.get(anchorKey(nodeId, code ?? toolUseId));
+    const g = grouping.groupOf.get(anchorKey(nodeId, toolUseId));
     if (g) expand.push(g);
-    if (code) expand.push(toolKey(nodeId, code));
     if (!grouping.cardCalls.has(toolUseId)) expand.push(toolKey(nodeId, toolUseId));
   }
   return { expand };
@@ -679,8 +691,7 @@ export function isGroupOpen(row: Extract<Row, { kind: "group" }>, expanded: Reco
   );
 }
 
-/** Row index for a node / call, preferring the exact call row (a call Claude's code made: its `REPL` call's row). */
+/** Row index for a node / call, preferring the exact call row. */
 export function rowIndexOf(grouping: Grouping, nodeId: string, toolUseId?: string | null): number | undefined {
-  const call = toolUseId ? (grouping.codeOf.get(toolUseId) ?? toolUseId) : null;
-  return (call ? grouping.index.get(anchorKey(nodeId, call)) : undefined) ?? grouping.index.get(nodeId);
+  return (toolUseId ? grouping.index.get(anchorKey(nodeId, toolUseId)) : undefined) ?? grouping.index.get(nodeId);
 }

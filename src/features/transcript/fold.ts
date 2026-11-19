@@ -12,7 +12,7 @@ const rowTime = (r: Row | undefined): number | null => {
   return "node" in r ? (r.node.timestampMs ?? null) : null;
 };
 
-/** Tool calls a run of rows holds (Subagent / Workflow / question cards count as calls; Claude's code, the calls it made). */
+/** Tool calls a run of rows holds (Subagent / Workflow / question cards count as calls; Claude's code does not, the calls it made do). */
 function callCount(rows: Row[]): number {
   let n = 0;
   for (const r of rows) {

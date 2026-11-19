@@ -1,8 +1,11 @@
-import { Check, MessageCircleQuestionMark } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CodeXml, MessageCircleQuestionMark } from "lucide-react";
 import type { Node, ToolCall } from "@/ipc/bindings";
 import { useState } from "react";
 import { hasPreview, OptionPreview, QuestionForm, useQuestionRequest } from "@/features/connect";
 import { cn } from "@/lib/cn";
+import { useUi } from "@/state/ui";
+import { toolKey } from "../keys";
+import { CodeBlock } from "../tools/code";
 import type { RoleInfo, ToolCallBlock } from "../grouping";
 import { clock, parseJson } from "../util";
 import { Anchor } from "./Anchor";
@@ -20,6 +23,8 @@ interface AskResult {
   answers?: Record<string, string>;
   annotations?: Record<string, { notes?: string }>;
 }
+
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 const CLARIFY = "The user wants to clarify these questions.";
 
@@ -42,18 +47,33 @@ export function clarifyAnswers(text: string): AskResult {
 }
 
 /** AskUserQuestion: one card with every question and option; the user's picks are marked in place. */
-export function AskRow({ node, call, role }: { node: Node; call: ToolCallBlock; role: RoleInfo | null }) {
+export function AskRow({
+  node,
+  call,
+  code,
+  role,
+}: {
+  node: Node;
+  call: ToolCallBlock;
+  code?: ToolCallBlock;
+  role: RoleInfo | null;
+}) {
   return (
     <AssistantSegment role={role}>
       <Anchor nodeId={node.id} toolUseId={call.toolUseId} className="w-full">
-        <AskCard call={call} />
+        <AskCard call={call} code={code ? { nodeId: node.id, call: code } : undefined} />
       </Anchor>
     </AssistantSegment>
   );
 }
 
-/** The 「向你提问」 card of an AskUserQuestion call: on its own row, or among the calls Claude's code made. */
-export function AskCard({ call }: { call: ToolCall }) {
+/**
+ * The 「向你提问」 card of an AskUserQuestion call. `code`: Claude's code that asked and did nothing else (Code Mode),
+ * opened from the header (its `tool:` key, as its own line would be); its return value is the answers, not shown.
+ */
+export function AskCard({ call, code }: { call: ToolCall; code?: { nodeId: string; call: ToolCall } }) {
+  const codeKey = code ? toolKey(code.nodeId, code.call.toolUseId) : "";
+  const codeOpen = useUi((s) => !!code && (s.expanded[codeKey] ?? false));
   const result = call.result;
   // "Chat about this" is recorded as a rejection, but it is the user's choice, not a failure.
   const clarify = result?.isError === true && result.text.includes(CLARIFY);
@@ -84,6 +104,23 @@ export function AskCard({ call }: { call: ToolCall }) {
         <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
         <span className="font-semibold">向你提问</span>
         {questions.length > 1 && <span className="text-secondary">{questions.length} 个问题</span>}
+        {code && (
+          <button
+            type="button"
+            aria-expanded={codeOpen}
+            onClick={() => useUi.getState().setExpanded(codeKey, !codeOpen)}
+            data-testid="ask-code"
+            className="flex items-center gap-1 rounded px-1 text-[11px] text-secondary hover:text-text"
+          >
+            <CodeXml size={12} strokeWidth={1.6} aria-hidden />
+            代码
+            {codeOpen ? (
+              <ChevronDown size={11} strokeWidth={1.8} aria-hidden />
+            ) : (
+              <ChevronRight size={11} strokeWidth={1.8} aria-hidden />
+            )}
+          </button>
+        )}
         <span
           data-testid="ask-status"
           className={cn("ml-auto", failed ? "text-error" : answering ? "text-live-waiting" : "text-secondary")}
@@ -106,6 +143,11 @@ export function AskCard({ call }: { call: ToolCall }) {
         )}
         {fallback && <div className="text-[12px] whitespace-pre-wrap text-secondary">{fallback}</div>}
       </div>
+      {code && codeOpen && (
+        <div className="border-t border-border bg-ground">
+          <CodeBlock code={str(parseJson<{ code?: unknown }>(code.call.inputJson)?.code)} />
+        </div>
+      )}
       {failed && (
         <div className="border-t border-error/30 bg-error-bg px-3 py-1.5 text-[12px] whitespace-pre-wrap text-error">
           {result.text}

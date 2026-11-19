@@ -55,12 +55,15 @@ export function Shell({
   status,
   failed,
   durationMs,
+  quiet,
   children,
 }: {
   nodeId: string;
   call: ToolCall;
   startMs: number | null;
   icon: ReactNode;
+  /** A light, smaller line without the verb (Claude's code among the calls it made). */
+  quiet?: boolean;
   /** Label for a tool without a verb of its own (MCP tools and the like). */
   name?: string;
   summary: ReactNode;
@@ -95,12 +98,17 @@ export function Shell({
         // A link in the summary opens itself (the opener plugin takes `_blank` links) instead of toggling.
         onClick={(e) => (e.target as Element).closest("a[href]") || toggle(key)}
         className={cn(
-          "group/tool flex min-h-7 w-full items-center gap-2 rounded-md text-left text-[13px]",
-          failed ? "text-error" : "text-secondary hover:text-text",
+          "group/tool flex w-full items-center gap-2 rounded-md text-left",
+          quiet ? "min-h-[22px] text-[12px]" : "min-h-7 text-[13px]",
+          failed ? "text-error" : quiet ? "text-secondary/90 hover:text-text" : "text-secondary hover:text-text",
         )}
       >
-        <span className="flex shrink-0 items-center [&>svg]:size-[14px]">{icon}</span>
-        <span className={cn("shrink-0", failed ? "" : "text-text/90")}>{VERB[call.name] ?? name ?? call.name}</span>
+        <span className={cn("flex shrink-0 items-center", quiet ? "[&>svg]:size-[13px]" : "[&>svg]:size-[14px]")}>
+          {icon}
+        </span>
+        {!quiet && (
+          <span className={cn("shrink-0", failed ? "" : "text-text/90")}>{VERB[call.name] ?? name ?? call.name}</span>
+        )}
         <span className="flex min-w-0 flex-1 items-center gap-2">{summary}</span>
         {status ??
           (result == null ? (
