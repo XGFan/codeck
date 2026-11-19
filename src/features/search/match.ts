@@ -66,11 +66,20 @@ export function matchSessions(
   return scored.sort((a, b) => b.score - a.score).map((x) => x.s);
 }
 
-/** Projects matching on the name or path, most recently active first. */
+/**
+ * Projects matching on the name or path. A name equal to the query comes first, then names with more
+ * terms (a path-only match last); ties go most recently active first.
+ */
 export function matchProjects(projects: ProjectSummary[], q: ParsedQuery): ProjectSummary[] {
-  return projects
-    .filter((p) => matches([p.displayName.toLowerCase(), p.path.toLowerCase()], q))
-    .sort((a, b) => b.lastActiveMs - a.lastActiveMs);
+  const query = q.include.join(" ");
+  const scored: { p: ProjectSummary; score: number }[] = [];
+  for (const p of projects) {
+    const name = p.displayName.toLowerCase();
+    if (!matches([name, p.path.toLowerCase()], q)) continue;
+    const inName = q.include.filter((t) => name.includes(t)).length;
+    scored.push({ p, score: name === query ? q.include.length + 1 : inName });
+  }
+  return scored.sort((a, b) => b.score - a.score || b.p.lastActiveMs - a.p.lastActiveMs).map((x) => x.p);
 }
 
 /** `text` split into runs, `hit` where it contains one of `terms` (case-insensitive). */

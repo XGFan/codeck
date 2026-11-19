@@ -66,9 +66,23 @@ describe("matchProjects", () => {
     { id: "/w/wmc", path: "/w/wmc", displayName: "rwf-wmc", lastActiveMs: 3 },
   ] as ProjectSummary[];
 
-  it("按名称或路径匹配，最近活跃在前", () => {
-    expect(matchProjects(projects, parseQuery("identity")).map((p) => p.id)).toEqual(["/x/identity", "/w/identity"]);
+  it("按名称或路径匹配", () => {
     expect(matchProjects(projects, parseQuery("/w/ identity")).map((p) => p.id)).toEqual(["/w/identity"]);
+  });
+  it("名称等于查询的在前，其次名称命中的，只有路径命中的最后；同档最近活跃在前", () => {
+    const joy = [
+      { id: "/d/Joy/ford", path: "/d/Joy/ford", displayName: "ford", lastActiveMs: 9 },
+      { id: "/f/joy/a", path: "/f/joy/a", displayName: "a", lastActiveMs: 8 },
+      { id: "/d/joyride", path: "/d/joyride", displayName: "joyride", lastActiveMs: 7 },
+      { id: "/d/Joy", path: "/d/Joy", displayName: "Joy", lastActiveMs: 1 },
+    ] as ProjectSummary[];
+    expect(matchProjects(joy, parseQuery("Joy")).map((p) => p.id)).toEqual([
+      "/d/Joy",
+      "/d/joyride",
+      "/d/Joy/ford",
+      "/f/joy/a",
+    ]);
+    expect(matchProjects(projects, parseQuery("identity")).map((p) => p.id)).toEqual(["/x/identity", "/w/identity"]);
   });
 });
 
