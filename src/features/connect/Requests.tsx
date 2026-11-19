@@ -81,12 +81,19 @@ export function Requests({ c }: { c: ConnState }) {
 
 const isSub = (r: Request) => "agent_id" in r && !!r.agent_id;
 
+/**
+ * A question with no 「向你提问」 card in the main transcript while it waits, answered on a card of its own in the input
+ * area: a background Subagent's, or one asked from code in Code Mode (`tools.AskUserQuestion`, id `repl_…`), whose
+ * call claude writes to the transcript only once the script ends, after the answer.
+ */
+export const ownCard = (r: QuestionEvent) => !!r.agent_id || r.request_id.startsWith("repl_");
+
 function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
   switch (r.type) {
     case "permission_request":
       return <PermissionCard r={r} c={c} focus={focus} />;
     case "question":
-      return r.agent_id ? <QuestionCard r={r} c={c} /> : <QuestionHint r={r} />;
+      return ownCard(r) ? <QuestionCard r={r} c={c} /> : <QuestionHint r={r} />;
     case "choice":
       return <ChoiceCard r={r} c={c} focus={focus} />;
     case "rewind":
@@ -506,7 +513,7 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
   );
 }
 
-/** A background Subagent's AskUserQuestion: not in the main transcript, so a card of its own here. */
+/** A question not on a card in the main transcript ([`ownCard`]): a card of its own here. */
 function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const qs = Array.isArray(r.questions) ? r.questions : [];
   return (

@@ -480,6 +480,31 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     });
 });
 
+test("Code Mode 里从代码发起的提问在输入区的卡片上作答", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  // `tools.AskUserQuestion` in a REPL script: its call reaches the transcript only after the answer.
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "question",
+      request_id: "repl_e2e_code",
+      agent_id: null,
+      questions: [
+        { question: "用哪个方案？", header: "方案", multiSelect: false, options: [{ label: "A" }, { label: "B" }] },
+      ],
+    }),
+  );
+  const q = page.getByTestId("question-card");
+  await expect(q).toContainText("用哪个方案？");
+  await expect(q).not.toContainText("Subagent");
+  await expect(page.getByTestId("question-hint")).toHaveCount(0);
+  await q.getByTestId("question-option").filter({ hasText: "B" }).click();
+  await q.getByTestId("submit-answer").click();
+  await expect
+    .poll(() => lastSent(page, "answer_question"))
+    .toMatchObject({ request_id: "repl_e2e_code", answers: [{ options: ["B"] }] });
+});
+
 test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点回到输入框；每道题都答了时不能先聊聊", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");

@@ -11,7 +11,7 @@ import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { arrived, PENDING_MAX_MS } from "./pending";
-import { Requests } from "./Requests";
+import { ownCard, Requests } from "./Requests";
 import { resumeOffer } from "./resume";
 import { connFor, draftKey, errorKey, isNewUnprompted, lsEntryFor, useConnect, waitingSessions } from "./store";
 
@@ -148,7 +148,7 @@ export function useQuestionRequest(toolUseId: string): { r: QuestionEvent; c: Co
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
   const r = c?.requests.find(
-    (x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !x.agent_id,
+    (x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !ownCard(x),
   );
   return c && r && !c.procExit && !c.sessionExited ? { r, c } : null;
 }
