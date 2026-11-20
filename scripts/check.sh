@@ -50,10 +50,12 @@ trap 'stop; echo; echo "$me: 已中断。" >&2; exit 130' INT TERM HUP
 
 # Markdown (README, spec, TODO…) never needs a check, wherever it lives.
 has() { echo "$changed" | grep -vE '\.md$' | grep -qE "$1"; }
+rust_re='^(crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/)'
+web_re='^(src/|e2e/|e2e-host/|package\.json$|pnpm-lock\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript)\.html$|\.env\.|\.prettier)'
 rust=false; ccrpc=false; web=false
-has '^(crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/)' && rust=true
+has "$rust_re" && rust=true
 has '^(crates/ccrpc/|crates/codeck-host/src/ccrpc/)' && ccrpc=true
-has '^(src/|e2e/|e2e-host/|package\.json$|pnpm-lock\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript)\.html$|\.env\.|\.prettier)' && web=true
+has "$web_re" && web=true
 if ! $rust && ! $web; then
   echo "$me: 只有文档等改动，跳过检查。"
   exit 0
@@ -102,6 +104,19 @@ else
   echo "$me: 将运行 ${plan}。"
 fi
 $clean || echo "$me: 工作区有未提交的改动，这次通过不记录。"
+
+# Untracked files are not part of what is pushed (nor of the key), but the checks run on the working
+# tree and take them along: say so when one lies where a group that runs looks.
+extra=$(git ls-files --others --exclude-standard | grep -vE '\.md$')
+loose=""
+case " $todo " in *" rust "* | *" ccrpc "*) loose=$(echo "$extra" | grep -E "$rust_re") ;; esac
+case " $todo " in *" web "*) loose="$loose
+$(echo "$extra" | grep -E "$web_re")" ;; esac
+loose=$(echo "$loose" | sed '/^$/d')
+if [ -n "$loose" ]; then
+  n=$(echo "$loose" | wc -l | tr -d ' ')
+  echo "$me: $n 个未跟踪的文件会被一起检查，但不在推送的内容里：$(echo "$loose" | head -n 3 | tr '\n' ' ')" >&2
+fi
 
 parent=$PPID
 step() {
