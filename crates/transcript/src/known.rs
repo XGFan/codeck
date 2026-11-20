@@ -126,6 +126,9 @@ pub const TOOLS: &[&str] = &[
     // Code Mode: Claude's code, and the wait for what it sends back.
     "REPL",
     "Poll",
+    // Code Mode: the code's own helpers for finding tools, recorded like the tool calls it makes.
+    "searchTools",
+    "describeTool",
 ];
 
 /// Tools that spawn a Subagent Run.

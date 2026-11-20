@@ -36,6 +36,8 @@ const VERB: Record<string, string> = {
   TaskUpdate: "更新任务",
   TaskList: "任务列表",
   REPL: "执行代码",
+  searchTools: "查找工具",
+  describeTool: "查看工具",
 };
 
 /** A call's verb (「运行」「读取」), or its name for a tool without one. */
