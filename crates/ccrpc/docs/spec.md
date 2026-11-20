@@ -117,7 +117,7 @@ Holder ID → `toh ls --json` 里它的 `shell_pid`（Pane 的 shell）与 `sock
 | `get_tool_result {tool_use_id}` | 任意 | 工具结果全文：落盘过的读 `persisted` 文件，否则取 transcript 里的结果；超过 100KB 截断 | `content`、`persisted`（没落盘为 null） |
 | `get_image {uuid, index?}` | 任意 | 带图提示词的第 `index` 张图片（0 起，缺省 0；对应该 user block 的 `images`），从 transcript 里读 | `media_type`、`data`（base64） |
 
-错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果；`get_image` 找不到该图片）、`not_offered`（没有“总是允许”）、`unsupported`（提问不在插件里等）、`unrecognized_screen`、`input_not_empty`、`not_found`（`rewind` 的 `uuid` 不是 Main Line 上的提示词）、`not_in_picker`（终端的回退列表里找不到这条提示词）、`ambiguous`（回退列表里有分不清的同样提示词）、`delivered`（`edit_queue` 要取回的消息已经送出）、`tasks_running`（`exit` 时 Claude Code 说还有后台任务，没带 `stop_tasks`）、`compact_failed`（`compact` 没有压缩完成）、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
+错误码：`bad_request`（JSON 或字段不对，含答案与题目对不上）、`unknown_command`、`not_idle`、`not_busy`、`not_waiting`、`unknown_request`（`request_id` 不是当前挂起的请求；`get_tool_result` 找不到该工具结果；`get_image` 找不到该图片）、`not_offered`（没有“总是允许”）、`unsupported`（提问不在插件里等）、`unrecognized_screen`、`input_not_empty`、`not_found`（`rewind` 的 `uuid` 不是 Main Line 上的提示词）、`not_in_picker`（终端的回退列表里找不到这条提示词）、`ambiguous`（回退列表里有分不清的同样提示词）、`delivered`（`edit_queue` 要取回的消息已经送出）、`tasks_running`（`exit` 时 Claude Code 说还有后台任务，没带 `stop_tasks`；ccrpc 关掉这个询问，期间与之后 2 秒内进程文件残留的 waiting 不发 `state`）、`compact_failed`（`compact` 没有压缩完成）、`timeout`、`exited`、`io`。状态不满足时立即失败，不排队；排队只有 `follow_up`。
 
 ### 5.2 事件
 

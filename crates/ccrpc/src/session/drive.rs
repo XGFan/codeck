@@ -865,6 +865,9 @@ impl Engine {
     pub(super) fn exit(&mut self, close_pane: bool, stop_tasks: bool) -> CmdResult {
         self.exiting = true;
         let r = self.exit_claude(close_pane, stop_tasks);
+        // The dismissed question leaves the Process File later than the screen.
+        self.exit_dismissed_at =
+            matches!(&r, Err((code, _)) if *code == "tasks_running").then(Instant::now);
         self.exiting = false;
         r
     }

@@ -74,6 +74,9 @@ const COMPACT_IDLE: Duration = Duration::from_secs(5);
 const POP_SETTLE: Duration = Duration::from_millis(300);
 /// `input needed` without an AskUserQuestion from the plugin becomes `dialog` after this long.
 const CLASSIFY_GRACE: Duration = Duration::from_millis(500);
+/// After `exit` dismissed Claude Code's question about running tasks, the Process File still says
+/// `waiting` for a moment (its writes are throttled): not reported as waiting for this long.
+const EXIT_QUESTION_GRACE: Duration = Duration::from_secs(2);
 /// A permission prompt whose dialog matches no request is reported as `dialog` (or analyzed)
 /// after this long.
 const MATCH_GRACE: Duration = Duration::from_secs(1);
@@ -198,6 +201,8 @@ pub struct Engine {
     answered_until: Option<Instant>,
     /// `exit` is running: the question it asks first is answered by ccrpc, not reported as waiting.
     exiting: bool,
+    /// When `exit` dismissed that question and failed with `tasks_running` ([`EXIT_QUESTION_GRACE`]).
+    exit_dismissed_at: Option<Instant>,
     /// `get_messages` pages (its own thread).
     history: HistoryWorker,
     /// `get_messages` asked and not answered yet, oldest first.
@@ -380,6 +385,7 @@ impl Engine {
             no_checkin_since: None,
             answered_until: None,
             exiting: false,
+            exit_dismissed_at: None,
             history: HistoryWorker::start(wake.clone()),
             pages: VecDeque::new(),
             model: None,
@@ -1190,7 +1196,10 @@ impl Engine {
             }
             _ => State::Idle,
         };
-        if self.exiting && matches!(next, State::Waiting { .. }) {
+        let dismissed = self
+            .exit_dismissed_at
+            .is_some_and(|t| t.elapsed() < EXIT_QUESTION_GRACE);
+        if (self.exiting || dismissed) && matches!(next, State::Waiting { .. }) {
             return;
         }
         self.set_state(next);
