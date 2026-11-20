@@ -211,16 +211,19 @@ pub struct ToolCall {
     pub subagent_id: Option<AgentId>,
     pub workflow_run_id: Option<String>,
     pub notification_node_id: Option<NodeId>,
-    /// Code Mode: set on a `REPL` call (Claude's code), with the calls the code made.
+    /// Code Mode: set on a `REPL` call (Claude's code).
     pub code: Option<CodeRun>,
+    /// Code Mode: the `REPL` call whose code made this call. Such calls are blocks of that call's
+    /// message, right after it and in the order the code made them.
+    pub via_code: Option<String>,
 }
 
 /// What a `REPL` call's code did (Code Mode, docs/spec.md「Code Mode」).
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeRun {
-    /// The tool calls the code made, in order (never a `REPL` call).
-    pub calls: Vec<ToolCall>,
+    /// How many tool calls the code made: the blocks after it that name it in `via_code`.
+    pub call_count: u32,
     /// What the code returned or threw; `None` until it is sent back.
     pub outcome: Option<CodeOutcome>,
 }

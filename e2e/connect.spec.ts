@@ -269,6 +269,7 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
             workflowRunId: null,
             notificationNodeId: null,
             code: null,
+            viaCode: null,
           },
         ],
       },

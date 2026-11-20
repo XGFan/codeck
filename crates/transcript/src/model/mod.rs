@@ -41,6 +41,7 @@ mod tests {
             workflow_run_id: None,
             notification_node_id: None,
             code: None,
+            via_code: None,
         });
         let v = serde_json::to_value(&block).unwrap();
         assert_eq!(v["kind"], "toolCall");

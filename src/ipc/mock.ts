@@ -294,13 +294,7 @@ function toolCalls(sessionId: string): Map<string, ToolCall> {
   const m = new Map<string, ToolCall>();
   const scan = (nodes: Node[]) => {
     for (const n of nodes)
-      if (n.body.kind === "assistant")
-        for (const b of n.body.blocks)
-          if (b.kind === "toolCall") {
-            m.set(b.toolUseId, b);
-            // Code Mode: the calls Claude's code made.
-            for (const c of b.code?.calls ?? []) m.set(c.toolUseId, c);
-          }
+      if (n.body.kind === "assistant") for (const b of n.body.blocks) if (b.kind === "toolCall") m.set(b.toolUseId, b);
   };
   scan(mainNodes(sessionId));
   if (sessionId === RICH_ID) {
@@ -396,15 +390,11 @@ function findIn(req: FindRequest): FindResult {
         else if (blk.kind === "thinking") add(n.id, { kind: "thinking" }, blk.text);
         else if (blk.kind === "toolCall") {
           add(n.id, { kind: "toolInput", toolUseId: blk.toolUseId }, blk.inputJson);
-          // Claude's code (Code Mode): its output is what it returned, then come the calls it made.
+          // Claude's code (Code Mode): its output is what it returned.
           const out = blk.code
             ? blk.code.outcome && `${blk.code.outcome.log}\n${blk.code.outcome.text}`
             : blk.result?.text;
           if (out) add(n.id, { kind: "toolOutput", toolUseId: blk.toolUseId }, out);
-          for (const c of blk.code?.calls ?? []) {
-            add(n.id, { kind: "toolInput", toolUseId: c.toolUseId }, c.inputJson);
-            if (c.result) add(n.id, { kind: "toolOutput", toolUseId: c.toolUseId }, c.result.text);
-          }
         }
       }
   }

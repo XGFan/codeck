@@ -240,9 +240,11 @@ fn assistant_body(
                 }
                 "redacted_thinking" => {}
                 "tool_use" if b.name.as_deref() == Some(code_mode::POLL) => polls = true,
-                "tool_use" => blocks.push(AssistantBlock::ToolCall(tool_call(
-                    ctx, b, shown, node_id, runs,
-                ))),
+                "tool_use" => blocks.extend(
+                    tool_calls(ctx, b, shown, node_id, runs)
+                        .into_iter()
+                        .map(AssistantBlock::ToolCall),
+                ),
                 other => {
                     let (path, offset) = s.location(ctx.files, f);
                     blocks.push(AssistantBlock::Unknown {
@@ -267,12 +269,73 @@ fn assistant_body(
     })
 }
 
-fn tool_call(
+/// A `tool_use` block as the calls it shows as: the call itself, then (Code Mode, when it is
+/// Claude's code) the calls the code made, each naming it in `via_code`.
+fn tool_calls(
     ctx: &RenderCtx<'_>,
     b: &RawBlock,
     shown: &[bool],
     node_id: &str,
     runs: &CodeRuns,
+) -> Vec<ToolCall> {
+    let s = ctx.skeleton;
+    let mut call = tool_call(ctx, b, shown, node_id, None);
+    let id = call.tool_use_id.clone();
+    // Not the `REPL` pair Code Mode adds for an error the code threw (it is virtual).
+    let is_code = call.name == code_mode::REPL
+        && s.tool_use_at
+            .get(&id)
+            .is_some_and(|&at| !s.nodes[at].is_virtual);
+    if !is_code {
+        return vec![call];
+    }
+    let made: Vec<ToolCall> = runs
+        .calls
+        .get(&id)
+        .into_iter()
+        .flatten()
+        .flat_map(|&v| s.entry(ctx.files, v).blocks())
+        .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(code_mode::REPL))
+        .map(|b| tool_call(ctx, b, shown, node_id, Some(&id)))
+        .chain(
+            ctx.unrecorded_calls
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(|u| unrecorded_call(ctx, u, &id)),
+        )
+        .collect();
+    // A call that failed itself (rejected, interrupted, invalid input) ran no code: its result
+    // is the error.
+    let outcome = runs.outcome.get(&id).cloned().or_else(|| {
+        call.result
+            .as_ref()
+            .filter(|r| r.is_error)
+            .map(|r| CodeOutcome {
+                is_error: true,
+                text: r.text.clone(),
+                log: String::new(),
+                truncated: r.truncated,
+                duration_ms: None,
+            })
+    });
+    call.code = Some(CodeRun {
+        call_count: made.len() as u32,
+        outcome,
+    });
+    let mut out = Vec::with_capacity(1 + made.len());
+    out.push(call);
+    out.extend(made);
+    out
+}
+
+/// One `tool_use` block with its result; `via_code`: the `REPL` call whose code made it.
+fn tool_call(
+    ctx: &RenderCtx<'_>,
+    b: &RawBlock,
+    shown: &[bool],
+    node_id: &str,
+    via_code: Option<&str>,
 ) -> ToolCall {
     let s = ctx.skeleton;
     let id = b.id.clone().unwrap_or_default();
@@ -284,45 +347,12 @@ fn tool_call(
     let result = s
         .tool_result_block(ctx.files, &id, Some(shown))
         .map(|(_, e, block)| tool_result(e, block, &name, node_id, &id));
-    // Not on the `REPL` pair Code Mode adds for an error the code threw (it is virtual).
-    let is_code = name == code_mode::REPL
-        && s.tool_use_at
-            .get(&id)
-            .is_some_and(|&at| !s.nodes[at].is_virtual);
-    let code = is_code.then(|| CodeRun {
-        calls: runs
-            .calls
-            .get(&id)
-            .into_iter()
-            .flatten()
-            .flat_map(|&v| s.entry(ctx.files, v).blocks())
-            .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(code_mode::REPL))
-            .map(|b| tool_call(ctx, b, shown, node_id, runs))
-            .chain(
-                ctx.unrecorded_calls
-                    .get(&id)
-                    .into_iter()
-                    .flatten()
-                    .map(|u| unrecorded_call(ctx, u)),
-            )
-            .collect(),
-        // A call that failed itself (rejected, interrupted, invalid input) ran no code: its
-        // result is the error.
-        outcome: runs.outcome.get(&id).cloned().or_else(|| {
-            result.as_ref().filter(|r| r.is_error).map(|r| CodeOutcome {
-                is_error: true,
-                text: r.text.clone(),
-                log: String::new(),
-                truncated: r.truncated,
-                duration_ms: None,
-            })
-        }),
-    });
     ToolCall {
         subagent_id: ctx.subagent_by_tool.get(&id).cloned(),
         workflow_run_id: ctx.workflow_by_tool.get(&id).cloned(),
         notification_node_id: ctx.notification_by_tool.get(&id).cloned(),
-        code,
+        code: None,
+        via_code: via_code.map(str::to_owned),
         tool_use_id: id,
         name,
         input_json,
@@ -331,9 +361,9 @@ fn tool_call(
     }
 }
 
-/// An Agent call the code made that left no record ([`UnrecordedCall`]): launched, with an empty
-/// result like the virtual pair of one the code waited for.
-fn unrecorded_call(ctx: &RenderCtx<'_>, u: &UnrecordedCall) -> ToolCall {
+/// An Agent call the code of `code` made that left no record ([`UnrecordedCall`]): launched, with
+/// an empty result like the virtual pair of one the code waited for.
+fn unrecorded_call(ctx: &RenderCtx<'_>, u: &UnrecordedCall, code: &str) -> ToolCall {
     ToolCall {
         tool_use_id: u.tool_use_id.clone(),
         name: "Agent".to_owned(),
@@ -353,6 +383,7 @@ fn unrecorded_call(ctx: &RenderCtx<'_>, u: &UnrecordedCall) -> ToolCall {
         workflow_run_id: None,
         notification_node_id: ctx.notification_by_tool.get(&u.tool_use_id).cloned(),
         code: None,
+        via_code: Some(code.to_owned()),
     }
 }
 

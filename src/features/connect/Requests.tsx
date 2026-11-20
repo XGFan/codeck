@@ -332,6 +332,7 @@ function ToolInput({ r, sessionId }: { r: PermissionRequestEvent; sessionId: str
       workflowRunId: null,
       notificationNodeId: null,
       code: null,
+      viaCode: null,
     }),
     [r.request_id, r.tool_name, r.input],
   );

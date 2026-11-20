@@ -75,34 +75,29 @@ pub fn find(
                         AssistantBlock::Unknown { raw_json, .. } => {
                             m.add(FindLocation::Text, count(raw_json))
                         }
-                        AssistantBlock::ToolCall(tc) => {
-                            // A `REPL` call's own output is its code's outcome; the calls the code
-                            // made follow it, under the same node.
-                            let calls = std::iter::once(tc)
-                                .chain(tc.code.iter().flat_map(|c| c.calls.iter()));
-                            for c in calls {
-                                let id = &c.tool_use_id;
-                                m.add(
-                                    FindLocation::ToolInput {
-                                        tool_use_id: id.clone(),
-                                    },
-                                    count(&tool_input(&sk, files, id)),
-                                );
-                                let output = match &c.code {
-                                    Some(code) => code
-                                        .outcome
-                                        .as_ref()
-                                        .map(|o| format!("{}\n{}", o.log, o.text))
-                                        .unwrap_or_default(),
-                                    None => tool_output(s, &sk, files, &shown, id),
-                                };
-                                m.add(
-                                    FindLocation::ToolOutput {
-                                        tool_use_id: id.clone(),
-                                    },
-                                    count(&output),
-                                );
-                            }
+                        AssistantBlock::ToolCall(c) => {
+                            let id = &c.tool_use_id;
+                            m.add(
+                                FindLocation::ToolInput {
+                                    tool_use_id: id.clone(),
+                                },
+                                count(&tool_input(&sk, files, id)),
+                            );
+                            // A `REPL` call's output is its code's outcome.
+                            let output = match &c.code {
+                                Some(code) => code
+                                    .outcome
+                                    .as_ref()
+                                    .map(|o| format!("{}\n{}", o.log, o.text))
+                                    .unwrap_or_default(),
+                                None => tool_output(s, &sk, files, &shown, id),
+                            };
+                            m.add(
+                                FindLocation::ToolOutput {
+                                    tool_use_id: id.clone(),
+                                },
+                                count(&output),
+                            );
                         }
                     }
                 }

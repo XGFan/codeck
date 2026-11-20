@@ -162,10 +162,7 @@ export function buildRows(input: GroupingInput): Grouping {
   const index = new Map<string, number>();
   const groupOf = new Map<string, string>();
   const toolNode = new Map<string, string>();
-  const noteCall = (call: ToolCallBlock, nodeId: string) => {
-    toolNode.set(call.toolUseId, nodeId);
-    for (const c of call.code?.calls ?? []) toolNode.set(c.toolUseId, nodeId);
-  };
+  const noteCall = (call: ToolCallBlock, nodeId: string) => toolNode.set(call.toolUseId, nodeId);
   const cardCalls = new Set<string>();
   const compactKeyOf = new Map<string, string>();
 
@@ -293,7 +290,7 @@ export function buildRows(input: GroupingInput): Grouping {
       inRun = true;
       pendingRole = { node, branch, retries: retriesBefore.get(node.id) };
     }
-    const flat = flatBlocks(body.blocks);
+    const flat = shownBlocks(body.blocks);
     for (let p = 0; p < flat.length; p++) {
       const { b, i, code } = flat[p]!;
       if (b.kind === "toolCall") noteCall(b, node.id);
@@ -538,7 +535,7 @@ const SEARCH_TOOLS = new Set(["Grep", "Glob", "WebSearch", "WebFetch", "ToolSear
  */
 export function describeCalls(given: ToolCall[]): { text: string; targets: string[] } {
   // Claude's code by the calls it made (rows of their own); code that called nothing as 「执行 N 段代码」.
-  const runs = given.filter((c) => c.code && c.code.calls.length === 0).length;
+  const runs = given.filter((c) => c.code?.callCount === 0).length;
   const calls = given.flatMap(callsOf);
   let read = 0;
   let commands = 0;
@@ -587,18 +584,23 @@ const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v ? v 
 const baseName = (p: string | null) => (p ? (p.split("/").pop() ?? p) : null);
 
 /**
- * The blocks of an assistant message with Claude's code (Code Mode's `REPL`) followed by the calls it made, each a
- * call of its own (its question and Subagent cards, its place in a tool group); `i` is the block's index in the
- * message (a call the code made: its code's). Code that only asked questions (and did not throw) is left out: its
- * question cards carry it (`code`).
+ * The blocks of an assistant message that are shown, `i` each one's index in the message. Claude's code (Code Mode's
+ * `REPL`) comes with the calls it made right after it (`viaCode`), each a call of its own (its question and Subagent
+ * cards, its place in a tool group). Code that only asked questions (and did not throw) is left out: its question
+ * cards carry it (`code`).
  */
-function flatBlocks(blocks: AssistantBlock[]): Array<{ b: AssistantBlock; i: number; code?: ToolCallBlock }> {
-  return blocks.flatMap((b, i) => {
-    if (b.kind !== "toolCall" || !b.code) return [{ b, i }];
-    const calls = b.code.calls.map((c): ToolCallBlock => ({ ...c, kind: "toolCall" }));
-    const asksOnly =
-      calls.length > 0 && calls.every((c) => c.name === "AskUserQuestion") && b.code.outcome?.isError !== true;
-    return [...(asksOnly ? [] : [{ b, i }]), ...calls.map((c) => ({ b: c, i, code: asksOnly ? b : undefined }))];
+function shownBlocks(blocks: AssistantBlock[]): Array<{ b: AssistantBlock; i: number; code?: ToolCallBlock }> {
+  const calls = blocks.filter((b): b is ToolCallBlock => b.kind === "toolCall");
+  const askers = new Map<string, ToolCallBlock>();
+  for (const c of calls) {
+    if (!c.code || c.code.outcome?.isError === true) continue;
+    const made = calls.filter((m) => m.viaCode === c.toolUseId);
+    if (made.length > 0 && made.every((m) => m.name === "AskUserQuestion")) askers.set(c.toolUseId, c);
+  }
+  return blocks.flatMap((b, i): Array<{ b: AssistantBlock; i: number; code?: ToolCallBlock }> => {
+    if (b.kind !== "toolCall") return [{ b, i }];
+    if (askers.has(b.toolUseId)) return [];
+    return [{ b, i, code: b.viaCode ? askers.get(b.viaCode) : undefined }];
   });
 }
 

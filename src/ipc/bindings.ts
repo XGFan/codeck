@@ -266,8 +266,8 @@ export type CodeOutcome = {
 
 /**  What a `REPL` call's code did (Code Mode, docs/spec.md「Code Mode」). */
 export type CodeRun = {
-	/**  The tool calls the code made, in order (never a `REPL` call). */
-	calls: ToolCall[],
+	/**  How many tool calls the code made: the blocks after it that name it in `via_code`. */
+	callCount: number,
 	/**  What the code returned or threw; `None` until it is sent back. */
 	outcome: CodeOutcome | null,
 };
@@ -822,8 +822,13 @@ export type ToolCall = {
 	subagentId: string | null,
 	workflowRunId: string | null,
 	notificationNodeId: string | null,
-	/**  Code Mode: set on a `REPL` call (Claude's code), with the calls the code made. */
+	/**  Code Mode: set on a `REPL` call (Claude's code). */
 	code: CodeRun | null,
+	/**
+	 *  Code Mode: the `REPL` call whose code made this call. Such calls are blocks of that call's
+	 *  message, right after it and in the order the code made them.
+	 */
+	viaCode: string | null,
 };
 
 export type ToolDetail = {

@@ -1583,16 +1583,24 @@ fn code_of<'a>(t: &'a Transcript, id: &str) -> &'a transcript::model::CodeRun {
     call(t, id).code.as_ref().expect("REPL call has a code run")
 }
 
+/// The calls the code of `REPL` call `id` made: the calls naming it in `via_code`.
+fn made_by<'a>(t: &'a Transcript, id: &str) -> Vec<&'a ToolCall> {
+    tool_calls(t)
+        .into_iter()
+        .filter(|c| c.via_code.as_deref() == Some(id))
+        .collect()
+}
+
 #[test]
-fn code_mode_nests_the_calls_the_code_made() {
+fn code_mode_lists_the_calls_the_code_made_after_it() {
     let s = open("code_mode", ids::CODE_MODE_DIR, ids::CODE_MODE);
     let t = main_t(&s, true);
     // The virtual entries are not nodes of their own, and Poll is not shown.
     let virtual_ids: Vec<String> = (7..=14).chain(19..=22).chain(29..=32).map(cm).collect();
     assert!(t.nodes.iter().all(|n| !virtual_ids.contains(&n.id)));
     assert!(tool_calls(&t).iter().all(|c| c.name != "Poll"));
-    let names = |c: &transcript::model::CodeRun| -> Vec<(String, String)> {
-        c.calls
+    let names = |id: &str| -> Vec<(String, String)> {
+        made_by(&t, id)
             .iter()
             .map(|c| (c.tool_use_id.clone(), c.name.clone()))
             .collect()
@@ -1600,8 +1608,10 @@ fn code_mode_nests_the_calls_the_code_made() {
 
     // Run 1: four calls, result delivered in a poll_events attachment.
     let r1 = code_of(&t, "toolu_c0de_r1");
+    let c1 = made_by(&t, "toolu_c0de_r1");
+    assert_eq!(r1.call_count, 4);
     assert_eq!(
-        names(r1),
+        names("toolu_c0de_r1"),
         [
             ("repl_c0de-v1", "Bash"),
             ("repl_c0de-v2", "Edit"),
@@ -1617,11 +1627,11 @@ fn code_mode_nests_the_calls_the_code_made() {
         "{ edited: [ 'src/client/retry.rs', 'src/middleware/upstream.rs' ], exit: 0 }"
     );
     assert_eq!(o1.duration_ms, Some(9123.0));
-    let rg = r1.calls[0].result.as_ref().unwrap();
+    let rg = c1[0].result.as_ref().unwrap();
     assert_eq!(rg.text, "src/client/retry.rs\nsrc/middleware/upstream.rs");
     assert!(rg.extra_json.as_deref().unwrap().contains("\"stdout\""));
     assert!(
-        r1.calls[1]
+        c1[1]
             .result
             .as_ref()
             .unwrap()
@@ -1633,9 +1643,16 @@ fn code_mode_nests_the_calls_the_code_made() {
 
     // Run 2: the code threw; the virtual REPL error pair is not one of its calls.
     let r2 = code_of(&t, "toolu_c0de_r2");
-    assert_eq!(names(r2), [("repl_c0de-v5".to_owned(), "Read".to_owned())]);
     assert_eq!(
-        r2.calls[0].result.as_ref().unwrap().text,
+        names("toolu_c0de_r2"),
+        [("repl_c0de-v5".to_owned(), "Read".to_owned())]
+    );
+    assert_eq!(
+        made_by(&t, "toolu_c0de_r2")[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .text,
         "     1\t[server]\n     2\tport = 8080"
     );
     let o2 = r2.outcome.as_ref().unwrap();
@@ -1647,8 +1664,9 @@ fn code_mode_nests_the_calls_the_code_made() {
 
     // Run 3: delivered as the Poll result (the quoted event is ignored); a call inside failed.
     let r3 = code_of(&t, "toolu_c0de_r3");
-    assert_eq!(names(r3).len(), 2);
-    assert!(r3.calls[0].result.as_ref().unwrap().is_error);
+    let c3 = made_by(&t, "toolu_c0de_r3");
+    assert_eq!((c3.len(), r3.call_count), (2, 2));
+    assert!(c3[0].result.as_ref().unwrap().is_error);
     let o3 = r3.outcome.as_ref().unwrap();
     assert_eq!(
         (o3.text.as_str(), o3.log.as_str(), o3.duration_ms),
@@ -1658,16 +1676,39 @@ fn code_mode_nests_the_calls_the_code_made() {
     let NodeBody::Assistant { blocks, .. } = &a3.body else {
         panic!("assistant")
     };
-    assert_eq!(blocks.len(), 2, "text + REPL; Poll dropped");
+    // The calls are blocks of the code's message, right after it; Poll is dropped.
+    let kinds: Vec<&str> = blocks
+        .iter()
+        .map(|b| match b {
+            AssistantBlock::ToolCall(c) => c.tool_use_id.as_str(),
+            _ => "text",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "text",
+            "toolu_c0de_r3",
+            c3[0].tool_use_id.as_str(),
+            c3[1].tool_use_id.as_str()
+        ]
+    );
 
     // Run 4: still running when the file ends.
     let r4 = code_of(&t, "toolu_c0de_r4");
-    assert!(r4.calls.is_empty() && r4.outcome.is_none());
-    // A call that is not REPL has no code run.
-    assert!(r1.calls.iter().all(|c| c.code.is_none()));
+    assert!(r4.call_count == 0 && r4.outcome.is_none());
+    assert!(made_by(&t, "toolu_c0de_r4").is_empty());
+    // A call that is not REPL has no code run, and only the calls code made name one.
+    assert!(c1.iter().all(|c| c.code.is_none()));
+    assert!(
+        tool_calls(&t)
+            .iter()
+            .all(|c| c.code.is_none() || c.via_code.is_none())
+    );
     // Hidden entries shown or not, the code runs are the same.
     let plain = main_t(&s, false);
     assert_eq!(code_of(&plain, "toolu_c0de_r1"), r1);
+    assert_eq!(made_by(&plain, "toolu_c0de_r1"), c1);
     assert_eq!(code_of(&plain, "toolu_c0de_r3"), r3);
 }
 
@@ -1708,13 +1749,13 @@ fn code_mode_agent_call_the_code_did_not_wait_for_is_listed_under_its_code() {
     );
     let t = main_t(&s, false);
     assert_eq!(t.orphan_subagent_ids, ["aelse"]);
-    let r1 = code_of(&t, "toolu_c0de_r1");
+    let c1 = made_by(&t, "toolu_c0de_r1");
     assert_eq!(
-        r1.calls.len(),
-        5,
+        (c1.len(), code_of(&t, "toolu_c0de_r1").call_count),
+        (5, 5),
         "the four recorded calls, then the Agent call"
     );
-    let agent = r1.calls.last().unwrap();
+    let agent = *c1.last().unwrap();
     assert_eq!(
         (agent.tool_use_id.as_str(), agent.name.as_str()),
         ("repl_c0de-agent", "Agent")
@@ -1730,8 +1771,7 @@ fn code_mode_agent_call_the_code_did_not_wait_for_is_listed_under_its_code() {
     assert!(run.is_async);
     // Other code runs are as before.
     assert!(
-        code_of(&t, "toolu_c0de_r3")
-            .calls
+        made_by(&t, "toolu_c0de_r3")
             .iter()
             .all(|c| c.name != "Agent")
     );
@@ -1856,8 +1896,9 @@ fn code_mode_outcome_found_when_the_repl_result_is_off_the_path() {
     );
     let t = main_t(&s, false);
     let run = code_of(&t, "r1");
-    assert_eq!(run.calls.len(), 1);
-    assert_eq!(run.calls[0].name, "AskUserQuestion");
+    let made = made_by(&t, "r1");
+    assert_eq!((made.len(), run.call_count), (1, 1));
+    assert_eq!(made[0].name, "AskUserQuestion");
     let o = run.outcome.as_ref().expect("outcome");
     assert_eq!(
         (o.text.as_str(), o.duration_ms),

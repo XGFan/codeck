@@ -185,13 +185,7 @@ fn tool_calls<'a>(turn: &'a Turn<'_>) -> Vec<&'a ToolCall> {
             AssistantBlock::ToolCall(c) => Some(c),
             _ => None,
         })
-        .flat_map(with_code_calls)
         .collect()
-}
-
-/// A call, then (Code Mode) the calls its code made.
-fn with_code_calls(c: &ToolCall) -> impl Iterator<Item = &ToolCall> {
-    std::iter::once(c).chain(c.code.iter().flat_map(|r| r.calls.iter()))
 }
 
 /// The text after the turn's last tool call or thinking: what the viewer calls its answer.
@@ -288,11 +282,9 @@ fn write_process(out: &mut String, turn: &Turn<'_>, shape: &dyn Fn(&str, usize) 
                 let _ = writeln!(out, "    思考：{}", shape(text, TURN_TEXT_CHARS));
             }
             AssistantBlock::ToolCall(c) => {
-                for c in with_code_calls(c) {
-                    tools += 1;
-                    if tools <= TURN_TOOLS {
-                        let _ = writeln!(out, "    工具：{}", describe(c));
-                    }
+                tools += 1;
+                if tools <= TURN_TOOLS {
+                    let _ = writeln!(out, "    工具：{}", describe(c));
                 }
             }
             _ => {}

@@ -1,4 +1,4 @@
-import type { CodeOutcome, Node, ToolCall, ToolResult } from "@/ipc/bindings";
+import type { AssistantBlock, CodeOutcome, Node, ToolResult } from "@/ipc/bindings";
 import { asstNode, call, MIN, text, userNode } from "./builders";
 
 /**
@@ -8,35 +8,31 @@ import { asstNode, call, MIN, text, userNode } from "./builders";
 export const CODE_MODE_ID = "c0de5e55-0011-4000-8000-000000000011";
 export const CODE_MODE_TITLE = "Code Mode：把重试上限改成 5";
 
-/** A call Claude's code made (no `kind`: it lives in the `REPL` call's code run). */
-function inner(
-  toolUseId: string,
-  name: string,
-  input: unknown,
-  result: Partial<ToolResult> & { text: string },
-): ToolCall {
-  const { kind: _, ...c } = call(toolUseId, name, input, result) as Extract<
-    ReturnType<typeof call>,
-    { kind: "toolCall" }
-  >;
-  return c;
-}
+type ToolCallBlock = Extract<AssistantBlock, { kind: "toolCall" }>;
 
+/** A call Claude's code made (`repl` names the code in its `viaCode`). */
+const inner = (toolUseId: string, name: string, input: unknown, result: Partial<ToolResult> & { text: string }) =>
+  call(toolUseId, name, input, result) as ToolCallBlock;
+
+/** Claude's code (a `REPL` call) and, right after it, the calls it made. */
 function repl(
   toolUseId: string,
   evalId: number,
   description: string,
   code: string,
-  calls: ToolCall[],
+  calls: ToolCallBlock[],
   outcome: CodeOutcome | null,
-) {
-  return call(
-    toolUseId,
-    "REPL",
-    { code, description },
-    { text: `(dispatched #${evalId})` },
-    { code: { calls, outcome } },
-  );
+): AssistantBlock[] {
+  return [
+    call(
+      toolUseId,
+      "REPL",
+      { code, description },
+      { text: `(dispatched #${evalId})` },
+      { code: { callCount: calls.length, outcome } },
+    ),
+    ...calls.map((c) => ({ ...c, viaCode: toolUseId })),
+  ];
 }
 
 const benchQuestion = {
@@ -70,7 +66,7 @@ export function codeModeNodes(start: number): Node[] {
     userNode("cm-u0", at(0), "把所有 max_attempts: 3 改成 5，跑一下重试测试，再读出配置里的重试参数。"),
     asstNode("cm-a0", at(0.2), [
       text("先找出所有写着 `max_attempts: 3` 的地方，一起改成 5，再跑重试测试。"),
-      repl(
+      ...repl(
         "cm-r1",
         1,
         "把重试上限改成 5 并跑重试测试",
@@ -117,7 +113,7 @@ export function codeModeNodes(start: number): Node[] {
     ]),
     asstNode("cm-a1", at(0.6), [
       text("两处都改好了，重试测试 9 个全部通过。接着读配置。"),
-      repl(
+      ...repl(
         "cm-r2",
         2,
         "读出配置里的重试参数",
@@ -141,7 +137,7 @@ export function codeModeNodes(start: number): Node[] {
     ]),
     asstNode("cm-a2", at(0.8), [
       text("配置里没有 retry 段。顺便并行跑一下 clippy。"),
-      repl(
+      ...repl(
         "cm-r3",
         3,
         "并行跑 clippy 与重试测试",
@@ -175,7 +171,7 @@ export function codeModeNodes(start: number): Node[] {
     userNode("cm-u1", at(3), "跑一下重试路径的基准测试。"),
     // A question asked from the code: its call is among the code's, its answer in `toolUseResult`.
     asstNode("cm-a6", at(3.02), [
-      repl(
+      ...repl(
         "cm-r6",
         6,
         "问要跑哪些基准",
@@ -203,7 +199,7 @@ export function codeModeNodes(start: number): Node[] {
         { text: "The user doesn't want to proceed with this tool use.", isError: true },
         {
           code: {
-            calls: [],
+            callCount: 0,
             outcome: {
               isError: true,
               text: "The user doesn't want to proceed with this tool use.",
@@ -216,7 +212,7 @@ export function codeModeNodes(start: number): Node[] {
       ),
     ]),
     asstNode("cm-a4", at(3.1), [
-      repl("cm-r4", 4, "跑重试路径的基准测试", "await $`cargo bench --bench retry`", [], null),
+      ...repl("cm-r4", 4, "跑重试路径的基准测试", "await $`cargo bench --bench retry`", [], null),
     ]),
   ];
 }

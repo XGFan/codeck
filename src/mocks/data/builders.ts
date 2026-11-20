@@ -113,6 +113,7 @@ export function call(
     workflowRunId: null,
     notificationNodeId: null,
     code: null,
+    viaCode: null,
     ...o,
   };
 }

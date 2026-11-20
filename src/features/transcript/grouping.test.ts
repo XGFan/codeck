@@ -329,14 +329,11 @@ describe("API retries", () => {
 });
 
 describe("Code Mode", () => {
-  const inner = (id: string, name: string, input: unknown, isError = false) => {
-    const { kind: _, ...c } = call(id, name, input, { text: "", isError }) as Extract<
-      ReturnType<typeof call>,
-      { kind: "toolCall" }
-    >;
-    return c;
-  };
-  const repl = (id: string, calls: ReturnType<typeof inner>[], threw = false) =>
+  type CallBlock = Extract<ReturnType<typeof call>, { kind: "toolCall" }>;
+  const inner = (id: string, name: string, input: unknown, isError = false) =>
+    call(id, name, input, { text: "", isError }) as CallBlock;
+  /** Claude's code and, right after it, the calls it made (as the backend lists them). */
+  const repl = (id: string, calls: CallBlock[], threw = false) => [
     call(
       id,
       "REPL",
@@ -344,11 +341,13 @@ describe("Code Mode", () => {
       { text: "(dispatched #1)" },
       {
         code: {
-          calls,
+          callCount: calls.length,
           outcome: { isError: threw, text: "r", log: "", truncated: false, durationMs: 5 },
         },
       },
-    );
+    ),
+    ...calls.map((c) => ({ ...c, viaCode: id })),
+  ];
   const callIds = (r: Row) =>
     r.kind === "group" ? r.items.flatMap((it) => (it.type === "call" ? [it.call.toolUseId] : [])) : [];
 
@@ -357,8 +356,8 @@ describe("Code Mode", () => {
       input([
         userNode("u1", 1, "go"),
         asstNode("a1", 2, [
-          repl("r1", [inner("v1", "Bash", { command: "ls" }), inner("v2", "Read", { file_path: "/a/b.rs" }, true)]),
-          repl("r2", [], true),
+          ...repl("r1", [inner("v1", "Bash", { command: "ls" }), inner("v2", "Read", { file_path: "/a/b.rs" }, true)]),
+          ...repl("r2", [], true),
         ]),
       ]),
     );
@@ -375,7 +374,7 @@ describe("Code Mode", () => {
 
   it("a call the code made is found and opened as a row of its own", () => {
     const g = buildRows(
-      input([userNode("u1", 1, "go"), asstNode("a1", 2, [repl("r1", [inner("v1", "Bash", { command: "ls" })])])]),
+      input([userNode("u1", 1, "go"), asstNode("a1", 2, repl("r1", [inner("v1", "Bash", { command: "ls" })]))]),
     );
     expect(g.toolNode.get("v1")).toBe("a1");
     expect(rowIndexOf(g, "a1", "v1")).toBe(rowIndexOf(g, "a1", "r1"));
@@ -387,8 +386,8 @@ describe("Code Mode", () => {
     const g = buildRows(
       input([
         userNode("u1", 1, "go"),
-        asstNode("a1", 2, [repl("r1", [ask])]),
-        asstNode("a2", 3, [repl("r2", [inner("v1", "Bash", { command: "ls" }), { ...ask, toolUseId: "q2" }])]),
+        asstNode("a1", 2, repl("r1", [ask])),
+        asstNode("a2", 3, repl("r2", [inner("v1", "Bash", { command: "ls" }), { ...ask, toolUseId: "q2" }])),
       ]),
     );
     const asks = g.rows.filter((r): r is Extract<Row, { kind: "ask" }> => r.kind === "ask");
