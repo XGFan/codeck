@@ -12,7 +12,7 @@ import { BranchSwitcher } from "../BranchSwitcher";
 import { describeNotice } from "../notice";
 import { promptParts } from "../promptCode";
 import { ImageMarker, ImageRefs } from "../tools";
-import { type TeammateItem, peerMessages, previewOf, teammateItems, teammateParts } from "../teammate";
+import { type TeammateItem, previewOf, teammateItems, teammateParts } from "../teammate";
 import { clock, commandLine, prettyJson } from "../util";
 import { TaskPromptCard } from "./Agents";
 import { Anchor } from "./Anchor";
@@ -353,7 +353,7 @@ function MessageCard({
  * shut down and task assigned as one centered line.
  */
 function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
-  const items = teammateItems(teammateParts(body.text));
+  const items = teammateItems(teammateParts(body.relayed));
   return (
     <div className="flex flex-col gap-2">
       {items.map((it, i) => {
@@ -364,7 +364,7 @@ function TeammateCard({ node, body }: { node: Node; body: UserBody }) {
               key={key}
               testId="teammate-message"
               color={it.message.color}
-              who={it.message.id ?? "未知"}
+              who={it.message.from ?? "未知"}
               tag="报告"
               timeMs={node.timestampMs}
               title={it.message.summary}
@@ -386,12 +386,12 @@ function PeerCard({ node, body }: { node: Node; body: UserBody }) {
   const o = body.origin as Extract<UserBody["origin"], { kind: "peer" }>;
   return (
     <div className="flex flex-col gap-2">
-      {peerMessages(body.text, o.from).map((m, i) => (
+      {body.relayed.map((m, i) => (
         <MessageCard
           key={i}
           testId="peer-message"
           color={m.color}
-          who={m.id ?? "未知"}
+          who={m.from ?? o.from ?? "未知"}
           tag={PEER_LABEL[o.source]}
           timeMs={node.timestampMs}
           title={m.summary}

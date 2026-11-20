@@ -80,6 +80,7 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 - 索引是可丢弃的镜像（ADR-0003）：不写迁移，schema 变化就把 `index/schema.rs` 的 `SCHEMA_VERSION` +1，启动时自动删库重建。
 - 工具输出不进 FTS，也不提供搜索（ADR-0004）；⌘F 会话内查找仍覆盖工具输出（`assemble/find.rs`）。
 - Code Mode（Claude Code 的 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`，规则见 spec「Code Mode」）：解析只在 `assemble/code_mode.rs`（事件解析、按路径把虚拟消息归给代码）；模型里代码仍是一个 `REPL` 的 `ToolCall`（`code` 带 `callCount` 与返回值），它调用的工具是同一条消息里紧随其后的平级 `ToolCall`（`viaCode` 指回代码），前端、⌘F、CLI 都按这个平的序列走，不要再嵌套。
+- Teammate 与其他 Agent、插件转发来的消息（`<teammate-message>`、`<cross-session-message>`、`<agent-message>`）只在后端拆：`prompt::relayed_messages` 给出 `UserPrompt.relayed`（发送方、颜色、summary、正文、一行预览、Teammate 的 JSON 消息说的事），前端 `features/transcript/teammate.ts` 只管排版，不读标签。两处例外：mock 数据按记录的原文写，`src/mocks/data/relayed.ts` 替后端拆（改格式时对照 Rust 的测试）；Connect 的排队提示拿到的是 ccrpc 给的原文，`connect/queue.ts` 只读开头标签的发送方与 summary。
 - Cost：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine/sync/write.rs` 的 `rebill_changed`）。价格表在 `Engine` 里，联网下载在 codeck-host（`prices.rs`，ADR-0005）。
 
 ### codeck-host、src-tauri 与 codeck-daemon

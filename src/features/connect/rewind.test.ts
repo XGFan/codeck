@@ -8,7 +8,7 @@ const prompt = (id: string, origin: Extract<Node["body"], { kind: "userPrompt" }
     timestampMs: null,
     hidden: false,
     inherited: false,
-    body: { kind: "userPrompt", text: id, images: [], origin },
+    body: { kind: "userPrompt", text: id, images: [], origin, relayed: [] },
   }) as Node;
 const reply = (id: string) =>
   ({

@@ -499,7 +499,12 @@ export type Node = {
 	body: NodeBody,
 };
 
-export type NodeBody = { kind: "userPrompt"; text: string; images: ImageRef[]; origin: PromptOrigin } | { kind: "assistant"; messageId: string | null; model: string | null; blocks: AssistantBlock[]; usage: TokenTotals | null; isApiError: boolean } | { kind: "compactBoundary"; trigger: string | null; preTokens: number | null } | { kind: "compactSummary"; text: string } | { kind: "system"; subtype: string; level: string | null; 
+export type NodeBody = { kind: "userPrompt"; text: string; images: ImageRef[]; origin: PromptOrigin; 
+/**
+ *  The messages a prompt relayed from other agents holds, in order (`origin` `Teammate` or
+ *  `Peer`); empty for any other prompt. `text` keeps the prompt as recorded.
+ */
+relayed: RelayedMessage[] } | { kind: "assistant"; messageId: string | null; model: string | null; blocks: AssistantBlock[]; usage: TokenTotals | null; isApiError: boolean } | { kind: "compactBoundary"; trigger: string | null; preTokens: number | null } | { kind: "compactSummary"; text: string } | { kind: "system"; subtype: string; level: string | null; 
 /**
  *  Empty when the entry carries nothing beyond its envelope (e.g. `agents_killed`); the
  *  viewer then words it by `subtype`.
@@ -563,6 +568,32 @@ export type PromptOrigin = { kind: "human" } |
 { kind: "peer"; source: PeerSource; 
 /**  The sender: the other Session's name, the agent's, the plugin's. */
 from: string | null } | { kind: "meta" };
+
+/**
+ *  One message of a prompt relayed from other agents: a `<teammate-message>`, a
+ *  `<cross-session-message>` or `<agent-message>` block, or a plugin's text.
+ */
+export type RelayedMessage = {
+	/**
+	 *  The sender: the teammate's id, the other Session's name (else its address), the agent's
+	 *  id, the plugin's name.
+	 */
+	from: string | null,
+	/**  A `<cross-session-message>`'s `from` (`uds:…`): what a SendMessage to that Session names. */
+	address: string | null,
+	color: string | null,
+	/**  The tag's `summary`. */
+	summary: string | null,
+	/**  What is inside the tag (for a plugin: after its opening line), trimmed. */
+	body: string,
+	/**
+	 *  One line for it: its `summary`; a JSON message's `summary`, else its `type`; else its
+	 *  first line.
+	 */
+	preview: string,
+	/**  What a teammate's JSON message says, for the kinds known here; any other is a report. */
+	event: TeammateEvent | null,
+};
 
 export type SearchGroup = {
 	session: SessionSummary,
@@ -796,6 +827,25 @@ export type SubagentRun = {
 	/**  A teammate's color (as Claude Code names it, e.g. `blue`). */
 	color: string | null,
 };
+
+/**  What a teammate's JSON message says. `who`: the message's `from`, else the tag's teammate. */
+export type TeammateEvent = 
+/**
+ *  Its round ended with a result (`idle_notification` with `result`, since claude 2.1.251);
+ *  `failed`: `idleReason` `failed`.
+ */
+{ kind: "done"; who: string | null; result: string; failed: boolean } | 
+/**  Its round ended, nothing more said. */
+{ kind: "idle"; who: string | null } | 
+/**  Its round failed without a result (`failureReason`). */
+{ kind: "failed"; who: string | null; reason: string | null } | 
+/**
+ *  It shut down: `shutdown_approved` from it, or (`system`) `teammate_terminated` from
+ *  `system` naming it ("X has shut down.").
+ */
+{ kind: "exited"; who: string | null; system: boolean } | 
+/**  A task was assigned (`task_assignment`); `who`: who assigned it. */
+{ kind: "task"; who: string | null; taskId: string | null; subject: string | null };
 
 /**  Inclusive range of unix-epoch milliseconds; either bound may be open. */
 export type TimeRange = {

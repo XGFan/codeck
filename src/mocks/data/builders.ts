@@ -1,4 +1,5 @@
 import type { AssistantBlock, ImageRef, Node, PromptOrigin, TokenTotals, ToolCall, ToolResult } from "@/ipc/bindings";
+import { relayedOf } from "./relayed";
 
 export const NOW = Date.now();
 export const MIN = 60_000;
@@ -49,7 +50,13 @@ export function userNode(
     timestampMs: ts,
     hidden: o.hidden ?? false,
     inherited: o.inherited ?? false,
-    body: { kind: "userPrompt", text, images: o.images ?? [], origin: o.origin ?? { kind: "human" } },
+    body: {
+      kind: "userPrompt",
+      text,
+      images: o.images ?? [],
+      origin: o.origin ?? { kind: "human" },
+      relayed: relayedOf(o.origin ?? { kind: "human" }, text),
+    },
   };
 }
 

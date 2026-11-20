@@ -83,6 +83,9 @@ pub enum NodeBody {
         text: String,
         images: Vec<ImageRef>,
         origin: PromptOrigin,
+        /// The messages a prompt relayed from other agents holds, in order (`origin` `Teammate` or
+        /// `Peer`); empty for any other prompt. `text` keeps the prompt as recorded.
+        relayed: Vec<RelayedMessage>,
     },
     Assistant {
         message_id: Option<String>,
@@ -162,6 +165,61 @@ pub enum PromptOrigin {
         from: Option<String>,
     },
     Meta,
+}
+
+/// One message of a prompt relayed from other agents: a `<teammate-message>`, a
+/// `<cross-session-message>` or `<agent-message>` block, or a plugin's text.
+#[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayedMessage {
+    /// The sender: the teammate's id, the other Session's name (else its address), the agent's
+    /// id, the plugin's name.
+    pub from: Option<String>,
+    /// A `<cross-session-message>`'s `from` (`uds:…`): what a SendMessage to that Session names.
+    pub address: Option<String>,
+    pub color: Option<String>,
+    /// The tag's `summary`.
+    pub summary: Option<String>,
+    /// What is inside the tag (for a plugin: after its opening line), trimmed.
+    pub body: String,
+    /// One line for it: its `summary`; a JSON message's `summary`, else its `type`; else its
+    /// first line.
+    pub preview: String,
+    /// What a teammate's JSON message says, for the kinds known here; any other is a report.
+    pub event: Option<TeammateEvent>,
+}
+
+/// What a teammate's JSON message says. `who`: the message's `from`, else the tag's teammate.
+#[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum TeammateEvent {
+    /// Its round ended with a result (`idle_notification` with `result`, since claude 2.1.251);
+    /// `failed`: `idleReason` `failed`.
+    Done {
+        who: Option<String>,
+        result: String,
+        failed: bool,
+    },
+    /// Its round ended, nothing more said.
+    Idle { who: Option<String> },
+    /// Its round failed without a result (`failureReason`).
+    Failed {
+        who: Option<String>,
+        reason: Option<String>,
+    },
+    /// It shut down: `shutdown_approved` from it, or (`system`) `teammate_terminated` from
+    /// `system` naming it ("X has shut down.").
+    Exited { who: Option<String>, system: bool },
+    /// A task was assigned (`task_assignment`); `who`: who assigned it.
+    Task {
+        who: Option<String>,
+        task_id: Option<String>,
+        subject: Option<String>,
+    },
 }
 
 /// Where a [`PromptOrigin::Peer`] message came from.

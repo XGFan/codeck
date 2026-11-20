@@ -731,6 +731,7 @@ mod tests {
         prompt::TeammateMessage {
             teammate_id: Some(id.into()),
             color: color.map(Into::into),
+            summary: None,
             body: body.into(),
         }
     }

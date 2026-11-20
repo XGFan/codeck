@@ -670,7 +670,12 @@ fn teammate_messages_are_not_human_prompts_and_empty_system_entries_stay_empty()
         .find(|n| n.id == "7e1a0c55-3b2d-5f4e-9a61-0d2c8b7f4e10")
         .expect("teammate message on the Main Line");
     match &n.body {
-        NodeBody::UserPrompt { origin, text, .. } => {
+        NodeBody::UserPrompt {
+            origin,
+            text,
+            relayed,
+            ..
+        } => {
             assert_eq!(
                 origin,
                 &PromptOrigin::Teammate {
@@ -680,6 +685,19 @@ fn teammate_messages_are_not_human_prompts_and_empty_system_entries_stay_empty()
                 }
             );
             assert!(text.contains("The GUI shell builds"));
+            // The message itself, out of its wrapper: what the viewer draws.
+            let m = &relayed[0];
+            assert_eq!(
+                (m.from.as_deref(), m.color.as_deref(), m.preview.as_str()),
+                (
+                    Some("gui-impl"),
+                    Some("red"),
+                    "GUI shell done, all checks green"
+                )
+            );
+            assert!(
+                m.body.contains("The GUI shell builds") && !m.body.contains("<teammate-message")
+            );
         }
         b => panic!("unexpected {b:?}"),
     }
@@ -1510,6 +1528,7 @@ fn input_queued_while_claude_was_busy_shows_as_user_messages() {
             text,
             images,
             origin,
+            ..
         } => (text.clone(), images.len(), origin.clone()),
         b => panic!("{id}: unexpected {b:?}"),
     };

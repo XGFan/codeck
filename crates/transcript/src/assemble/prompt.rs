@@ -1,7 +1,7 @@
 //! `PromptOrigin` classification; `<command-name>`, `<task-notification>`,
 //! `<teammate-message>` and agent-to-agent message parsing.
 
-use crate::model::{PeerSource, PromptOrigin};
+use crate::model::{PeerSource, PromptOrigin, RelayedMessage, TeammateEvent};
 use crate::raw::RawEntry;
 
 /// Start of the line Claude Code puts before a message relayed from another agent
@@ -347,6 +347,7 @@ pub fn unrecognized_mark(e: &RawEntry) -> Option<String> {
 pub struct TeammateMessage {
     pub teammate_id: Option<String>,
     pub color: Option<String>,
+    pub summary: Option<String>,
     pub body: String,
 }
 
@@ -367,11 +368,191 @@ pub fn teammate_messages(text: &str) -> Vec<TeammateMessage> {
         out.push(TeammateMessage {
             teammate_id: attr(block, "teammate_id"),
             color: attr(block, "color"),
+            summary: attr(block, "summary"),
             body: block[gt + 1..end].trim().to_owned(),
         });
         rest = &block[end + CLOSE.len()..];
     }
     out
+}
+
+/// The messages of a prompt relayed from other agents (`origin` `Teammate` or `Peer`), in order;
+/// none for any other prompt. A relayed prompt with no block of its kind is one message: its text.
+pub fn relayed_messages(origin: &PromptOrigin, text: &str) -> Vec<RelayedMessage> {
+    match origin {
+        PromptOrigin::Teammate { .. } => {
+            let found = teammate_messages(text);
+            if found.is_empty() {
+                return vec![plain_message(None, text.trim())];
+            }
+            found
+                .into_iter()
+                .map(|m| RelayedMessage {
+                    event: teammate_event(&m),
+                    preview: preview_of(m.summary.as_deref(), &m.body),
+                    from: m.teammate_id,
+                    address: None,
+                    color: m.color,
+                    summary: m.summary,
+                    body: m.body,
+                })
+                .collect()
+        }
+        PromptOrigin::Peer { from, .. } => peer_messages(text, from.as_deref()),
+        _ => Vec::new(),
+    }
+}
+
+fn plain_message(from: Option<&str>, body: &str) -> RelayedMessage {
+    RelayedMessage {
+        from: from.map(str::to_owned),
+        address: None,
+        color: None,
+        summary: None,
+        body: body.to_owned(),
+        preview: preview_of(None, body),
+        event: None,
+    }
+}
+
+/// Each `<cross-session-message from="…" from-name="…">` / `<agent-message from="…">` block of a
+/// message from another agent, the sender falling back to `from`; with no such block it is a
+/// plugin's: its text after the `The <name> plugin sent a message:` line.
+fn peer_messages(text: &str, from: Option<&str>) -> Vec<RelayedMessage> {
+    const TAGS: [&str; 2] = ["cross-session-message", "agent-message"];
+    let mut out = Vec::new();
+    let mut rest = text;
+    loop {
+        let next = TAGS
+            .iter()
+            .filter_map(|t| find_open(rest, t).map(|at| (at, *t)))
+            .min();
+        let Some((at, name)) = next else { break };
+        let block = &rest[at..];
+        let close = format!("</{name}>");
+        let (Some(gt), Some(end)) = (block.find('>'), block.find(&close)) else {
+            break;
+        };
+        if gt > end {
+            break;
+        }
+        let address = (name == TAGS[0]).then(|| attr(block, "from")).flatten();
+        let body = block[gt + 1..end].trim();
+        out.push(RelayedMessage {
+            from: attr(block, "from-name")
+                .or_else(|| attr(block, "from"))
+                .or_else(|| from.map(str::to_owned)),
+            address,
+            ..plain_message(None, body)
+        });
+        rest = &block[end + close.len()..];
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    let t = text.trim();
+    let (open, close) = PLUGIN_PREAMBLE;
+    let body = t
+        .strip_prefix(open)
+        .and_then(|r| r.split_once(close))
+        .filter(|(name, _)| !name.is_empty() && !name.contains('\n'))
+        .map_or(t, |(_, body)| body.trim_start());
+    vec![plain_message(from, body)]
+}
+
+/// Where `<name` opens a tag in `s` (followed by whitespace or `>`).
+fn find_open(s: &str, name: &str) -> Option<usize> {
+    let open = format!("<{name}");
+    let mut from = 0;
+    while let Some(i) = s[from..].find(&open) {
+        let at = from + i;
+        match s[at + open.len()..].chars().next() {
+            Some(c) if c.is_whitespace() || c == '>' => return Some(at),
+            _ => from = at + open.len(),
+        }
+    }
+    None
+}
+
+/// A message body that is a JSON object.
+fn json_object(body: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if !body.starts_with('{') {
+        return None;
+    }
+    match serde_json::from_str(body).ok()? {
+        serde_json::Value::Object(o) => Some(o),
+        _ => None,
+    }
+}
+
+/// A string field of a JSON message, trimmed; `None` when absent or empty.
+fn json_str(v: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    let s = v.get(key)?.as_str()?.trim();
+    (!s.is_empty()).then(|| s.to_owned())
+}
+
+/// What a teammate's JSON message says ([`TeammateEvent`]); `None` for plain text and for kinds
+/// not known here (shown as reports).
+pub fn teammate_event(m: &TeammateMessage) -> Option<TeammateEvent> {
+    let v = json_object(&m.body)?;
+    let who = || json_str(&v, "from").or_else(|| m.teammate_id.clone());
+    match v.get("type")?.as_str()? {
+        "idle_notification" => {
+            let failed = v.get("idleReason").and_then(|r| r.as_str()) == Some("failed");
+            Some(match json_str(&v, "result") {
+                Some(result) => TeammateEvent::Done {
+                    who: who(),
+                    result,
+                    failed,
+                },
+                None if failed => TeammateEvent::Failed {
+                    who: who(),
+                    reason: json_str(&v, "failureReason"),
+                },
+                None => TeammateEvent::Idle { who: who() },
+            })
+        }
+        "shutdown_approved" => Some(TeammateEvent::Exited {
+            who: who(),
+            system: false,
+        }),
+        "teammate_terminated" => {
+            let message = json_str(&v, "message")?;
+            let name = message
+                .strip_suffix('.')
+                .unwrap_or(&message)
+                .strip_suffix(" has shut down")
+                .filter(|n| !n.is_empty() && !n.contains('\n'))?;
+            Some(TeammateEvent::Exited {
+                who: Some(name.to_owned()),
+                system: true,
+            })
+        }
+        "task_assignment" => Some(TeammateEvent::Task {
+            who: json_str(&v, "assignedBy").or_else(|| m.teammate_id.clone()),
+            task_id: json_str(&v, "taskId"),
+            subject: json_str(&v, "subject"),
+        }),
+        _ => None,
+    }
+}
+
+/// One line for a relayed message: its `summary`; a JSON message's `summary`, else its `type`;
+/// else its first line that says anything.
+fn preview_of(summary: Option<&str>, body: &str) -> String {
+    if let Some(s) = summary {
+        return s.to_owned();
+    }
+    if let Some(v) = json_object(body) {
+        return json_str(&v, "summary")
+            .or_else(|| json_str(&v, "type"))
+            .unwrap_or_default();
+    }
+    body.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn attr(s: &str, name: &str) -> Option<String> {
@@ -496,12 +677,161 @@ mod tests {
             TeammateMessage {
                 teammate_id: Some("a".into()),
                 color: Some("blue".into()),
+                summary: Some("s".into()),
                 body: "report".into(),
             }
         );
         assert_eq!(m[1].teammate_id.as_deref(), Some("system"));
         assert_eq!(m[1].body, "{\"type\":\"teammate_terminated\"}");
         assert!(teammate_messages("no tags").is_empty());
+    }
+
+    /// A relayed prompt of teammate messages, each `(tag attributes, body)`.
+    fn relayed(blocks: &[(&str, String)]) -> Vec<RelayedMessage> {
+        let body: Vec<String> = blocks
+            .iter()
+            .map(|(attrs, body)| format!("<teammate-message {attrs}>\n{body}\n</teammate-message>"))
+            .collect();
+        let text = format!(
+            "Another Claude session sent a message:\n{}\n\nThis came from another Claude session",
+            body.join("\n\n")
+        );
+        let origin = PromptOrigin::Teammate {
+            teammate_id: None,
+            color: None,
+            summary: None,
+        };
+        relayed_messages(&origin, &text)
+    }
+
+    const A: &str = r#"teammate_id="line-a" color="blue""#;
+
+    #[test]
+    fn a_teammates_round_ends_with_its_result_just_idle_or_failed() {
+        let who = Some("line-a".to_owned());
+        let done = r#"{"type":"idle_notification","from":"line-a","idleReason":"available","result":"Done.\n\n- a"}"#;
+        let idle = r#"{"type":"idle_notification","from":"line-a","idleReason":"available"}"#;
+        let failed = r#"{"type":"idle_notification","from":"line-a","idleReason":"failed","failureReason":"API Error"}"#;
+        let m = relayed(&[(A, done.into()), (A, idle.into()), (A, failed.into())]);
+        assert_eq!(
+            m.iter().map(|m| m.event.clone()).collect::<Vec<_>>(),
+            [
+                Some(TeammateEvent::Done {
+                    who: who.clone(),
+                    result: "Done.\n\n- a".into(),
+                    failed: false
+                }),
+                Some(TeammateEvent::Idle { who: who.clone() }),
+                Some(TeammateEvent::Failed {
+                    who: who.clone(),
+                    reason: Some("API Error".into())
+                }),
+            ]
+        );
+        assert!(m.iter().all(|m| m.color.as_deref() == Some("blue")));
+    }
+
+    #[test]
+    fn a_teammates_shutdown_and_a_task_assignment_say_who() {
+        let m = relayed(&[
+            (
+                r#"teammate_id="system""#,
+                r#"{"type":"teammate_terminated","message":"line-a has shut down."}"#.into(),
+            ),
+            (A, r#"{"type":"shutdown_approved","from":"line-a"}"#.into()),
+            (
+                r#"teammate_id="team-lead""#,
+                r#"{"type":"task_assignment","taskId":"6","subject":"Write docs","assignedBy":"team-lead"}"#.into(),
+            ),
+            (r#"teammate_id="system""#, r#"{"type":"teammate_terminated"}"#.into()),
+        ]);
+        assert_eq!(
+            m[0].event,
+            Some(TeammateEvent::Exited {
+                who: Some("line-a".into()),
+                system: true
+            })
+        );
+        assert_eq!(
+            m[1].event,
+            Some(TeammateEvent::Exited {
+                who: Some("line-a".into()),
+                system: false
+            })
+        );
+        assert_eq!(
+            m[2].event,
+            Some(TeammateEvent::Task {
+                who: Some("team-lead".into()),
+                task_id: Some("6".into()),
+                subject: Some("Write docs".into())
+            })
+        );
+        // Names nobody: a report as it is.
+        assert_eq!(m[3].event, None);
+    }
+
+    #[test]
+    fn reports_are_previewed_by_summary_json_type_or_first_line() {
+        let m = relayed(&[
+            (
+                r#"teammate_id="line-a" summary="Stage one""#,
+                "Stage one done.".into(),
+            ),
+            (A, "\n  And the tests pass.\nMore.".into()),
+            (A, r#"{"type":"plan_approval_request"}"#.into()),
+        ]);
+        assert!(m.iter().all(|m| m.event.is_none()));
+        assert_eq!(
+            m.iter().map(|m| m.preview.as_str()).collect::<Vec<_>>(),
+            ["Stage one", "And the tests pass.", "plan_approval_request"]
+        );
+        assert_eq!(m[0].from.as_deref(), Some("line-a"));
+        assert_eq!(m[0].summary.as_deref(), Some("Stage one"));
+        assert_eq!(m[0].body, "Stage one done.");
+    }
+
+    #[test]
+    fn messages_from_other_agents_come_out_of_their_wrappers() {
+        let peer = |source, from: Option<&str>| PromptOrigin::Peer {
+            source,
+            from: from.map(str::to_owned),
+        };
+        let text = "Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/1.sock\" from-name=\"codeck-99\">\nURGENT\n</cross-session-message>\n\n<agent-message from=\"w2\">\nhi\n</agent-message>\n\nThis came from another Claude session";
+        let m = relayed_messages(&peer(PeerSource::Session, Some("codeck-99")), text);
+        assert_eq!(m.len(), 2);
+        assert_eq!(
+            (
+                m[0].from.as_deref(),
+                m[0].address.as_deref(),
+                m[0].body.as_str()
+            ),
+            (Some("codeck-99"), Some("uds:/tmp/1.sock"), "URGENT")
+        );
+        assert_eq!(
+            (
+                m[1].from.as_deref(),
+                m[1].address.as_deref(),
+                m[1].body.as_str()
+            ),
+            (Some("w2"), None, "hi")
+        );
+        // A plugin's message is its text after the opening line.
+        let m = relayed_messages(
+            &peer(PeerSource::Plugin, Some("plannotator")),
+            "The plannotator plugin sent a message:\nFeedback.",
+        );
+        assert_eq!(m.len(), 1);
+        assert_eq!(
+            (
+                m[0].from.as_deref(),
+                m[0].body.as_str(),
+                m[0].preview.as_str()
+            ),
+            (Some("plannotator"), "Feedback.", "Feedback.")
+        );
+        // A prompt that is not relayed has none.
+        assert!(relayed_messages(&PromptOrigin::Human, text).is_empty());
     }
 
     #[test]

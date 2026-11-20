@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { nearlySame, peerMessages, previewOf, teammateItems, teammateParts } from "./teammate";
+import { relayedOf } from "@/mocks/data/relayed";
+import { nearlySame, peerNames, previewOf, teammateItems, teammateParts } from "./teammate";
+import { userNode } from "@/mocks/data/builders";
 
 const msg = (attrs: string, body: string) => `<teammate-message ${attrs}>\n${body}\n</teammate-message>`;
+/** A relayed prompt's messages as the backend gives them (the mock's stand-in for its parser). */
 const relayed = (...blocks: string[]) =>
-  `Another Claude session sent a message:\n${blocks.join("\n\n")}\n\nThis came from another Claude session`;
+  relayedOf(
+    { kind: "teammate", teammateId: null, color: null, summary: null },
+    `Another Claude session sent a message:\n${blocks.join("\n\n")}\n\nThis came from another Claude session`,
+  );
 const json = (o: object) => JSON.stringify(o);
 const A = 'teammate_id="line-a" color="blue"';
 
@@ -64,21 +70,19 @@ describe("teammateParts", () => {
   });
 });
 
-describe("peerMessages", () => {
-  it("takes each message from another agent out of its wrapper, sender as its id", () => {
+describe("peerNames", () => {
+  it("another Session's address maps to the name its messages carry", () => {
     const text =
-      'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/1.sock" from-name="codeck-99">\nURGENT\n</cross-session-message>\n\nThis came from another Claude session';
-    expect(peerMessages(text, null)).toEqual([{ id: "codeck-99", color: null, summary: null, body: "URGENT" }]);
-    expect(peerMessages('<agent-message from="w2">\nhi\n</agent-message>', null)[0]).toMatchObject({
-      id: "w2",
-      body: "hi",
-    });
-  });
-
-  it("a plugin's message is its text after the opening line", () => {
-    expect(peerMessages("The plannotator plugin sent a message:\nFeedback.", "plannotator")).toEqual([
-      { id: "plannotator", color: null, summary: null, body: "Feedback." },
-    ]);
+      'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/1.sock" from-name="codeck-99">\nURGENT\n</cross-session-message>';
+    const nodes = [
+      userNode("p1", 1, text, { origin: { kind: "peer", source: "session", from: "codeck-99" } }),
+      // Without a name the address says nothing more.
+      userNode("p2", 2, '<cross-session-message from="uds:/tmp/2.sock">\nhi\n</cross-session-message>', {
+        origin: { kind: "peer", source: "session", from: null },
+      }),
+      userNode("u1", 3, "hello"),
+    ];
+    expect([...peerNames(nodes)]).toEqual([["uds:/tmp/1.sock", "codeck-99"]]);
   });
 });
 
@@ -98,7 +102,7 @@ describe("teammateItems", () => {
       ),
     );
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "done", who: "bench", report: { id: "bench", summary: "压测结果" } });
+    expect(items[0]).toMatchObject({ kind: "done", who: "bench", report: { from: "bench", summary: "压测结果" } });
   });
 
   it("drops the report when the result says nearly the same", () => {
@@ -114,7 +118,7 @@ describe("teammateItems", () => {
     const items = teammateItems(
       teammateParts(relayed(other, report("第一条"), report("第二条"), done("完全不同的结论"))),
     );
-    expect(items.map((i) => (i.kind === "report" ? `report:${i.message.id}:${i.message.body}` : i.kind))).toEqual([
+    expect(items.map((i) => (i.kind === "report" ? `report:${i.message.from}:${i.message.body}` : i.kind))).toEqual([
       "report:redis:Redis 写好了",
       "report:bench:第一条",
       "done",

@@ -156,6 +156,7 @@ fn prompt_text(turn: &Turn<'_>) -> Option<String> {
         text,
         images,
         origin,
+        ..
     } = &turn.prompt?.body
     else {
         return None;

@@ -142,6 +142,7 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
                     }
                 }
                 NodeBody::UserPrompt {
+                    relayed: prompt::relayed_messages(&origin, &text),
                     images,
                     text,
                     origin,

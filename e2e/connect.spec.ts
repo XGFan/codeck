@@ -401,7 +401,7 @@ test("发出提示词：输入框立即清空，对话末尾先是跳动省略�
         timestampMs: Date.now(),
         hidden: false,
         inherited: false,
-        body: { kind: "userPrompt", text: "MOCK-TOOL please", images: [], origin: { kind: "human" } },
+        body: { kind: "userPrompt", text: "MOCK-TOOL please", images: [], origin: { kind: "human" }, relayed: [] },
       });
       window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
     },
@@ -637,7 +637,7 @@ test("回复前按 Esc 撤回的提示词：从对话里拿掉、文字回到输
         timestampMs: Date.now(),
         hidden: false,
         inherited: false,
-        body: { kind: "userPrompt", text: "改成两行\n的那个", images: [], origin: { kind: "human" } },
+        body: { kind: "userPrompt", text: "改成两行\n的那个", images: [], origin: { kind: "human" }, relayed: [] },
       });
       window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
     }, id);
@@ -1933,7 +1933,7 @@ const indexFork = (page: Page) =>
         timestampMs: Date.now(),
         hidden: false,
         inherited: false,
-        body: { kind: "userPrompt", text, images: [], origin: { kind: "human" } },
+        body: { kind: "userPrompt", text, images: [], origin: { kind: "human" }, relayed: [] },
       });
       window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
     },

@@ -1,4 +1,3 @@
-import { peerMessages, previewOf, teammateMessages } from "@/features/transcript/teammate";
 import type { Draft } from "./drafts";
 import { shiftTokens, withoutTokens } from "./imageTokens";
 
@@ -14,13 +13,14 @@ const firstLine = (s: string) =>
  */
 export function queueText(item: string): string {
   const t = item.trim();
-  if (/^<(cross-session-message|agent-message)\b/.test(t)) {
-    const m = peerMessages(t, null)[0]!;
-    return `${m.id ?? "Agent"}：${firstLine(m.body)}`;
-  }
-  if (t.startsWith("<teammate-message")) {
-    const m = teammateMessages(t)[0]!;
-    return `${m.id ?? "Teammate"}：${previewOf(m)}`;
+  // The queue comes from ccrpc as Claude Code recorded it; the transcript's own messages come parsed from the
+  // backend. Here only the opening tag's sender and summary are read, for this one line.
+  const m = /^<(cross-session-message|agent-message|teammate-message)\b([^>]*)>([\s\S]*?)(?:<\/\1>|$)/.exec(t);
+  if (m) {
+    const attr = (name: string) => new RegExp(`\\b${name}="([^"]*)"`).exec(m[2]!)?.[1]?.trim() || null;
+    if (m[1] === "teammate-message")
+      return `${attr("teammate_id") ?? "Teammate"}：${attr("summary") ?? firstLine(m[3]!)}`;
+    return `${attr("from-name") ?? attr("from") ?? "Agent"}：${firstLine(m[3]!)}`;
   }
   if (t.startsWith("<task-notification>")) {
     const summary = /<summary>([\s\S]*?)<\/summary>/.exec(t)?.[1]?.trim();
