@@ -244,3 +244,11 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - `/rename` 记成本地命令（`system` / `local_command` 条目，接在 Main Line 末尾）并写 `custom-title` / `agent-name`。不回退直接 `/rename` 时整段历史分几次写出（先 `custom-title`，再是复制来的条目），所以要等文件长度稳定才算写完。
 - 选择器与确认页上的时间（`5s ago`）是原提示词的发送时间，与原 transcript 一致。
 
+## Code Mode（`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`，2026-11-20，2.1.327）
+
+- 模型只调用 `REPL`（写 JavaScript）与 `Poll`；代码里的调用（`tools.X(…)`、`$`…`` 等）的 tool_use id 是 Claude Code 自己给的 `repl_<uuid>`，模型的调用是 API 的 `toolu_…`。harness 自己补的 Poll（id `poll_<uuid>`）不写成 assistant 条目，只留一条 `poll_events` 附件。
+- **hook 顺序**（真实 Session）：PreToolUse(REPL) → 代码里每个调用各一对 PreToolUse / PostToolUse → PostToolUse(REPL)。PostToolUse(REPL) 在代码结束时才来，不是调用返回 `(dispatched #N)` 时；代码还在跑时模型接着调的 `Poll`，它的 PreToolUse 夹在中间。hook 输入里没有指回那次 REPL 调用的字段，所以「哪段代码发起的」只能取最近一个还没收到 PostToolUse 的 REPL 调用。
+- **transcript 的写入时机**：REPL 的 assistant 条目与 `(dispatched #N)` 结果在派发时写出；代码里的调用（`isVirtual` 的一对对消息）要等这段代码的结果送达（`Poll` 的结果或 `poll_events` 附件）才一起写出，时间戳都是送达那一刻。虚拟条目的 `madeBy` 恒为 `other`，没有指回代码的字段；几段代码的调用在同一次送达里写出时文件里分不清。实测一段 `sleep 4`、`echo`、`sleep 3` 的代码：第一个调用的 PreToolUse 在发出提示词后 3.3s，transcript 里这些调用的条目在 10.4s。
+- **队列**：每个 harness 事件（`<event nonce="…" kind="repl-eval" …>`，以及 `repl-status`）先记一条 `queue-operation` / `enqueue`，1 秒内被 Poll 取走：不带正文的 `dequeue`，或带正文的 `remove`。
+- **说明**：`REPL` 输入的 `description` 写不写随模型：Opus 5.5 约 36%（1491 段），Fable 5.2、Opus 4.8、Haiku 5.5 都是 100%。
+- 没实测：代码里需要审批的调用（实测的 Session 是 bypass 模式）；Subagent Run 里的代码。
