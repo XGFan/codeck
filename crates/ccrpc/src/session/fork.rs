@@ -224,11 +224,8 @@ impl Engine {
             if let Some(a) = shown["options"].as_array_mut() {
                 a.retain(|o| o["option"] == "both" || o["option"] == "conversation");
             }
-            if let Some(r) = self.rewind.as_mut() {
-                r.event = shown.clone();
-            }
             self.set_fork_phase(ForkPhase::Confirming);
-            self.emit(shown);
+            self.emit_request(shown);
             return;
         }
         match self.answer_rewind(&id, Some(option)) {

@@ -28,6 +28,7 @@ mod workflows;
 
 pub use self::block::{Block, BlockKind, MAX_BLOCK_TEXT, PendingTool, Persisted};
 pub use self::branch::off_main_uuids;
+pub use self::queue::{QueueItem, QueueKind, queue_item};
 pub use self::read::entry_uuids;
 pub use self::records::local_setting;
 pub use self::tasks::{BgTask, TaskKind, monitor_notice, task_notification};

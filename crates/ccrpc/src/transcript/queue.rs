@@ -1,9 +1,63 @@
 //! Claude Code's input queue (main line), as the main file's `queue-operation` entries leave it.
 
 use ::transcript::assemble::{nodes, prompt};
+use ::transcript::model::PeerSource;
 use ::transcript::raw::{RawEntry, decode_str};
+use serde::Serialize;
 
 use super::TxEvent;
+
+/// Who a queued item is from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QueueKind {
+    /// What the person typed, or a steer (a plugin's message too: it is queued as typed).
+    Typed,
+    /// Another Session's message (`<cross-session-message>`).
+    Session,
+    /// A Subagent's or Teammate's of this Session (`<agent-message>`).
+    Agent,
+}
+
+/// A queued item as the caller gets it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QueueItem {
+    pub kind: QueueKind,
+    /// The sender of a message from another Session or agent (`from-name`, else `from`).
+    pub from: Option<String>,
+    /// What was typed (`[Image #n]` kept); for a message, what its tags hold, without Claude
+    /// Code's lines around them.
+    pub text: String,
+    /// `↑` takes it back into the input box: only what was typed.
+    pub editable: bool,
+}
+
+/// A queued item's text as the caller gets it.
+pub fn queue_item(text: &str) -> QueueItem {
+    let peer = prompt::peer_text(text).and_then(|(source, messages)| match source {
+        PeerSource::Session => Some((QueueKind::Session, messages)),
+        PeerSource::Agent => Some((QueueKind::Agent, messages)),
+        PeerSource::Plugin => None,
+    });
+    match peer {
+        Some((kind, messages)) => QueueItem {
+            kind,
+            from: messages.first().and_then(|m| m.from.clone()),
+            text: messages
+                .iter()
+                .map(|m| m.body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            editable: false,
+        },
+        None => QueueItem {
+            kind: QueueKind::Typed,
+            from: None,
+            text: text.to_owned(),
+            editable: true,
+        },
+    }
+}
 
 /// Unconfirmed `dequeue` guesses kept ([`Queue::settle_delivered`]).
 const MAX_GUESSES: usize = 8;
@@ -152,4 +206,51 @@ fn queue_key(text: &str) -> String {
         }
     }
     t.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_what_was_typed_is_taken_back() {
+        let typed = |t: &str| QueueItem {
+            kind: QueueKind::Typed,
+            from: None,
+            text: t.into(),
+            editable: true,
+        };
+        assert_eq!(queue_item("MOCK-STEERED now"), typed("MOCK-STEERED now"));
+        assert_eq!(queue_item("[Image #1] look"), typed("[Image #1] look"));
+        // A plugin's message is queued as typed.
+        assert_eq!(
+            queue_item("The plannotator plugin sent a message:\nFeedback."),
+            typed("The plannotator plugin sent a message:\nFeedback.")
+        );
+        // Another Session's, wrapped in Claude Code's lines, its body on several lines.
+        let session = "Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/a.sock\" from-name=\"c6\">\nhi\nthere\n</cross-session-message>\n\nThis came from another Claude session";
+        assert_eq!(
+            queue_item(session),
+            QueueItem {
+                kind: QueueKind::Session,
+                from: Some("c6".into()),
+                text: "hi\nthere".into(),
+                editable: false,
+            }
+        );
+        assert_eq!(
+            queue_item("<agent-message from=\"a\">\nhi\n</agent-message>"),
+            QueueItem {
+                kind: QueueKind::Agent,
+                from: Some("a".into()),
+                text: "hi".into(),
+                editable: false,
+            }
+        );
+        let v = serde_json::to_value(queue_item("x")).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"kind": "typed", "from": null, "text": "x", "editable": true})
+        );
+    }
 }

@@ -128,7 +128,6 @@ function KindTasks({
   onShown: (open: boolean) => void;
 }) {
   const command = useConnect((s) => s.command);
-  const refresh = useConnect((s) => s.refreshTasks);
   const setError = useConnect((s) => s.setError);
   const [showDone, setShowDone] = useState(false);
   const k = kindOf(kind);
@@ -138,13 +137,7 @@ function KindTasks({
   const name = (t: Task) => t.description || t.command || t.id;
 
   return (
-    <Popover.Root
-      open={shown}
-      onOpenChange={(o) => {
-        onShown(o);
-        if (o) void refresh(c.conn);
-      }}
-    >
+    <Popover.Root open={shown} onOpenChange={onShown}>
       <Popover.Trigger className={footBtn} data-testid={`tasks-${kind}`} title={`后台运行中：${n} 个 ${k.label}`}>
         <k.Icon size={14} strokeWidth={1.7} aria-hidden />
         {n} {k.label}
@@ -193,7 +186,6 @@ function KindTasks({
                       onClick={async () => {
                         const r = await command(c.conn, { type: "stop_task", task_id: t.id });
                         if (!r.success) setError(errorKey(c), `停止失败：${r.error?.message ?? ""}`);
-                        void refresh(c.conn);
                       }}
                     >
                       <Square size={10} aria-hidden />

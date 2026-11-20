@@ -436,7 +436,9 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     window.__cvCcrpc!.emit({
       type: "question",
       request_id: "toolu_e2e_multi",
+      tool_use_id: "toolu_e2e_multi",
       agent_id: "a1b2c3d4e5f6",
+      from_code: false,
       questions: [
         {
           question: "防住哪些情况？",
@@ -490,6 +492,7 @@ test("Code Mode 里从代码发起的提问在输入区的卡片上作答", asyn
     window.__cvCcrpc!.emit({
       type: "question",
       request_id: "repl_e2e_code",
+      tool_use_id: "repl_e2e_code",
       agent_id: null,
       from_code: true,
       questions: [
@@ -506,6 +509,55 @@ test("Code Mode 里从代码发起的提问在输入区的卡片上作答", asyn
   await expect
     .poll(() => lastSent(page, "answer_question"))
     .toMatchObject({ request_id: "repl_e2e_code", answers: [{ options: ["B"] }] });
+});
+
+test("请求卡片留到 ccrpc 报它结束（request_end），不随状态变化消失", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  const emit = (msg: Record<string, unknown>) => page.evaluate((m) => window.__cvCcrpc!.emit(m), msg);
+  await emit({ type: "state", state: "waiting", waiting: { kind: "permission", waiting_for: "permission prompt" } });
+  await emit({
+    type: "permission_request",
+    request_id: "toolu_e2e_end",
+    tool_use_id: "toolu_e2e_end",
+    tool_name: "Bash",
+    input: { command: "rm -rf build" },
+    agent_id: null,
+    from_code: false,
+    options: null,
+    layout_source: null,
+  });
+  const card = page.getByTestId("permission-card");
+  await expect(card).toContainText("rm -rf build");
+  // Answered in the terminal: the Session runs on, the card stays until ccrpc says the request is over.
+  await emit({ type: "state", state: "busy", waiting: null });
+  await page.waitForTimeout(300);
+  await expect(card).toBeVisible();
+  await emit({ type: "request_end", request_id: "toolu_e2e_end" });
+  await expect(card).toHaveCount(0);
+});
+
+test("后台任务随 tasks 事件更新", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  await expect(page.getByTestId("tasks-shell")).toHaveCount(0);
+  const shell = (status: string) => ({
+    id: "b-e2e",
+    kind: "shell",
+    tool_use_id: null,
+    description: "pnpm dev",
+    command: "pnpm dev",
+    status,
+    idle: false,
+  });
+  const tasks = (status: string) =>
+    page.evaluate((t) => window.__cvCcrpc!.emit({ type: "tasks", tasks: [t] }), shell(status));
+  await tasks("running");
+  await expect(page.getByTestId("tasks-shell")).toHaveText("1 Shell");
+  await tasks("completed");
+  await expect(page.getByTestId("tasks-shell")).toHaveCount(0);
+  // Not asked for: the list comes with the events.
+  expect(await lastSent(page, "get_tasks")).toBeUndefined();
 });
 
 test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在对话里各占一行；等待审批写在工具组上，提问答完才出现", async ({
@@ -531,6 +583,7 @@ test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在�
   await emit({
     type: "permission_request",
     request_id: "repl_e2e_bench",
+    tool_use_id: "repl_e2e_bench",
     tool_name: "Bash",
     input: bench,
     agent_id: null,
@@ -544,7 +597,9 @@ test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在�
   await expect(current).toContainText("等待审批：运行 cargo bench --bench retry");
   await expect(page.getByTestId("permission-card")).toBeVisible();
   // Allowed and done: its output is what the hook reported, before the transcript has the call.
-  await emit({ type: "state", state: "busy" });
+  await emit({ type: "request_end", request_id: "repl_e2e_bench" });
+  await emit({ type: "state", state: "busy", waiting: null });
+  await expect(page.getByTestId("permission-card")).toHaveCount(0);
   await emit({
     type: "code_call_end",
     tool_use_id: "repl_e2e_bench",
@@ -572,10 +627,18 @@ test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在�
     input: { questions: [question] },
     code: "cm-r4",
   });
-  await emit({ type: "question", request_id: "repl_e2e_ask", agent_id: null, from_code: true, questions: [question] });
+  await emit({
+    type: "question",
+    request_id: "repl_e2e_ask",
+    tool_use_id: "repl_e2e_ask",
+    agent_id: null,
+    from_code: true,
+    questions: [question],
+  });
   await expect(page.getByTestId("question-card")).toContainText("再跑一遍吗？");
   await expect(transcript.getByTestId("ask").filter({ hasText: "再跑一遍吗？" })).toHaveCount(0);
-  await emit({ type: "state", state: "busy" });
+  await emit({ type: "request_end", request_id: "repl_e2e_ask" });
+  await emit({ type: "state", state: "busy", waiting: null });
   await emit({
     type: "code_call_end",
     tool_use_id: "repl_e2e_ask",
@@ -594,7 +657,9 @@ test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点�
     window.__cvCcrpc!.emit({
       type: "question",
       request_id: "toolu_e2e_chat",
+      tool_use_id: "toolu_e2e_chat",
       agent_id: "a1b2c3d4e5f6",
+      from_code: false,
       questions: [
         { question: "用哪个颜色？", header: "颜色", multiSelect: false, options: [{ label: "红" }, { label: "蓝" }] },
         {
@@ -670,7 +735,7 @@ test("回复前按 Esc 撤回的提示词：从对话里拿掉、文字回到输
   await page.getByTestId("header-more").click();
   await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
   // The same words sent again (a new turn): shown.
-  await page.evaluate(() => window.__cvCcrpc!.emit({ type: "state", state: "busy" }));
+  await page.evaluate(() => window.__cvCcrpc!.emit({ type: "state", state: "busy", waiting: null }));
   await append("e2e-sent-again");
   await expect(bubble("e2e-sent-again")).toBeVisible();
   await expect(bubble("e2e-taken-back")).toHaveCount(0);
@@ -683,7 +748,9 @@ test("作答时选项旁显示 preview：先是第一项的，悬停、键盘焦
     window.__cvCcrpc!.emit({
       type: "question",
       request_id: "toolu_e2e_preview",
+      tool_use_id: "toolu_e2e_preview",
       agent_id: "a1b2c3d4e5f6",
+      from_code: false,
       questions: [
         {
           question: "侧栏的整体结构选哪种？",
@@ -1707,7 +1774,7 @@ test("显示工作中时这一轮其实刚结束：照样作为提示词发出�
   await connectTo(page, TURNS);
   await expect(state(page)).toContainText("空闲");
   // The app still shows the turn running; ccrpc finds the Session idle when the line comes.
-  await page.evaluate(() => window.__cvCcrpc!.emit({ type: "state", state: "busy" }));
+  await page.evaluate(() => window.__cvCcrpc!.emit({ type: "state", state: "busy", waiting: null }));
   await expect(state(page)).toContainText("工作中");
   await send(page, "MOCK-SLOW please");
   await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "MOCK-SLOW please", if_busy: "steer" });

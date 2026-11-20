@@ -130,7 +130,7 @@ struct QuestionCard: View {
         Task {
             busy = true
             error = nil
-            let resp = await model.connect.answer(c, requestId: r.requestId, cmd)
+            let resp = await model.connect.command(c.conn, cmd)
             busy = false
             if resp.success { answered += 1 } else { error = Answers.error(resp) }
         }

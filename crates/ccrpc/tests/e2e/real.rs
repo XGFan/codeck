@@ -142,7 +142,7 @@ fn controls_a_real_session() {
         "answers": [{"options": ["Spaces"]}, {"options": ["prettier", "biome"]}]}),
     );
     let tr = rpc.until("question result", Duration::from_secs(30), |v| {
-        v["type"] == "block" && v["kind"] == "tool_result" && v["tool_use_id"] == q["request_id"]
+        v["type"] == "block" && v["kind"] == "tool_result" && v["tool_use_id"] == q["tool_use_id"]
     });
     let c = tr["content"].as_str().unwrap();
     assert!(
@@ -157,7 +157,7 @@ fn controls_a_real_session() {
     let q = rpc.event("question", Duration::from_secs(60));
     rpc.call("q4", json!({"type": "answer_question", "request_id": q["request_id"], "answers": [{"other": "teal green"}]}));
     let tr = rpc.until("other result", Duration::from_secs(30), |v| {
-        v["type"] == "block" && v["kind"] == "tool_result" && v["tool_use_id"] == q["request_id"]
+        v["type"] == "block" && v["kind"] == "tool_result" && v["tool_use_id"] == q["tool_use_id"]
     });
     assert!(tr["content"].as_str().unwrap().contains("teal green"));
     rpc.event("turn_end", Duration::from_secs(60));

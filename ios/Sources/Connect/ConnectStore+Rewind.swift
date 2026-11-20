@@ -53,12 +53,8 @@ extension ConnectStore {
         if let option { cmd["option"] = .string(option.rawValue) } else { cmd["cancel"] = true }
         // A Fork's own rewind: ccrpc goes on with the Fork, whose `fork` event brings the prompt.
         let forking = { if case .fork = self.starts[c.conn] { true } else { false } }()
-        let r = await answer(c, requestId: request.requestId, .object(cmd))
+        let r = await command(c.conn, .object(cmd))
         guard r.success else {
-            // The page is gone (answered or left in the terminal): so is its card. A Fork's still waits in ccrpc.
-            if !forking, ["unknown_request", "not_waiting"].contains(r.error?.code) {
-                hideRequest(c, requestId: request.requestId)
-            }
             return "\(option == nil ? "取消回退" : "回退")失败：\(r.errorText)"
         }
         guard let option, !forking else { return nil }

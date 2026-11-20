@@ -38,12 +38,9 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
     private enum Keys: String, CodingKey { case type, requestId = "request_id" }
 
     init(from decoder: Decoder) throws {
-        guard let c = try? decoder.container(keyedBy: Keys.self) else {
-            self = .other(type: "", requestId: UUID().uuidString)
-            return
-        }
+        let c = try decoder.container(keyedBy: Keys.self)
         let type = c.lenient(String.self, .type) ?? ""
-        let id = c.lenient(String.self, .requestId) ?? "\(type):\(UUID().uuidString)"
+        let id = try c.decode(String.self, forKey: .requestId)
         switch type {
         case "permission_request":
             if let r = try? PermissionRequest(from: decoder) { self = .permission(r); return }
@@ -71,6 +68,8 @@ struct PermissionRequest: Decodable, Equatable, Sendable {
     }
 
     var requestId: String
+    /// The tool call it asks for.
+    var toolUseId: String
     var toolName: String
     var input: JSONValue?
     var agentId: String?
@@ -78,12 +77,16 @@ struct PermissionRequest: Decodable, Equatable, Sendable {
     var layoutSource: String?
 
     enum CodingKeys: String, CodingKey {
-        case requestId = "request_id", toolName = "tool_name", input, agentId = "agent_id", options
+        case requestId = "request_id", toolUseId = "tool_use_id", toolName = "tool_name", input, agentId = "agent_id", options
         case layoutSource = "layout_source"
     }
 
-    init(requestId: String, toolName: String, input: JSONValue?, options: [Option]? = nil, layoutSource: String? = nil) {
+    init(
+        requestId: String, toolUseId: String, toolName: String, input: JSONValue?, options: [Option]? = nil,
+        layoutSource: String? = nil
+    ) {
         self.requestId = requestId
+        self.toolUseId = toolUseId
         self.toolName = toolName
         self.input = input
         self.options = options
@@ -93,6 +96,7 @@ struct PermissionRequest: Decodable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         requestId = try c.decode(String.self, forKey: .requestId)
+        toolUseId = try c.decode(String.self, forKey: .toolUseId)
         toolName = c.lenient(String.self, .toolName) ?? "工具"
         input = c.lenient(JSONValue.self, .input)
         agentId = c.lenient(String.self, .agentId)
@@ -135,14 +139,19 @@ struct AskQuestion: Decodable, Equatable, Sendable {
 
 struct QuestionRequest: Decodable, Equatable, Sendable {
     var requestId: String
+    /// The tool call it asks for.
+    var toolUseId: String
     var questions: [AskQuestion]
     var agentId: String?
 
-    enum CodingKeys: String, CodingKey { case requestId = "request_id", questions, agentId = "agent_id" }
+    enum CodingKeys: String, CodingKey {
+        case requestId = "request_id", toolUseId = "tool_use_id", questions, agentId = "agent_id"
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         requestId = try c.decode(String.self, forKey: .requestId)
+        toolUseId = try c.decode(String.self, forKey: .toolUseId)
         questions = c.lenient(Lossy<AskQuestion>.self, .questions)?.items ?? []
         agentId = c.lenient(String.self, .agentId)
     }
@@ -198,24 +207,45 @@ struct RewindRequest: Decodable, Equatable, Sendable {
     var uuid: String
     /// The prompt's full text.
     var text: String
-    /// The page's sentence on the code (`The code will be unchanged.`).
-    var code: String?
+    /// What the page says on the code; nil for a sentence ccrpc could not read.
+    var code: Code?
+    /// The page's own sentence on the code.
+    var codeText: String?
     /// The page's `⚠` warning when code would be restored.
     var warning: String?
     /// The restores the page offers.
     var options: [Option]
 
-    enum CodingKeys: String, CodingKey { case requestId = "request_id", uuid, text, code, warning, options }
+    enum CodingKeys: String, CodingKey {
+        case requestId = "request_id", uuid, text, code, codeText = "code_text", warning, options
+    }
+
+    /// `code` of a rewind: whether the code is restored, with the diff and the files.
+    struct Code: Decodable, Equatable, Sendable {
+        var restores: Bool
+        var delta: String?
+        var target: String?
+
+        init(restores: Bool, delta: String? = nil, target: String? = nil) {
+            self.restores = restores
+            self.delta = delta
+            self.target = target
+        }
+    }
 
     private struct Offered: Decodable {
         var option: String
     }
 
-    init(requestId: String, uuid: String, text: String = "", code: String? = nil, warning: String? = nil, options: [Option]) {
+    init(
+        requestId: String, uuid: String, text: String = "", code: Code? = nil, codeText: String? = nil,
+        warning: String? = nil, options: [Option]
+    ) {
         self.requestId = requestId
         self.uuid = uuid
         self.text = text
         self.code = code
+        self.codeText = codeText
         self.warning = warning
         self.options = options
     }
@@ -225,7 +255,8 @@ struct RewindRequest: Decodable, Equatable, Sendable {
         requestId = try c.decode(String.self, forKey: .requestId)
         uuid = try c.decode(String.self, forKey: .uuid)
         text = c.lenient(String.self, .text) ?? ""
-        code = c.lenient(String.self, .code)
+        code = c.lenient(Code.self, .code)
+        codeText = c.lenient(String.self, .codeText)
         warning = c.lenient(String.self, .warning)
         let offered = Set(c.lenient(Lossy<Offered>.self, .options)?.items.map(\.option) ?? [])
         options = Option.allCases.filter { offered.contains($0.rawValue) }

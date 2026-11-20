@@ -3,22 +3,21 @@ import { api } from "@/ipc";
 import type { CcrpcInfo, LaunchRule, LiveEntry } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { createCcrpcClient } from "./client";
-import {
-  apply,
-  fromHost,
-  initial,
-  rewindAnswered,
-  rewindShown,
-  type ConnState,
-  type HostConn,
-  type PendingPrompt,
-} from "./conn";
+import { apply, fromHost, initial, rewindAnswered, type ConnState, type HostConn, type PendingPrompt } from "./conn";
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
 import { addWithdrawn, loadWithdrawn, saveWithdrawn } from "./withdrawn";
 import { createLsWatch } from "./lsWatch";
 import { resumeFailure } from "./resume";
 import { forkTitle } from "./fork";
-import type { ForkEvent, InMsg, LsEntry, ResponseMsg, RewindOption, RewindRequest, Task } from "./protocol";
+import {
+  PROTOCOL,
+  type ForkEvent,
+  type InMsg,
+  type LsEntry,
+  type ResponseMsg,
+  type RewindOption,
+  type RewindRequest,
+} from "./protocol";
 import { errorText, isNotFound } from "@/lib/errors";
 import { ALL_SESSIONS } from "@/queries/hooks";
 import { forgetSteers } from "./queue";
@@ -98,8 +97,6 @@ interface ConnectStore {
    */
   close(conn: string, stopTasks: boolean): Promise<"tasks_running" | void>;
   reconnect(conn: string): Promise<void>;
-  refreshTasks(conn: string): Promise<void>;
-  dropRequest(conn: string, requestId: string): void;
   /** 「回退」 on a prompt: `rewind` to its confirm page, shown as a card; a failure is shown on the Session. */
   rewind(conn: string, uuid: string): Promise<void>;
   /**
@@ -216,7 +213,9 @@ export const useConnect = create<ConnectStore>((set, get) => {
         // A new Session's input box takes typing from now on (its page was opened for that).
         if (after.newIn != null && [conn, after.sessionId].includes(useUi.getState().sessionId))
           window.setTimeout(() => focusInput(conn), 0);
-        void get().refreshTasks(conn);
+        // Another protocol: its events would be read wrong.
+        if (msg.protocol !== PROTOCOL)
+          setErr(errorKey(after), `ccrpc 版本不匹配：协议 ${msg.protocol}，需要 ${PROTOCOL}`);
         break;
       case "session_changed": {
         // `/clear` and the like: follow the Pane to its new Session if the old one is on screen.
@@ -236,7 +235,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
         const dk = draftKey(after);
         const draft = get().drafts[dk] ?? EMPTY_DRAFT;
         if (back && !draft.text.trim() && draft.images.length === 0) get().setDraft(dk, (d) => ({ ...d, text: back }));
-        void get().refreshTasks(conn);
         break;
       }
     }
@@ -722,27 +720,14 @@ export const useConnect = create<ConnectStore>((set, get) => {
       }
     },
 
-    async refreshTasks(conn) {
-      const r = await get().command(conn, { type: "get_tasks" });
-      if (r.success && r.data && Array.isArray(r.data.tasks)) {
-        const tasks = r.data.tasks as Task[];
-        update(conn, (c) => ({ ...c, tasks }));
-      }
-    },
-
-    dropRequest(conn, requestId) {
-      update(conn, (c) => ({ ...c, requests: c.requests.filter((q) => q.request_id !== requestId) }));
-    },
-
     async rewind(conn, uuid) {
       const c = get().conns[conn];
       if (!c) return;
       void api.ccrpcGuiLog(conn, `rewind ${uuid}`);
       setErr(errorKey(c), null);
-      update(conn, (x) => ({ ...x, picking: false, rewinding: { uuid, waited: false } }));
+      update(conn, (x) => ({ ...x, picking: false, rewinding: { uuid } }));
+      // The confirm page's card comes as a `rewind` event before this answer.
       const r = await get().command(conn, { type: "rewind", uuid });
-      if (r.success && r.data?.type === "rewind")
-        return update(conn, (x) => rewindShown(x, r.data as unknown as RewindRequest));
       update(conn, (x) => ({ ...x, rewinding: null }));
       if (!r.success) setErr(errorKey(c), `回退失败：${r.error?.message ?? r.error?.code ?? ""}`);
     },
@@ -760,15 +745,13 @@ export const useConnect = create<ConnectStore>((set, get) => {
       const c = get().conns[conn];
       if (!c) return;
       if (!r.success) {
-        // The confirm page is gone (answered or left in the terminal): so is its card. A Fork's own rewind
-        // refused before any key still waits in ccrpc (answered again); once the Fork failed nothing is said here.
+        // A Fork's own rewind refused before any key still waits in ccrpc (answered again); once the Fork failed
+        // nothing is said here.
         if (forking)
           return c.forkOf ? setErr(errorKey(c), `回退失败：${r.error?.message ?? r.error?.code ?? ""}`) : undefined;
-        if (r.error?.code === "unknown_request" || r.error?.code === "not_waiting")
-          get().dropRequest(conn, req.request_id);
         return setErr(errorKey(c), `${option ? "回退" : "取消回退"}失败：${r.error?.message ?? r.error?.code ?? ""}`);
       }
-      if (!option || forking) return get().dropRequest(conn, req.request_id);
+      if (!option || forking) return;
       // Claude Code put the prompt back into its input box; here it goes into an empty one, a draft stays.
       const dk = draftKey(c);
       const draft = get().drafts[dk] ?? EMPTY_DRAFT;

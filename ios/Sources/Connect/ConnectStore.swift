@@ -15,8 +15,6 @@ final class ConnectStore {
     var errors: [String: String] = [:]
     /// Sessions a Connect is on its way for.
     private(set) var connecting: Set<String> = []
-    /// Requests answered here (`conn|request_id`): hidden at once, before the Host's state drops them.
-    private var answered: Set<String> = []
     /// Connects this app is ending (Disconnect, 关闭 Session, a failed start): gone without a trace when the Host
     /// removes them.
     @ObservationIgnored var ending: Set<String> = []
@@ -68,7 +66,6 @@ final class ConnectStore {
         lsError = nil
         errors = [:]
         connecting = []
-        answered = []
         ending = []
         starts = [:]
         started = [:]
@@ -121,7 +118,6 @@ final class ConnectStore {
         }
         order = order.filter { merged[$0] != nil } + states.items.map(\.conn).filter { merged[$0] != nil && !order.contains($0) }
         conns = merged
-        pruneAnswered()
         for conn in starts.keys { follow(conn, gone: merged[conn] == nil && !touched.contains(conn)) }
         return true
     }
@@ -153,7 +149,6 @@ final class ConnectStore {
         noteMove(from: conns[state.conn], to: state)
         noteCard(from: conns[state.conn], to: state)
         conns[state.conn] = state
-        pruneAnswered()
         follow(state.conn)
     }
 
@@ -195,13 +190,11 @@ final class ConnectStore {
         restoredPrompts[conn] = nil
         notes[conn] = nil
         if let c = conns[conn], Self.endedByItself(c, ending: ending) {
-            answered = answered.filter { !$0.hasPrefix(conn + "|") }
             return
         }
         ending.remove(conn)
         conns[conn] = nil
         order.removeAll { $0 == conn }
-        answered = answered.filter { !$0.hasPrefix(conn + "|") }
     }
 
     /// Before a Resume: ended Connects of this Session go (one whose ccrpc still runs, driving nothing, is
@@ -254,19 +247,13 @@ final class ConnectStore {
         conns.values.contains { $0.holderId == holderId && $0.isLive }
     }
 
-    /// The cards to show: main line first, those just answered left out.
+    /// The cards to show: main line first.
     func requests(of c: ConnState) -> [ConnRequest] {
-        let open = c.requests.filter { !answered.contains("\(c.conn)|\($0.id)") }
+        let open = c.requests
         // `/btw` last: the first request is the one answered from the list, and it has nothing to answer.
         let btw = open.filter { if case .btw = $0 { true } else { false } }
         let rest = open.filter { r in !btw.contains { $0.id == r.id } }
         return rest.filter { $0.agentId == nil } + rest.filter { $0.agentId != nil } + btw
-    }
-
-    private func pruneAnswered() {
-        answered = answered.filter { key in
-            conns.values.contains { c in c.requests.contains { "\(c.conn)|\($0.id)" == key } }
-        }
     }
 
     // MARK: Commands
@@ -323,18 +310,6 @@ final class ConnectStore {
             if case .host(let c, _) = error as? HostError { code = c }
             return .failed(Self.text(error), code: code)
         }
-    }
-
-    /// Answers a card; answered, it leaves at once (the Host's state drops it on the tool's result).
-    func answer(_ c: ConnState, requestId: String, _ command: JSONValue) async -> CommandResponse {
-        let r = await self.command(c.conn, command)
-        if r.success { answered.insert("\(c.conn)|\(requestId)") }
-        return r
-    }
-
-    /// A card that is gone from the terminal without the Host's state saying so yet.
-    func hideRequest(_ c: ConnState, requestId: String) {
-        answered.insert("\(c.conn)|\(requestId)")
     }
 
     /// The slash commands available in `cwd`; nil when the Host cannot say (the text then goes as a prompt).

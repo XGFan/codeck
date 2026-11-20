@@ -37,7 +37,7 @@ fn launched(i: &Value) -> Option<(String, TaskKind)> {
 fn merge_stop_tasks(tasks: &mut Vec<BgTask>, seen: impl Fn(&str) -> bool, bg: &Value) {
     let Some(bg) = bg.as_array() else { return };
     for t in tasks.iter_mut() {
-        if t.tool_use_id.is_empty()
+        if t.tool_use_id.is_none()
             && t.status == "running"
             && !bg.iter().any(|b| b["id"].as_str() == Some(t.id.as_str()))
         {
@@ -61,7 +61,7 @@ fn merge_stop_tasks(tasks: &mut Vec<BgTask>, seen: impl Fn(&str) -> bool, bg: &V
         tasks.push(BgTask {
             id: id.to_string(),
             kind,
-            tool_use_id: String::new(),
+            tool_use_id: None,
             description: t["description"].as_str().map(str::to_string),
             command: t["command"].as_str().map(str::to_string),
             status: t["status"].as_str().unwrap_or("running").to_string(),
@@ -70,7 +70,25 @@ fn merge_stop_tasks(tasks: &mut Vec<BgTask>, seen: impl Fn(&str) -> bool, bg: &V
     }
 }
 
+/// `tasks` for `now` when it differs from what was sent last (`sent`, updated).
+fn changed_tasks(sent: &mut Option<Vec<BgTask>>, now: Vec<BgTask>) -> Option<Value> {
+    if sent.as_ref() == Some(&now) {
+        return None;
+    }
+    let ev = json!({"type": "tasks", "tasks": now});
+    *sent = Some(now);
+    Some(ev)
+}
+
 impl Engine {
+    /// `tasks` once the background tasks (or their status) changed.
+    pub(super) fn sync_tasks(&mut self) {
+        let now = self.tasks();
+        if let Some(ev) = changed_tasks(&mut self.tasks_sent, now) {
+            self.emit(ev);
+        }
+    }
+
     /// A background task the plugin saw start: Bash `run_in_background`, an async Agent, a
     /// Monitor, a Workflow (from the tool's response).
     pub(super) fn note_background_launch(&mut self, tool_use_id: &str, i: &Value) {
@@ -105,7 +123,7 @@ impl Engine {
         self.hook_tasks.push(BgTask {
             id,
             kind,
-            tool_use_id: tool_use_id.to_string(),
+            tool_use_id: Some(tool_use_id.to_string()),
             description,
             command: matches!(kind, TaskKind::Shell | TaskKind::Monitor)
                 .then(|| text(&input["command"]))
@@ -151,7 +169,7 @@ impl Engine {
             match out.iter_mut().find(|t| t.id == h.id) {
                 Some(t) => {
                     t.status = h.status.clone();
-                    if t.tool_use_id.is_empty() {
+                    if t.tool_use_id.is_none() {
                         t.tool_use_id = h.tool_use_id.clone();
                     }
                 }
@@ -168,13 +186,21 @@ impl Engine {
                 }
                 t.idle = t.kind == TaskKind::Agent
                     && t.status == "running"
-                    && t.tool_use_id.is_empty()
+                    && t.tool_use_id.is_none()
                     && t.description
                         .as_deref()
                         .is_some_and(|d| tl.teammate_idle(d));
             }
         }
         out
+    }
+
+    /// The background tasks still running.
+    pub(super) fn running_tasks(&self) -> Vec<BgTask> {
+        self.tasks()
+            .into_iter()
+            .filter(|t| t.status == "running")
+            .collect()
     }
 
     /// Stops a running background task from Claude Code's `/tasks` panel.
@@ -232,7 +258,9 @@ impl Engine {
                     Ok(_) => {}
                     Err(why) => {
                         self.keys(key::ESC)?;
-                        self.emit(json!({"type": "unrecognized", "context": format!("stop_task：{why}"), "lines": s.lines}));
+                        let id = self.next_screen_id("unrecognized");
+                        self.emit_request(json!({"type": "unrecognized", "request_id": id,
+                            "context": format!("stop_task：{why}"), "lines": s.lines}));
                         return err("unrecognized_screen", format!("stop_task：{why}"));
                     }
                 };
@@ -318,6 +346,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tasks_go_out_only_when_they_changed() {
+        let shell = BgTask {
+            id: "b1".into(),
+            kind: TaskKind::Shell,
+            tool_use_id: Some("toolu_1".into()),
+            description: None,
+            command: Some("sleep 30".into()),
+            status: "running".into(),
+            idle: false,
+        };
+        let mut sent = None;
+        // The first list goes out, even an empty one (nothing was sent: after /clear).
+        assert_eq!(
+            changed_tasks(&mut sent, Vec::new()),
+            Some(json!({"type": "tasks", "tasks": []}))
+        );
+        assert_eq!(changed_tasks(&mut sent, Vec::new()), None);
+        let ev = changed_tasks(&mut sent, vec![shell.clone()]).unwrap();
+        assert_eq!(ev["tasks"][0]["status"], "running");
+        assert_eq!(changed_tasks(&mut sent, vec![shell.clone()]), None);
+        let stopped = BgTask {
+            status: "killed".into(),
+            ..shell
+        };
+        let ev = changed_tasks(&mut sent, vec![stopped]).unwrap();
+        assert_eq!(ev["tasks"][0]["status"], "killed");
+    }
+
+    #[test]
     fn a_subagent_runs_own_background_task_is_not_the_main_lines() {
         let bash = |agent: Value| {
             json!({"tool_name": "Bash", "agent_id": agent,
@@ -339,7 +396,7 @@ mod tests {
         let hooked = BgTask {
             id: "ae174d96c4d6404de".into(),
             kind: TaskKind::Agent,
-            tool_use_id: "toolu_1".into(),
+            tool_use_id: Some("toolu_1".into()),
             description: Some("ccrpc side".into()),
             command: None,
             status: "running".into(),

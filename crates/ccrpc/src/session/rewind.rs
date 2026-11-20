@@ -21,8 +21,6 @@ pub(super) struct RewindReq {
     text: String,
     /// The confirm page as announced: the screen shows this rewind while it shows this page.
     page: Option<RewindConfirm>,
-    /// What `rewind` answered (and `get_state` shows as the request).
-    pub(super) event: Value,
     /// Since when the Session has not been waiting on this page.
     gone_since: Option<Instant>,
 }
@@ -59,6 +57,26 @@ fn now_ms() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as f64)
         .unwrap_or_default()
+}
+
+/// What the confirm page says of the code, as `{restores, delta, target}`: `The code will be
+/// restored -1 in w.txt.` → `{true, "-1", "w.txt"}`, `The code will be restored.` → `{true, null,
+/// null}`, `The code will be unchanged.` → `{false, null, null}`; `None` for any other sentence.
+fn rewind_code(sentence: &str) -> Option<Value> {
+    let s = sentence.trim().strip_prefix("The code will be ")?;
+    let s = s.strip_suffix('.').unwrap_or(s).trim();
+    if s == "unchanged" {
+        return Some(json!({"restores": false, "delta": null, "target": null}));
+    }
+    if s == "restored" {
+        return Some(json!({"restores": true, "delta": null, "target": null}));
+    }
+    let (delta, target) = s.strip_prefix("restored ")?.split_once(" in ")?;
+    let (delta, target) = (delta.trim(), target.trim());
+    if delta.is_empty() || target.is_empty() {
+        return None;
+    }
+    Some(json!({"restores": true, "delta": delta, "target": target}))
 }
 
 /// Indices of the prompts a confirm page's quote may be about.
@@ -181,11 +199,15 @@ impl Engine {
         got.ok_or(("timeout", "60 秒内没读完 transcript".to_string()))
     }
 
+    /// `rewind`: the confirm page goes out as a `rewind` request, then as the response.
     pub(super) fn rewind(&mut self, uuid: &str) -> CmdResult {
-        self.rewind_in(uuid, None)
+        let event = self.rewind_in(uuid, None)?;
+        self.emit_request(event.clone());
+        Ok(event)
     }
 
-    /// `rewind`, the prompts read from `from` when given (see [`Engine::main_prompts`]).
+    /// `rewind`, the prompts read from `from` when given (see [`Engine::main_prompts`]), up to
+    /// the confirm page: its `rewind` event, not sent.
     pub(super) fn rewind_in(&mut self, uuid: &str, from: Option<&Path>) -> CmdResult {
         self.require(self.state == State::Idle, "not_idle")?;
         let mut prompts = self.main_prompts(from)?;
@@ -208,7 +230,6 @@ impl Engine {
             uuid: uuid.to_string(),
             text: prompts[target].text.clone(),
             page: None,
-            event: Value::Null,
             gone_since: None,
         });
         let r = self.drive_rewind(&prompts, target);
@@ -314,7 +335,8 @@ impl Engine {
         err("not_in_picker", "终端的回退列表里没有这条提示词")
     }
 
-    /// The target's confirm page is up: its `Restore …` options are what the caller may pick.
+    /// The target's confirm page is up: its `Restore …` options are what the caller may pick. The
+    /// event for it is returned; the caller sends it.
     fn open_confirm(&mut self, page: RewindConfirm) -> CmdResult {
         let options: Vec<Value> = RewindOption::ALL
             .into_iter()
@@ -329,12 +351,12 @@ impl Engine {
         };
         self.rewind_seq += 1;
         let id = format!("rewind:{}", self.rewind_seq);
+        let code = page.code.as_deref().and_then(rewind_code);
         let event = json!({"type": "rewind", "request_id": id, "uuid": r.uuid, "text": r.text,
-            "code": page.code, "warning": page.warning, "options": options});
+            "code": code, "code_text": page.code, "warning": page.warning, "options": options});
         crate::clog!("rewind {id} to {}: {:?}", r.uuid, page.code);
         r.id = Some(id);
         r.page = Some(page);
-        r.event = event.clone();
         if let Ok(s) = self.screen() {
             crate::log::screen(s.lines.iter().map(String::as_str));
         }
@@ -507,6 +529,31 @@ mod tests {
             warning: None,
             options: Vec::new(),
         }
+    }
+
+    #[test]
+    fn the_code_sentence_is_read() {
+        let code = |restores: bool, delta: Value, target: Value| {
+            Some(json!({"restores": restores, "delta": delta, "target": target}))
+        };
+        assert_eq!(
+            rewind_code("The code will be unchanged."),
+            code(false, Value::Null, Value::Null)
+        );
+        assert_eq!(
+            rewind_code("The code will be restored -1 in w.txt."),
+            code(true, json!("-1"), json!("w.txt"))
+        );
+        assert_eq!(
+            rewind_code("The code will be restored."),
+            code(true, Value::Null, Value::Null)
+        );
+        assert_eq!(
+            rewind_code("The code will be restored +3 -12 in 2 files."),
+            code(true, json!("+3 -12"), json!("2 files"))
+        );
+        assert_eq!(rewind_code("Code restore is unavailable."), None);
+        assert_eq!(rewind_code("The code will be rewritten."), None);
     }
 
     #[test]

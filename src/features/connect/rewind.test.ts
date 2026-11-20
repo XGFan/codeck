@@ -32,16 +32,16 @@ const point = (selected: string, main: string): BranchPoint => ({
 
 describe("rewind", () => {
   it("says what the confirm page says about the code", () => {
-    expect(codeLine("The code will be unchanged.")).toBe("这条提示词及之后的对话会被移除；代码不变");
-    expect(codeLine("The code will be restored -1 in w.txt.")).toBe(
-      "这条提示词及之后的对话会被移除；代码会恢复：w.txt（−1）",
-    );
-    expect(codeLine("The code will be restored +3 -12 in src/a.rs and README.md.")).toBe(
+    const code = (restores: boolean, delta: string | null, target: string | null) => ({ restores, delta, target });
+    expect(codeLine(code(false, null, null), "x")).toBe("这条提示词及之后的对话会被移除；代码不变");
+    expect(codeLine(code(true, "-1", "w.txt"), "x")).toBe("这条提示词及之后的对话会被移除；代码会恢复：w.txt（−1）");
+    expect(codeLine(code(true, "+3 -12", "src/a.rs and README.md"), "x")).toBe(
       "这条提示词及之后的对话会被移除；代码会恢复：src/a.rs and README.md（+3 −12）",
     );
-    // Not read from the page, or worded otherwise: the conversation part, or the sentence as it is.
-    expect(codeLine(null)).toBe("这条提示词及之后的对话会被移除");
-    expect(codeLine("The code will be partly restored.")).toBe("The code will be partly restored.");
+    expect(codeLine(code(true, null, null), "x")).toBe("这条提示词及之后的对话会被移除；代码会恢复");
+    // Not read by ccrpc: the sentence as it is, or the conversation part when the page said nothing.
+    expect(codeLine(null, "Code restore is unavailable.")).toBe("Code restore is unavailable.");
+    expect(codeLine(null, null)).toBe("这条提示词及之后的对话会被移除");
   });
 
   it("offers the prompts and commands typed on the Main Line, before the one already rewound to", () => {

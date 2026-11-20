@@ -50,7 +50,7 @@ fn cwd() -> PathBuf {
 }
 
 const STARTED: &str = r#"
-echo '{"type":"ready","protocol":3,"holder_id":"H1","session_id":null,"cwd":"/w","state":"idle"}'
+echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":null,"cwd":"/w","state":"idle"}'
 echo '{"type":"session_changed","session_id":"S-1","previous":null}'
 IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
 echo '{"type":"response","id":"1","command":"prompt","success":true,"data":{"uuid":"u"}}'
@@ -102,7 +102,7 @@ fn sends_the_prompt_once_the_session_is_known_then_lets_go() {
 fn the_folder_trust_dialog_is_refused_and_nothing_is_sent() {
     let (dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":3,"holder_id":"H1","session_id":null,"cwd":null,"state":"starting"}'
+echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":null,"cwd":null,"state":"starting"}'
 echo '{"type":"choice","request_id":"choice:1","title":"t","options":[{"label":"Yes, I trust this folder","meaning":"allow","description":null},{"label":"No, exit","meaning":"deny","description":null}],"tool_use_id":null,"layout":"trust_folder","layout_source":"builtin"}'
 IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
 echo '{"type":"state","state":"exited"}'
@@ -165,7 +165,7 @@ fn a_silent_ccrpc_times_out() {
 fn a_failed_prompt_names_the_pane_left_behind() {
     let (_dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":3,"holder_id":"H1","session_id":"S-1","cwd":"/w","state":"idle"}'
+echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":"S-1","cwd":"/w","state":"idle"}'
 IFS= read -r line
 echo '{"type":"response","id":"1","command":"prompt","success":false,"error":{"code":"not_idle","message":"当前状态为 busy"}}'
 cat > /dev/null

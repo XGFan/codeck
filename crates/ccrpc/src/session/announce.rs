@@ -44,7 +44,7 @@ pub(super) enum Announced {
         event: Value,
         gone_since: Option<Instant>,
     },
-    /// A dialog handed to the caller as its screen: the Process File's `waitingFor`.
+    /// A dialog handed to the caller as its screen: its request id (`dialog:N`).
     Dialog(String),
 }
 
@@ -65,7 +65,8 @@ impl Announced {
 
 impl Engine {
     /// Startup screens (onboarding, folder trust) come before the Process File: report each
-    /// distinct one, checking at most once a second.
+    /// distinct one, checking at most once a second. One request for the whole startup: each
+    /// screen updates it.
     pub(super) fn report_startup_screen(&mut self) {
         let Some(seen) = self.claude_seen_at else {
             return;
@@ -98,7 +99,8 @@ impl Engine {
                     gone_since: None,
                 });
                 self.startup_last = Some(lines);
-                self.emit(ev);
+                self.startup_dialog = None;
+                self.emit_request(ev);
             }
             return;
         }
@@ -107,12 +109,30 @@ impl Engine {
         }
         if self.startup_last.as_ref() != Some(&lines) {
             self.startup_last = Some(lines.clone());
-            self.emit(json!({"type": "dialog", "waiting_for": "startup", "lines": lines}));
+            let id = match &self.startup_dialog {
+                Some(id) => id.clone(),
+                None => {
+                    let id = self.next_screen_id("dialog");
+                    self.startup_dialog = Some(id.clone());
+                    id
+                }
+            };
+            self.emit_request(json!({"type": "dialog", "request_id": id,
+                "waiting_for": "startup", "lines": lines}));
+        }
+    }
+
+    /// The request id for a dialog waiting for `waiting_for`: the one reported for it still not
+    /// ended (the waiting flickered), else a new one.
+    fn dialog_id(&mut self, waiting_for: &str) -> String {
+        match self.reported.dialog_for(waiting_for) {
+            Some(id) => id,
+            None => self.next_screen_id("dialog"),
         }
     }
 
     /// Answers the folder trust dialog: the cursor onto the option, then Enter.
-    pub(super) fn answer_trust(&mut self, option: &str) -> CmdResult {
+    pub(super) fn answer_trust(&mut self, request_id: &str, option: &str) -> CmdResult {
         let want_yes = if recognize::TRUST_YES.starts_with(option) && !option.is_empty() {
             true
         } else if recognize::TRUST_NO.starts_with(option) && !option.is_empty() {
@@ -134,6 +154,7 @@ impl Engine {
             };
             if on_yes == want_yes {
                 self.keys(key::ENTER)?;
+                self.reported.answered(request_id);
                 let gone = self.wait_screen(Duration::from_secs(10), |_, s| {
                     recognize::trust_folder(&s.lines).is_none().then_some(())
                 });
@@ -271,7 +292,7 @@ impl Engine {
                     }
                     let ev = Self::permission_event(r, opts);
                     self.announced = Some(Announced::Request(r.id.clone()));
-                    self.emit(ev);
+                    self.emit_request(ev);
                     return;
                 }
                 if let Some(s) = &screen {
@@ -286,7 +307,7 @@ impl Engine {
                     crate::clog!("recognize permission {} on screen", r.id);
                     let ev = Self::permission_event(r, opts);
                     self.announced = Some(Announced::Request(id));
-                    self.emit(ev);
+                    self.emit_request(ev);
                     return;
                 }
                 let Some(s) = screen else {
@@ -299,16 +320,19 @@ impl Engine {
                 if self.announce_choice(&s) {
                     return;
                 }
-                if self.waiting_age() >= MATCH_GRACE {
+                // A dialog reported a moment ago for this same waiting (the Process File flickered
+                // out of it and back) is taken up again at once: its card keeps its id.
+                let again = self.reported.dialog_for(&waiting_for).is_some();
+                if again || self.waiting_age() >= MATCH_GRACE {
                     // Known layouts may only be cut off: look again at WORK_SIZE first.
                     if self.grow() || self.analyzing(&s, &waiting_for) {
                         return;
                     }
                     // Cannot tie the dialog to a request: hand the screen to the caller.
-                    self.announced = Some(Announced::Dialog(waiting_for.clone()));
-                    self.emit(
-                        json!({"type": "dialog", "waiting_for": waiting_for, "lines": s.lines}),
-                    );
+                    let id = self.dialog_id(&waiting_for);
+                    self.announced = Some(Announced::Dialog(id.clone()));
+                    self.emit_request(json!({"type": "dialog", "request_id": id,
+                        "waiting_for": waiting_for, "lines": s.lines}));
                 }
             }
             WaitKind::Question => {
@@ -323,11 +347,11 @@ impl Engine {
                         None => return,
                     },
                 };
-                let ev = json!({"type": "question", "request_id": id,
+                let ev = json!({"type": "question", "request_id": id, "tool_use_id": id,
                     "questions": input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": agent_id,
                     "from_code": super::code_calls::from_code(&id)});
                 self.announced = Some(Announced::Request(id));
-                self.emit(ev);
+                self.emit_request(ev);
             }
             WaitKind::Dialog => {
                 // The Process File says waiting before the dialog is drawn: let it render first.
@@ -350,8 +374,10 @@ impl Engine {
                 if self.grow() || self.analyzing(&s, &waiting_for) {
                     return;
                 }
-                self.announced = Some(Announced::Dialog(waiting_for.clone()));
-                self.emit(json!({"type": "dialog", "waiting_for": waiting_for, "lines": s.lines}));
+                let id = self.dialog_id(&waiting_for);
+                self.announced = Some(Announced::Dialog(id.clone()));
+                self.emit_request(json!({"type": "dialog", "request_id": id,
+                    "waiting_for": waiting_for, "lines": s.lines}));
             }
         }
     }
@@ -398,7 +424,7 @@ impl Engine {
             event: ev.clone(),
             gone_since: None,
         });
-        self.emit(ev);
+        self.emit_request(ev);
         true
     }
 
@@ -574,7 +600,7 @@ impl Engine {
             .as_ref()
             .is_some_and(|a| a.is_trust() && a.is(request_id))
         {
-            return self.answer_trust(option);
+            return self.answer_trust(request_id, option);
         }
         match &self.state {
             State::Waiting { .. } => {}
@@ -631,6 +657,7 @@ impl Engine {
             opts.iter().find(|o| o.cursor).map(|o| o.number)
         };
         self.press_option(select, pick, &cursor_of)?;
+        self.reported.answered(request_id);
         let rid = request_id.to_string();
         let ok = self.wait_until(Duration::from_secs(10), |e| {
             !matches!(e.state, State::Waiting { .. })

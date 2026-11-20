@@ -1,42 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { token } from "./imageTokens";
-import { editable, queueText, rememberSteer, takenBack } from "./queue";
+import type { QueueItem } from "./protocol";
+import { queueText, rememberSteer, takenBack } from "./queue";
 
 describe("queueText", () => {
-  it("a message from another agent reads as its sender and first line", () => {
-    const item =
-      '<cross-session-message from="uds:/tmp/a.sock" hop-chain="8a7e" from-name="codeck-c6" from-mode="bypass">\nMy CoDeck.app is from 93fc585.\n\nMore.\n</cross-session-message>';
-    expect(queueText(item)).toBe("codeck-c6：My CoDeck.app is from 93fc585.");
-    expect(queueText('<agent-message from="line-a">\nDone.\n</agent-message>')).toBe("line-a：Done.");
-  });
-
-  it("a Teammate's message reads as its sender and preview; a task notification as its summary", () => {
-    expect(queueText('<teammate-message teammate_id="gui" summary="GUI done">\nbody\n</teammate-message>')).toBe(
-      "gui：GUI done",
+  it("a message from elsewhere reads as its sender and first line; what was typed as it is", () => {
+    const from = (kind: "session" | "agent", sender: string, text: string): QueueItem => ({
+      kind,
+      from: sender,
+      text,
+      editable: false,
+    });
+    expect(queueText(from("session", "codeck-c6", "\nMy CoDeck.app is from 93fc585.\n\nMore."))).toBe(
+      "codeck-c6：My CoDeck.app is from 93fc585.",
     );
-    expect(
-      queueText(
-        "<task-notification>\n<task-id>b1</task-id>\n<summary>Background command done</summary>\n</task-notification>",
-      ),
-    ).toBe("后台任务：Background command done");
-  });
-
-  it("anything else stays as typed", () => {
-    expect(queueText("做完再跑一下测试")).toBe("做完再跑一下测试");
+    expect(queueText(from("agent", "line-a", "Done."))).toBe("line-a：Done.");
+    expect(queueText({ kind: "typed", from: null, text: "做完再\n跑一下测试", editable: true })).toBe(
+      "做完再\n跑一下测试",
+    );
   });
 });
 
 describe("taking the queue back", () => {
   const img = (n: number) => ({ path: `/img/${n}.png`, url: `data:image/png;base64,${n}` });
-
-  it("only what was typed comes back, not a message from elsewhere", () => {
-    expect(editable("做完再跑一下测试")).toBe(true);
-    expect(editable("[Image #1]看这个")).toBe(true);
-    expect(
-      editable('<cross-session-message from="uds:/tmp/a.sock" from-name="c6">\nhi\n</cross-session-message>'),
-    ).toBe(false);
-    expect(editable('<agent-message from="line-a">\nDone.\n</agent-message>')).toBe(false);
-  });
 
   it("the items one per line, oldest first; an image from elsewhere is left out", () => {
     expect(takenBack("c-plain", ["先跑测试", "[Image #1] 再看看这个"])).toEqual({

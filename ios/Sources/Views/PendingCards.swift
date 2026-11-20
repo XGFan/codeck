@@ -205,7 +205,7 @@ private struct PendingPermission: View {
             "type": "answer_permission", "request_id": .string(r.requestId), "decision": .string(decision),
         ])
         Task {
-            await sendAnswer(model.connect, c, r.requestId, command, busy: $busy, error: $error, answered: $answered)
+            await sendAnswer(model.connect, c, command, busy: $busy, error: $error, answered: $answered)
         }
     }
 }

@@ -76,8 +76,6 @@ struct Entry {
 struct Pending {
     conn: String,
     command: String,
-    request_id: Option<String>,
-    /// The client's command waits for it; none for the Host's own `get_tasks`.
     waiter: Option<oneshot::Sender<Value>>,
 }
 
@@ -196,75 +194,14 @@ impl ConnectHub {
                 conn: conn.to_string(),
             });
         }
-        // As the desktop app does: the background tasks again once connected and after each turn.
-        if matches!(v["type"].as_str(), Some("ready" | "turn_end")) {
-            self.send_own(conn, "get_tasks");
-        }
         true
-    }
-
-    /// The Host's own command (no one waits for it); its response is handled in `on_response`.
-    fn send_own(self: &Arc<Self>, conn: &str, command: &str) {
-        let id = self.next_id();
-        self.inner.lock().pending.insert(
-            id.clone(),
-            Pending {
-                conn: conn.to_string(),
-                command: command.to_string(),
-                request_id: None,
-                waiter: None,
-            },
-        );
-        let line = json!({ "type": command, "id": id }).to_string();
-        let (hub, conn) = (self.clone(), conn.to_string());
-        // Not on the connection's reader thread: a write may block until ccrpc reads.
-        std::thread::spawn(move || {
-            if (hub.writer)(&conn, &line).is_err() {
-                hub.inner.lock().pending.remove(&id);
-            }
-        });
     }
 
     /// The response to a command the Host sent (`id` pending): handled here, true. Otherwise false.
     fn on_response(self: &Arc<Self>, id: &str, r: Value) -> bool {
-        let mut inner = self.inner.lock();
-        let Some(p) = inner.pending.remove(id) else {
+        let Some(p) = self.inner.lock().pending.remove(id) else {
             return false;
         };
-        if p.command == "rewind" {
-            if inner
-                .conns
-                .get_mut(&p.conn)
-                .is_some_and(|e| e.state.rewind_response(&r))
-            {
-                self.changed(&mut inner, &p.conn);
-            }
-        } else if r["success"] == true
-            && let Some(e) = inner.conns.get_mut(&p.conn)
-        {
-            let changed = match p.command.as_str() {
-                "get_tasks" => match r["data"]["tasks"].as_array() {
-                    Some(t) => {
-                        e.state.tasks = t.clone();
-                        true
-                    }
-                    None => false,
-                },
-                // Answered: the card goes at once (ccrpc ends it on the tool's result), as on the desktop.
-                "answer_permission" | "answer_question" | "answer_choice" | "answer_rewind" => {
-                    let before = e.state.requests.len();
-                    e.state
-                        .requests
-                        .retain(|q| q["request_id"].as_str() != p.request_id.as_deref());
-                    e.state.requests.len() != before
-                }
-                _ => false,
-            };
-            if changed {
-                self.changed(&mut inner, &p.conn);
-            }
-        }
-        drop(inner);
         // On the connection's reader thread, so before its exit event: the Session is being quit on purpose.
         if p.waiter.is_some() && p.command == "exit" && r["success"] == true {
             (self.events)(HostEvent::CcrpcClosing { conn: p.conn });
@@ -409,27 +346,19 @@ impl ConnectHub {
         let Some(kind) = obj.get("type").and_then(Value::as_str).map(str::to_string) else {
             return Err(relay::invalid("命令缺少 type"));
         };
-        let request_id = obj
-            .get("request_id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
         let id = self.next_id();
         obj.insert("id".into(), id.clone().into());
         let (tx, rx) = oneshot::channel();
         {
             let mut inner = self.inner.lock();
-            let Some(e) = inner.conns.get_mut(conn) else {
+            if !inner.conns.contains_key(conn) {
                 return Err(relay::invalid("没有这个连接，或 ccrpc 已退出"));
-            };
-            if kind == "rewind" {
-                e.state.rewind_sent();
             }
             inner.pending.insert(
                 id.clone(),
                 Pending {
                     conn: conn.to_string(),
                     command: kind.clone(),
-                    request_id,
                     waiter: Some(tx),
                 },
             );
@@ -732,52 +661,39 @@ mod tests {
     }
 
     #[test]
-    fn folds_a_turn_and_keeps_its_own_responses() {
+    fn folds_a_turn_from_ccrpcs_events() {
         let f = fixture();
         f.hub.register("c1", Some("H1".into()));
         assert_eq!(f.last_state().holder_id.as_deref(), Some("H1"));
 
-        f.line(json!({ "type": "ready", "protocol": 2, "holder_id": "H1", "session_id": "s1", "cwd": "/w", "claude_version": "2.1", "state": "idle", "size": [80, 24], "warnings": [] }));
+        f.line(json!({
+            "type": "ready", "protocol": 4, "holder_id": "H1", "session_id": "s1", "cwd": "/w", "claude_version": "2.1",
+            "state": "idle", "waiting": null, "requests": [], "size": [80, 24], "queue": [],
+            "tasks": [{ "id": "b1", "kind": "shell", "tool_use_id": null, "description": "sleep", "command": "sleep 9", "status": "running", "idle": false }],
+            "warnings": [],
+        }));
         let s = f.last_state();
         assert!(s.ready);
         assert_eq!(s.session_id.as_deref(), Some("s1"));
-        // The Host asks for the background tasks itself after `ready`.
-        let (conn, cmd) = f.wrote();
-        assert_eq!(conn, "c1");
-        assert_eq!(cmd["type"], "get_tasks");
-        let id = cmd["id"].as_str().unwrap().to_string();
-        assert!(id.starts_with('h'));
-        let tasks = json!([{ "id": "b1", "kind": "shell", "tool_use_id": null, "description": "sleep", "status": "running" }]);
-        f.line(json!({ "type": "response", "id": id, "command": "get_tasks", "success": true, "data": { "tasks": tasks } }));
-        let events = f.drain();
-        // Its response is the Host's: not relayed, folded into the tasks.
-        assert!(
-            !events.iter().any(
-                |e| matches!(e, HostEvent::CcrpcLine { line, .. } if line.contains("get_tasks"))
-            )
-        );
-        let s = events
-            .into_iter()
-            .filter_map(|e| match e {
-                HostEvent::ConnectState(s) => Some(*s),
-                _ => None,
-            })
-            .next_back()
-            .unwrap();
-        assert_eq!(s.tasks, tasks.as_array().unwrap().clone());
+        assert_eq!(s.tasks[0]["id"], "b1");
+        assert!(s.notices.is_empty());
 
-        f.line(json!({ "type": "state", "state": "busy" }));
+        f.line(json!({ "type": "state", "state": "busy", "waiting": null }));
         assert_eq!(f.last_state().state, "busy");
-        f.line(json!({ "type": "permission_request", "request_id": "t1", "tool_name": "Bash", "input": {}, "agent_id": null, "options": null, "layout_source": null }));
+        f.line(json!({ "type": "permission_request", "request_id": "t1", "tool_use_id": "t1", "tool_name": "Bash", "input": {}, "agent_id": null, "options": null, "layout_source": null }));
         f.line(json!({ "type": "state", "state": "waiting", "waiting": { "kind": "permission", "waiting_for": "permission prompt" } }));
         let s = f.last_state();
         assert_eq!(s.state, "waiting");
         assert_eq!(s.requests.len(), 1);
-        f.line(json!({ "type": "state", "state": "busy" }));
-        f.line(json!({ "type": "block", "kind": "tool_result", "tool_use_id": "t1" }));
+        // The request lives until ccrpc ends it, whatever the state does.
+        f.line(json!({ "type": "state", "state": "busy", "waiting": null }));
+        assert_eq!(f.last_state().requests.len(), 1);
+        f.line(json!({ "type": "request_end", "request_id": "t1" }));
         assert!(f.last_state().requests.is_empty());
+        f.line(json!({ "type": "tasks", "tasks": [] }));
+        assert!(f.last_state().tasks.is_empty());
         // Other lines are relayed as before.
-        f.line(json!({ "type": "block", "kind": "text", "text": "hi" }));
+        f.line(json!({ "type": "workflow", "note": "hi" }));
         assert!(
             f.drain()
                 .iter()
@@ -786,7 +702,8 @@ mod tests {
         f.line(json!({ "type": "turn_end", "prompt_id": "p", "aborted": false }));
         let s = f.last_state();
         assert_eq!(s.last_turn.unwrap()["prompt_id"], "p");
-        assert_eq!(f.wrote().1["type"], "get_tasks");
+        // The Host sends nothing of its own.
+        assert!(f.written.try_recv().is_err());
         // A response to someone else's id (the desktop app's `g<n>`) is relayed.
         f.line(json!({ "type": "response", "id": "g1", "command": "abort", "success": true }));
         assert!(
@@ -823,8 +740,8 @@ mod tests {
             line: resp.to_string(),
         });
         assert_eq!(call.await.unwrap().unwrap(), resp);
-        // Answered: the card is gone.
-        assert!(f.hub.states()[0].requests.is_empty());
+        // The card stays until ccrpc ends the request.
+        assert_eq!(f.hub.states()[0].requests.len(), 1);
 
         // Unknown connection.
         assert!(
@@ -868,54 +785,6 @@ mod tests {
         f.line(json!({ "type": "state", "state": "idle" }));
         f.hub.register("c1", None);
         assert!(f.hub.states().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_clients_rewind_is_a_card_until_answered() {
-        let f = fixture();
-        f.hub.register("c1", Some("H1".into()));
-        f.line(json!({ "type": "state", "state": "idle" }));
-        let request = json!({
-            "type": "rewind", "request_id": "rewind:1", "uuid": "u2", "text": "second", "code": "The code will be unchanged.",
-            "warning": null, "options": [{ "option": "conversation", "label": "Restore conversation" }],
-        });
-        let send = |command: Value| {
-            let hub = f.hub.clone();
-            tokio::spawn(async move { hub.command("c1", command).await })
-        };
-        let respond = |command: &str, data: Value| {
-            let (_, cmd) = f.wrote();
-            assert_eq!(cmd["type"], command);
-            f.line(json!({ "type": "response", "id": cmd["id"], "command": command, "success": true, "data": data }));
-        };
-
-        // The confirm page is up (waiting) when ccrpc answers: the request it returns is the card.
-        let call = send(json!({ "type": "rewind", "uuid": "u2" }));
-        let (_, cmd) = f.wrote();
-        f.line(json!({ "type": "state", "state": "waiting", "waiting": { "kind": "dialog", "waiting_for": "dialog open" } }));
-        f.line(json!({ "type": "response", "id": cmd["id"], "command": "rewind", "success": true, "data": request }));
-        assert_eq!(call.await.unwrap().unwrap()["data"], request);
-        assert_eq!(f.hub.states()[0].requests, vec![request.clone()]);
-
-        let call = send(
-            json!({ "type": "answer_rewind", "request_id": "rewind:1", "option": "conversation" }),
-        );
-        respond(
-            "answer_rewind",
-            json!({ "state": "idle", "text": "second" }),
-        );
-        call.await.unwrap().unwrap();
-        assert!(f.hub.states()[0].requests.is_empty());
-
-        // Answered in the terminal before ccrpc's response came: no card, nothing would take it away.
-        f.line(json!({ "type": "state", "state": "idle" }));
-        let call = send(json!({ "type": "rewind", "uuid": "u2" }));
-        let (_, cmd) = f.wrote();
-        f.line(json!({ "type": "state", "state": "waiting", "waiting": { "kind": "dialog", "waiting_for": "dialog open" } }));
-        f.line(json!({ "type": "state", "state": "idle" }));
-        f.line(json!({ "type": "response", "id": cmd["id"], "command": "rewind", "success": true, "data": request }));
-        call.await.unwrap().unwrap();
-        assert!(f.hub.states()[0].requests.is_empty());
     }
 
     #[test]

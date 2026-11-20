@@ -1591,4 +1591,108 @@ mod tests {
             );
         }
     }
+
+    /// Every event type the non-test sources emit is declared in the schema, and every declared
+    /// event is emitted somewhere, so the schema and the code cannot drift apart.
+    #[test]
+    fn schema_covers_every_event() {
+        use std::collections::BTreeSet;
+        use std::path::Path;
+
+        fn sources(dir: &Path, out: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        sources(&path, out);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let end = text.find("#[cfg(test)]").unwrap_or(text.len());
+                    out.push(text[..end].to_owned());
+                }
+            }
+        }
+
+        // `"type": "x"`, `["type"] = json!("x")` and `insert("type".into(), json!("x"))`.
+        let mut emitted = BTreeSet::new();
+        let mut texts = Vec::new();
+        sources(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut texts,
+        );
+        for text in &texts {
+            for (head, tail) in [
+                ("\"type\"", ":"),
+                ("[\"type\"]", "= json!("),
+                ("insert(\"type\".into(),", "json!("),
+            ] {
+                for (at, _) in text.match_indices(head) {
+                    let rest = text[at + head.len()..].trim_start();
+                    let Some(rest) = rest.strip_prefix(tail) else {
+                        continue;
+                    };
+                    let rest = rest.trim_start();
+                    if let Some(rest) = rest.strip_prefix('"')
+                        && let Some(name) = rest.split('"').next()
+                    {
+                        emitted.insert(name.to_owned());
+                    }
+                }
+            }
+        }
+        for name in [
+            "ready",
+            "state",
+            "permission_request",
+            "question",
+            "choice",
+            "rewind",
+            "dialog",
+            "unrecognized",
+            "btw",
+            "request_end",
+            "tasks",
+            "fork",
+        ] {
+            assert!(
+                emitted.contains(name),
+                "源码扫描没找到事件 {name}：扫描方式失效了？"
+            );
+        }
+
+        let schema: Value =
+            serde_json::from_str(include_str!("../docs/protocol.schema.json")).unwrap();
+        let defs = &schema["$defs"];
+        let declared: BTreeSet<String> = defs["events"]
+            .as_object()
+            .expect("缺少 events 定义")
+            .values()
+            .filter_map(|e| e["properties"]["type"]["const"].as_str())
+            .map(str::to_owned)
+            .collect();
+        let commands: BTreeSet<String> = defs["commands"]
+            .as_object()
+            .expect("缺少 commands 定义")
+            .values()
+            .filter_map(|c| c["properties"]["type"]["const"].as_str())
+            .map(str::to_owned)
+            .collect();
+        // Not events: the response envelope, and the hook definitions of the generated plugin.
+        let others: BTreeSet<String> = ["response", "command"].map(str::to_owned).into();
+        let missing: Vec<_> = emitted
+            .iter()
+            .filter(|t| !declared.contains(*t) && !commands.contains(*t) && !others.contains(*t))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "protocol.schema.json 缺少事件 {missing:?}"
+        );
+        let stale: Vec<_> = declared.iter().filter(|t| !emitted.contains(*t)).collect();
+        assert!(
+            stale.is_empty(),
+            "protocol.schema.json 里的事件源码没有发出 {stale:?}"
+        );
+    }
 }

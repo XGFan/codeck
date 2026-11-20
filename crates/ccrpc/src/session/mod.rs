@@ -27,7 +27,7 @@ use crate::recognize::{self, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
 use crate::toh::{self, Pane};
-use crate::transcript::{self, BgTask, BlockKind, Tailer, TaskKind, TxEvent};
+use crate::transcript::{self, BgTask, BlockKind, QueueItem, Tailer, TaskKind, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
 mod announce;
@@ -35,6 +35,7 @@ mod btw;
 mod code_calls;
 mod drive;
 mod fork;
+mod reported;
 mod requests;
 mod rewind;
 mod startup;
@@ -48,7 +49,7 @@ use self::rewind::RewindReq;
 pub use self::startup::{cmd_attach, cmd_new, resolve_target};
 use self::turn::{Marks, TurnTracker, Typed};
 
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 /// Longest wait between two looks while a command waits.
 const TICK: Duration = Duration::from_millis(50);
 /// Longest wait between two looks when idle (file, Holder and stdin events wake earlier).
@@ -164,7 +165,7 @@ impl State {
             State::Waiting { kind, waiting_for } => {
                 json!({"state": "waiting", "waiting": {"kind": kind.name(), "waiting_for": waiting_for}})
             }
-            s => json!({"state": s.name()}),
+            s => json!({"state": s.name(), "waiting": null}),
         }
     }
 }
@@ -288,16 +289,25 @@ pub struct Engine {
     fork: Option<ForkJob>,
     /// What went out for the current waiting.
     announced: Option<Announced>,
+    /// Requests reported and not ended (`request_end` goes out once each is over).
+    reported: reported::Reported,
+    /// Numbers the dialogs and unrecognized screens reported (`dialog:N`, `unrecognized:N`).
+    screen_seq: u64,
     startup_checked: Option<Instant>,
     startup_last: Option<Vec<String>>,
+    /// The startup screens' request id: one for the whole startup (until the folder trust dialog
+    /// or the Process File).
+    startup_dialog: Option<String>,
     /// Queued follow-ups (checked: image paths absolute).
     follow_ups: VecDeque<rpc::Input>,
     /// What the person typed (or a steer sent) waiting in Claude Code's own queue, oldest first:
     /// the transcript's queue minus task notifications and Teammate messages.
-    queue: Vec<String>,
+    queue: Vec<QueueItem>,
     marks: Marks,
     /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
     resolved: HashSet<String>,
+    /// The background tasks last sent (`tasks`).
+    tasks_sent: Option<Vec<BgTask>>,
     procfile_warned: bool,
     exited: bool,
     /// Events are suppressed (initial settle).
@@ -437,12 +447,16 @@ impl Engine {
             rewound: None,
             fork: None,
             announced: None,
+            reported: Default::default(),
+            screen_seq: 0,
             startup_checked: None,
             startup_last: None,
+            startup_dialog: None,
             follow_ups: VecDeque::new(),
             queue: Vec::new(),
             marks: Marks::default(),
             resolved: HashSet::new(),
+            tasks_sent: None,
             procfile_warned: false,
             exited: false,
             quiet: false,
@@ -474,6 +488,58 @@ impl Engine {
             }
         }
         self.out.send(&v);
+    }
+
+    /// A request event (`request_id` set): kept among the reported requests, so that its
+    /// `request_end` goes out once it is over. One answered here is not reported again.
+    pub(super) fn emit_request(&mut self, ev: Value) {
+        self.sync_requests();
+        if ev["request_id"]
+            .as_str()
+            .is_some_and(|id| self.reported.is_answered(id))
+        {
+            return;
+        }
+        for e in self.reported.upsert(ev.clone()) {
+            self.emit(e);
+        }
+        self.emit(ev);
+    }
+
+    /// `request_end` for each reported request that is over now.
+    fn sync_requests(&mut self) {
+        let facts = reported::Facts {
+            open: self.requests.iter().map(|r| r.id.clone()).collect(),
+            screen_question: self
+                .pending_ask()
+                .map(|p| p.id.clone())
+                .filter(|id| !self.resolved.contains(id)),
+            asked: self.pending_ask().map(|p| p.id.clone()),
+            announced: match &self.announced {
+                Some(Announced::Choice { id, .. } | Announced::Dialog(id)) => Some(id.clone()),
+                _ => None,
+            },
+            startup_dialog: self.startup_dialog.clone().filter(|_| self.pf.is_none()),
+            rewind: self.rewind.as_ref().and_then(|r| r.id.clone()),
+            btw: self.btw.is_open(),
+            waiting: matches!(self.state, State::Waiting { .. }),
+        };
+        for e in self.reported.sync(&facts, Instant::now()) {
+            self.emit(e);
+        }
+    }
+
+    /// A new `dialog:N` / `unrecognized:N` request id.
+    pub(super) fn next_screen_id(&mut self, kind: &str) -> String {
+        self.screen_seq += 1;
+        format!("{kind}:{}", self.screen_seq)
+    }
+
+    /// Ends the reported `unrecognized` screens (the state moved on, or keys were sent since).
+    fn end_unrecognized(&mut self) {
+        for e in self.reported.end_type("unrecognized") {
+            self.emit(e);
+        }
     }
 
     fn locate_claude(&mut self) {
@@ -690,6 +756,14 @@ impl Engine {
         if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
             self.rewound = None;
             let cwd = self.pf.as_ref().and_then(|p| p.cwd.clone()).or(cwd);
+            // Every request of the Session before is over, and the caller starts afresh: the
+            // tasks and the queue go out again.
+            if prev.is_some() {
+                self.reported.clear();
+                self.announced = None;
+                self.tasks_sent = None;
+                self.queue.clear();
+            }
             self.emit(
                 json!({"type": "session_changed", "session_id": sid, "previous": prev,
                 "cwd": cwd}),
@@ -829,8 +903,11 @@ impl Engine {
         self.refresh_announcement();
         self.watch_rewind();
         self.see_btw();
+        self.sync_requests();
         self.announce_requests();
         self.look_at_screen();
+        self.sync_requests();
+        self.sync_tasks();
     }
 
     /// The permission mode: the mode line under the input box, else what the plugin last saw.
@@ -1075,6 +1152,8 @@ impl Engine {
             return;
         }
         self.exited = true;
+        // Every request is over with the Session: no `request_end` for each.
+        self.reported.clear();
         self.set_state(State::Exited);
         self.emit(json!({"type": "session_exit"}));
     }
@@ -1083,6 +1162,7 @@ impl Engine {
         if self.state == s {
             return;
         }
+        self.end_unrecognized();
         // Leaving the waiting does not end a request (the Process File may flicker): the plugin's
         // PostToolUse / PermissionDenied or going idle does.
         if matches!(
@@ -1207,44 +1287,37 @@ impl Engine {
 
     /// Claude Code's queue changed: keep the person's part, and tell the caller.
     fn set_queue(&mut self, items: &[String]) {
-        let mine: Vec<String> = items.iter().filter(|t| in_queue(t)).cloned().collect();
+        let mine: Vec<QueueItem> = items
+            .iter()
+            .filter(|t| in_queue(t))
+            .map(|t| transcript::queue_item(t))
+            .collect();
         if mine != self.queue {
             self.queue = mine;
             self.emit(json!({"type": "queue", "items": self.queue}));
         }
     }
 
-    fn get_state(&self) -> Value {
-        let mut v = self.state.to_json();
-        let request = self.announced.as_ref().map(|a| match a {
-            Announced::Choice { event, .. } => event.clone(),
-            Announced::Request(id) => match self.open_request(id) {
-                Some(r) => json!({"request_id": r.id, "tool_name": r.tool_name, "input": r.input,
-                    "agent_id": r.agent_id}),
-                None => json!({"waiting_for": id}),
-            },
-            Announced::Dialog(waiting_for) => json!({"waiting_for": waiting_for}),
-        });
-        // An announced rewind is the request (its confirm page waits in the TUI).
-        let rewind = self
-            .rewind
-            .as_ref()
-            .filter(|r| r.id.is_some())
-            .map(|r| r.event.clone());
-        v["request"] = rewind.or(request).unwrap_or(Value::Null);
-        v["holder_id"] = json!(self.holder_id);
-        v["session_id"] = json!(self.session_id);
-        v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
-        v["follow_up_queue"] = json!(self.follow_ups.len());
-        v["follow_ups"] = json!(self.follow_up_texts());
-        v["queue"] = json!(self.queue);
-        v["size"] = json!([self.size.0, self.size.1]);
-        let info = self.session_info();
-        for k in ["mode", "model", "effort", "context_tokens", "title"] {
-            v[k] = info[k].clone();
+    /// What `get_state` and `ready` say about the Session now.
+    fn snapshot(&self) -> Snapshot<'_> {
+        Snapshot {
+            state: &self.state,
+            requests: self.reported.events(),
+            holder_id: &self.holder_id,
+            session_id: self.session_id.as_deref(),
+            cwd: self.pf.as_ref().and_then(|p| p.cwd.as_deref()),
+            size: self.size,
+            info: self.session_info(),
+            queue: &self.queue,
+            follow_ups: self.follow_up_texts(),
+            tasks: self.tasks(),
+            code_calls: self.code_calls.open(),
+            feedback_draft: self.feedback.as_ref().map_or(Value::Null, public_draft),
         }
-        v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
-        v
+    }
+
+    fn get_state(&self) -> Value {
+        self.snapshot().to_json()
     }
 
     /// `get_messages`: the page is read on the history thread and answered by [`poll_pages`]
@@ -1324,7 +1397,7 @@ impl Engine {
     }
 
     pub fn execute(&mut self, c: &Command) -> CmdResult {
-        match c {
+        let res = match c {
             Command::Prompt { input, if_busy } => self.prompt_cmd(input, *if_busy),
             Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
             Command::SetMode { mode } => self.set_mode(*mode),
@@ -1397,7 +1470,11 @@ impl Engine {
                     ),
                 }
             }
+        };
+        if matches!(c, Command::SendKeys { .. } | Command::Abort) {
+            self.end_unrecognized();
         }
+        res
     }
 
     fn ready(&mut self) {
@@ -1412,21 +1489,6 @@ impl Engine {
             self.size.0,
             self.size.1
         );
-        let mut v = self.state.to_json();
-        v["type"] = json!("ready");
-        v["protocol"] = json!(PROTOCOL);
-        v["holder_id"] = json!(self.holder_id);
-        v["session_id"] = json!(self.session_id);
-        v["cwd"] = json!(self.pf.as_ref().and_then(|p| p.cwd.clone()));
-        v["claude_version"] = json!(version);
-        v["size"] = json!([self.size.0, self.size.1]);
-        v["queue"] = json!(self.queue);
-        // Seen by the first look, before events went out.
-        v["feedback_draft"] = self.feedback.as_ref().map_or(Value::Null, public_draft);
-        let info = self.session_info();
-        for k in ["mode", "model", "effort", "context_tokens", "title"] {
-            v[k] = info[k].clone();
-        }
         let mut warnings = Vec::new();
         if let Some(ver) = &version
             && !TESTED_CLAUDE_VERSIONS.contains(&ver.as_str())
@@ -1435,7 +1497,11 @@ impl Engine {
                 "Claude Code {ver} 不是实测过的版本，认不出的界面会交给分析器或报 unrecognized"
             ));
         }
-        v["warnings"] = json!(warnings);
+        // Seen by the first look, before events went out.
+        let snapshot = self.snapshot();
+        let tasks = snapshot.tasks.clone();
+        let v = ready_event(snapshot.to_json(), version, warnings);
+        self.tasks_sent = Some(tasks);
         self.emit(v);
     }
 
@@ -1547,11 +1613,7 @@ impl Engine {
             return;
         }
         self.settle_armed = false;
-        let running: Vec<_> = self
-            .tasks()
-            .into_iter()
-            .filter(|t| t.status == "running")
-            .collect();
+        let running = self.running_tasks();
         self.emit(json!({"type": "settled", "background_tasks": running}));
     }
 
@@ -1572,9 +1634,13 @@ impl Engine {
         } else {
             self.turns.idle_at_connect();
         }
+        // What the first look reported went out to nobody: `ready` says what is pending, and
+        // it is announced after it.
         self.announced = None;
+        self.reported.clear();
         self.startup_checked = None;
         self.startup_last = None;
+        self.startup_dialog = None;
     }
 
     /// While a command waits: lines from stdin that neither write to the Pane nor wait (reads, the
@@ -1653,10 +1719,16 @@ impl Engine {
                     self.get_messages(id, query);
                     return;
                 }
+                // A snapshot the command returns (`get_state`, `get_tasks`) is of what is live now.
+                self.sync_requests();
+                self.sync_tasks();
                 let v = match self.execute(&command) {
                     Ok(data) => rpc::response_ok(id.as_deref(), name, data),
                     Err((code, msg)) => rpc::response_err(id.as_deref(), name, code, &msg),
                 };
+                // What the command ended is said before its response.
+                self.sync_requests();
+                self.sync_tasks();
                 self.emit(v);
             }
             Err(RpcError {
@@ -1676,6 +1748,58 @@ impl Engine {
     }
 }
 
+/// The Session as `get_state` and `ready` give it: every field there, `null` when unknown.
+struct Snapshot<'a> {
+    state: &'a State,
+    /// The requests reported and not ended, as their events.
+    requests: Vec<Value>,
+    holder_id: &'a str,
+    session_id: Option<&'a str>,
+    cwd: Option<&'a str>,
+    size: (u16, u16),
+    /// `session_info`'s fields.
+    info: Value,
+    queue: &'a [QueueItem],
+    follow_ups: Vec<String>,
+    tasks: Vec<BgTask>,
+    /// Code Mode: the calls reported with `code_call` and not ended.
+    code_calls: Vec<Value>,
+    feedback_draft: Value,
+}
+
+impl Snapshot<'_> {
+    fn to_json(&self) -> Value {
+        let mut v = self.state.to_json();
+        v["requests"] = json!(self.requests);
+        v["holder_id"] = json!(self.holder_id);
+        v["session_id"] = json!(self.session_id);
+        v["cwd"] = json!(self.cwd);
+        v["size"] = json!([self.size.0, self.size.1]);
+        for k in ["mode", "model", "effort", "context_tokens", "title"] {
+            v[k] = self.info[k].clone();
+        }
+        v["queue"] = json!(self.queue);
+        v["follow_ups"] = json!(self.follow_ups);
+        v["tasks"] = json!(self.tasks);
+        v["code_calls"] = json!(self.code_calls);
+        v["feedback_draft"] = self.feedback_draft.clone();
+        v
+    }
+}
+
+/// `ready`: the snapshot, with the protocol, Claude Code's version and warnings.
+fn ready_event(
+    mut snapshot: Value,
+    claude_version: Option<String>,
+    warnings: Vec<String>,
+) -> Value {
+    snapshot["type"] = json!("ready");
+    snapshot["protocol"] = json!(PROTOCOL);
+    snapshot["claude_version"] = json!(claude_version);
+    snapshot["warnings"] = json!(warnings);
+    snapshot
+}
+
 /// Whether a queued item is part of the `queue` a caller sees: what a person typed or steered and
 /// messages from other Sessions and agents, as the TUI lists them. Not a task notification, a
 /// Teammate message, or a harness event of Code Mode (`<event nonce="…" kind="repl-eval" …>`:
@@ -1692,6 +1816,59 @@ fn in_queue(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fields `get_state` and `ready` share.
+    const SNAPSHOT_FIELDS: &[&str] = &[
+        "state",
+        "waiting",
+        "requests",
+        "holder_id",
+        "session_id",
+        "cwd",
+        "size",
+        "mode",
+        "model",
+        "effort",
+        "context_tokens",
+        "title",
+        "queue",
+        "follow_ups",
+        "tasks",
+        "code_calls",
+        "feedback_draft",
+    ];
+
+    #[test]
+    fn ready_and_get_state_say_every_field() {
+        let state = State::Idle;
+        let info = json!({"mode": null, "model": null, "effort": null, "context_tokens": null,
+            "title": null});
+        let s = Snapshot {
+            state: &state,
+            requests: Vec::new(),
+            holder_id: "h1",
+            session_id: None,
+            cwd: None,
+            size: (120, 40),
+            info,
+            queue: &[],
+            follow_ups: Vec::new(),
+            tasks: Vec::new(),
+            code_calls: Vec::new(),
+            feedback_draft: Value::Null,
+        };
+        let keys =
+            |v: &Value| -> HashSet<String> { v.as_object().unwrap().keys().cloned().collect() };
+        let fields: HashSet<String> = SNAPSHOT_FIELDS.iter().map(|k| k.to_string()).collect();
+        let state = s.to_json();
+        assert_eq!(keys(&state), fields);
+        assert!(state["waiting"].is_null());
+        let ready = ready_event(state, None, Vec::new());
+        let mut want = fields;
+        want.extend(["type", "protocol", "claude_version", "warnings"].map(String::from));
+        assert_eq!(keys(&ready), want);
+        assert_eq!(ready["protocol"], 4);
+    }
 
     #[test]
     fn harness_events_and_notifications_are_not_in_the_queue() {

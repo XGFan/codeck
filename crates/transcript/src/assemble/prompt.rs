@@ -301,6 +301,16 @@ fn peer_origin(e: &RawEntry, text: &str) -> Option<PromptOrigin> {
     })
 }
 
+/// A message another agent or a plugin sent, from its text alone (a plugin's only by its
+/// `The <name> plugin sent a message:` line): where it came from and its messages, as
+/// [`relayed_messages`] gives them. `None` for any other text.
+pub fn peer_text(text: &str) -> Option<(PeerSource, Vec<RelayedMessage>)> {
+    let Some(PromptOrigin::Peer { source, from }) = peer_origin(&RawEntry::default(), text) else {
+        return None;
+    };
+    Some((source, peer_messages(text, from.as_deref())))
+}
+
 /// `origin.kind` values classified here; any other is reported by [`unrecognized_mark`].
 const KNOWN_ORIGIN_KINDS: &[&str] = &[
     "human",
@@ -832,6 +842,29 @@ mod tests {
         );
         // A prompt that is not relayed has none.
         assert!(relayed_messages(&PromptOrigin::Human, text).is_empty());
+    }
+
+    #[test]
+    fn peer_text_reads_the_sender_and_messages_from_the_text() {
+        let session = "Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/1.sock\" from-name=\"codeck-99\">\nURGENT\nsecond line\n</cross-session-message>\n\nThis came from another Claude session";
+        let (source, m) = peer_text(session).unwrap();
+        assert_eq!(source, PeerSource::Session);
+        assert_eq!(
+            (m.len(), m[0].from.as_deref(), m[0].body.as_str()),
+            (1, Some("codeck-99"), "URGENT\nsecond line")
+        );
+        let (source, m) = peer_text("<agent-message from=\"w2\">\nhi\n</agent-message>").unwrap();
+        assert_eq!(
+            (source, m[0].from.as_deref()),
+            (PeerSource::Agent, Some("w2"))
+        );
+        let (source, m) = peer_text("The plannotator plugin sent a message:\nFeedback.").unwrap();
+        assert_eq!(
+            (source, m[0].from.as_deref(), m[0].body.as_str()),
+            (PeerSource::Plugin, Some("plannotator"), "Feedback.")
+        );
+        assert!(peer_text("fix the test first").is_none());
+        assert!(peer_text("[Image #1] look").is_none());
     }
 
     #[test]

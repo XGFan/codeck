@@ -9,13 +9,13 @@ final class ConnStateDecodingTests: XCTestCase {
       "ready": true, "state": "waiting", "waiting": {"kind": "permission", "waiting_for": "permission prompt"},
       "mode": "accept_edits", "model": "claude-opus-4-7", "effort": "xhigh", "contextTokens": 51234,
       "requests": [
-        {"type": "permission_request", "request_id": "toolu_1", "tool_name": "Bash",
+        {"type": "permission_request", "request_id": "toolu_1", "tool_use_id": "toolu_1", "tool_name": "Bash",
          "input": {"command": "rm -rf build", "description": "清理"}, "agent_id": null,
          "options": [{"label": "Yes", "meaning": "allow"},
                      {"label": "Yes, and don't ask again for rm commands", "meaning": "allow_always"},
                      {"label": "No", "meaning": "deny"}],
          "layout_source": "builtin"},
-        {"type": "question", "request_id": "toolu_2", "agent_id": "a1b2c3d4e5f6",
+        {"type": "question", "request_id": "toolu_2", "tool_use_id": "toolu_2", "agent_id": "a1b2c3d4e5f6",
          "questions": [{"question": "用哪个方案？", "header": "方案",
                         "options": [{"label": "A", "description": "快"}, {"label": "B", "preview": "x"}],
                         "multiSelect": false}]},
@@ -24,18 +24,20 @@ final class ConnStateDecodingTests: XCTestCase {
          "tool_use_id": null, "layout": "model_switch", "layout_source": "builtin"},
         {"type": "dialog", "request_id": "dialog:trust", "waiting_for": "trust", "lines": ["", "Trust this folder?", ""]},
         {"type": "unrecognized", "request_id": "unrecognized:cost", "context": "cost", "lines": ["Total cost: $1"]},
-        {"type": "rewind", "request_id": "rw1", "uuid": "u", "text": "hi", "code": "The code will be unchanged.", "warning": null,
+        {"type": "rewind", "request_id": "rw1", "uuid": "u", "text": "hi", "code": {"restores": false, "delta": null, "target": null}, "code_text": "The code will be unchanged.", "warning": null,
          "options": [{"option": "conversation", "label": "Restore conversation"}, {"option": "both", "label": "Restore code and conversation"},
                      {"option": "summarize", "label": "Summarize from here"}]},
         {"type": "teleport", "request_id": "t1"},
-        {"type": "permission_request", "request_id": 7}
+        {"type": "permission_request", "request_id": "p7"},
+        {"type": "unknown_without_id"}
       ],
       "progress": {"text": "Thinking… (12s)", "verb": "Thinking", "elapsed_s": 12, "tokens": null},
-      "queue": ["先这样", 3],
+      "queue": [{"kind": "typed", "from": null, "text": "先这样", "editable": true},
+                {"kind": "session", "from": "api", "text": "\\n迁移完成\\n第二行", "editable": false}, 3],
       "tasks": [
         {"id": "b1", "kind": "shell", "tool_use_id": "toolu_9", "description": null, "command": "npm run dev", "status": "running"},
         {"id": "m1", "kind": "monitor", "description": "watch", "status": "completed"},
-        {"id": "t1", "kind": "agent", "tool_use_id": "", "description": "docs", "status": "running", "idle": true},
+        {"id": "t1", "kind": "agent", "tool_use_id": null, "description": "docs", "status": "running", "idle": true},
         {"kind": "agent"}
       ],
       "lastTurn": {"type": "turn_end", "duration_ms": 1200},
@@ -56,6 +58,7 @@ final class ConnStateDecodingTests: XCTestCase {
 
         guard case .permission(let p) = c.requests[0] else { return XCTFail("permission") }
         XCTAssertEqual(p.toolName, "Bash")
+        XCTAssertEqual(p.toolUseId, "toolu_1")
         XCTAssertEqual(p.allowAlways?.label, "Yes, and don't ask again for rm commands")
         XCTAssertEqual(ConnectWords.inputBlocks(tool: p.toolName, p.input), [
             InputBlock(kind: .code, text: "rm -rf build"),
@@ -86,16 +89,20 @@ final class ConnStateDecodingTests: XCTestCase {
 
         // The restores this app knows, in the card's order.
         XCTAssertEqual(c.requests[5], .rewind(RewindRequest(
-            requestId: "rw1", uuid: "u", text: "hi", code: "The code will be unchanged.", options: [.both, .conversation]
+            requestId: "rw1", uuid: "u", text: "hi", code: .init(restores: false), codeText: "The code will be unchanged.",
+            options: [.both, .conversation]
         )))
         XCTAssertEqual(c.requests[6], .other(type: "teleport", requestId: "t1"))
-        // A known type that does not decode is kept as a card without actions.
-        guard case .other("permission_request", _) = c.requests[7] else { return XCTFail("malformed permission") }
+        // A known type that does not decode is kept as a card without actions; one without an id is dropped.
+        guard case .other("permission_request", "p7") = c.requests[7] else { return XCTFail("malformed permission") }
     }
 
     func testKeepsWhatDecodesAndDropsTheRest() throws {
         let c = try JSONDecoder().decode(ConnState.self, from: Data(Self.stateJSON.utf8))
-        XCTAssertEqual(c.queue, ["先这样"])
+        XCTAssertEqual(c.queue.map(\.kind), ["typed", "session"])
+        XCTAssertEqual(c.queue.map(\.editable), [true, false])
+        XCTAssertEqual(c.queue.map(\.label), ["先这样", "api：迁移完成"])
+        XCTAssertEqual(c.tasks.first { $0.id == "t1" }?.toolUseId, nil)
         XCTAssertEqual(c.tasks.map(\.id), ["b1", "m1", "t1"])
         XCTAssertEqual(c.runningTasks.map(\.name), ["npm run dev", "docs"])
         XCTAssertEqual(c.workingTasks.map(\.name), ["npm run dev"])
@@ -170,13 +177,15 @@ final class ConnStateDecodingTests: XCTestCase {
 @MainActor
 final class RewindTests: XCTestCase {
     func testCodeLineSaysWhatTheConfirmPageSays() {
-        XCTAssertEqual(RewindWords.codeLine(nil), "这条提示词及之后的对话会被移除")
-        XCTAssertEqual(RewindWords.codeLine("The code will be unchanged."), "这条提示词及之后的对话会被移除；代码不变")
+        XCTAssertEqual(RewindWords.codeLine(nil, nil), "这条提示词及之后的对话会被移除")
+        XCTAssertEqual(RewindWords.codeLine(.init(restores: false), "x"), "这条提示词及之后的对话会被移除；代码不变")
         XCTAssertEqual(
-            RewindWords.codeLine("The code will be restored +2 -1 in w.txt, a/b.rs."),
+            RewindWords.codeLine(.init(restores: true, delta: "+2 -1", target: "w.txt, a/b.rs"), "x"),
             "这条提示词及之后的对话会被移除；代码会恢复：w.txt, a/b.rs（+2 −1）"
         )
-        XCTAssertEqual(RewindWords.codeLine("Something else."), "Something else.")
+        XCTAssertEqual(RewindWords.codeLine(.init(restores: true, delta: "-1", target: "w.txt"), nil).hasSuffix("（−1）"), true)
+        XCTAssertEqual(RewindWords.codeLine(.init(restores: true), nil), "这条提示词及之后的对话会被移除；代码会恢复")
+        XCTAssertEqual(RewindWords.codeLine(nil, "Something else."), "Something else.")
     }
 
     func testThePageOffersRewindOnlyOnAConnectAndForkOnlyWhenItCanStart() {
@@ -449,21 +458,21 @@ final class AnswersTests: XCTestCase {
         let opts = { (allow: String, deny: String) in
             [PermissionRequest.Option(label: allow, meaning: "allow"), .init(label: deny, meaning: "deny")]
         }
-        let builtin = PermissionRequest(requestId: "r", toolName: "Bash", input: nil, options: opts("Yes", "No"), layoutSource: "builtin")
+        let builtin = PermissionRequest(requestId: "r", toolUseId: "r", toolName: "Bash", input: nil, options: opts("Yes", "No"), layoutSource: "builtin")
         XCTAssertEqual(Answers.permissionLabel(builtin, meaning: "allow", fallback: "允许"), "允许")
         XCTAssertEqual(Answers.permissionLabel(builtin, meaning: "deny", fallback: "拒绝"), "拒绝")
-        let learned = PermissionRequest(requestId: "r", toolName: "Bash", input: nil, options: opts("Yes", "No"), layoutSource: "learned")
+        let learned = PermissionRequest(requestId: "r", toolUseId: "r", toolName: "Bash", input: nil, options: opts("Yes", "No"), layoutSource: "learned")
         XCTAssertEqual(Answers.permissionLabel(learned, meaning: "allow", fallback: "允许"), "Yes")
-        let none = PermissionRequest(requestId: "r", toolName: "Bash", input: nil)
+        let none = PermissionRequest(requestId: "r", toolUseId: "r", toolName: "Bash", input: nil)
         XCTAssertEqual(Answers.permissionLabel(none, meaning: "allow", fallback: "允许"), "允许")
         let grant = PermissionRequest(
-            requestId: "r", toolName: "computer", input: nil,
+            requestId: "r", toolUseId: "r", toolName: "computer", input: nil,
             options: opts("Allow for this session (4 apps)", "Deny, and tell Claude what to do differently (esc)"),
             layoutSource: "builtin"
         )
         XCTAssertEqual(Answers.permissionLabel(grant, meaning: "allow", fallback: "允许"), "Allow for this session (4 apps)")
         XCTAssertEqual(Answers.permissionLabel(grant, meaning: "deny", fallback: "拒绝"), "拒绝")
-        let workflow = PermissionRequest(requestId: "r", toolName: "W", input: nil, options: opts("Yes, run it", "No"), layoutSource: "builtin")
+        let workflow = PermissionRequest(requestId: "r", toolUseId: "r", toolName: "W", input: nil, options: opts("Yes, run it", "No"), layoutSource: "builtin")
         XCTAssertEqual(Answers.permissionLabel(workflow, meaning: "allow", fallback: "允许"), "允许")
     }
 

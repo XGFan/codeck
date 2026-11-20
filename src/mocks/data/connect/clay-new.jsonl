@@ -1,15 +1,16 @@
 {"t": 1793700000500, "dir": "meta", "ls": {"holder_id": "mclaynew00001", "session_id": "c1a70000-0000-4000-8000-0000000000c1", "title": null, "cwd": "/Users/dev/Developer/lumen-api/services", "status": "idle", "plugin": true}}
-{"t": 1793700000540, "dir": "recv", "msg": {"type": "ready", "protocol": 3, "holder_id": "mclaynew00001", "session_id": "c1a70000-0000-4000-8000-0000000000c1", "cwd": "/Users/dev/Developer/lumen-api/services", "claude_version": "2.1.317", "state": "idle", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": []}}
+{"t": 1793700000540, "dir": "recv", "msg": {"type": "ready", "protocol": 4, "holder_id": "mclaynew00001", "session_id": "c1a70000-0000-4000-8000-0000000000c1", "cwd": "/Users/dev/Developer/lumen-api/services", "claude_version": "2.1.317", "state": "idle", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": [], "effort": null, "waiting": null, "requests": [], "title": null, "queue": [], "follow_ups": [], "tasks": [], "code_calls": [], "feedback_draft": null}}
 {"t": 1793700000600, "dir": "send", "msg": {"id": "p1", "type": "prompt", "text": "/release v1"}}
-{"t": 1793700000610, "dir": "recv", "msg": {"type": "state", "state": "busy"}}
+{"t": 1793700000610, "dir": "recv", "msg": {"type": "state", "state": "busy", "waiting": null}}
 {"t": 1793700000620, "dir": "recv", "msg": {"type": "response", "id": "p1", "command": "prompt", "success": true, "data": {"delivered_as": "prompt", "uuid": "c1a70000-0000-4000-8000-00000000u001", "prompt_id": null}}}
-{"t": 1793700000630, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700000630, "dir": "recv", "msg": {"type": "state", "state": "idle", "waiting": null}}
 {"t": 1793700000700, "dir": "send", "msg": {"id": "s1", "type": "slash", "command": "cost"}}
 {"t": 1793700000710, "dir": "recv", "msg": {"type": "response", "id": "s1", "command": "slash", "success": true, "data": {}}}
 {"t": 1793700000720, "dir": "recv", "msg": {"type": "state", "state": "waiting", "waiting": {"kind": "dialog", "waiting_for": "dialog open"}}}
-{"t": 1793700000730, "dir": "recv", "msg": {"type": "dialog", "waiting_for": "dialog open", "lines": ["   Settings  Status   Config   Usage   Stats", "", "   Session", "", "   Total cost:            $0.0000", "   Total duration (API):  0s"]}}
+{"t": 1793700000730, "dir": "recv", "msg": {"type": "dialog", "request_id": "dialog:1", "waiting_for": "dialog open", "lines": ["   Settings  Status   Config   Usage   Stats", "", "   Session", "", "   Total cost:            $0.0000", "   Total duration (API):  0s"]}}
 {"t": 1793700000800, "dir": "send", "msg": {"id": "a1", "type": "abort"}}
-{"t": 1793700000810, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700000810, "dir": "recv", "msg": {"type": "state", "state": "idle", "waiting": null}}
+{"t": 1793700000819, "dir": "recv", "msg": {"type": "request_end", "request_id": "dialog:1"}}
 {"t": 1793700000820, "dir": "recv", "msg": {"type": "response", "id": "a1", "command": "abort", "success": true, "data": {"state": "idle"}}}
 {"t": 1793700000900, "dir": "send", "msg": {"id": "b1", "type": "slash", "command": "btw 这个端口是谁占的"}}
 {"t": 1793700000910, "dir": "recv", "msg": {"type": "response", "id": "b1", "command": "slash", "success": true, "data": {}}}
@@ -17,6 +18,6 @@
 {"t": 1793700000930, "dir": "recv", "msg": {"type": "btw", "request_id": "btw", "question": "这个端口是谁占的", "answering": true, "text": null}}
 {"t": 1793700000940, "dir": "recv", "msg": {"type": "btw", "request_id": "btw", "question": "这个端口是谁占的", "answering": false, "text": "是 vite 的开发服务器。\n\n停掉它就能释放 1420。"}}
 {"t": 1793700001000, "dir": "send", "msg": {"id": "b2", "type": "close_btw"}}
-{"t": 1793700001010, "dir": "recv", "msg": {"type": "btw_closed"}}
-{"t": 1793700001020, "dir": "recv", "msg": {"type": "state", "state": "idle"}}
+{"t": 1793700001010, "dir": "recv", "msg": {"type": "request_end", "request_id": "btw"}}
+{"t": 1793700001020, "dir": "recv", "msg": {"type": "state", "state": "idle", "waiting": null}}
 {"t": 1793700001030, "dir": "recv", "msg": {"type": "response", "id": "b2", "command": "close_btw", "success": true, "data": {}}}

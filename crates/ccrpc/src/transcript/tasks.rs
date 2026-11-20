@@ -39,16 +39,15 @@ pub struct BgTask {
     /// Claude Code's task id (agentId, background shell id, Workflow task id).
     pub id: String,
     pub kind: TaskKind,
-    pub tool_use_id: String,
+    /// The call that started it; `None` when ccrpc did not see it start (known only from Stop).
+    pub tool_use_id: Option<String>,
     pub description: Option<String>,
     /// The shell command of a background shell or a Monitor.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     /// `running` until Claude Code reports it ended (`completed`, `failed`, `killed`, …).
     pub status: String,
     /// A running Teammate between rounds, waiting for a message. Claude Code keeps it `running` and
     /// leaves it out of its own count of what is working.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub idle: bool,
 }
 
@@ -132,7 +131,7 @@ impl Tasks {
             self.list.push(BgTask {
                 id,
                 kind,
-                tool_use_id: tool_use_id.to_string(),
+                tool_use_id: Some(tool_use_id.to_string()),
                 description: field("description").or(summary),
                 command: field("command"),
                 status: "running".into(),

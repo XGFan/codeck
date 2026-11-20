@@ -17,6 +17,7 @@
   "requests": [
     {
       "agent_id": null,
+      "from_code": false,
       "input": {
         "command": "pnpm test",
         "description": "Run the tests"
@@ -38,10 +39,12 @@
       ],
       "request_id": "toolu_1",
       "tool_name": "Bash",
+      "tool_use_id": "toolu_1",
       "type": "permission_request"
     },
     {
       "agent_id": "agent-7",
+      "from_code": false,
       "questions": [
         {
           "header": "DB",
@@ -60,38 +63,54 @@
         }
       ],
       "request_id": "toolu_2",
+      "tool_use_id": "toolu_2",
       "type": "question"
     },
     {
-      "layout": "plan_approval",
-      "layout_source": "builtin",
+      "code": {
+        "delta": "-1",
+        "restores": true,
+        "target": "w.txt"
+      },
+      "code_text": "The code will be restored -1 in w.txt.",
       "options": [
         {
-          "description": null,
-          "label": "Yes, auto-accept edits",
-          "meaning": "allow"
+          "label": "Restore code and conversation",
+          "option": "both"
         },
         {
-          "description": "Tell Claude what to change",
-          "label": "No, keep planning",
-          "meaning": "deny"
+          "label": "Restore conversation",
+          "option": "conversation"
         }
       ],
-      "request_id": "choice-1",
-      "title": "Ready to code?",
-      "tool_use_id": "toolu_3",
-      "type": "choice"
+      "request_id": "rewind:1",
+      "text": "second prompt",
+      "type": "rewind",
+      "uuid": "u2",
+      "warning": null
     }
   ],
   "progress": null,
   "queue": [
-    "and then run lint"
+    {
+      "editable": true,
+      "from": null,
+      "kind": "typed",
+      "text": "and then run lint"
+    },
+    {
+      "editable": false,
+      "from": "api",
+      "kind": "session",
+      "text": "migration is done"
+    }
   ],
   "tasks": [
     {
       "command": "pnpm dev",
       "description": "dev server",
       "id": "b1",
+      "idle": false,
       "kind": "shell",
       "status": "running",
       "tool_use_id": "toolu_9"

@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, usePathCompletions, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
-import type { FeedbackDraft } from "./protocol";
+import type { FeedbackDraft, QueueItem } from "./protocol";
 import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand, typedName } from "./slash";
 import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, isDraft, type Draft } from "./drafts";
@@ -20,7 +20,7 @@ import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
 import { caretOnFirstRow } from "./caretRow";
-import { editable, queueText, rememberSteer, takenBack } from "./queue";
+import { queueText, rememberSteer, takenBack } from "./queue";
 import { ChipLayer, MirrorText } from "./ImageChips";
 import {
   dropImages,
@@ -266,7 +266,7 @@ export function Composer({ c }: { c: ConnState }) {
   };
 
   /** ↑ takes what the person queued back (as in the terminal): there is some, and nothing else is on its way. */
-  const canEditQueue = live && state === "busy" && !sending && c.queue.some(editable);
+  const canEditQueue = live && state === "busy" && !sending && c.queue.some((q) => q.editable);
   const editQueue = async () => {
     setSending(true);
     setError(null);
@@ -275,7 +275,10 @@ export function Composer({ c }: { c: ConnState }) {
     const items = r.data?.items;
     if (!r.success || !Array.isArray(items))
       return setError(`取回排队的消息失败：${r.error?.message ?? r.error?.code ?? ""}`);
-    const back = takenBack(c.conn, items as string[]);
+    const back = takenBack(
+      c.conn,
+      (items as QueueItem[]).map((q) => q.text),
+    );
     if (!back.text) return;
     // Before what is in the box, as in the terminal; the caret after what came back.
     update((d) => {
@@ -452,7 +455,7 @@ export function Composer({ c }: { c: ConnState }) {
   const placeholder = !live
     ? "连接中…"
     : state === "busy"
-      ? c.queue.some(editable)
+      ? c.queue.some((q) => q.editable)
         ? "按 ↑ 取回排队的消息（⌘Enter 中断本轮、立即发送，Esc 中止）"
         : "插话，当前工具调用结束后送达（⌘Enter 中断本轮、立即发送，Esc 中止）"
       : state === "waiting"
@@ -470,7 +473,7 @@ export function Composer({ c }: { c: ConnState }) {
             icon={<Clock size={18} strokeWidth={1.7} />}
             title={`排队 ${c.queue.length} 条`}
             desc={c.queue.map((q, i) => (
-              <span key={`${i}:${q}`} data-testid="queue-item" title={queueText(q)}>
+              <span key={`${i}:${q.text}`} data-testid="queue-item" title={queueText(q)}>
                 {i > 0 && "；"}
                 {queueText(q)}
               </span>

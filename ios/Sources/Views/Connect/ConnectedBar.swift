@@ -119,14 +119,14 @@ struct ConnectedBar: View {
 
 /// What waits in Claude Code's own queue.
 private struct QueueChips: View {
-    let queue: [String]
+    let queue: [QueueItem]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 chip { Text("排队 \(queue.count) 条").foregroundStyle(.secondary) }
-                ForEach(Array(queue.enumerated()), id: \.offset) { _, text in
-                    chip { Text(text).lineLimit(1).frame(maxWidth: 220) }
+                ForEach(Array(queue.enumerated()), id: \.offset) { _, item in
+                    chip { Text(item.label).lineLimit(1).frame(maxWidth: 220) }
                 }
             }
             .font(.footnote)

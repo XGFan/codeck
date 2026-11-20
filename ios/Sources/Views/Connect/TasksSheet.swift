@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Background tasks of a Connect (Tasks.tsx): running ones by kind, each with 停止 (idle only, as on the
-/// desktop); the finished ones after them. Opening it asks ccrpc for the list again (`get_tasks`).
+/// desktop); the finished ones after them.
 struct TasksSheet: View {
     let sessionId: String
     let conn: String
@@ -46,7 +46,6 @@ struct TasksSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .task { _ = await model.connect.command(conn, ["type": "get_tasks"]) }
     }
 
     private func kinds(of tasks: [ConnTask]) -> [String] {
@@ -84,7 +83,6 @@ struct TasksSheet: View {
             let r = await model.connect.command(conn, ["type": "stop_task", "task_id": .string(t.id)])
             stopping.remove(t.id)
             if !r.success { error = "停止失败：\(r.errorText)" }
-            _ = await model.connect.command(conn, ["type": "get_tasks"])
         }
     }
 }

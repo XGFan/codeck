@@ -2,32 +2,21 @@
 // Content is not kept here: CoDeck shows it from its own index and live following.
 
 import type {
-  ChoiceEvent,
-  BtwEvent,
-  DialogEvent,
   FeedbackDraft,
   InMsg,
-  PermissionRequestEvent,
   ProgressEvent,
-  QuestionEvent,
+  QueueItem,
+  RequestEvent,
   RewindOption,
   RewindRequest,
   StateName,
   Task,
   TurnEndEvent,
-  UnrecognizedEvent,
   Waiting,
 } from "./protocol";
 
 /** Something waiting for an answer, as a card. */
-export type Request =
-  | PermissionRequestEvent
-  | QuestionEvent
-  | ChoiceEvent
-  | RewindRequest
-  | BtwEvent
-  | (DialogEvent & { request_id: string })
-  | (UnrecognizedEvent & { request_id: string });
+export type Request = RequestEvent;
 
 /** The conversation went back to before a prompt: shown in the transcript until the next prompt. */
 export interface Rewound {
@@ -79,7 +68,7 @@ export interface ConnState {
   requests: Request[];
   progress: ProgressEvent | null;
   /** What waits in the TUI's own queue (sent when the current tool call ends, or at once with `send_now`). */
-  queue: string[];
+  queue: QueueItem[];
   /** Code Mode: the calls the main line's code made that ccrpc reported, oldest first (not folded by the Host). */
   codeCalls: CodeCall[];
   tasks: Task[];
@@ -108,8 +97,8 @@ export interface ConnState {
   feedbackDraft: FeedbackDraft | null;
   /** 「选回退点」 (`/rewind` typed): every prompt that can be rewound to shows its 「回退」. */
   picking: boolean;
-  /** A `rewind` command under way: the prompt it opens the confirm page for, and whether the Session waited since. */
-  rewinding: { uuid: string; waited: boolean } | null;
+  /** A `rewind` command under way: the prompt it opens the confirm page for, until the page's card comes. */
+  rewinding: { uuid: string } | null;
   /**
    * The conversation went back to before this prompt, as ccrpc keeps it: until the transcript shows the new Branch
    * (checked where it is shown), the Session changes or the connection ends.
@@ -223,39 +212,21 @@ function notice(s: ConnState, text: string): ConnState {
   return { ...s, notices: [...s.notices.slice(-4), { id: ++noticeSeq, text }] };
 }
 
-/** Main-line requests end when the Session stops waiting; a background Subagent's stays, and `/btw` until it closes. */
-function dropMainRequests(s: ConnState): Request[] {
-  return s.requests.filter((r) => r.type === "btw" || ("agent_id" in r && r.agent_id));
-}
-
+/** A request event: the card with its id is updated in place, or added. */
 function upsertRequest(s: ConnState, r: Request): ConnState {
-  // A rewind's confirm page is off the screen once anything else waits.
-  const rest = s.requests.filter((x) => x.request_id !== r.request_id && x.type !== "rewind");
-  // A dialog / unrecognized screen replaces any other screen-only card.
-  const others =
-    r.type === "dialog" || r.type === "unrecognized" || r.type === "choice" || r.type === "rewind"
-      ? rest.filter((x) => x.type === "permission_request" || x.type === "question" || x.type === "btw")
-      : rest;
-  return { ...s, requests: [...others, r] };
+  const at = s.requests.findIndex((x) => x.request_id === r.request_id);
+  const requests = at < 0 ? [...s.requests, r] : s.requests.map((x, i) => (i === at ? r : x));
+  return { ...s, requests };
 }
 
 /**
- * `rewind` stopped at the confirm page: its card. When the Session already stopped waiting (the page was answered or
- * left in the terminal before the answer arrived), nothing would remove it: none.
- */
-export function rewindShown(s: ConnState, r: RewindRequest): ConnState {
-  if (s.rewinding?.waited && s.state !== "waiting") return { ...s, rewinding: null };
-  return { ...upsertRequest(s, r), rewinding: null };
-}
-
-/**
- * The rewind's confirm page was answered with `option`: the card goes; with the conversation restored the prompt is
- * marked (the transcript changes only with the next prompt), with only the code restored a notice says so.
+ * The rewind's confirm page was answered with `option` (its card goes with its `request_end`): with the conversation
+ * restored the prompt is marked (the transcript changes only with the next prompt), with only the code restored a
+ * notice says so.
  */
 export function rewindAnswered(s: ConnState, r: RewindRequest, option: RewindOption, keptDraft: boolean): ConnState {
-  const t = { ...s, requests: s.requests.filter((x) => x.request_id !== r.request_id) };
-  if (option === "code") return notice(t, "已恢复代码");
-  return { ...t, rewound: { uuid: r.uuid, withCode: option === "both", keptDraft } };
+  if (option === "code") return notice(s, "已恢复代码");
+  return { ...s, rewound: { uuid: r.uuid, withCode: option === "both", keptDraft } };
 }
 
 export function apply(s: ConnState, m: InMsg): ConnState {
@@ -269,16 +240,27 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         cwd: m.cwd,
         claudeVersion: m.claude_version,
         state: m.state,
-        waiting: m.waiting ?? null,
-        mode: m.mode ?? null,
-        model: m.model ?? null,
-        effort: m.effort ?? null,
-        contextTokens: m.context_tokens ?? null,
-        queue: m.queue ?? [],
-        feedbackDraft: m.feedback_draft ?? null,
+        waiting: m.waiting,
+        mode: m.mode,
+        model: m.model,
+        effort: m.effort,
+        contextTokens: m.context_tokens,
+        requests: m.requests,
+        queue: m.queue,
+        tasks: m.tasks,
+        codeCalls: m.code_calls.map((c) => ({
+          toolUseId: c.tool_use_id,
+          name: c.name,
+          input: c.input,
+          code: c.code,
+          end: null,
+        })),
+        feedbackDraft: m.feedback_draft,
       };
     case "queue":
       return { ...s, queue: m.items };
+    case "tasks":
+      return { ...s, tasks: m.tasks };
     case "code_call": {
       const call = { toolUseId: m.tool_use_id, name: m.name, input: m.input, code: m.code, end: null };
       const rest = s.codeCalls.filter((c) => c.toolUseId !== m.tool_use_id);
@@ -292,26 +274,17 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         ),
       };
     case "state": {
-      const waiting = m.state === "waiting" ? (m.waiting ?? null) : null;
-      const requests = m.state === "waiting" ? s.requests : dropMainRequests(s);
       return {
         ...s,
         state: m.state,
-        waiting,
-        requests,
+        waiting: m.waiting,
         progress: m.state === "busy" ? s.progress : null,
         // Prompts are picked while idle.
         picking: s.picking && m.state === "idle",
         // A new turn: the last prompt is no longer the one taken back.
         withdrawnText: m.state === "busy" ? null : s.withdrawnText,
-        rewinding: s.rewinding && m.state === "waiting" ? { ...s.rewinding, waited: true } : s.rewinding,
       };
     }
-    case "block":
-      // The tool ran (main line or a background Subagent's): its request is over.
-      if (m.kind === "tool_result" && s.requests.some((r) => r.request_id === m.tool_use_id))
-        return { ...s, requests: s.requests.filter((r) => r.request_id !== m.tool_use_id) };
-      return s;
     case "turn_end":
       return {
         ...s,
@@ -321,20 +294,20 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         codeCalls: m.aborted ? [] : s.codeCalls,
         withdrawnText: m.aborted && m.restored_text ? m.restored_text : null,
       };
+    case "rewind":
+      // The confirm page the `rewind` under way opened: its card takes over from 「正在准备回退…」.
+      return { ...upsertRequest(s, m), rewinding: s.rewinding?.uuid === m.uuid ? null : s.rewinding };
     case "permission_request":
     case "question":
     case "choice":
-    case "rewind":
+    case "dialog":
+    case "unrecognized":
     case "btw":
       return upsertRequest(s, m);
-    case "btw_closed":
-      return { ...s, requests: s.requests.filter((r) => r.type !== "btw") };
-    case "dialog":
-      return upsertRequest(s, { ...m, request_id: `dialog:${m.waiting_for}` });
-    case "unrecognized":
-      return upsertRequest(s, { ...m, request_id: `unrecognized:${m.context}` });
+    case "request_end":
+      return { ...s, requests: s.requests.filter((r) => r.request_id !== m.request_id) };
     case "session_info":
-      return { ...s, mode: m.mode, model: m.model, effort: m.effort ?? null, contextTokens: m.context_tokens };
+      return { ...s, mode: m.mode, model: m.model, effort: m.effort, contextTokens: m.context_tokens };
     case "progress":
       return s.state === "busy" ? { ...s, progress: m } : s;
     case "feedback_draft":
@@ -348,6 +321,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "session_changed":
       // The first sessionId after `ready` (`new`): the same Session, nothing to reset.
       if (m.previous == null) return { ...s, sessionId: m.session_id, cwd: m.cwd ?? s.cwd };
+      // Another Session: its requests, queue and tasks start over (ccrpc sends the queue and tasks again).
       return {
         ...initial(s.conn, s.holderId),
         ready: true,

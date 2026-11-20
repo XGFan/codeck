@@ -11,15 +11,17 @@ use serde_json::{Value, json};
 fn events() -> Vec<Value> {
     vec![
         json!({
-            "type": "ready", "protocol": 2, "holder_id": "h1", "session_id": "s1", "cwd": "/work/app",
-            "claude_version": "2.1.318", "state": "idle", "size": [120, 40], "mode": "manual",
-            "model": "claude-opus-4-7", "effort": "high", "context_tokens": 51234, "warnings": [], "queue": [],
+            "type": "ready", "protocol": 4, "holder_id": "h1", "session_id": "s1", "cwd": "/work/app",
+            "claude_version": "2.1.318", "warnings": [], "state": "idle", "waiting": null, "requests": [],
+            "size": [120, 40], "mode": "manual", "model": "claude-opus-4-7", "effort": "high",
+            "context_tokens": 51234, "title": "Fix the build", "queue": [], "follow_ups": [], "tasks": [],
+            "code_calls": [], "feedback_draft": null,
         }),
-        json!({ "type": "state", "state": "busy" }),
+        json!({ "type": "state", "state": "busy", "waiting": null }),
         json!({ "type": "progress", "text": "Thinking… (12s · ↓ 1.2k tokens)", "verb": "Thinking", "elapsed_s": 12, "tokens": 1200 }),
         json!({
-            "type": "permission_request", "request_id": "toolu_1", "tool_name": "Bash",
-            "input": { "command": "pnpm test", "description": "Run the tests" }, "agent_id": null,
+            "type": "permission_request", "request_id": "toolu_1", "tool_use_id": "toolu_1", "tool_name": "Bash",
+            "input": { "command": "pnpm test", "description": "Run the tests" }, "agent_id": null, "from_code": false,
             "options": [
                 { "label": "Yes", "meaning": "allow" },
                 { "label": "Yes, and don't ask again for pnpm test commands in /work/app", "meaning": "allow_always" },
@@ -28,24 +30,53 @@ fn events() -> Vec<Value> {
             "layout_source": "builtin",
         }),
         json!({
-            "type": "question", "request_id": "toolu_2", "agent_id": "agent-7",
+            "type": "question", "request_id": "toolu_2", "tool_use_id": "toolu_2", "agent_id": "agent-7", "from_code": false,
             "questions": [{
                 "question": "Which database?", "header": "DB", "multiSelect": false,
                 "options": [{ "label": "Postgres", "description": "Relational" }, { "label": "SQLite", "preview": "file.db" }],
             }],
         }),
         json!({
-            "type": "choice", "request_id": "choice-1", "title": "Ready to code?", "tool_use_id": "toolu_3",
+            "type": "choice", "request_id": "choice:1", "title": "Ready to code?", "tool_use_id": "toolu_3",
             "layout": "plan_approval", "layout_source": "builtin",
             "options": [
                 { "label": "Yes, auto-accept edits", "meaning": "allow", "description": null },
                 { "label": "No, keep planning", "meaning": "deny", "description": "Tell Claude what to change" },
             ],
         }),
+        json!({
+            "type": "rewind", "request_id": "rewind:1", "uuid": "u2", "text": "second prompt",
+            "code": { "restores": true, "delta": "-1", "target": "w.txt" },
+            "code_text": "The code will be restored -1 in w.txt.", "warning": null,
+            "options": [
+                { "option": "both", "label": "Restore code and conversation" },
+                { "option": "conversation", "label": "Restore conversation" },
+            ],
+        }),
         json!({ "type": "state", "state": "waiting", "waiting": { "kind": "permission", "waiting_for": "Bash" } }),
-        json!({ "type": "queue", "items": ["and then run lint"] }),
+        json!({ "type": "request_end", "request_id": "choice:1" }),
+        json!({
+            "type": "queue",
+            "items": [
+                { "kind": "typed", "from": null, "text": "and then run lint", "editable": true },
+                { "kind": "session", "from": "api", "text": "migration is done", "editable": false },
+            ],
+        }),
+        json!({
+            "type": "tasks",
+            "tasks": [{
+                "id": "b1", "kind": "shell", "tool_use_id": "toolu_9", "description": "dev server",
+                "command": "pnpm dev", "status": "running", "idle": false,
+            }],
+        }),
         json!({ "type": "session_info", "mode": "plan", "model": "claude-opus-4-7", "effort": "xhigh", "context_tokens": 52000 }),
         json!({ "type": "follow_up_failed", "text": "x", "error": { "code": "busy", "message": "还在忙" } }),
+        json!({
+            "type": "turn_end", "prompt_id": "p1", "trigger": "prompt", "last_text": "Done.", "error": null,
+            "aborted": false, "restored_text": null, "background_tasks": [], "duration_ms": 8123,
+            "usage": { "input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 0 },
+            "api_cost": 0.0123,
+        }),
     ]
 }
 
@@ -55,16 +86,6 @@ fn conn_state_matches_the_ios_fixture() {
     for e in events() {
         s.apply(&e);
     }
-    s.tasks = vec![json!({
-        "id": "b1", "kind": "shell", "tool_use_id": "toolu_9", "description": "dev server",
-        "command": "pnpm dev", "status": "running",
-    })];
-    s.last_turn = Some(json!({
-        "type": "turn_end", "prompt_id": "p1", "trigger": "prompt", "last_text": "Done.", "error": null,
-        "aborted": false, "restored_text": null, "background_tasks": [], "duration_ms": 8123,
-        "usage": { "input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 0 },
-        "api_cost": 0.0123,
-    }));
     let got = serde_json::to_string_pretty(&s).unwrap() + "\n";
 
     let path =

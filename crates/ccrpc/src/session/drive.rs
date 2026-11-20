@@ -132,12 +132,15 @@ impl Engine {
 
     /// Every failed reading of the screen ends here. At a size other than [`WORK_SIZE`] the PTY
     /// switches to it, so that trying again reads the screen as Claude Code lays it out.
-    pub(super) fn unrecognized(&self, context: &str, s: Option<&Screen>) -> CmdErr {
+    pub(super) fn unrecognized(&mut self, context: &str, s: Option<&Screen>) -> CmdErr {
         let lines = match s {
             Some(s) => s.lines.clone(),
             None => self.screen().map(|s| s.lines).unwrap_or_default(),
         };
-        self.emit(json!({"type": "unrecognized", "context": context, "lines": lines}));
+        let id = self.next_screen_id("unrecognized");
+        self.emit_request(
+            json!({"type": "unrecognized", "request_id": id, "context": context, "lines": lines}),
+        );
         let msg = if self.grow() {
             format!(
                 "{context}：屏幕与已知布局不符，窗格已调成 {}×{}",
@@ -160,7 +163,7 @@ impl Engine {
     }
 
     /// The prompt input box is on screen (no dialog has it): returns its text.
-    pub(super) fn input_box_now(&self) -> std::result::Result<String, CmdErr> {
+    pub(super) fn input_box_now(&mut self) -> std::result::Result<String, CmdErr> {
         let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
         if recognize::btw_panel(&s.lines).is_some() {
             return err("btw_open", "/btw 面板还开着，关闭后才能发送");
@@ -670,7 +673,7 @@ impl Engine {
     /// box, which is then emptied; the items are returned, oldest first.
     pub(super) fn edit_queue(&mut self) -> CmdResult {
         self.require(self.state == State::Busy, "not_busy")?;
-        if !self.queue.iter().any(|q| editable(q)) {
+        if !self.queue.iter().any(|q| q.editable) {
             return err("bad_request", "队列里没有可取回的消息");
         }
         // `↑` joins what it takes back with what is in the box, which keeps `!` commands queued.
@@ -687,14 +690,14 @@ impl Engine {
             if n != seen {
                 (seen, at) = (n, Instant::now());
             }
-            !e.queue.iter().any(|q| editable(q)) || (n > 0 && at.elapsed() >= POP_SETTLE)
+            !e.queue.iter().any(|q| q.editable) || (n > 0 && at.elapsed() >= POP_SETTLE)
         });
         let items = self.marks.popped_after(before);
         // The box has them now (or, had the queue just gone out, the last prompt from history).
         let cleared = self.clear_input();
         if items.is_empty() {
             cleared?;
-            if !self.queue.iter().any(|q| editable(q)) {
+            if !self.queue.iter().any(|q| q.editable) {
                 return err("delivered", "排队的消息已经送出");
             }
             return err("timeout", "5 秒内队列里的消息没有取回");
@@ -702,6 +705,7 @@ impl Engine {
         if let Err((_, m)) = &cleared {
             crate::clog!("input box keeps what was taken back: {m}");
         }
+        let items: Vec<QueueItem> = items.iter().map(|t| transcript::queue_item(t)).collect();
         Ok(json!({"items": items}))
     }
 
@@ -940,30 +944,10 @@ impl Engine {
     }
 }
 
-/// A queued item `↑` takes back into the input box: what the person typed (or a steer), not a
-/// message from another Session or agent (task notifications, Teammate messages and harness
-/// events are not in [`Engine::queue`]).
-fn editable(item: &str) -> bool {
-    let t = item.trim_start();
-    !t.starts_with("<cross-session-message") && !t.starts_with("<agent-message")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use rpc::{Input, Part};
-
-    #[test]
-    fn only_what_was_typed_is_taken_back() {
-        assert!(editable("MOCK-STEERED now"));
-        assert!(editable("[Image #1] look"));
-        assert!(!editable(
-            "<cross-session-message from=\"uds:/tmp/a.sock\" from-name=\"c6\">\nhi\n</cross-session-message>"
-        ));
-        assert!(!editable(
-            "<agent-message from=\"a\">\nhi\n</agent-message>"
-        ));
-    }
 
     #[test]
     fn parts_are_checked_up_front() {

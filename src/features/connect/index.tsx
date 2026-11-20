@@ -148,7 +148,7 @@ export function useQuestionRequest(toolUseId: string): { r: QuestionEvent; c: Co
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
   const r = c?.requests.find(
-    (x): x is QuestionEvent => x.type === "question" && x.request_id === toolUseId && !ownCard(x),
+    (x): x is QuestionEvent => x.type === "question" && x.tool_use_id === toolUseId && !ownCard(x),
   );
   return c && r && !c.procExit && !c.sessionExited ? { r, c } : null;
 }

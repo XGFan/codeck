@@ -227,7 +227,7 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
 /**
  * 「关闭」: disconnects and ends the Session with its Pane (ccrpc `exit`, aborting a running turn first). A running
  * turn or background task is ended only after a confirmation: asked first for the tasks CoDeck knows of, and when
- * Claude Code says on exit that some still run (its own monitors are not in `get_tasks`).
+ * Claude Code says on exit that some still run (its own monitors are not among the tasks ccrpc lists).
  */
 function ConnectClose({ c }: { c: ConnState }) {
   const close = useConnect((s) => s.close);

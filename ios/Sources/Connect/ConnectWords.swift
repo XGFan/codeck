@@ -286,15 +286,14 @@ enum RewindWords {
 
     private static let removed = "这条提示词及之后的对话会被移除"
 
-    /// The confirm page's sentence on the code, in Chinese: `The code will be unchanged.`, `The code will be restored
-    /// <diff> in <files>.`; another sentence as it is.
-    static func codeLine(_ code: String?) -> String {
-        guard let s = code?.trimmingCharacters(in: .whitespacesAndNewlines) else { return removed }
-        if s.wholeMatch(of: #/The code will be unchanged\.?/#) != nil { return "\(removed)；代码不变" }
-        if let m = s.wholeMatch(of: #/The code will be restored (.+?) in (.+?)\.?/#) {
-            return "\(removed)；代码会恢复：\(m.2)（\(m.1.replacing(#/-(?=\d)/#, with: "−"))）"
-        }
-        return s
+    /// What the confirm page says about the code, in Chinese (ccrpc read it); a sentence it could not read as it is
+    /// (`codeText`).
+    static func codeLine(_ code: RewindRequest.Code?, _ codeText: String?) -> String {
+        guard let code else { return codeText ?? removed }
+        if !code.restores { return "\(removed)；代码不变" }
+        guard let target = code.target else { return "\(removed)；代码会恢复" }
+        let delta = code.delta.map { "（\($0.replacing(#/-(?=\d)/#, with: "−"))）" } ?? ""
+        return "\(removed)；代码会恢复：\(target)\(delta)"
     }
 }
 

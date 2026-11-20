@@ -23,12 +23,11 @@ pub struct ConnState {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub context_tokens: Option<u64>,
-    /// What waits for an answer, as cards: dialog and unrecognized carry `request_id` =
-    /// `dialog:<waiting_for>` / `unrecognized:<context>`.
+    /// What waits for an answer, as cards, in the order ccrpc reported them.
     pub requests: Vec<Value>,
     pub progress: Option<Value>,
-    /// What waits in the TUI's own queue.
-    pub queue: Vec<String>,
+    /// What waits in the TUI's own queue (ccrpc's queue items).
+    pub queue: Vec<Value>,
     pub tasks: Vec<Value>,
     /// The last turn's end (`turn_end` as ccrpc wrote it).
     pub last_turn: Option<Value>,
@@ -42,10 +41,10 @@ pub struct ConnState {
     pub fork: Option<Value>,
     /// A client of this Host disconnected it (its ccrpc's exit is not a failure).
     pub disconnected: bool,
-    /// A `rewind` command of the Host's is under way; true once the Session waited since (conn.ts `rewinding`).
-    #[serde(skip)]
-    rewinding: Option<bool>,
 }
+
+/// The protocol version this Host understands.
+const PROTOCOL: u64 = 4;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct ProcExit {
@@ -70,10 +69,8 @@ fn some(v: &Value) -> Option<Value> {
     (!v.is_null()).then(|| v.clone())
 }
 
-fn strings(v: &Value) -> Vec<String> {
-    v.as_array()
-        .map(|a| a.iter().filter_map(text).collect())
-        .unwrap_or_default()
+fn array(v: &Value) -> Vec<Value> {
+    v.as_array().cloned().unwrap_or_default()
 }
 
 impl ConnState {
@@ -102,28 +99,7 @@ impl ConnState {
             feedback_draft: None,
             fork: None,
             disconnected: false,
-            rewinding: None,
         }
-    }
-
-    /// The Host sent a `rewind` command for a client.
-    pub fn rewind_sent(&mut self) {
-        self.rewinding = Some(false);
-    }
-
-    /// The response to that `rewind` (conn.ts `rewindShown`): stopped at the confirm page, it is the card to answer.
-    /// Not when the Session already stopped waiting (the page was answered or left in the terminal before the
-    /// response came): nothing would remove the card. True when the state changed.
-    pub fn rewind_response(&mut self, r: &Value) -> bool {
-        let waited = self.rewinding.take() == Some(true);
-        if r["success"] != true
-            || r["data"]["type"] != "rewind"
-            || (waited && self.state != "waiting")
-        {
-            return false;
-        }
-        self.upsert_request(r["data"].clone());
-        true
     }
 
     fn notice(&mut self, text: String) {
@@ -134,32 +110,16 @@ impl ConnState {
         self.notices.push(Notice { id, text });
     }
 
-    /// Main-line requests end when the Session stops waiting; a background Subagent's stays, and
-    /// the `/btw` card until its panel closes.
-    fn drop_main_requests(&mut self) {
-        self.requests.retain(|r| {
-            r["type"] == "btw" || r["agent_id"].as_str().is_some_and(|a| !a.is_empty())
-        });
-    }
-
+    /// A request event: updates the request with the same `request_id` in place, else appends it.
     fn upsert_request(&mut self, r: Value) {
-        let id = r["request_id"].clone();
-        // A rewind's confirm page is off the screen once anything else waits.
-        self.requests
-            .retain(|x| x["request_id"] != id && x["type"] != "rewind");
-        // A dialog / unrecognized screen replaces any other screen-only card.
-        if matches!(
-            r["type"].as_str(),
-            Some("dialog" | "unrecognized" | "choice" | "rewind")
-        ) {
-            self.requests.retain(|x| {
-                matches!(
-                    x["type"].as_str(),
-                    Some("permission_request" | "question" | "btw")
-                )
-            });
+        match self
+            .requests
+            .iter_mut()
+            .find(|x| x["request_id"] == r["request_id"])
+        {
+            Some(x) => *x = r,
+            None => self.requests.push(r),
         }
-        self.requests.push(r);
     }
 
     /// Folds one ccrpc line (an event; responses and content change nothing). True when the state may have
@@ -180,56 +140,34 @@ impl ConnState {
                 self.model = text(&m["model"]);
                 self.effort = text(&m["effort"]);
                 self.context_tokens = m["context_tokens"].as_u64();
-                self.queue = strings(&m["queue"]);
+                self.requests = array(&m["requests"]);
+                self.queue = array(&m["queue"]);
+                self.tasks = array(&m["tasks"]);
                 self.feedback_draft = some(&m["feedback_draft"]);
+                if m["protocol"].as_u64() != Some(PROTOCOL) {
+                    let found = m["protocol"]
+                        .as_u64()
+                        .map_or_else(|| "未知".to_string(), |n| n.to_string());
+                    self.notice(format!("ccrpc 版本不匹配：协议 {found}，需要 {PROTOCOL}"));
+                }
             }
-            "queue" => self.queue = strings(&m["items"]),
+            "queue" => self.queue = array(&m["items"]),
+            "tasks" => self.tasks = array(&m["tasks"]),
             "state" => {
                 let state = m["state"].as_str().unwrap_or("").to_string();
-                if state == "waiting" {
-                    self.waiting = some(&m["waiting"]);
-                } else {
-                    self.waiting = None;
-                    self.drop_main_requests();
-                }
+                self.waiting = some(&m["waiting"]);
                 if state != "busy" {
                     self.progress = None;
                 }
-                if state == "waiting" && self.rewinding.is_some() {
-                    self.rewinding = Some(true);
-                }
                 self.state = state;
-            }
-            "block" => {
-                // The tool ran (main line or a background Subagent's): its request is over.
-                let id = &m["tool_use_id"];
-                if m["kind"] != "tool_result"
-                    || !self.requests.iter().any(|r| r["request_id"] == *id)
-                {
-                    return false;
-                }
-                self.requests.retain(|r| r["request_id"] != *id);
             }
             "turn_end" => {
                 self.progress = None;
                 self.last_turn = Some(m.clone());
             }
-            "permission_request" | "question" | "choice" | "rewind" | "btw" => {
-                self.upsert_request(m.clone())
-            }
-            "btw_closed" => self.requests.retain(|r| r["type"] != "btw"),
-            "dialog" => {
-                let mut r = m.clone();
-                r["request_id"] =
-                    format!("dialog:{}", m["waiting_for"].as_str().unwrap_or("")).into();
-                self.upsert_request(r);
-            }
-            "unrecognized" => {
-                let mut r = m.clone();
-                r["request_id"] =
-                    format!("unrecognized:{}", m["context"].as_str().unwrap_or("")).into();
-                self.upsert_request(r);
-            }
+            "permission_request" | "question" | "choice" | "rewind" | "dialog" | "unrecognized"
+            | "btw" => self.upsert_request(m.clone()),
+            "request_end" => self.requests.retain(|r| r["request_id"] != m["request_id"]),
             "session_info" => {
                 self.mode = text(&m["mode"]);
                 self.model = text(&m["model"]);
@@ -276,7 +214,6 @@ impl ConnState {
                 s.model = self.model.take();
                 s.effort = self.effort.take();
                 s.disconnected = self.disconnected;
-                s.rewinding = self.rewinding;
                 *self = s;
             }
             "session_exit" => {
@@ -320,8 +257,9 @@ mod tests {
 
     fn perm(id: &str, agent: Option<&str>) -> Value {
         json!({
-            "type": "permission_request", "request_id": id, "tool_name": "Bash",
+            "type": "permission_request", "request_id": id, "tool_use_id": id, "tool_name": "Bash",
             "input": { "command": "ls" }, "agent_id": agent, "options": null, "layout_source": null,
+            "from_code": false,
         })
     }
 
@@ -336,23 +274,20 @@ mod tests {
 
     fn ready() -> Value {
         json!({
-            "type": "ready", "protocol": 2, "holder_id": "h1", "session_id": "old", "cwd": "/w",
-            "claude_version": "2.1", "state": "idle", "size": [80, 24], "mode": "manual", "model": "m",
-            "context_tokens": 5, "warnings": [],
+            "type": "ready", "protocol": 4, "holder_id": "h1", "session_id": "old", "cwd": "/w",
+            "claude_version": "2.1", "state": "idle", "waiting": null, "requests": [], "size": [80, 24],
+            "mode": "manual", "model": "m", "context_tokens": 5, "queue": [], "tasks": [], "warnings": [],
         })
+    }
+
+    fn qi(text: &str) -> Value {
+        json!({ "kind": "typed", "from": null, "text": text, "editable": true })
     }
 
     fn ids(s: &ConnState) -> Vec<&str> {
         s.requests
             .iter()
             .map(|r| r["request_id"].as_str().unwrap())
-            .collect()
-    }
-
-    fn types(s: &ConnState) -> Vec<&str> {
-        s.requests
-            .iter()
-            .map(|r| r["type"].as_str().unwrap())
             .collect()
     }
 
@@ -372,67 +307,78 @@ mod tests {
         assert_eq!(exited.feedback_draft, None);
         assert_eq!(exited.state, "exited");
         assert!(exited.session_exited);
-        // A ccrpc too old to say: none.
-        r.as_object_mut().unwrap().remove("feedback_draft");
-        assert_eq!(fold(&[r]).feedback_draft, None);
     }
 
     #[test]
-    fn ends_main_line_requests_when_waiting_ends_a_subagents_when_its_tool_ran() {
+    fn requests_live_until_request_end_whatever_the_state_does() {
         let waiting = json!({ "type": "state", "state": "waiting", "waiting": { "kind": "permission", "waiting_for": "permission prompt" } });
         let mut s = fold(&[waiting, perm("t1", None), perm("t2", Some("agent-1"))]);
         assert_eq!(s.state, "waiting");
         assert_eq!(s.waiting.as_ref().unwrap()["kind"], "permission");
         assert_eq!(ids(&s), ["t1", "t2"]);
-        s.apply(&json!({ "type": "state", "state": "busy" }));
-        assert_eq!(ids(&s), ["t2"]);
+        s.apply(&json!({ "type": "state", "state": "busy", "waiting": null }));
         assert_eq!(s.waiting, None);
-        // Text blocks change nothing; the Subagent's own tool result ends its request.
-        let before = s.clone();
-        assert!(!s.apply(&json!({ "type": "block", "kind": "text" })));
-        assert_eq!(s, before);
-        s.apply(&json!({ "type": "block", "kind": "tool_result", "tool_use_id": "t2" }));
-        assert!(s.requests.is_empty());
+        assert_eq!(ids(&s), ["t1", "t2"]);
+        // Only `request_end` ends a request, and only its id.
+        s.apply(&json!({ "type": "request_end", "request_id": "t2" }));
+        assert_eq!(ids(&s), ["t1"]);
     }
 
     #[test]
-    fn re_announcing_a_request_replaces_it_a_new_screen_card_replaces_the_previous_one() {
+    fn a_request_event_updates_the_request_with_its_id_in_place() {
         let mut again = perm("t1", None);
         again["options"] = json!([{ "label": "Yes", "meaning": "allow" }]);
-        let s = fold(&[perm("t1", None), again]);
-        assert_eq!(s.requests.len(), 1);
+        let s = fold(&[perm("t1", None), perm("t2", None), again]);
+        assert_eq!(ids(&s), ["t1", "t2"]);
         assert_eq!(s.requests[0]["options"].as_array().unwrap().len(), 1);
+        // Every kind of request is folded the same way, and none replaces another.
         let s = fold_on(
             s,
             &[
-                json!({ "type": "dialog", "waiting_for": "x", "lines": ["a"] }),
-                json!({ "type": "unrecognized", "context": "c", "lines": ["b"] }),
+                json!({ "type": "dialog", "request_id": "dialog:1", "waiting_for": "x", "lines": ["a"] }),
+                json!({ "type": "unrecognized", "request_id": "unrecognized:2", "context": "c", "lines": ["b"] }),
+                json!({ "type": "choice", "request_id": "choice:3", "title": "t", "options": [] }),
+                json!({ "type": "rewind", "request_id": "rewind:4", "uuid": "u", "text": "q", "code": null, "code_text": null, "warning": null, "options": [] }),
+                json!({ "type": "btw", "request_id": "btw", "question": "q", "answering": true, "text": null }),
+                json!({ "type": "dialog", "request_id": "dialog:1", "waiting_for": "x", "lines": ["b"] }),
             ],
         );
-        assert_eq!(types(&s), ["permission_request", "unrecognized"]);
-        assert_eq!(ids(&s), ["t1", "unrecognized:c"]);
-        let s = fold_on(
-            s,
-            &[json!({ "type": "dialog", "waiting_for": "dialog open", "lines": [] })],
+        assert_eq!(
+            ids(&s),
+            [
+                "t1",
+                "t2",
+                "dialog:1",
+                "unrecognized:2",
+                "choice:3",
+                "rewind:4",
+                "btw"
+            ]
         );
-        assert_eq!(ids(&s), ["t1", "dialog:dialog open"]);
+        assert_eq!(s.requests[2]["lines"], json!(["b"]));
     }
 
     #[test]
-    fn the_btw_card_stays_until_its_panel_closes() {
-        let ask = |answering: bool, text: Value| json!({ "type": "btw", "request_id": "btw", "question": "q", "answering": answering, "text": text });
-        let s = fold(&[
-            json!({ "type": "state", "state": "busy" }),
-            ask(true, Value::Null),
-            ask(false, json!("a")),
-            json!({ "type": "state", "state": "waiting", "waiting": { "kind": "dialog", "waiting_for": "dialog open" } }),
-            json!({ "type": "dialog", "waiting_for": "x", "lines": [] }),
-            json!({ "type": "state", "state": "idle" }),
-        ]);
-        assert_eq!(types(&s), ["btw"]);
-        assert_eq!(s.requests[0]["text"], "a");
-        let s = fold_on(s, &[json!({ "type": "btw_closed" })]);
-        assert!(s.requests.is_empty());
+    fn ready_carries_the_requests_tasks_and_queue_and_a_wrong_protocol_is_a_notice() {
+        let item = json!({ "kind": "typed", "from": null, "text": "a", "editable": true });
+        let task = json!({ "id": "b1", "kind": "shell", "tool_use_id": null, "description": null, "command": "sleep 9", "status": "running", "idle": false });
+        let mut r = ready();
+        r["requests"] = json!([perm("t1", None)]);
+        r["queue"] = json!([item]);
+        r["tasks"] = json!([task]);
+        let mut s = fold(&[r]);
+        assert_eq!(ids(&s), ["t1"]);
+        assert_eq!(s.queue, std::slice::from_ref(&item));
+        assert_eq!(s.tasks, [task]);
+        assert!(s.notices.is_empty());
+        s.apply(&json!({ "type": "tasks", "tasks": [] }));
+        assert!(s.tasks.is_empty());
+
+        let mut old = ready();
+        old["protocol"] = json!(3);
+        let s = fold(&[old]);
+        assert_eq!(s.notices.len(), 1);
+        assert_eq!(s.notices[0].text, "ccrpc 版本不匹配：协议 3，需要 4");
     }
 
     #[test]
@@ -507,7 +453,7 @@ mod tests {
     #[test]
     fn ready_session_info_and_queue_fill_the_header() {
         let mut r = ready();
-        r["queue"] = json!(["a"]);
+        r["queue"] = json!([qi("a")]);
         r["effort"] = json!("high");
         r["state"] = json!("waiting");
         r["waiting"] = json!({ "kind": "dialog", "waiting_for": "dialog open" });
@@ -516,11 +462,11 @@ mod tests {
             (s.ready, s.state.as_str(), s.claude_version.as_deref()),
             (true, "waiting", Some("2.1"))
         );
-        assert_eq!(s.queue, ["a"]);
+        assert_eq!(s.queue, [qi("a")]);
         assert_eq!(s.effort.as_deref(), Some("high"));
         assert_eq!(s.context_tokens, Some(5));
-        s.apply(&json!({ "type": "queue", "items": ["a", "b"] }));
-        assert_eq!(s.queue, ["a", "b"]);
+        s.apply(&json!({ "type": "queue", "items": [qi("a"), qi("b")] }));
+        assert_eq!(s.queue, [qi("a"), qi("b")]);
         s.apply(&json!({ "type": "session_info", "mode": "plan", "model": "opus", "context_tokens": 9 }));
         assert_eq!(
             (s.mode.as_deref(), s.model.as_deref(), s.effort.as_deref()),

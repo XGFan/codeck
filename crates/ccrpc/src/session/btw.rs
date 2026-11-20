@@ -1,6 +1,6 @@
 //! The `/btw` side question: Claude Code answers in a panel in place of the input box and writes
 //! nothing to the transcript, so the panel is the only place to read the answer from. The answer
-//! goes out as a `btw` event, `btw_closed` when the panel is gone.
+//! goes out as a `btw` request, ended (`request_end`) when the panel is gone.
 
 use super::*;
 
@@ -37,14 +37,21 @@ pub(super) fn is_btw(text: &str) -> bool {
         .is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace))
 }
 
+impl BtwWatch {
+    /// The panel is announced or being read (until it has been gone a moment).
+    pub(super) fn is_open(&self) -> bool {
+        self.question.is_some()
+    }
+}
+
 impl Engine {
     pub(super) fn btw_open(&self) -> bool {
         self.screen()
             .is_ok_and(|s| recognize::btw_panel(&s.lines).is_some())
     }
 
-    fn emit_btw(&self, question: &str, text: Option<String>) {
-        self.emit(
+    fn emit_btw(&mut self, question: &str, text: Option<String>) {
+        self.emit_request(
             json!({"type": "btw", "request_id": "btw", "question": question,
             "answering": text.is_none(), "text": text}),
         );
@@ -71,7 +78,6 @@ impl Engine {
                     >= GONE_AFTER
             {
                 self.btw = BtwWatch::default();
-                self.emit(json!({"type": "btw_closed"}));
             }
             return;
         };

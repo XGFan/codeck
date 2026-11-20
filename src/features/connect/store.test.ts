@@ -24,18 +24,29 @@ let sent: { conn: string; msg: Record<string, unknown> }[];
 let store: typeof import("./store");
 
 const state = () => store.useConnect.getState();
-const ready = (holderId: string, sessionId: string | null) =>
-  ({
-    type: "ready",
-    protocol: 1,
-    holder_id: holderId,
-    session_id: sessionId,
-    cwd: "/w",
-    claude_version: "2",
-    state: "idle",
-    size: [80, 24],
-    warnings: [],
-  }) as unknown as InMsg;
+const ready = (holderId: string, sessionId: string | null, protocol = 4): InMsg => ({
+  type: "ready",
+  protocol,
+  claude_version: "2",
+  warnings: [],
+  state: "idle",
+  waiting: null,
+  requests: [],
+  holder_id: holderId,
+  session_id: sessionId,
+  cwd: "/w",
+  size: [80, 24],
+  mode: null,
+  model: null,
+  effort: null,
+  context_tokens: null,
+  title: null,
+  queue: [],
+  follow_ups: [],
+  tasks: [],
+  code_calls: [],
+  feedback_draft: null,
+});
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
 beforeEach(async () => {
@@ -76,7 +87,7 @@ beforeEach(async () => {
     ccrpcSend: async (conn: string, msg: Record<string, unknown>) => {
       sent.push({ conn, msg });
       if (!answers) return;
-      const data = msg.type === "get_screen" ? screen : msg.type === "get_tasks" ? { tasks: [] } : {};
+      const data = msg.type === "get_screen" ? screen : {};
       queueMicrotask(() =>
         line(conn, { type: "response", id: msg.id, command: msg.type, success: true, data } as unknown as InMsg),
       );
@@ -249,6 +260,17 @@ describe("connections shared with clients on the LAN", () => {
   });
 });
 
+describe("ready", () => {
+  it("another protocol is said on the Session", async () => {
+    h.api.ccrpcConnect = async () => "c1";
+    await state().connect("H1", SID);
+    line("c1", ready("H1", SID, 3));
+    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 4");
+    line("c1", ready("H1", SID));
+    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 4");
+  });
+});
+
 describe("commands", () => {
   it("still waiting when ccrpc exits: answered with a failure", async () => {
     h.api.ccrpcConnect = async () => "c1";
@@ -272,6 +294,7 @@ describe("rewind", () => {
       uuid: "u1",
       text: "t",
       code: null,
+      code_text: null,
       warning: null,
       options: [{ option: "conversation", label: "Restore conversation" }],
     } as const;
@@ -309,10 +332,10 @@ describe("Resume", () => {
     await state().resume(SID, "/w");
     line("r1", ready("H9", null));
     await vi.advanceTimersByTimeAsync(29_999);
-    expect(sent.filter((s) => s.msg.type !== "get_tasks")).toEqual([]);
+    expect(sent).toEqual([]);
     await vi.advanceTimersByTimeAsync(1 + 300);
     await flush();
-    expect(sent.filter((s) => s.msg.type !== "get_tasks").map((s) => s.msg)).toEqual([
+    expect(sent.map((s) => s.msg)).toEqual([
       expect.objectContaining({ type: "get_screen" }),
       expect.objectContaining({ type: "exit", close_pane: true, stop_tasks: true }),
     ]);
@@ -326,7 +349,7 @@ describe("Resume", () => {
     line("r1", { type: "permission_request", request_id: "p1" } as unknown as InMsg);
     await vi.advanceTimersByTimeAsync(30_400);
     expect(state().errors[SID]).toBeUndefined();
-    line("r1", { type: "state", state: "idle" } as unknown as InMsg);
+    line("r1", { type: "request_end", request_id: "p1" });
     await vi.advanceTimersByTimeAsync(30_400);
     expect(state().errors[SID]).toMatch(/^Resume 失败：30 秒内没有启动/);
   });
@@ -411,7 +434,7 @@ describe("Fork", () => {
       title_error: null,
     } as unknown as InMsg);
 
-  it("its rewind's ⚠ card answered: the `fork` event comes before the answer, which then only closes the card", async () => {
+  it("its rewind's ⚠ card answered: the `fork` event and the card's end come before the answer", async () => {
     await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: "u1", restore: "both" });
     line("f1", ready("H9", null));
     line("f1", { type: "session_changed", session_id: NEW, previous: null } as unknown as InMsg);
@@ -432,6 +455,7 @@ describe("Fork", () => {
       if (msg.type !== "answer_rewind") return;
       queueMicrotask(() => {
         forked();
+        line(conn, { type: "request_end", request_id: "rewind:1" });
         line(conn, {
           type: "response",
           id: msg.id,

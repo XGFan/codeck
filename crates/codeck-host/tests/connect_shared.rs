@@ -14,7 +14,7 @@ ls) exec sleep 60 ;;
 attach)
   mkdir "$D/attached" 2>/dev/null || { echo "已有 ccrpc 连着" >&2; exit 1; }
   trap 'rmdir "$D/attached"' EXIT
-  echo '{"type":"ready","protocol":2,"holder_id":"H1","session_id":"S1","cwd":"/w","state":"idle","size":[80,24]}'
+  echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":"S1","cwd":"/w","state":"idle","size":[80,24]}'
   # The first claude in the Pane ends; its ccrpc stays until its stdin closes.
   if mkdir "$D/first" 2>/dev/null; then echo '{"type":"session_exit"}'; fi
   cat >/dev/null

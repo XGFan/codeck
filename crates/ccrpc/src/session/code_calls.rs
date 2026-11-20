@@ -27,8 +27,9 @@ pub(super) struct CodeCalls {
     /// `REPL` calls whose code is running (PreToolUse seen, PostToolUse not yet: it comes when the
     /// code ends, not when the call returns), oldest first.
     running: Vec<String>,
-    /// Calls reported with `code_call` and not ended.
-    open: VecDeque<String>,
+    /// Calls reported with `code_call` and not ended (`{tool_use_id, name, input, code}`), oldest
+    /// first.
+    open: VecDeque<Value>,
 }
 
 impl CodeCalls {
@@ -38,13 +39,15 @@ impl CodeCalls {
         let id = input["tool_use_id"].as_str()?;
         match event {
             "PreToolUse" if from_code(id) => {
-                self.open.push_back(id.to_owned());
+                let call = json!({"tool_use_id": id, "name": input["tool_name"],
+                    "input": input["tool_input"], "code": self.running.last()});
+                self.open.push_back(call.clone());
                 if self.open.len() > MAX_OPEN {
                     self.open.pop_front();
                 }
-                Some(json!({"type": "code_call", "tool_use_id": id,
-                    "name": input["tool_name"], "input": input["tool_input"],
-                    "code": self.running.last()}))
+                let mut ev = call;
+                ev["type"] = json!("code_call");
+                Some(ev)
             }
             "PreToolUse" if input["tool_name"] == REPL => {
                 self.running.push(id.to_owned());
@@ -55,7 +58,7 @@ impl CodeCalls {
             }
             "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => {
                 self.running.retain(|r| r != id);
-                let at = self.open.iter().position(|o| o == id)?;
+                let at = self.open.iter().position(|o| o["tool_use_id"] == id)?;
                 self.open.remove(at);
                 let response = Some(&input["tool_response"])
                     .filter(|r| r.to_string().len() <= RESPONSE_BYTES)
@@ -66,6 +69,11 @@ impl CodeCalls {
             }
             _ => None,
         }
+    }
+
+    /// The calls reported and not ended, oldest first.
+    pub(super) fn open(&self) -> Vec<Value> {
+        self.open.iter().cloned().collect()
     }
 }
 
@@ -105,6 +113,12 @@ mod tests {
         assert_eq!(c.on_hook("PostToolUse", &post("repl_a")), None);
         let failed = c.on_hook("PreToolUse", &pre("Read", "repl_b")).unwrap();
         assert_eq!(failed["code"], "toolu_r1");
+        // Only the call not ended yet is open, as `code_call` gave it.
+        assert_eq!(
+            c.open(),
+            [json!({"tool_use_id": "repl_b", "name": "Read",
+                "input": {"command": "ls"}, "code": "toolu_r1"})]
+        );
         assert_eq!(
             c.on_hook("PostToolUseFailure", &json!({"tool_use_id": "repl_b"})),
             Some(
@@ -112,6 +126,7 @@ mod tests {
                 "response": null})
             )
         );
+        assert!(c.open().is_empty());
         // The code ended: a call after it (a script still running, or one ccrpc attached during)
         // names no code.
         assert_eq!(c.on_hook("PostToolUse", &post("toolu_r1")), None);

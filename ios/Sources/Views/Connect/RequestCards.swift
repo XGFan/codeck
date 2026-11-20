@@ -81,12 +81,12 @@ struct CardShell<Content: View>: View {
 /// Sends an answer; its error stays on the card.
 @MainActor
 func sendAnswer(
-    _ store: ConnectStore, _ c: ConnState, _ requestId: String, _ command: JSONValue,
+    _ store: ConnectStore, _ c: ConnState, _ command: JSONValue,
     busy: Binding<Bool>, error: Binding<String?>, answered: Binding<Int>
 ) async {
     busy.wrappedValue = true
     error.wrappedValue = nil
-    let r = await store.answer(c, requestId: requestId, command)
+    let r = await store.command(c.conn, command)
     busy.wrappedValue = false
     if r.success { answered.wrappedValue += 1 } else { error.wrappedValue = Answers.error(r) }
 }
@@ -138,7 +138,7 @@ private struct PermissionCard: View {
         var cmd: [String: JSONValue] = ["type": "answer_permission", "request_id": .string(r.requestId), "decision": .string(decision)]
         if let message { cmd["message"] = .string(message) }
         Task {
-            await sendAnswer(model.connect, c, r.requestId, .object(cmd), busy: $busy, error: $error, answered: $answered)
+            await sendAnswer(model.connect, c, .object(cmd), busy: $busy, error: $error, answered: $answered)
         }
     }
 
@@ -163,7 +163,7 @@ private struct ChoiceCard: View {
                 Button {
                     let cmd: JSONValue = ["type": "answer_choice", "request_id": .string(r.requestId), "option": .string(o.label)]
                     Task {
-                        await sendAnswer(model.connect, c, r.requestId, cmd, busy: $busy, error: $error, answered: $answered)
+                        await sendAnswer(model.connect, c, cmd, busy: $busy, error: $error, answered: $answered)
                     }
                 } label: {
                     VStack(spacing: 1) {
@@ -202,7 +202,7 @@ private struct RewindCard: View {
                 .padding(.leading, 10)
                 .overlay(alignment: .leading) { Rectangle().fill(Palette.hairline).frame(width: 2) }
                 .padding(.horizontal, 4)
-            Text(RewindWords.codeLine(r.code)).font(.footnote).padding(.horizontal, 4)
+            Text(RewindWords.codeLine(r.code, r.codeText)).font(.footnote).padding(.horizontal, 4)
             if r.warning != nil {
                 Text(RewindWords.warning).font(.footnote).foregroundStyle(Palette.warnText).padding(.horizontal, 4)
             }

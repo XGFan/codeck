@@ -320,6 +320,13 @@ impl Rpc {
         r["data"].clone()
     }
 
+    /// `call`, with the lines that came before its response (they stay in `seen` too).
+    pub(crate) fn call_seeing(&mut self, id: &str, c: Value) -> (Value, Vec<Value>) {
+        let before = self.seen.len();
+        let data = self.call(id, c);
+        (data, self.seen[before..].to_vec())
+    }
+
     pub(crate) fn event(&mut self, ty: &str, timeout: Duration) -> Value {
         self.until(ty, timeout, |v| v["type"] == ty)
     }
@@ -427,7 +434,7 @@ pub(crate) fn person_resizes(
 /// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
 pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["protocol"], 3);
+    assert_eq!(ready["protocol"], 4);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.shell_pid = shell_pid(env, &holder);
     assert!(rpc.shell_pid.is_some());

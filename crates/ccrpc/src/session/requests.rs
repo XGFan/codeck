@@ -352,7 +352,7 @@ impl Engine {
             Some((o, s)) => (o, Value::String(s)),
             None => (Value::Null, Value::Null),
         };
-        json!({"type": "permission_request", "request_id": r.id, "tool_name": r.tool_name,
+        json!({"type": "permission_request", "request_id": r.id, "tool_use_id": r.id, "tool_name": r.tool_name,
             "input": r.input, "agent_id": r.agent_id, "options": options, "layout_source": source,
             "from_code": super::code_calls::from_code(&r.id)})
     }
@@ -459,6 +459,7 @@ impl Engine {
     /// The request was answered through its hook: it is over, and the closing dialog is not
     /// taken for a new one.
     pub(super) fn answered(&mut self, id: &str) {
+        self.reported.answered(id);
         self.resolve(id);
         // `announced` stays on the request until the state moves on.
         self.announced = Some(Announced::Request(id.to_string()));
@@ -532,6 +533,14 @@ impl Engine {
             }
         }
         let mut res = self.wait_leave_request(request_id)?;
+        if select != Select::Cursor {
+            // A number key answers at once: the decision is out, so the request is over whatever
+            // the rest of this command does (a message that cannot be delivered fails the
+            // command, it does not bring the dialog back). Its hook, if any, still holds the
+            // request until the tool is done.
+            self.reported.answered(request_id);
+            self.answered_until = Some(Instant::now() + ANSWER_SETTLE);
+        }
         if select == Select::Cursor {
             // The Process File may flicker out of waiting while the dialog is still up (the Enter
             // dropped): only a dialog gone from the screen counts as answered.
@@ -543,6 +552,7 @@ impl Engine {
             }
             // Its dialog is answered: the call is no candidate for a later dialog.
             self.resolve(request_id);
+            self.reported.answered(request_id);
             if let Some(msg) = message {
                 res["message_delivered_as"] = self.deliver_after_tool_deny(msg)?;
             }

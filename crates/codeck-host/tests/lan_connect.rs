@@ -25,7 +25,7 @@ attach)
   H="$4"
   mkdir "$D/attached-$H" 2>/dev/null || { echo "已有 ccrpc 连着" >&2; exit 1; }
   trap 'sleep 0.3; rmdir "$D/attached-$H"' EXIT
-  echo "{\"type\":\"ready\",\"protocol\":2,\"holder_id\":\"$H\",\"session_id\":\"S\",\"cwd\":\"/w\",\"state\":\"idle\",\"size\":[80,24]}"
+  echo "{\"type\":\"ready\",\"protocol\":4,\"claude_version\":null,\"warnings\":[],\"holder_id\":\"$H\",\"session_id\":\"S\",\"cwd\":\"/w\",\"state\":\"idle\",\"waiting\":null,\"requests\":[],\"size\":[80,24],\"mode\":null,\"model\":null,\"effort\":null,\"context_tokens\":null,\"title\":null,\"queue\":[],\"follow_ups\":[],\"tasks\":[],\"code_calls\":[],\"feedback_draft\":null}"
   cat >/dev/null
   ;;
 esac

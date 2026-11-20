@@ -185,7 +185,7 @@
       ]
     },
     "bg_task": {
-      "description": "transcript 里的后台任务。",
+      "description": "后台任务。",
       "type": "object",
       "properties": {
         "id": {
@@ -202,8 +202,11 @@
           "description": "任务种类（monitor：Monitor 工具的任务）。"
         },
         "tool_use_id": {
-          "type": "string",
-          "description": "启动它的 tool_use id。"
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "启动它的 tool_use id；不知道时为 null。"
         },
         "description": {
           "type": [
@@ -217,8 +220,15 @@
           "description": "running；Claude Code 给的结束状态，如 completed、failed、killed；或 ccrpc 停掉后的 stopped。"
         },
         "command": {
-          "type": "string",
-          "description": "后台 shell 或 Monitor 的命令。"
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "后台 shell 或 Monitor 的命令；其余为 null。"
+        },
+        "idle": {
+          "type": "boolean",
+          "description": "Teammate 一轮结束、等消息；status 仍是 running。"
         }
       },
       "required": [
@@ -226,7 +236,272 @@
         "kind",
         "tool_use_id",
         "description",
-        "status"
+        "command",
+        "status",
+        "idle"
+      ]
+    },
+    "queue_item": {
+      "description": "Claude Code 输入队列里的一项。typed：人输入的或插话（正文原样，含 [Image #n]）；session：别的 Session 发来的消息；agent：本 Session 的 Subagent / Teammate 发来的消息。",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "typed",
+            "session",
+            "agent"
+          ],
+          "description": "来源。"
+        },
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "发送方的名字；typed 为 null。"
+        },
+        "text": {
+          "type": "string",
+          "description": "正文：typed 为原文；session / agent 为消息标签里的正文，不带标签与 Claude Code 的套话。"
+        },
+        "editable": {
+          "type": "boolean",
+          "description": "能否在终端里按 ↑ 取回：只有 typed 为 true。"
+        }
+      },
+      "required": [
+        "kind",
+        "from",
+        "text",
+        "editable"
+      ]
+    },
+    "rewind_code": {
+      "description": "确认页上代码会怎样，由 ccrpc 解析确认页那句英文；原句在 rewind 事件的 code_text。认不出的句子为 null。",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "restores": {
+          "type": "boolean",
+          "description": "代码是否会被恢复。"
+        },
+        "delta": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "确认页写的改动量，如 -1；不变或没写为 null。"
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "确认页写的文件名；不变或没写为 null。"
+        }
+      },
+      "required": [
+        "restores",
+        "delta",
+        "target"
+      ]
+    },
+    "open_code_call": {
+      "description": "已报过 code_call、还没报 code_call_end 的调用。",
+      "type": "object",
+      "properties": {
+        "tool_use_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "input": {
+          "description": "工具输入原样。"
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "发起它的代码：最近一个仍在运行的 REPL 调用的 tool_use_id；不知道时为 null。几段代码同时运行时无从分辨，取最近开始的。"
+        }
+      },
+      "required": [
+        "tool_use_id",
+        "name",
+        "input",
+        "code"
+      ]
+    },
+    "request": {
+      "description": "挂起的请求：发出它时的事件对象。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/events/permission_request"
+        },
+        {
+          "$ref": "#/$defs/events/question"
+        },
+        {
+          "$ref": "#/$defs/events/choice"
+        },
+        {
+          "$ref": "#/$defs/events/rewind"
+        },
+        {
+          "$ref": "#/$defs/events/dialog"
+        },
+        {
+          "$ref": "#/$defs/events/unrecognized"
+        },
+        {
+          "$ref": "#/$defs/events/btw"
+        }
+      ]
+    },
+    "snapshot": {
+      "title": "snapshot",
+      "description": "Session 的完整状态快照：get_state 的响应，也是 ready 的一部分。",
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "waiting": {
+          "description": "state 为 waiting 时的等待详情，否则为 null。",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/waiting"
+            }
+          ]
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/request"
+          },
+          "description": "当前挂起的所有请求，各为它发出时的事件对象，按发出的先后。"
+        },
+        "holder_id": {
+          "type": "string",
+          "description": "Holder id。"
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Claude Code session id。"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "工作目录。"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "列或行。"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "PTY 此刻的 [列, 行]（同 ready）。"
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
+        },
+        "context_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Session 的标题：transcript 里最后一条 custom-title（/rename 或 rename 设的），没有则最后一条 ai-title；都没有为 null。"
+        },
+        "queue": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/queue_item"
+          },
+          "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的、别的 Session 或 Agent 发来的消息），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
+        },
+        "follow_ups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "队列里的正文。"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bg_task"
+          },
+          "description": "后台任务（含已结束的）。"
+        },
+        "code_calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/open_code_call"
+          },
+          "description": "Code Mode：已报过 code_call、还没报 code_call_end 的调用。"
+        },
+        "feedback_draft": {
+          "$ref": "#/$defs/feedback_draft"
+        }
+      },
+      "required": [
+        "state",
+        "waiting",
+        "requests",
+        "holder_id",
+        "session_id",
+        "cwd",
+        "size",
+        "mode",
+        "model",
+        "effort",
+        "context_tokens",
+        "title",
+        "queue",
+        "follow_ups",
+        "tasks",
+        "code_calls",
+        "feedback_draft"
       ]
     },
     "error_code": {
@@ -249,7 +524,10 @@
         "io",
         "no_feedback_draft",
         "btw_open",
-        "not_found"
+        "not_found",
+        "ambiguous",
+        "tasks_running",
+        "not_in_picker"
       ]
     },
     "choice_option": {
@@ -1539,9 +1817,9 @@
           "items": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/queue_item"
             },
-            "description": "从 Claude Code 队列里取回的各条（先入在前），正文同 queue 事件；带图片的含 [Image #n]，图片本身不返回。"
+            "description": "从 Claude Code 队列里取回的各条（先入在前，都是 typed）；带图片的含 [Image #n]，图片本身不返回。"
           }
         },
         "required": [
@@ -1670,176 +1948,7 @@
         "required": []
       },
       "get_state": {
-        "title": "get_state",
-        "description": "当前状态快照。",
-        "type": "object",
-        "properties": {
-          "state": {
-            "$ref": "#/$defs/state"
-          },
-          "waiting": {
-            "$ref": "#/$defs/waiting"
-          },
-          "request": {
-            "description": "挂起的请求；挂起的 choice 为它的 choice 事件，挂起的回退为 rewind 的响应（type: rewind）；没有为 null。",
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "request_id": {
-                    "type": "string",
-                    "description": "请求 id。"
-                  },
-                  "tool_name": {
-                    "type": "string",
-                    "description": "工具名。"
-                  },
-                  "input": {
-                    "description": "工具输入。"
-                  },
-                  "agent_id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "后台 Subagent 的请求时为它的 agent id。"
-                  }
-                },
-                "required": [
-                  "request_id",
-                  "tool_name",
-                  "input"
-                ]
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "waiting_for": {
-                    "type": "string",
-                    "description": "对话框的 waiting_for。"
-                  }
-                },
-                "required": [
-                  "waiting_for"
-                ]
-              },
-              {
-                "type": "object",
-                "description": "挂起的 choice：它的 choice 事件。",
-                "properties": {
-                  "type": {
-                    "const": "choice"
-                  }
-                },
-                "required": [
-                  "type"
-                ]
-              },
-              {
-                "$ref": "#/$defs/response_data/rewind",
-                "description": "挂起的回退：rewind 的响应。"
-              }
-            ]
-          },
-          "holder_id": {
-            "type": "string",
-            "description": "Holder id。"
-          },
-          "session_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Claude Code session id。"
-          },
-          "cwd": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "工作目录。"
-          },
-          "follow_up_queue": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "follow_up 队列长度。"
-          },
-          "follow_ups": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "队列里的正文。"
-          },
-          "mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
-          },
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
-          },
-          "context_tokens": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Session 的标题：transcript 里最后一条 custom-title（/rename 或 rename 设的），没有则最后一条 ai-title；都没有为 null。"
-          },
-          "queue": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
-          },
-          "feedback_draft": {
-            "$ref": "#/$defs/feedback_draft"
-          },
-          "size": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "列或行。"
-            },
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "PTY 此刻的 [列, 行]（同 ready）。"
-          }
-        },
-        "required": [
-          "state",
-          "request",
-          "holder_id",
-          "session_id",
-          "cwd",
-          "follow_up_queue",
-          "follow_ups"
-        ]
+        "$ref": "#/$defs/snapshot"
       },
       "get_messages": {
         "title": "get_messages",
@@ -2052,72 +2161,8 @@
         ]
       },
       "rewind": {
-        "title": "rewind",
-        "description": "终端停在确认页时它写的内容。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "rewind"
-          },
-          "request_id": {
-            "type": "string",
-            "description": "rewind:N，answer_rewind 用。"
-          },
-          "uuid": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string",
-            "description": "这条提示词的全文（transcript 里的）。"
-          },
-          "code": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "确认页上代码会怎样的原文：The code will be restored … / The code will be unchanged.；认不出为 null。"
-          },
-          "warning": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "确认页的 ⚠ 警告原文（有代码要恢复时才有），没有为 null。"
-          },
-          "options": {
-            "type": "array",
-            "description": "这次能选的恢复选项（确认页上有的），按确认页的顺序。",
-            "items": {
-              "type": "object",
-              "properties": {
-                "option": {
-                  "enum": [
-                    "both",
-                    "conversation",
-                    "code"
-                  ]
-                },
-                "label": {
-                  "type": "string",
-                  "description": "确认页上的原文。"
-                }
-              },
-              "required": [
-                "option",
-                "label"
-              ]
-            }
-          }
-        },
-        "required": [
-          "type",
-          "request_id",
-          "uuid",
-          "text",
-          "code",
-          "warning",
-          "options"
-        ]
+        "$ref": "#/$defs/events/rewind",
+        "description": "终端停在确认页时的 rewind 事件。"
       },
       "answer_rewind": {
         "title": "answer_rewind",
@@ -2141,7 +2186,7 @@
       },
       "exit": {
         "title": "exit",
-        "description": "claude 已退出（close_pane 时 Pane 也已收到 exit）。",
+        "description": "claude 已退出（带 close_pane 时 Pane 也关了）。",
         "type": "object",
         "properties": {}
       },
@@ -2478,6 +2523,16 @@
               "$ref": "#/$defs/response_data/dismiss_feedback_draft"
             }
           }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "exit"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/exit"
+            }
+          }
         }
       ]
     },
@@ -2547,39 +2602,20 @@
     "events": {
       "ready": {
         "title": "ready",
-        "description": "连接后的第一条事件。",
+        "description": "连接后的第一条事件：当前状态快照（snapshot 的全部字段）加协议版本、Claude Code 版本与警告。",
         "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/$defs/snapshot"
+          }
+        ],
         "properties": {
           "type": {
             "const": "ready"
           },
-          "state": {
-            "$ref": "#/$defs/state"
-          },
-          "waiting": {
-            "$ref": "#/$defs/waiting"
-          },
           "protocol": {
-            "const": 3,
+            "const": 4,
             "description": "协议版本。"
-          },
-          "holder_id": {
-            "type": "string",
-            "description": "Holder id。"
-          },
-          "session_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Claude Code session id。"
-          },
-          "cwd": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "工作目录。"
           },
           "claude_version": {
             "type": [
@@ -2588,79 +2624,18 @@
             ],
             "description": "Claude Code 版本。"
           },
-          "size": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "列或行。"
-            },
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "PTY 此刻的 [列, 行]：人的 Client 设的尺寸；ccrpc 认不出屏幕时调成的 120×40（ADR-0001）。"
-          },
           "warnings": {
             "type": "array",
             "items": {
               "type": "string"
             },
             "description": "Claude Code 不是实测过的版本时一句。"
-          },
-          "mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
-          },
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
-          },
-          "context_tokens": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "description": "它的 input + cache_read + cache_creation token 数（当前上下文大小）。"
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Session 的标题：transcript 里最后一条 custom-title（/rename 或 rename 设的），没有则最后一条 ai-title；都没有为 null。"
-          },
-          "queue": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
-          },
-          "feedback_draft": {
-            "$ref": "#/$defs/feedback_draft"
           }
         },
         "required": [
           "type",
-          "state",
           "protocol",
-          "holder_id",
-          "session_id",
-          "cwd",
           "claude_version",
-          "size",
           "warnings"
         ]
       },
@@ -2676,12 +2651,21 @@
             "$ref": "#/$defs/state"
           },
           "waiting": {
-            "$ref": "#/$defs/waiting"
+            "description": "state 为 waiting 时的等待详情，否则为 null。",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/waiting"
+              }
+            ]
           }
         },
         "required": [
           "type",
-          "state"
+          "state",
+          "waiting"
         ]
       },
       "block": {
@@ -2875,9 +2859,16 @@
           "background_tasks": {
             "type": "array",
             "items": {
-              "type": "object"
+              "$ref": "#/$defs/bg_task"
             },
-            "description": "Stop 时仍在运行的后台任务（Claude Code 原样：id、type、status、description 等）。"
+            "description": "Stop 时仍在运行的后台任务，没有为 []。"
+          },
+          "restored_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "中止时 Claude Code 把这一轮的提示词放回了输入框（回复开始前按 Esc），为这条提示词的全文；否则为 null。"
           }
         },
         "required": [
@@ -2890,7 +2881,8 @@
           "background_tasks",
           "duration_ms",
           "usage",
-          "api_cost"
+          "api_cost",
+          "restored_text"
         ]
       },
       "settled": {
@@ -2924,7 +2916,7 @@
           },
           "request_id": {
             "type": "string",
-            "description": "等于 tool_use_id。"
+            "description": "请求 id，挂起的请求里唯一；值同 tool_use_id。"
           },
           "tool_name": {
             "type": "string",
@@ -2961,16 +2953,22 @@
           "from_code": {
             "type": "boolean",
             "description": "这次调用出自 Code Mode 的代码（REPL 脚本里的 tools.X(...)）：Claude Code 要等代码的结果送达才把它写进 transcript，此前只有 code_call 事件提到它。"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "description": "它所为的工具调用的 id；在对话里找对应的行用它。"
           }
         },
         "required": [
           "type",
           "request_id",
+          "tool_use_id",
           "tool_name",
           "input",
           "agent_id",
           "options",
-          "layout_source"
+          "layout_source",
+          "from_code"
         ]
       },
       "question": {
@@ -2983,7 +2981,7 @@
           },
           "request_id": {
             "type": "string",
-            "description": "等于 tool_use_id。"
+            "description": "请求 id，挂起的请求里唯一；值同 tool_use_id。"
           },
           "questions": {
             "description": "AskUserQuestion 输入原样。"
@@ -2998,12 +2996,91 @@
           "from_code": {
             "type": "boolean",
             "description": "这次调用出自 Code Mode 的代码（REPL 脚本里的 tools.X(...)）：Claude Code 要等代码的结果送达才把它写进 transcript，此前只有 code_call 事件提到它。"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "description": "它所为的工具调用的 id；在对话里找对应的行用它。"
           }
         },
         "required": [
           "type",
           "request_id",
-          "questions"
+          "tool_use_id",
+          "questions",
+          "agent_id",
+          "from_code"
+        ]
+      },
+      "rewind": {
+        "title": "rewind",
+        "description": "回退的确认页：终端停在确认页时发出，rewind 命令的响应带同一个对象；作答、取消或确认页离开屏幕时以 request_end 结束。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "rewind"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "rewind:N，answer_rewind 用。"
+          },
+          "uuid": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "这条提示词的全文（transcript 里的）。"
+          },
+          "code": {
+            "$ref": "#/$defs/rewind_code"
+          },
+          "code_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "确认页上代码会怎样的原句（如 The code will be restored -1 in w.txt.）；没有为 null。"
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "确认页的 ⚠ 警告原文（有代码要恢复时才有），没有为 null。"
+          },
+          "options": {
+            "type": "array",
+            "description": "这次能选的恢复选项（确认页上有的），按确认页的顺序。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "option": {
+                  "enum": [
+                    "both",
+                    "conversation",
+                    "code"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "description": "确认页上的原文。"
+                }
+              },
+              "required": [
+                "option",
+                "label"
+              ]
+            }
+          }
+        },
+        "required": [
+          "type",
+          "request_id",
+          "uuid",
+          "text",
+          "code",
+          "code_text",
+          "warning",
+          "options"
         ]
       },
       "dialog": {
@@ -3013,6 +3090,10 @@
         "properties": {
           "type": {
             "const": "dialog"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "dialog:<n>；启动界面全程用同一个 id，每个不同画面带新的 lines 再发一次。"
           },
           "waiting_for": {
             "type": "string",
@@ -3028,6 +3109,7 @@
         },
         "required": [
           "type",
+          "request_id",
           "waiting_for",
           "lines"
         ]
@@ -3039,6 +3121,10 @@
         "properties": {
           "type": {
             "const": "unrecognized"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "unrecognized:<n>。"
           },
           "context": {
             "type": "string",
@@ -3054,13 +3140,14 @@
         },
         "required": [
           "type",
+          "request_id",
           "context",
           "lines"
         ]
       },
       "btw": {
         "title": "btw",
-        "description": "/btw 面板开着：回答中或已读出答案。面板由 close_btw、abort 或终端里的 Esc 关闭。",
+        "description": "/btw 面板开着：回答中或已读出答案。面板由 close_btw、abort 或终端里的 Esc 关闭，关了以 request_end（request_id 为 btw）结束。",
         "type": "object",
         "properties": {
           "type": {
@@ -3093,17 +3180,22 @@
           "text"
         ]
       },
-      "btw_closed": {
-        "title": "btw_closed",
-        "description": "/btw 面板关了。",
+      "request_end": {
+        "title": "request_end",
+        "description": "ccrpc 报过的请求结束：在这里或终端里作答了、它的工具跑了或被拒、对话框离开屏幕、本轮结束、被另一个界面顶替。/btw 面板关了时 request_id 为 btw。Session 结束或换了 Session（session_exit、previous 非 null 的 session_changed）时所有请求都算结束，不逐个发。",
         "type": "object",
         "properties": {
           "type": {
-            "const": "btw_closed"
+            "const": "request_end"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "结束的请求。"
           }
         },
         "required": [
-          "type"
+          "type",
+          "request_id"
         ]
       },
       "bash_output": {
@@ -3158,7 +3250,19 @@
             "description": "正文。"
           },
           "error": {
-            "type": "string",
+            "type": "object",
+            "properties": {
+              "code": {
+                "$ref": "#/$defs/error_code"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
             "description": "失败原因。"
           }
         },
@@ -3179,14 +3283,35 @@
           "items": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/queue_item"
             },
-            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
+            "description": "Claude Code 自己的输入队列，先入在前，不含任务通知、Teammate 消息与 Code Mode 的 harness 事件。"
           }
         },
         "required": [
           "type",
           "items"
+        ]
+      },
+      "tasks": {
+        "title": "tasks",
+        "description": "后台任务的列表有变化（含状态、idle）：整份。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "tasks"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/bg_task"
+            },
+            "description": "全部后台任务，含已结束的。"
+          }
+        },
+        "required": [
+          "type",
+          "tasks"
         ]
       },
       "code_call": {
@@ -3540,12 +3665,85 @@
               "null"
             ],
             "description": "此前的 session id。"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "claude 的工作目录；new 的 ready 早于进程文件时 cwd 为 null，以这里的为准。"
           }
         },
         "required": [
           "type",
           "session_id",
-          "previous"
+          "previous",
+          "cwd"
+        ]
+      },
+      "fork": {
+        "title": "fork",
+        "description": "new --fork 做完：成功带 session_id 等，失败带 error。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "fork"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "新 Session；失败时没有此字段。"
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被 Fork 的 Session。"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "回退时放回输入框的提示词全文（! 命令为「! 命令」）；没有 --fork-at 为 null；失败时没有此字段。"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "改成的标题；没有 --fork-title 或改名失败为 null；失败时没有此字段。"
+          },
+          "title_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "改名失败的原因，否则为 null；失败时没有此字段。"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "$ref": "#/$defs/error_code"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "失败时才有。"
+          }
+        },
+        "required": [
+          "type",
+          "origin"
         ]
       },
       "session_exit": {
@@ -3699,6 +3897,9 @@
           "$ref": "#/$defs/events/question"
         },
         {
+          "$ref": "#/$defs/events/rewind"
+        },
+        {
           "$ref": "#/$defs/events/dialog"
         },
         {
@@ -3708,7 +3909,7 @@
           "$ref": "#/$defs/events/btw"
         },
         {
-          "$ref": "#/$defs/events/btw_closed"
+          "$ref": "#/$defs/events/request_end"
         },
         {
           "$ref": "#/$defs/events/bash_output"
@@ -3718,6 +3919,9 @@
         },
         {
           "$ref": "#/$defs/events/queue"
+        },
+        {
+          "$ref": "#/$defs/events/tasks"
         },
         {
           "$ref": "#/$defs/events/code_call"
@@ -3748,6 +3952,9 @@
         },
         {
           "$ref": "#/$defs/events/session_changed"
+        },
+        {
+          "$ref": "#/$defs/events/fork"
         },
         {
           "$ref": "#/$defs/events/session_exit"

@@ -1,5 +1,6 @@
 import type { Draft } from "./drafts";
 import { shiftTokens, withoutTokens } from "./imageTokens";
+import type { QueueItem } from "./protocol";
 
 const firstLine = (s: string) =>
   s
@@ -7,31 +8,9 @@ const firstLine = (s: string) =>
     .find((l) => l.trim())
     ?.trim() ?? "";
 
-/**
- * A queued item as it reads in the queue notice: a message from another agent or a Teammate as `<sender>：<first
- * line>`, a background task's notification as `后台任务：<summary>`; anything else as it was typed.
- */
-export function queueText(item: string): string {
-  const t = item.trim();
-  // The queue comes from ccrpc as Claude Code recorded it; the transcript's own messages come parsed from the
-  // backend. Here only the opening tag's sender and summary are read, for this one line.
-  const m = /^<(cross-session-message|agent-message|teammate-message)\b([^>]*)>([\s\S]*?)(?:<\/\1>|$)/.exec(t);
-  if (m) {
-    const attr = (name: string) => new RegExp(`\\b${name}="([^"]*)"`).exec(m[2]!)?.[1]?.trim() || null;
-    if (m[1] === "teammate-message")
-      return `${attr("teammate_id") ?? "Teammate"}：${attr("summary") ?? firstLine(m[3]!)}`;
-    return `${attr("from-name") ?? attr("from") ?? "Agent"}：${firstLine(m[3]!)}`;
-  }
-  if (t.startsWith("<task-notification>")) {
-    const summary = /<summary>([\s\S]*?)<\/summary>/.exec(t)?.[1]?.trim();
-    return summary ? `后台任务：${summary}` : "后台任务通知";
-  }
-  return item;
-}
-
-/** A queued item ↑ takes back into the input box (`edit_queue`): what was typed, not a message from elsewhere. */
-export function editable(item: string): boolean {
-  return !/^<(cross-session-message|agent-message|teammate-message|task-notification)\b/.test(item.trimStart());
+/** A queued item as it reads in the queue notice: a message from elsewhere as `<sender>：<first line>`; what was typed as it is. */
+export function queueText(item: QueueItem): string {
+  return item.from ? `${item.from}：${firstLine(item.text)}` : item.text;
 }
 
 const IMAGE_TAG = /\[Image #\d+\]/g;

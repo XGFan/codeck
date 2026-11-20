@@ -1,7 +1,7 @@
 // Rewind in a Connected Session (ccrpc `rewind` / `answer_rewind`): which prompts can be rewound to, and the words
 // of the confirm card and the transcript's marker.
 import type { BranchPoint, Node } from "@/ipc/bindings";
-import type { RewindOption } from "./protocol";
+import type { RewindCode, RewindOption } from "./protocol";
 
 /** The card's buttons, in this order (only those the confirm page offers). */
 export const REWIND_LABELS: Record<RewindOption, string> = {
@@ -23,16 +23,14 @@ export const REWIND_WARNING = "恢复的文件整份覆盖，之后的改动都�
 const REMOVED = "这条提示词及之后的对话会被移除";
 
 /**
- * The confirm page's sentence on the code, in Chinese: `The code will be unchanged.`, `The code will be restored
- * <diff> in <files>.`; another sentence as it is.
+ * What the confirm page says about the code, in Chinese (ccrpc read it); a sentence it could not read as it is (`codeText`).
  */
-export function codeLine(code: string | null): string {
-  if (code == null) return REMOVED;
-  const s = code.trim();
-  if (/^The code will be unchanged\.?$/.test(s)) return `${REMOVED}；代码不变`;
-  const m = /^The code will be restored (.+?) in (.+?)\.?$/.exec(s);
-  if (m) return `${REMOVED}；代码会恢复：${m[2]}（${m[1]!.replace(/-(?=\d)/g, "−")}）`;
-  return s;
+export function codeLine(code: RewindCode | null, codeText: string | null): string {
+  if (code == null) return codeText ?? REMOVED;
+  if (!code.restores) return `${REMOVED}；代码不变`;
+  if (!code.target) return `${REMOVED}；代码会恢复`;
+  const delta = code.delta ? `（${code.delta.replace(/-(?=\d)/g, "−")}）` : "";
+  return `${REMOVED}；代码会恢复：${code.target}${delta}`;
 }
 
 /** The divider above the rewound prompt. */

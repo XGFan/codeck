@@ -323,7 +323,7 @@ function CardFoot({ error, children }: { error?: string | null; children?: React
 function ToolInput({ r, sessionId }: { r: PermissionRequestEvent; sessionId: string | null }) {
   const call = useMemo<ToolCall>(
     () => ({
-      toolUseId: r.request_id,
+      toolUseId: r.tool_use_id,
       name: r.tool_name,
       inputJson: JSON.stringify(r.input ?? {}),
       inputTruncated: false,
@@ -334,10 +334,10 @@ function ToolInput({ r, sessionId }: { r: PermissionRequestEvent; sessionId: str
       code: null,
       viaCode: null,
     }),
-    [r.request_id, r.tool_name, r.input],
+    [r.tool_use_id, r.tool_name, r.input],
   );
-  const nodeId = `connect:${r.request_id}`;
-  const key = toolKey(nodeId, r.request_id);
+  const nodeId = `connect:${r.tool_use_id}`;
+  const key = toolKey(nodeId, r.tool_use_id);
   const known = useUi((s) => key in s.expanded);
   useEffect(() => {
     if (!known) useUi.getState().setExpanded(key, true);
@@ -482,10 +482,10 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
       ? data.nodes.find(
           (n) =>
             n.body.kind === "assistant" &&
-            n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.request_id),
+            n.body.blocks.some((b) => b.kind === "toolCall" && b.toolUseId === r.tool_use_id),
         )
       : undefined;
-  const seen = useOnScreen(node ? anchorKey(node.id, r.request_id) : null);
+  const seen = useOnScreen(node ? anchorKey(node.id, r.tool_use_id) : null);
   const qs = Array.isArray(r.questions) ? r.questions : [];
   if (seen) return null;
   return (
@@ -506,7 +506,7 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
               primary: true,
               testId: "question-jump",
               onClick: () =>
-                scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.request_id, flashMs: 2000 }),
+                scrollToNode({ scope: { kind: "main" }, nodeId: node.id, toolUseId: r.tool_use_id, flashMs: 2000 }),
             }
           : undefined
       }
@@ -628,7 +628,7 @@ function RewindCard({ r, c, focus }: { r: RewindRequest; c: ConnState; focus: bo
           {r.text}
         </p>
         <p data-testid="rewind-code-line" className="m-0">
-          {codeLine(r.code)}
+          {codeLine(r.code, r.code_text)}
         </p>
         {r.warning && (
           <p data-testid="rewind-warning" className="m-0 text-tag-text">

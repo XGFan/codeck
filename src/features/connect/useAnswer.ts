@@ -5,10 +5,9 @@ import { answerError } from "./answers";
 import type { ConnState } from "./conn";
 import { useConnect } from "./store";
 
-/** Sends an answer to a request; answered, the card leaves at once. */
+/** Sends an answer to a request; answered, ccrpc ends it (`request_end`, before the answer's response). */
 export function useAnswer(c: ConnState) {
   const command = useConnect((s) => s.command);
-  const dropRequest = useConnect((s) => s.dropRequest);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const send = async (msg: Record<string, unknown>) => {
@@ -16,9 +15,7 @@ export function useAnswer(c: ConnState) {
     setError(null);
     const r = await command(c.conn, msg);
     setBusy(false);
-    // Answered: off screen now, so the next card gets the keys (ccrpc ends it on the tool's result).
-    if (r.success) dropRequest(c.conn, String(msg.request_id));
-    else setError(answerError(r.error));
+    if (!r.success) setError(answerError(r.error));
     return r.success;
   };
   return { busy, error, send };

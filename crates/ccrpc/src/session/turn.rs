@@ -336,9 +336,8 @@ pub(super) struct TurnTracker {
     /// Input queued during the turn (steers) not yet delivered within it: delivered after its
     /// Stop as a turn of its own, which has no UserPromptSubmit.
     pending_steers: Vec<String>,
-    /// The turn's Stop came: `(when, last text, background tasks)`; `turn_end` once the transcript
-    /// caught up.
-    stop_pending: Option<(Instant, Option<String>, Value)>,
+    /// The turn's Stop came: `(when, last text)`; `turn_end` once the transcript caught up.
+    stop_pending: Option<(Instant, Option<String>)>,
     /// The next turn's Stop, come while this one's still waits for the transcript (claude fires
     /// both Stops before writing either turn): handled once this turn has ended.
     deferred_stop: Option<Stop>,
@@ -468,7 +467,7 @@ impl TurnTracker {
                 Some(_) => {
                     self.stats.aborted = true;
                     self.stats.prompt_text = None;
-                    self.end(&mut out, None, Value::Null);
+                    self.end(&mut out, None);
                 }
             }
         }
@@ -522,13 +521,13 @@ impl TurnTracker {
         } else if let Some(t) = stop.last_message {
             self.last_text = Some(t);
         }
-        out.push(TurnOut::Stopped(stop.background_tasks.clone()));
+        out.push(TurnOut::Stopped(stop.background_tasks));
         let last = if stop.failure {
             None
         } else {
             self.last_text.clone()
         };
-        self.stop_pending = Some((now, last, stop.background_tasks));
+        self.stop_pending = Some((now, last));
         out
     }
 
@@ -617,7 +616,7 @@ impl TurnTracker {
     /// (`idle_since`: when it went idle, `None` while not idle).
     pub(super) fn poll(&mut self, now: Instant, mut idle_since: Option<Instant>) -> Vec<TurnOut> {
         let mut out = Vec::new();
-        if let Some((at, _, _)) = &self.stop_pending
+        if let Some((at, _)) = &self.stop_pending
             && (self.stats.marker_seen || now.duration_since(*at) >= STOP_CATCH_UP)
         {
             out = self.finish_stopped(now);
@@ -644,7 +643,7 @@ impl TurnTracker {
                 self.stats = TurnStats::default();
             } else {
                 self.stats.aborted = true;
-                self.end(&mut out, None, Value::Null);
+                self.end(&mut out, None);
             }
         }
         out
@@ -657,7 +656,7 @@ impl TurnTracker {
         let mut out = Vec::new();
         if self.active {
             self.stats.aborted = true;
-            self.end(&mut out, None, Value::Null);
+            self.end(&mut out, None);
         }
         self.pending_steers.clear();
         self.open_provisional();
@@ -674,11 +673,11 @@ impl TurnTracker {
     }
 
     fn end_stopped(&mut self) -> Vec<TurnOut> {
-        let Some((_, last, bg)) = self.stop_pending.take() else {
+        let Some((_, last)) = self.stop_pending.take() else {
             return Vec::new();
         };
         let mut out = Vec::new();
-        self.end(&mut out, last, bg);
+        self.end(&mut out, last);
         // Input queued in it but not delivered within it runs next, with no UserPromptSubmit:
         // open that turn now (its Stop ends it).
         if !self.pending_steers.is_empty() {
@@ -722,17 +721,14 @@ impl TurnTracker {
         })))
     }
 
-    /// Pushes the turn's `turn_end` onto `out` (its `turn_start` first, if still due).
-    fn end(&mut self, out: &mut Vec<TurnOut>, last_text: Option<String>, background_tasks: Value) {
+    /// Pushes the turn's `turn_end` onto `out` (its `turn_start` first, if still due); the
+    /// engine adds the background tasks still running.
+    fn end(&mut self, out: &mut Vec<TurnOut>, last_text: Option<String>) {
         out.extend(self.started());
         self.active = false;
         let mut v = self.stats.to_json();
         v["type"] = json!("turn_end");
         v["last_text"] = json!(last_text);
-        v["background_tasks"] = match background_tasks {
-            Value::Array(a) => Value::Array(a),
-            _ => json!([]),
-        };
         let prompt = self.stats.prompt_text.take();
         self.stats = TurnStats::default();
         out.push(TurnOut::End(v, prompt));
@@ -828,6 +824,7 @@ impl Engine {
                 TurnOut::Stopped(bg) => self.note_running_tasks(&bg),
                 TurnOut::End(mut v, prompt) => {
                     v["restored_text"] = json!(self.restored(&v, prompt));
+                    v["background_tasks"] = json!(self.running_tasks());
                     self.settle_armed = true;
                     self.emit(v)
                 }
@@ -1118,7 +1115,8 @@ mod tests {
         assert_eq!(e[0]["usage"]["input_tokens"], 20);
         assert_eq!(e[0]["usage"]["output_tokens"], 6);
         assert_eq!(e[0]["api_cost"], 1.0);
-        assert_eq!(e[0]["background_tasks"][0]["id"], "b1");
+        // The engine lists the tasks still running (merged from the Stop above).
+        assert!(e[0].get("background_tasks").is_none());
         assert!(!t.active);
     }
 

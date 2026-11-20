@@ -89,7 +89,7 @@ struct ConnState: Decodable, Equatable, Sendable {
     var contextTokens: Double?
     var requests: [ConnRequest] = []
     var progress: Progress?
-    var queue: [String] = []
+    var queue: [QueueItem] = []
     var tasks: [ConnTask] = []
     var lastTurn: LastTurn?
     var procExit: ProcExit?
@@ -123,7 +123,7 @@ struct ConnState: Decodable, Equatable, Sendable {
         contextTokens = c.lenient(Double.self, .contextTokens)
         requests = c.lenient(Lossy<ConnRequest>.self, .requests)?.items ?? []
         progress = c.lenient(Progress.self, .progress)
-        queue = c.lenient(Lossy<String>.self, .queue)?.items ?? []
+        queue = c.lenient(Lossy<QueueItem>.self, .queue)?.items ?? []
         tasks = c.lenient(Lossy<ConnTask>.self, .tasks)?.items ?? []
         lastTurn = c.lenient(LastTurn.self, .lastTurn)
         procExit = c.lenient(ProcExit.self, .procExit)
@@ -147,7 +147,24 @@ struct ConnState: Decodable, Equatable, Sendable {
     var workingTasks: [ConnTask] { runningTasks.filter { !$0.idle } }
 }
 
-/// A background task (`get_tasks`).
+/// A message in Claude Code's queue (`queue`): typed here, or sent by another Session or a Subagent.
+struct QueueItem: Decodable, Equatable, Sendable {
+    /// `typed`, `session` or `agent`.
+    var kind: String
+    /// The sender of a message from elsewhere; nil for what was typed.
+    var from: String?
+    var text: String
+    var editable: Bool
+
+    /// As it reads in the queue: a message from elsewhere as `<sender>：<first line>`, what was typed as it is.
+    var label: String {
+        guard let from, !from.isEmpty else { return text }
+        let line = text.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return "\(from)：\(line.map { $0.trimmingCharacters(in: .whitespaces) } ?? "")"
+    }
+}
+
+/// A background task (`tasks`).
 struct ConnTask: Decodable, Equatable, Identifiable, Sendable {
     var id: String
     var kind: String

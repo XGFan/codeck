@@ -5,7 +5,7 @@
 // recording can stand for a Session of CoDeck's mock data and keeps its ids when re-recorded. Connecting replays what ccrpc printed up to the first
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
-// get_tasks) are answered from what was replayed. `new-session` and `resume*` are not listed: `ccrpcNew` opens
+// get_tasks) are answered from what was replayed (the background tasks from `ready` and the `tasks` events). `new-session` and `resume*` are not listed: `ccrpcNew` opens
 // the first; `ccrpcResume` opens `resume` (its `session_changed` names the Session asked for), or
 // `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it). `fork*` are not listed either: `ccrpcFork`
 // opens `fork` (before a prompt), `fork-session` (the whole Session), `fork-warning` (restoring code: the rewind's ⚠
@@ -14,8 +14,7 @@
 // `__cvCcrpc.list(name)`. `__cvCcrpc.remoteConn(name)` and `remoteDisconnect(conn)` stand for an iPhone on the LAN; what
 // has to be there before the app starts (`snapshot`, `lan`) comes from an init script's `window.__cvCcrpcPreset`.
 
-import type { InMsg, LsEntry, Task } from "@/features/connect/protocol";
-import { editable } from "@/features/connect/queue";
+import type { InMsg, LsEntry, QueueItem, RequestEvent, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
 import type { AnalyzerInfo, AppError, LanStatus, LaunchRule } from "./bindings";
 
@@ -31,8 +30,6 @@ interface WireLine {
   ls?: Partial<LsEntry>;
   /** On the meta line: `ccrpcConnect` returns this long after the replay starts (events before the id). */
   connect_delay_ms?: number;
-  /** On the meta line: what `get_tasks` answers (the recording's background tasks). */
-  tasks?: Task[];
   /** On the meta line: listed in `ccrpc ls` only once asked for (`__cvCcrpc.list(name)`). */
   on_request?: boolean;
 }
@@ -42,7 +39,6 @@ interface Fixture {
   lines: WireLine[];
   ls: LsEntry;
   connectDelayMs: number;
-  tasks: Task[];
   onRequest: boolean;
 }
 
@@ -81,7 +77,6 @@ function parse(name: string, text: string): Fixture {
     lines: lines.filter((l) => l.dir !== "meta"),
     ls,
     connectDelayMs: metaLine?.connect_delay_ms ?? 0,
-    tasks: metaLine?.tasks ?? [],
     onRequest: !!metaLine?.on_request,
   };
 }
@@ -97,10 +92,12 @@ interface Conn {
   /** The last `session_info` (or `ready`): what a synthesized one changes. */
   info: Record<string, unknown>;
   closed: boolean;
-  /** Tasks `stop_task` stopped on this connection: `get_tasks` reports them stopped. */
-  stopped: Set<string>;
+  /** The background tasks as `ready` or the last `tasks` event said: what `get_tasks` answers, `stop_task` changes. */
+  tasks: Task[];
+  /** The requests reported and not ended, by id: what `abort` and a synthesized answer end. */
+  requests: Map<string, RequestEvent>;
   /** The TUI's queue as the last `queue` event said: what `edit_queue` takes back. */
-  queue?: string[];
+  queue: QueueItem[];
   /** What follows `ready` waits this long (claude still starting). */
   startMs?: number;
   /** Started by a client on the LAN: a Connect to the same Holder gets this connection. */
@@ -168,7 +165,7 @@ export interface CcrpcProbe {
   emit: (msg: Record<string, unknown>) => void;
   /** The next command of this type is refused (after a moment, as ccrpc would answer). */
   failNext?: string;
-  /** Set by a test: Claude Code runs a monitor of its own (not in `get_tasks`), so `exit` asks about it. */
+  /** Set by a test: Claude Code runs a monitor of its own (not in `tasks`), so `exit` asks about it. */
   monitorRunning?: boolean;
   /** 「局域网访问」 as the mock Host has it (a test's change shows at the next refresh). */
   lan: LanStatus;
@@ -232,6 +229,16 @@ declare global {
 
 const later = (f: () => void) => setTimeout(f, 0);
 
+const REQUEST_TYPES = new Set<string>([
+  "permission_request",
+  "question",
+  "choice",
+  "rewind",
+  "dialog",
+  "unrecognized",
+  "btw",
+] satisfies RequestEvent["type"][]);
+
 /** What `ccrpc ls --json` lists: the recordings that stand for a running Pane, as hidden or shown since. */
 function lsNow(): LsEntry[] {
   return fixtures
@@ -259,6 +266,15 @@ function emit(id: string, msg: InMsg) {
   if (!c || c.closed) return;
   if (msg.type === "state") c.state = msg;
   if (msg.type === "queue") c.queue = msg.items;
+  if (msg.type === "tasks") c.tasks = msg.tasks;
+  if (msg.type === "ready") {
+    c.tasks = msg.tasks;
+    c.queue = msg.queue;
+    c.requests = new Map(msg.requests.map((r) => [r.request_id, r]));
+  }
+  if (REQUEST_TYPES.has(msg.type)) c.requests.set((msg as RequestEvent).request_id, msg as RequestEvent);
+  if (msg.type === "request_end") c.requests.delete(msg.request_id);
+  if (msg.type === "session_exit" || (msg.type === "session_changed" && msg.previous != null)) c.requests.clear();
   if (msg.type === "session_info" || msg.type === "ready") {
     const { mode, model, effort, context_tokens } = msg as unknown as Record<string, unknown>;
     c.info = { mode, model, effort: effort ?? null, context_tokens };
@@ -307,26 +323,31 @@ function respond(
   later(() => emit(id, r));
 }
 
+/** Ends the requests `which` picks, as ccrpc does before the response of the command that ended them. */
+function endRequests(id: string, c: Conn, which: (r: RequestEvent) => boolean) {
+  for (const r of [...c.requests.values()].filter(which))
+    later(() => emit(id, { type: "request_end", request_id: r.request_id }));
+}
+
 function synth(id: string, c: Conn, msg: Record<string, unknown>) {
   switch (msg.type) {
     case "get_state": {
-      const s = (c.state ?? { state: "idle" }) as Record<string, unknown>;
-      return respond(id, msg, s);
+      const s = (c.state ?? { state: "idle", waiting: null }) as Record<string, unknown>;
+      return respond(id, msg, { ...s, requests: [...c.requests.values()], queue: c.queue, tasks: c.tasks });
     }
     case "get_tasks":
-      return respond(id, msg, {
-        tasks: c.fx.tasks.map((t) => (c.stopped.has(t.id) ? { ...t, status: "stopped" } : t)),
-      });
-    case "stop_task":
-      c.stopped.add(String(msg.task_id));
+      return respond(id, msg, { tasks: c.tasks });
+    case "stop_task": {
+      const tasks = c.tasks.map((t) => (t.id === msg.task_id ? { ...t, status: "stopped" } : t));
+      later(() => emit(id, { type: "tasks", tasks }));
       return respond(id, msg, {});
+    }
     // ↑ on the empty input box: what the person typed comes back (messages from another agent stay queued).
     case "edit_queue": {
       if ((c.state as { state?: string } | null)?.state !== "busy") return respond(id, msg, null, "not_busy");
-      const all = c.queue ?? [];
-      const items = all.filter(editable);
+      const items = c.queue.filter((q) => q.editable);
       if (items.length === 0) return respond(id, msg, null, "bad_request");
-      later(() => emit(id, { type: "queue", items: all.filter((q) => !editable(q)) }));
+      later(() => emit(id, { type: "queue", items: c.queue.filter((q) => !q.editable) }));
       return respond(id, msg, { items });
     }
     // ctrl+enter: the TUI's queue goes out at once.
@@ -345,15 +366,16 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       later(() => emit(id, { type: "session_info", ...c.info, ...next } as unknown as InMsg));
       return;
     }
-    // Esc; like ccrpc, the state changes before the reply.
+    // Esc; like ccrpc, the main line's requests end and the state changes before the reply.
     case "abort":
-      later(() => emit(id, { type: "state", state: "idle" } as InMsg));
+      endRequests(id, c, (r) => r.type === "btw" || !("agent_id" in r && r.agent_id));
+      later(() => emit(id, { type: "state", state: "idle", waiting: null }));
       return respond(id, msg, { state: "idle" });
     // `/exit`; with `close_pane` the Pane ends too and leaves `ccrpc ls`. Background work still running makes Claude
     // Code ask first: without `stop_tasks` nothing ends.
     case "exit": {
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
-      const running = probe.monitorRunning || c.fx.tasks.some((t) => t.status === "running" && !c.stopped.has(t.id));
+      const running = probe.monitorRunning || c.tasks.some((t) => t.status === "running");
       if (running && !msg.stop_tasks)
         return respond(id, msg, null, "还有后台任务在运行：加 stop_tasks 退出并停掉它们", "tasks_running");
       if (msg.close_pane) {
@@ -361,8 +383,8 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
         later(pushLs);
       }
       respond(id, msg, {});
-      later(() => emit(id, { type: "state", state: "exited" } as InMsg));
-      later(() => emit(id, { type: "session_exit" } as InMsg));
+      later(() => emit(id, { type: "state", state: "exited", waiting: null }));
+      later(() => emit(id, { type: "session_exit" }));
       return;
     }
     // Typed into the TUI; what it does shows on the screen, not in a reply. `/exit` ends claude (the Pane stays).
@@ -370,8 +392,8 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
       respond(id, msg, {});
       if (String(msg.command).replace(/^\//, "") === "exit") {
-        later(() => emit(id, { type: "state", state: "exited" } as InMsg));
-        later(() => emit(id, { type: "session_exit" } as InMsg));
+        later(() => emit(id, { type: "state", state: "exited", waiting: null }));
+        later(() => emit(id, { type: "session_exit" }));
       }
       return;
     // `/rename`, answered once the transcript has the title.
@@ -379,7 +401,8 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
       return respond(id, msg, { title: String(msg.title).trim() });
     case "answer_question":
-      // Not in the recording (a question emitted by a test): answered.
+      // Not in the recording (a question emitted by a test): answered, so it ends.
+      endRequests(id, c, (r) => r.request_id === msg.request_id);
       return respond(id, msg, { state: "busy" });
     default:
       return respond(id, msg, null, `录制里没有 ${String(msg.type)}`);
@@ -388,7 +411,17 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
 
 function open(fx: Fixture, startMs?: number): string {
   const id = `mock${++seq}`;
-  conns.set(id, { fx, cursor: 0, state: null, info: {}, closed: false, stopped: new Set(), startMs });
+  conns.set(id, {
+    fx,
+    cursor: 0,
+    state: null,
+    info: {},
+    closed: false,
+    tasks: [],
+    requests: new Map(),
+    queue: [],
+    startMs,
+  });
   replay(id);
   return id;
 }

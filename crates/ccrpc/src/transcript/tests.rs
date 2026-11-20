@@ -1126,32 +1126,32 @@ fn a_teammate_is_idle_between_rounds() {
     assert!(t.teammate_idle("write docs"));
 }
 
-/// `get_tasks` puts `BgTask` on the wire: the kind is a lowercase string, `command` only
-/// for a shell or a Monitor.
+/// `tasks` / `get_tasks` put `BgTask` on the wire: the kind is a lowercase string, every field
+/// is there (`null` / `false` when there is nothing to say).
 #[test]
 fn background_tasks_serialize_as_on_the_wire() {
-    let task = |kind, command: Option<&str>| BgTask {
+    let task = |kind, tool_use_id: Option<&str>, command: Option<&str>| BgTask {
         id: "t1".into(),
         kind,
-        tool_use_id: "toolu_1".into(),
+        tool_use_id: tool_use_id.map(str::to_string),
         description: Some("d".into()),
         command: command.map(str::to_string),
         status: "running".into(),
         idle: false,
     };
     let all = [
-        task(TaskKind::Shell, Some("sleep 5")),
-        task(TaskKind::Agent, None),
-        task(TaskKind::Monitor, Some("tail -F x")),
-        task(TaskKind::Workflow, None),
+        task(TaskKind::Shell, Some("toolu_1"), Some("sleep 5")),
+        task(TaskKind::Agent, None, None),
+        task(TaskKind::Monitor, Some("toolu_1"), Some("tail -F x")),
+        task(TaskKind::Workflow, Some("toolu_1"), None),
     ];
     assert_eq!(
         serde_json::to_string(&all).unwrap(),
         concat!(
-            r#"[{"id":"t1","kind":"shell","tool_use_id":"toolu_1","description":"d","command":"sleep 5","status":"running"},"#,
-            r#"{"id":"t1","kind":"agent","tool_use_id":"toolu_1","description":"d","status":"running"},"#,
-            r#"{"id":"t1","kind":"monitor","tool_use_id":"toolu_1","description":"d","command":"tail -F x","status":"running"},"#,
-            r#"{"id":"t1","kind":"workflow","tool_use_id":"toolu_1","description":"d","status":"running"}]"#
+            r#"[{"id":"t1","kind":"shell","tool_use_id":"toolu_1","description":"d","command":"sleep 5","status":"running","idle":false},"#,
+            r#"{"id":"t1","kind":"agent","tool_use_id":null,"description":"d","command":null,"status":"running","idle":false},"#,
+            r#"{"id":"t1","kind":"monitor","tool_use_id":"toolu_1","description":"d","command":"tail -F x","status":"running","idle":false},"#,
+            r#"{"id":"t1","kind":"workflow","tool_use_id":"toolu_1","description":"d","command":null,"status":"running","idle":false}]"#
         )
     );
 }
