@@ -27,8 +27,10 @@ fn launched(i: &Value) -> Option<(String, TaskKind)> {
 /// there; seen start (plugin or transcript), it keeps its kind. A teammate (Agent with `name`) is
 /// listed as `teammate` and counts as a Subagent; its tool result does not say it runs in the
 /// background, and it only goes idle between messages (SubagentStop each time) until shut down, so
-/// it is known only from here. Claude Code's own monitors (`monitor`, e.g. an artifact's live
-/// updates) are left out: `/tasks` does not show them and no notification ends them.
+/// it is known only from here. A `monitor` that runs a command is a plugin's (2.1.329 lists it so;
+/// before, as a `shell`); Claude Code's own monitors (`monitor` without a command, e.g. an
+/// artifact's live updates) are left out: `/tasks` does not show them and no notification ends
+/// them.
 ///
 /// A task known only from an earlier Stop that this one no longer lists has ended (`completed`): no
 /// notification ends a teammate. Without the list (`bg` not an array) nothing ends.
@@ -51,6 +53,9 @@ fn merge_stop_tasks(tasks: &mut Vec<BgTask>, seen: impl Fn(&str) -> bool, bg: &V
             Some("subagent" | "teammate") => TaskKind::Agent,
             Some("shell") => TaskKind::Shell,
             Some("workflow") => TaskKind::Workflow,
+            Some("monitor") if t["command"].as_str().is_some_and(|c| !c.trim().is_empty()) => {
+                TaskKind::Monitor
+            }
             _ => continue,
         };
         tasks.push(BgTask {
@@ -363,5 +368,31 @@ mod tests {
         merge_stop_tasks(&mut tasks, |_| false, &json!([]));
         assert_eq!(tasks[1].status, "completed");
         assert_eq!(tasks[0], hooked);
+    }
+
+    /// claude 2.1.329 lists a plugin's monitor as `monitor` with its command (before: `shell`);
+    /// Claude Code's own monitors have none and stay out.
+    #[test]
+    fn stop_lists_a_monitor_that_runs_a_command() {
+        let mut tasks = Vec::new();
+        let bg = json!([
+            {"id": "b67jpgyqc", "type": "monitor", "status": "running", "description": "probe events",
+                "command": "sleep 3; echo ping; sleep 300"},
+            {"id": "m-own", "type": "monitor", "status": "running", "description": "artifact live updates"},
+        ]);
+        merge_stop_tasks(&mut tasks, |_| false, &bg);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            (
+                tasks[0].id.as_str(),
+                tasks[0].kind,
+                tasks[0].command.as_deref()
+            ),
+            (
+                "b67jpgyqc",
+                TaskKind::Monitor,
+                Some("sleep 3; echo ping; sleep 300")
+            )
+        );
     }
 }
