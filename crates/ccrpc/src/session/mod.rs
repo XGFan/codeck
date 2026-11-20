@@ -1193,14 +1193,7 @@ impl Engine {
 
     /// Claude Code's queue changed: keep the person's part, and tell the caller.
     fn set_queue(&mut self, items: &[String]) {
-        let mine: Vec<String> = items
-            .iter()
-            .filter(|t| {
-                let t = t.trim_start();
-                !t.starts_with("<task-notification>") && !t.contains("<teammate-message")
-            })
-            .cloned()
-            .collect();
+        let mine: Vec<String> = items.iter().filter(|t| in_queue(t)).cloned().collect();
         if mine != self.queue {
             self.queue = mine;
             self.emit(json!({"type": "queue", "items": self.queue}));
@@ -1666,5 +1659,46 @@ impl Engine {
                 ));
             }
         }
+    }
+}
+
+/// Whether a queued item is part of the `queue` a caller sees: what a person typed or steered and
+/// messages from other Sessions and agents, as the TUI lists them. Not a task notification, a
+/// Teammate message, or a harness event of Code Mode (`<event nonce="…" kind="repl-eval" …>`:
+/// every result of a script is queued until a Poll takes it, a moment later).
+fn in_queue(item: &str) -> bool {
+    let t = item.trim_start();
+    let harness_event = t
+        .strip_prefix("<event ")
+        .and_then(|rest| rest.split_once('>'))
+        .is_some_and(|(attrs, _)| attrs.contains("kind=\""));
+    !t.starts_with("<task-notification>") && !t.contains("<teammate-message") && !harness_event
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn harness_events_and_notifications_are_not_in_the_queue() {
+        assert!(in_queue("fix the test first"));
+        assert!(in_queue(
+            "<cross-session-message from=\"a\">\nhi\n</cross-session-message>"
+        ));
+        // As Claude Code 2.1.327 queues them (Code Mode).
+        assert!(!in_queue(
+            "<event nonce=\"-oHXZixt\" kind=\"repl-eval\" at=\"2026-11-20T15:17:47.676Z\" eval=\"1\" ms=\"176\" status=\"settled\">\n<result>ok</result>\n</event>"
+        ));
+        assert!(!in_queue(
+            "<event nonce=\"a1\" kind=\"repl-status\" at=\"x\">\n#3 still running\n</event>"
+        ));
+        assert!(!in_queue(
+            "<task-notification>\n<task-id>b1</task-id>\n</task-notification>"
+        ));
+        assert!(!in_queue(
+            "<teammate-message teammate_id=\"w\">\ndone\n</teammate-message>"
+        ));
+        // Typed words that only look like a tag stay.
+        assert!(in_queue("<event listeners leak> in the modal, look there"));
     }
 }

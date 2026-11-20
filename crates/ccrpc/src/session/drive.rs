@@ -938,8 +938,8 @@ impl Engine {
 }
 
 /// A queued item `↑` takes back into the input box: what the person typed (or a steer), not a
-/// message from another Session or agent (task notifications and Teammate messages are not in
-/// [`Engine::queue`]).
+/// message from another Session or agent (task notifications, Teammate messages and harness
+/// events are not in [`Engine::queue`]).
 fn editable(item: &str) -> bool {
     let t = item.trim_start();
     !t.starts_with("<cross-session-message") && !t.starts_with("<agent-message")

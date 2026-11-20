@@ -1814,7 +1814,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
+            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
           },
           "feedback_draft": {
             "$ref": "#/$defs/feedback_draft"
@@ -2646,7 +2646,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
+            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
           },
           "feedback_draft": {
             "$ref": "#/$defs/feedback_draft"
@@ -3173,7 +3173,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知与 Teammate 消息，先入在前。"
+            "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
           }
         },
         "required": [
