@@ -157,6 +157,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `session_info` | 权限模式、模型、思考等级、上下文大小、标题变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
 | `feedback_draft` | 模型起草了产品反馈（输入框上方的卡片）出现 / 消失，带 SendFeedback 的标题与全文 |
+| `code_call` / `code_call_end` | Code Mode 下主线的代码（`REPL`）发起 / 结束了一次工具调用：transcript 要等代码的结果送达才有这些调用，此前由插件的 hook 报来 |
 | `compaction_start` / `compaction_end` | 开始压缩对话（含自动压缩）/ 压缩完成（带压缩前后的上下文 token 数） |
 | `session_changed` / `session_exit` | sessionId 换了 / Session 结束 |
 

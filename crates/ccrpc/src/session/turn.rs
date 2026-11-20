@@ -864,6 +864,12 @@ impl Engine {
         if m.event != "SessionStart" && i["agent_id"].is_null() {
             self.follow_relocated(s("session_id"), s("transcript_path"));
         }
+        // Code Mode: what the main line's code is doing, which the transcript says only later.
+        if i["agent_id"].is_null()
+            && let Some(ev) = self.code_calls.on_hook(&m.event, i)
+        {
+            self.emit(ev);
+        }
         match m.event.as_str() {
             "SessionStart" => {
                 if let (Some(sid), Some(path)) = (s("session_id"), s("transcript_path")) {

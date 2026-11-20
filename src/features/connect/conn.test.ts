@@ -223,4 +223,33 @@ describe("conn reducer", () => {
     expect(apply(s, { type: "state", state: "idle" }).picking).toBe(true);
     expect(apply(s, { type: "state", state: "busy" }).picking).toBe(false);
   });
+
+  it("keeps the calls the code made as ccrpc reports them, until the turn is aborted or the Session ends", () => {
+    const start = (id: string): InMsg => ({
+      type: "code_call",
+      tool_use_id: id,
+      name: "Bash",
+      input: { command: id },
+      code: "toolu_r1",
+    });
+    const s = fold([
+      start("repl_a"),
+      start("repl_b"),
+      { type: "code_call_end", tool_use_id: "repl_a", is_error: true, response: null },
+    ]);
+    expect(s.codeCalls).toEqual([
+      {
+        toolUseId: "repl_a",
+        name: "Bash",
+        input: { command: "repl_a" },
+        code: "toolu_r1",
+        end: { isError: true, response: null },
+      },
+      { toolUseId: "repl_b", name: "Bash", input: { command: "repl_b" }, code: "toolu_r1", end: null },
+    ]);
+    // A turn that ended on its own keeps them (the transcript takes them over); an aborted one's are never written.
+    expect(fold([end], s).codeCalls).toHaveLength(2);
+    expect(fold([{ ...end, aborted: true }], s).codeCalls).toEqual([]);
+    expect(fold([{ type: "session_exit" }], s).codeCalls).toEqual([]);
+  });
 });

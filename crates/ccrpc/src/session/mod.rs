@@ -32,6 +32,7 @@ use crate::wake::{FsWatch, Wake};
 
 mod announce;
 mod btw;
+mod code_calls;
 mod drive;
 mod fork;
 mod requests;
@@ -182,6 +183,8 @@ pub struct Engine {
     /// The Session's hook socket, bound once claude is found.
     hooks: Option<HookServer>,
     pre_tools: VecDeque<PreTool>,
+    /// Code Mode: the code running and the calls it makes, from the plugin's hooks.
+    code_calls: code_calls::CodeCalls,
     requests: Vec<HookRequest>,
     hook_prompts: VecDeque<HookPrompt>,
     hook_seq: u64,
@@ -368,6 +371,7 @@ impl Engine {
             state_dir: hook::state_dir(),
             hooks: None,
             pre_tools: VecDeque::new(),
+            code_calls: code_calls::CodeCalls::default(),
             requests: Vec::new(),
             hook_prompts: VecDeque::new(),
             hook_seq: 0,
@@ -686,6 +690,7 @@ impl Engine {
             );
         }
         self.title_tail = Default::default();
+        self.code_calls = Default::default();
         self.title_len = None;
         self.title = None;
         let mut t = Tailer::new(path);

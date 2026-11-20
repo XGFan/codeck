@@ -31,6 +31,7 @@ const NOT_LISTED = "排查 Redis 连接池泄漏";
 const TURNS = "迁移表单校验到 zod";
 const TRUST = "/review 订单列表页";
 const REFUSED = "Longhorn 卷扩容与备份策略";
+const CODE_MODE = "Code Mode：把重试上限改成 5";
 
 type Probe = {
   sent: { msg: Record<string, unknown> }[];
@@ -490,6 +491,7 @@ test("Code Mode 里从代码发起的提问在输入区的卡片上作答", asyn
       type: "question",
       request_id: "repl_e2e_code",
       agent_id: null,
+      from_code: true,
       questions: [
         { question: "用哪个方案？", header: "方案", multiSelect: false, options: [{ label: "A" }, { label: "B" }] },
       ],
@@ -504,6 +506,85 @@ test("Code Mode 里从代码发起的提问在输入区的卡片上作答", asyn
   await expect
     .poll(() => lastSent(page, "answer_question"))
     .toMatchObject({ request_id: "repl_e2e_code", answers: [{ options: ["B"] }] });
+});
+
+test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在对话里各占一行；等待审批写在工具组上，提问答完才出现", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.evaluate(() => (window.__cvCcrpc as unknown as { list: (name: string) => void }).list("code-mode"));
+  await open(page, CODE_MODE);
+  await pick(page, "connect-button");
+  await expect(page.getByTestId("connect-panel")).toBeVisible();
+  const transcript = page.getByTestId("transcript");
+  const emit = (msg: Record<string, unknown>) => page.evaluate((m) => window.__cvCcrpc!.emit(m), msg);
+  // The Session's last code (`cm-r4`) still runs: the transcript has none of its calls.
+  const group = transcript.getByTestId("tool-group").last();
+  await expect(group).toContainText("执行 2 段代码");
+  await expect(transcript.getByTestId("group-current")).toHaveCount(0);
+  const bench = { command: "cargo bench --bench retry" };
+  await emit({ type: "code_call", tool_use_id: "repl_e2e_bench", name: "Bash", input: bench, code: "cm-r4" });
+  // The call has a row of its own, grouped with its code: the group says what runs now.
+  const current = transcript.getByTestId("group-current");
+  await expect(current).toContainText("正在运行 cargo bench --bench retry…");
+  // It asks for permission: the group says so (the card is in the input area).
+  await emit({
+    type: "permission_request",
+    request_id: "repl_e2e_bench",
+    tool_name: "Bash",
+    input: bench,
+    agent_id: null,
+    from_code: true,
+    options: [
+      { label: "Yes", meaning: "allow" },
+      { label: "No", meaning: "deny" },
+    ],
+    layout_source: "builtin",
+  });
+  await expect(current).toContainText("等待审批：运行 cargo bench --bench retry");
+  await expect(page.getByTestId("permission-card")).toBeVisible();
+  // Allowed and done: its output is what the hook reported, before the transcript has the call.
+  await emit({ type: "state", state: "busy" });
+  await emit({
+    type: "code_call_end",
+    tool_use_id: "repl_e2e_bench",
+    is_error: false,
+    response: { stdout: "retry/backoff  1.21 ms", stderr: "" },
+  });
+  await expect(current).toHaveCount(0);
+  await expect(group).toContainText("运行 1 条命令、执行 1 段代码");
+  await group.getByRole("button").first().click();
+  const row = transcript.locator('[data-tool="Bash"]').filter({ hasText: "cargo bench --bench retry" });
+  await row.getByRole("button").first().click();
+  await expect(row.getByTestId("terminal")).toContainText("retry/backoff  1.21 ms");
+
+  // A question from the code: answered on its card in the input area, in the transcript once answered.
+  const question = {
+    question: "再跑一遍吗？",
+    header: "基准",
+    multiSelect: false,
+    options: [{ label: "跑" }, { label: "不跑" }],
+  };
+  await emit({
+    type: "code_call",
+    tool_use_id: "repl_e2e_ask",
+    name: "AskUserQuestion",
+    input: { questions: [question] },
+    code: "cm-r4",
+  });
+  await emit({ type: "question", request_id: "repl_e2e_ask", agent_id: null, from_code: true, questions: [question] });
+  await expect(page.getByTestId("question-card")).toContainText("再跑一遍吗？");
+  await expect(transcript.getByTestId("ask").filter({ hasText: "再跑一遍吗？" })).toHaveCount(0);
+  await emit({ type: "state", state: "busy" });
+  await emit({
+    type: "code_call_end",
+    tool_use_id: "repl_e2e_ask",
+    is_error: false,
+    response: { questions: [question], answers: { "再跑一遍吗？": "不跑" } },
+  });
+  const ask = transcript.getByTestId("ask").filter({ hasText: "再跑一遍吗？" });
+  await expect(ask.getByTestId("ask-status")).toContainText("已回答");
+  await expect(ask.locator("[data-chosen]")).toHaveText(/不跑/);
 });
 
 test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点回到输入框；每道题都答了时不能先聊聊", async ({ page }) => {

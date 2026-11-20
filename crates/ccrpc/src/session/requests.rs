@@ -353,7 +353,8 @@ impl Engine {
             None => (Value::Null, Value::Null),
         };
         json!({"type": "permission_request", "request_id": r.id, "tool_name": r.tool_name,
-            "input": r.input, "agent_id": r.agent_id, "options": options, "layout_source": source})
+            "input": r.input, "agent_id": r.agent_id, "options": options, "layout_source": source,
+            "from_code": super::code_calls::from_code(&r.id)})
     }
 
     /// The main line's AskUserQuestion still waiting for its result in the transcript.

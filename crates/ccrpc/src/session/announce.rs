@@ -324,7 +324,8 @@ impl Engine {
                     },
                 };
                 let ev = json!({"type": "question", "request_id": id,
-                    "questions": input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": agent_id});
+                    "questions": input.get("questions").cloned().unwrap_or(Value::Null), "agent_id": agent_id,
+                    "from_code": super::code_calls::from_code(&id)});
                 self.announced = Some(Announced::Request(id));
                 self.emit(ev);
             }

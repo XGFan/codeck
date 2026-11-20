@@ -83,10 +83,10 @@ const isSub = (r: Request) => "agent_id" in r && !!r.agent_id;
 
 /**
  * A question with no 「向你提问」 card in the main transcript while it waits, answered on a card of its own in the input
- * area: a background Subagent's, or one asked from code in Code Mode (`tools.AskUserQuestion`, id `repl_…`), whose
- * call claude writes to the transcript only once the script ends, after the answer.
+ * area: a background Subagent's, or one asked from code in Code Mode (`tools.AskUserQuestion`, ccrpc's `from_code`),
+ * whose call claude writes to the transcript only once the script ends, after the answer.
  */
-export const ownCard = (r: QuestionEvent) => !!r.agent_id || r.request_id.startsWith("repl_");
+export const ownCard = (r: QuestionEvent) => !!r.agent_id || !!r.from_code;
 
 function Card({ r, c, focus }: { r: Request; c: ConnState; focus: boolean }) {
   switch (r.type) {

@@ -38,6 +38,23 @@ export interface Rewound {
   keptDraft: boolean;
 }
 
+/**
+ * A tool call the main line's code is making or made (Code Mode), from ccrpc's `code_call`: shown in the transcript
+ * until the transcript has it (`codeCalls.ts`).
+ */
+export interface CodeCall {
+  toolUseId: string;
+  name: string;
+  input: unknown;
+  /** The `REPL` call whose code made it; null when ccrpc does not know. */
+  code: string | null;
+  /** It ended: whether it failed, and the tool's answer when ccrpc had it. */
+  end: { isError: boolean; response: unknown } | null;
+}
+
+/** Code calls kept: the transcript takes over long before this many. */
+const MAX_CODE_CALLS = 200;
+
 /** A prompt sent and not in the indexed transcript yet: a placeholder bubble at its end. */
 export interface PendingPrompt {
   /** Its transcript entry (ccrpc's answer); null until ccrpc answers. */
@@ -63,6 +80,8 @@ export interface ConnState {
   progress: ProgressEvent | null;
   /** What waits in the TUI's own queue (sent when the current tool call ends, or at once with `send_now`). */
   queue: string[];
+  /** Code Mode: the calls the main line's code made that ccrpc reported, oldest first (not folded by the Host). */
+  codeCalls: CodeCall[];
   tasks: Task[];
   /** The last turn's end (duration, usage, cost, error, aborted). */
   lastTurn: TurnEndEvent | null;
@@ -127,6 +146,7 @@ export function initial(
     requests: [],
     progress: null,
     queue: [],
+    codeCalls: [],
     tasks: [],
     lastTurn: null,
     procExit: null,
@@ -259,6 +279,18 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       };
     case "queue":
       return { ...s, queue: m.items };
+    case "code_call": {
+      const call = { toolUseId: m.tool_use_id, name: m.name, input: m.input, code: m.code, end: null };
+      const rest = s.codeCalls.filter((c) => c.toolUseId !== m.tool_use_id);
+      return { ...s, codeCalls: [...rest, call].slice(-MAX_CODE_CALLS) };
+    }
+    case "code_call_end":
+      return {
+        ...s,
+        codeCalls: s.codeCalls.map((c) =>
+          c.toolUseId === m.tool_use_id ? { ...c, end: { isError: m.is_error, response: m.response } } : c,
+        ),
+      };
     case "state": {
       const waiting = m.state === "waiting" ? (m.waiting ?? null) : null;
       const requests = m.state === "waiting" ? s.requests : dropMainRequests(s);
@@ -285,6 +317,8 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         ...s,
         progress: null,
         lastTurn: m,
+        // An aborted turn's code is stopped: what it was doing is never written, so nothing would take these over.
+        codeCalls: m.aborted ? [] : s.codeCalls,
         withdrawnText: m.aborted && m.restored_text ? m.restored_text : null,
       };
     case "permission_request":
@@ -334,6 +368,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         sessionExited: true,
         state: "exited",
         requests: [],
+        codeCalls: [],
         progress: null,
         feedbackDraft: null,
         picking: false,

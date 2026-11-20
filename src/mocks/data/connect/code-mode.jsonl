@@ -1,0 +1,2 @@
+{"t":1793700001000,"dir":"meta","ls":{"holder_id":"mcodemode0001","session_id":"c0de5e55-0011-4000-8000-000000000011","title":"code-mode","cwd":"/work/lumen-api","status":"busy"},"on_request":true}
+{"t":1793700001010,"dir":"recv","msg":{"type":"ready","protocol":3,"holder_id":"mcodemode0001","session_id":"c0de5e55-0011-4000-8000-000000000011","cwd":"/work/lumen-api","claude_version":"2.1.327","state":"busy","size":[120,40],"mode":"manual","model":"claude-fable-5-2","context_tokens":21000,"warnings":[]}}

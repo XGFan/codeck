@@ -2957,6 +2957,10 @@
               null
             ],
             "description": "options 所用布局的来源；options 为 null 时为 null。"
+          },
+          "from_code": {
+            "type": "boolean",
+            "description": "这次调用出自 Code Mode 的代码（REPL 脚本里的 tools.X(...)）：Claude Code 要等代码的结果送达才把它写进 transcript，此前只有 code_call 事件提到它。"
           }
         },
         "required": [
@@ -2990,6 +2994,10 @@
               "null"
             ],
             "description": "来自 Subagent Run 时的 agent id。"
+          },
+          "from_code": {
+            "type": "boolean",
+            "description": "这次调用出自 Code Mode 的代码（REPL 脚本里的 tools.X(...)）：Claude Code 要等代码的结果送达才把它写进 transcript，此前只有 code_call 事件提到它。"
           }
         },
         "required": [
@@ -3179,6 +3187,67 @@
         "required": [
           "type",
           "items"
+        ]
+      },
+      "code_call": {
+        "title": "code_call",
+        "description": "Code Mode：主线的代码（REPL 调用）发起了一次工具调用（插件的 PreToolUse）。Claude Code 要等代码的结果送达才把这些调用写进 transcript，在那之前没有对应的 block。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "code_call"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "description": "这次调用的 id（repl_…），之后 transcript 里的 tool_use block 用同一个。"
+          },
+          "name": {
+            "type": "string",
+            "description": "工具名。"
+          },
+          "input": {
+            "description": "工具输入原样。"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "发起它的代码：最近一个仍在运行的 REPL 调用的 tool_use_id；不知道时为 null。几段代码同时运行时无从分辨，取最近开始的。"
+          }
+        },
+        "required": [
+          "type",
+          "tool_use_id",
+          "name",
+          "input",
+          "code"
+        ]
+      },
+      "code_call_end": {
+        "title": "code_call_end",
+        "description": "code_call 报过的调用结束了（插件的 PostToolUse、PostToolUseFailure 或 PermissionDenied）。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "code_call_end"
+          },
+          "tool_use_id": {
+            "type": "string"
+          },
+          "is_error": {
+            "type": "boolean",
+            "description": "调用失败或被拒绝。"
+          },
+          "response": {
+            "description": "PostToolUse 的 tool_response 原样；超过 16KB 或没有时为 null。"
+          }
+        },
+        "required": [
+          "type",
+          "tool_use_id",
+          "is_error",
+          "response"
         ]
       },
       "branch": {
@@ -3649,6 +3718,12 @@
         },
         {
           "$ref": "#/$defs/events/queue"
+        },
+        {
+          "$ref": "#/$defs/events/code_call"
+        },
+        {
+          "$ref": "#/$defs/events/code_call_end"
         },
         {
           "$ref": "#/$defs/events/branch"

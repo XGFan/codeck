@@ -161,8 +161,14 @@ function ToolGroup({ row }: { row: Extract<Row, { kind: "group" }> }) {
  */
 function CurrentCall({ node, call }: { node: Node; call: ToolCallBlock }) {
   const { sessionId } = useTranscriptCtx();
+  // A permission request's id is the call's; a choice (ExitPlanMode's) names the call it is for.
   const waiting = useConnect(
-    (s) => connFor(s, sessionId)?.requests.some((r) => "tool_use_id" in r && r.tool_use_id === call.toolUseId) ?? false,
+    (s) =>
+      connFor(s, sessionId)?.requests.some(
+        (r) =>
+          (r.type === "permission_request" && r.request_id === call.toolUseId) ||
+          ("tool_use_id" in r && r.tool_use_id === call.toolUseId),
+      ) ?? false,
   );
   const ms = useElapsed(node.timestampMs, !waiting);
   const target = describeCalls([call]).targets[0];

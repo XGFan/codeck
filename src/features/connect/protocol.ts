@@ -31,6 +31,8 @@ export interface PermissionRequestEvent {
   agent_id: string | null;
   options: PermissionOption[] | null;
   layout_source: LayoutSource | null;
+  /** For a call Claude's code made (Code Mode): the transcript has no such call until the code's result is delivered. */
+  from_code?: boolean;
 }
 export interface QuestionOption {
   label: string;
@@ -49,6 +51,28 @@ export interface QuestionEvent {
   request_id: string;
   questions: AskQuestion[];
   agent_id: string | null;
+  /** Asked from Claude's code (Code Mode's `tools.AskUserQuestion`): see `PermissionRequestEvent.from_code`. */
+  from_code?: boolean;
+}
+
+/**
+ * Code Mode: the main line's code (a `REPL` call) made a tool call. Claude Code writes such calls to the transcript
+ * only once the code's result is delivered, so until then this is all that says the call is running.
+ */
+export interface CodeCallEvent {
+  type: "code_call";
+  tool_use_id: string;
+  name: string;
+  input: unknown;
+  /** The `REPL` call whose code made it (the latest still running); null when ccrpc does not know. */
+  code: string | null;
+}
+/** A call `code_call` reported ended; `response` is the tool's answer as the plugin's hook had it (null: not said). */
+export interface CodeCallEndEvent {
+  type: "code_call_end";
+  tool_use_id: string;
+  is_error: boolean;
+  response: unknown;
 }
 export interface ChoiceOption {
   label: string;
@@ -204,6 +228,8 @@ export type EventMsg =
   | { type: "follow_up_failed"; text: string; error: { code: string; message: string } }
   /** The TUI's own input queue changed: steers and what the person typed while busy, oldest first. */
   | { type: "queue"; items: string[] }
+  | CodeCallEvent
+  | CodeCallEndEvent
   | { type: "layout_learned"; layout: string; kind: string; title: string; path: string }
   | { type: "analysis_failed"; error: string; title?: string }
   | ({ type: "session_info" } & SessionInfo)
