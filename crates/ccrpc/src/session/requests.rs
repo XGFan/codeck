@@ -247,7 +247,7 @@ impl Engine {
         ))
     }
 
-    /// The options of `r`'s dialog on `lines` (`[{label, meaning}]`, labels as shown) and where
+    /// The options of `r`'s dialog on `lines` (`[{id, label, meaning}]`, labels as shown) and where
     /// its layout comes from; `None` when the screen shows no dialog that fits `r`.
     pub(super) fn dialog_options(
         &self,
@@ -269,7 +269,8 @@ impl Engine {
             .options
             .iter()
             // `meaning` as the layouts write it: allow / allow_always / deny / other.
-            .map(|(_, label, meaning)| json!({"label": label, "meaning": meaning}))
+            // `id`: the number the dialog shows (a cursor menu's position, from 1).
+            .map(|(n, label, meaning)| json!({"id": n.to_string(), "label": label, "meaning": meaning}))
             .collect();
         Some((Value::Array(options), source))
     }

@@ -540,10 +540,10 @@ function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
 
 function ChoiceCard({ r, c, focus }: { r: ChoiceEvent; c: ConnState; focus: boolean }) {
   const { busy, error, send } = useAnswer(c);
-  const pick = (label: string) => void send({ type: "answer_choice", request_id: r.request_id, option: label });
+  const pick = (id: string) => void send({ type: "answer_choice", request_id: r.request_id, option_id: id });
   useNumberKeys(
     focus && !busy,
-    r.options.map((o) => () => pick(o.label)),
+    r.options.map((o) => () => pick(o.id)),
   );
   return (
     <Shell
@@ -556,13 +556,13 @@ function ChoiceCard({ r, c, focus }: { r: ChoiceEvent; c: ConnState; focus: bool
       <div className="flex flex-col gap-1.5">
         {r.options.map((o, i) => (
           <OptionRow
-            key={o.label}
+            key={o.id}
             n={i + 1}
             label={o.label}
             desc={o.description}
             primary={i === 0}
             disabled={busy}
-            onClick={() => pick(o.label)}
+            onClick={() => pick(o.id)}
             testid="choice-option"
           />
         ))}

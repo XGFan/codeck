@@ -92,7 +92,10 @@ export function useShownTranscript(transcript: Transcript, main: boolean): Trans
   const text = useConnect((s) => connFor(s, sessionId)?.withdrawnText ?? null);
   const ids = useConnect((s) => (sessionId ? s.withdrawn[sessionId] : undefined) ?? NO_IDS);
   const found = useConnect((s) => s.withdrawnFound);
-  const calls = useConnect((s) => connFor(s, sessionId)?.codeCalls ?? NO_CALLS);
+  const native = useNativeConnect((s) => s.c);
+  const own = useConnect((s) => connFor(s, sessionId)?.codeCalls ?? NO_CALLS);
+  // On the phone's page the app has the Connect: it says what the running code called.
+  const calls = native ? native.codeCalls : own;
   // Among the prompts not taken back already (the same words sent again and taken back again).
   const id = useMemo(
     () => (text ? withdrawnPrompt(hideNodes(transcript.nodes, ids), text) : null),

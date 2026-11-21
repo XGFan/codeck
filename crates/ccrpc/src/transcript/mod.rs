@@ -28,7 +28,7 @@ mod workflows;
 
 pub use self::block::{Block, BlockKind, MAX_BLOCK_TEXT, PendingTool, Persisted};
 pub use self::branch::off_main_uuids;
-pub use self::queue::{QueueItem, QueueKind, queue_item};
+pub use self::queue::{QueueItem, QueueKind, Queued, queue_item};
 pub use self::read::entry_uuids;
 pub use self::records::local_setting;
 pub use self::tasks::{BgTask, TaskKind, monitor_notice, task_notification};
@@ -88,14 +88,17 @@ pub enum TxEvent {
     },
     /// `queue-operation` / `enqueue`: input typed while busy was accepted.
     Enqueued {
+        /// The number ccrpc gave it (see [`Queued`]).
+        id: u64,
         content: String,
     },
     /// Claude Code's input queue changed (main line): what waits in it now, oldest first, task
     /// notifications included.
-    Queue(Vec<String>),
+    Queue(Vec<Queued>),
     /// `queue-operation` / `popAll`: `↑` in the TUI took this item back into the input box (one
     /// record per item taken; what cannot be edited there stays queued).
     Popped {
+        id: u64,
         content: String,
     },
     /// A user prompt entry in the main file (string content), or a slash command's record there as
@@ -254,7 +257,7 @@ impl Tailer {
     }
 
     /// Claude Code's input queue now (main line), oldest first.
-    pub fn queue(&self) -> &[String] {
+    pub fn queue(&self) -> &[Queued] {
         self.queue.items()
     }
 
@@ -371,6 +374,7 @@ impl Tailer {
         if std::fs::metadata(&self.main).is_ok_and(|m| m.len() < self.offset) {
             let old = std::mem::replace(self, Tailer::new(&self.main));
             self.copied_from(old.copied);
+            self.queue.continue_numbering(&old.queue);
             self.main_only = old.main_only;
             self.keep_offsets = old.keep_offsets;
             self.subs = old.subs;

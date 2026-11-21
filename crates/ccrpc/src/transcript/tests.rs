@@ -62,8 +62,9 @@ fn reads_prompts_blocks_turn_ends_and_steer() {
     }));
     // steer: enqueue marker and the queued_command delivered as a queued user block
     assert!(
-        evs.iter()
-            .any(|e| matches!(e, TxEvent::Enqueued { content } if content.starts_with("STEER:")))
+        evs.iter().any(
+            |e| matches!(e, TxEvent::Enqueued { content, .. } if content.starts_with("STEER:"))
+        )
     );
     assert!(
         bs.iter()
@@ -272,7 +273,7 @@ fn queue_follows_the_queue_operations() {
         evs.into_iter()
             .filter_map(|e| {
                 if let TxEvent::Queue(q) = e {
-                    Some(q)
+                    Some(q.into_iter().map(|i| i.text).collect())
                 } else {
                     None
                 }
@@ -321,12 +322,12 @@ fn queue_follows_the_queue_operations() {
     let popped: Vec<&str> = evs
         .iter()
         .filter_map(|e| match e {
-            TxEvent::Popped { content } => Some(content.as_str()),
+            TxEvent::Popped { content, .. } => Some(content.as_str()),
             _ => None,
         })
         .collect();
     assert_eq!(popped, ["d", "e"]);
-    assert_eq!(t.queue(), [relayed("")]);
+    assert_eq!(queue_texts(&t), [relayed("")]);
 }
 
 /// EnterWorktree moves the transcript with its Session directory: what was read stays read
@@ -431,7 +432,9 @@ fn a_dequeue_is_settled_by_what_was_delivered() {
     );
     let mut t = Tailer::new(&main);
     t.poll();
-    assert_eq!(t.queue(), std::slice::from_ref(&older));
+    assert_eq!(queue_texts(&t), std::slice::from_ref(&older));
+    // The guess put back keeps its number.
+    assert_eq!(t.queue()[0].id, 1);
     append(&main, &op("remove", Some(&older)));
     t.poll();
     assert!(t.queue().is_empty(), "{:?}", t.queue());
@@ -454,10 +457,11 @@ fn a_dequeue_is_settled_by_what_was_delivered() {
     write_lines(&sub, &[prompt("x1", None, "sub prompt", 1)]);
     let mut t = Tailer::new(&main);
     t.poll();
-    assert_eq!(t.queue(), [newer.clone(), next.clone()]);
+    assert_eq!(queue_texts(&t), [newer.clone(), next.clone()]);
+    assert_eq!(t.queue().iter().map(|q| q.id).collect::<Vec<_>>(), [2, 3]);
     append(&sub, &poll("x2", "QQNj8dxd", &newer));
     t.poll();
-    assert_eq!(t.queue(), std::slice::from_ref(&next));
+    assert_eq!(queue_texts(&t), std::slice::from_ref(&next));
 
     let main = dir.path().join("p.jsonl");
     write_lines(
@@ -471,7 +475,7 @@ fn a_dequeue_is_settled_by_what_was_delivered() {
     );
     let mut t = Tailer::new(&main);
     t.poll();
-    assert_eq!(t.queue(), ["second"]);
+    assert_eq!(queue_texts(&t), ["second"]);
 }
 
 /// A main file that shrank was replaced: nothing read from the old one is kept (queue,
@@ -515,7 +519,7 @@ fn a_replaced_main_file_starts_over() {
             .any(|b| b.agent_id.as_deref() == Some("ag1"))
     );
     assert!(first.iter().any(|e| matches!(e, TxEvent::Usage { .. })));
-    assert_eq!(t.queue(), ["old one", "old two"]);
+    assert_eq!(queue_texts(&t), ["old one", "old two"]);
     assert!(t.pending_by_id("toolu_old").is_some());
     write_lines(
         &main,
@@ -532,7 +536,9 @@ fn a_replaced_main_file_starts_over() {
         "{evs:?}"
     );
     assert!(blocks(&evs).iter().any(|b| b.uuid == "n1"));
-    assert_eq!(t.queue(), ["new"]);
+    assert_eq!(queue_texts(&t), ["new"]);
+    // Numbers given to the old file's items are not given again.
+    assert_eq!(t.queue()[0].id, 3);
     assert!(t.pending().is_empty());
     assert_eq!(t.offset_of("u1"), None);
     assert_eq!(t.offset_of("n1"), Some(0));
@@ -1362,4 +1368,8 @@ fn workflow_runs_are_reported_with_their_subagent_blocks() {
         })
         .unwrap();
     assert_eq!(w["status"], "completed");
+}
+
+fn queue_texts(t: &Tailer) -> Vec<String> {
+    t.queue().iter().map(|q| q.text.clone()).collect()
 }

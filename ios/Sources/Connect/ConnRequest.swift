@@ -63,6 +63,8 @@ enum ConnRequest: Decodable, Equatable, Identifiable, Sendable {
 
 struct PermissionRequest: Decodable, Equatable, Sendable {
     struct Option: Decodable, Equatable, Sendable {
+        /// The dialog's own number for it ("1", "2"…), unique within the request.
+        var id: String
         var label: String
         var meaning: String
     }
@@ -159,6 +161,8 @@ struct QuestionRequest: Decodable, Equatable, Sendable {
 
 struct ChoiceRequest: Decodable, Equatable, Sendable {
     struct Option: Decodable, Equatable, Sendable {
+        /// The dialog's own number for it ("1", "2"…), unique within the request.
+        var id: String
         var label: String
         var meaning: String?
         var description: String?

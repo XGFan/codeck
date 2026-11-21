@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -20,14 +20,21 @@ pub struct ConnState {
     pub state: String,
     pub waiting: Option<Value>,
     pub mode: Option<String>,
-    pub model: Option<String>,
+    /// ccrpc's `{id, name}` as it wrote it (`/model` before the next answer leaves `id` null).
+    pub model: Option<Value>,
     pub effort: Option<String>,
     pub context_tokens: Option<u64>,
+    /// Why `new` never got a Session (`start_failed`): ccrpc closed that Pane and ended.
+    pub start_failed: Option<String>,
+    /// Why ccrpc gave up (`fatal`): the reason it ended, in one line.
+    pub fatal: Option<String>,
     /// What waits for an answer, as cards, in the order ccrpc reported them.
     pub requests: Vec<Value>,
     pub progress: Option<Value>,
     /// What waits in the TUI's own queue (ccrpc's queue items).
     pub queue: Vec<Value>,
+    /// The code calls Code Mode ran, newest last, at most [`CODE_CALLS_MAX`].
+    pub code_calls: Vec<Value>,
     pub tasks: Vec<Value>,
     /// The last turn's end (`turn_end` as ccrpc wrote it).
     pub last_turn: Option<Value>,
@@ -44,7 +51,11 @@ pub struct ConnState {
 }
 
 /// The protocol version this Host understands.
-const PROTOCOL: u64 = 4;
+const PROTOCOL: u64 = 5;
+/// A connection's state goes whole to every client on each change: keep only the newest code calls.
+const CODE_CALLS_MAX: usize = 50;
+/// A code call's return value longer than this is dropped (the phone renders it whole).
+const CODE_CALL_RESPONSE_MAX: usize = 4096;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct ProcExit {
@@ -73,6 +84,28 @@ fn array(v: &Value) -> Vec<Value> {
     v.as_array().cloned().unwrap_or_default()
 }
 
+/// One code call as clients receive it: ccrpc's `{tool_use_id, name, input, code}` under the Host's names, with
+/// the call's end once there is one.
+fn code_call(v: &Value, end: Value) -> Value {
+    json!({
+        "toolUseId": v["tool_use_id"],
+        "name": v["name"],
+        "input": v["input"],
+        "code": v["code"],
+        "end": end,
+    })
+}
+
+/// What a finished code call returns; too long a response is dropped.
+fn code_call_end(v: &Value) -> Value {
+    let response = &v["response"];
+    let fits = serde_json::to_vec(response).is_ok_and(|b| b.len() <= CODE_CALL_RESPONSE_MAX);
+    json!({
+        "isError": v["is_error"],
+        "response": if fits { response.clone() } else { Value::Null },
+    })
+}
+
 impl ConnState {
     pub fn new(conn: &str, holder_id: Option<String>) -> Self {
         ConnState {
@@ -88,9 +121,12 @@ impl ConnState {
             model: None,
             effort: None,
             context_tokens: None,
+            start_failed: None,
+            fatal: None,
             requests: Vec::new(),
             progress: None,
             queue: Vec::new(),
+            code_calls: Vec::new(),
             tasks: Vec::new(),
             last_turn: None,
             proc_exit: None,
@@ -137,11 +173,16 @@ impl ConnState {
                 }
                 self.waiting = some(&m["waiting"]);
                 self.mode = text(&m["mode"]);
-                self.model = text(&m["model"]);
+                self.model = some(&m["model"]);
                 self.effort = text(&m["effort"]);
                 self.context_tokens = m["context_tokens"].as_u64();
                 self.requests = array(&m["requests"]);
                 self.queue = array(&m["queue"]);
+                self.code_calls = array(&m["code_calls"])
+                    .iter()
+                    .map(|c| code_call(c, Value::Null))
+                    .collect();
+                self.trim_code_calls();
                 self.tasks = array(&m["tasks"]);
                 self.feedback_draft = some(&m["feedback_draft"]);
                 if m["protocol"].as_u64() != Some(PROTOCOL) {
@@ -164,13 +205,33 @@ impl ConnState {
             "turn_end" => {
                 self.progress = None;
                 self.last_turn = Some(m.clone());
+                // An aborted turn: its code calls did not run to an end.
+                if m["aborted"] == true {
+                    self.code_calls.clear();
+                }
+            }
+            "code_call" => {
+                self.code_calls
+                    .retain(|c| c["toolUseId"] != m["tool_use_id"]);
+                self.code_calls.push(code_call(m, Value::Null));
+                self.trim_code_calls();
+            }
+            "code_call_end" => {
+                let end = code_call_end(m);
+                if let Some(c) = self
+                    .code_calls
+                    .iter_mut()
+                    .find(|c| c["toolUseId"] == m["tool_use_id"])
+                {
+                    c["end"] = end;
+                }
             }
             "permission_request" | "question" | "choice" | "rewind" | "dialog" | "unrecognized"
             | "btw" => self.upsert_request(m.clone()),
             "request_end" => self.requests.retain(|r| r["request_id"] != m["request_id"]),
             "session_info" => {
                 self.mode = text(&m["mode"]);
-                self.model = text(&m["model"]);
+                self.model = some(&m["model"]);
                 self.effort = text(&m["effort"]);
                 self.context_tokens = m["context_tokens"].as_u64();
             }
@@ -193,16 +254,17 @@ impl ConnState {
                 "界面识别失败：{}",
                 m["error"].as_str().unwrap_or("")
             )),
-            "session_changed" => {
-                let session_id = text(&m["session_id"]);
-                // `new`'s `ready` comes before claude has a Process File, without the cwd.
-                let cwd = text(&m["cwd"]).or_else(|| self.cwd.take());
-                // The first sessionId after `ready` (`new`): the same Session, nothing to reset.
-                if m["previous"].is_null() {
-                    self.session_id = session_id;
-                    self.cwd = cwd;
-                    return true;
+            "started" => {
+                // `new`'s `ready` comes before claude has a Process File: no sessionId, and no cwd.
+                self.session_id = text(&m["session_id"]);
+                if let Some(cwd) = text(&m["cwd"]) {
+                    self.cwd = Some(cwd);
                 }
+            }
+            "session_changed" => {
+                // Always another Session: what described the old one no longer holds.
+                let session_id = text(&m["session_id"]);
+                let cwd = text(&m["cwd"]).or_else(|| self.cwd.take());
                 let mut s = ConnState::new(&self.conn, self.holder_id.take());
                 s.ready = true;
                 s.session_id = session_id;
@@ -222,12 +284,24 @@ impl ConnState {
                 self.requests.clear();
                 self.progress = None;
                 self.feedback_draft = None;
+                self.code_calls.clear();
             }
+            "start_failed" => self.start_failed = text(&m["message"]),
+            "fatal" => self.fatal = text(&m["message"]),
             "fork" => self.fork = Some(m.clone()),
+            // ccrpc's own follow_up queue: only its own client shows it.
+            "follow_ups" => return false,
             // Responses, and content events (block text, branch, workflow): not state.
             _ => return false,
         }
         true
+    }
+
+    fn trim_code_calls(&mut self) {
+        if self.code_calls.len() > CODE_CALLS_MAX {
+            self.code_calls
+                .drain(..self.code_calls.len() - CODE_CALLS_MAX);
+        }
     }
 
     /// ccrpc's process ended.
@@ -274,14 +348,19 @@ mod tests {
 
     fn ready() -> Value {
         json!({
-            "type": "ready", "protocol": 4, "holder_id": "h1", "session_id": "old", "cwd": "/w",
+            "type": "ready", "protocol": 5, "holder_id": "h1", "session_id": "old", "cwd": "/w",
             "claude_version": "2.1", "state": "idle", "waiting": null, "requests": [], "size": [80, 24],
-            "mode": "manual", "model": "m", "context_tokens": 5, "queue": [], "tasks": [], "warnings": [],
+            "mode": "manual", "model": { "id": "claude-opus-4-7", "name": "Opus 4.7" },
+            "context_tokens": 5, "queue": [], "code_calls": [], "tasks": [], "warnings": [],
         })
     }
 
     fn qi(text: &str) -> Value {
-        json!({ "kind": "typed", "from": null, "text": text, "editable": true })
+        json!({ "id": "q1", "kind": "typed", "from": null, "text": text, "editable": true, "images": [] })
+    }
+
+    fn call(id: &str, code: &str) -> Value {
+        json!({ "type": "code_call", "tool_use_id": id, "name": "Read", "input": { "path": "a" }, "code": code })
     }
 
     fn ids(s: &ConnState) -> Vec<&str> {
@@ -360,7 +439,7 @@ mod tests {
 
     #[test]
     fn ready_carries_the_requests_tasks_and_queue_and_a_wrong_protocol_is_a_notice() {
-        let item = json!({ "kind": "typed", "from": null, "text": "a", "editable": true });
+        let item = json!({ "id": "q1", "kind": "typed", "from": null, "text": "a", "editable": true, "images": [] });
         let task = json!({ "id": "b1", "kind": "shell", "tool_use_id": null, "description": null, "command": "sleep 9", "status": "running", "idle": false });
         let mut r = ready();
         r["requests"] = json!([perm("t1", None)]);
@@ -375,10 +454,10 @@ mod tests {
         assert!(s.tasks.is_empty());
 
         let mut old = ready();
-        old["protocol"] = json!(3);
+        old["protocol"] = json!(4);
         let s = fold(&[old]);
         assert_eq!(s.notices.len(), 1);
-        assert_eq!(s.notices[0].text, "ccrpc 版本不匹配：协议 3，需要 4");
+        assert_eq!(s.notices[0].text, "ccrpc 版本不匹配：协议 4，需要 5");
     }
 
     #[test]
@@ -414,17 +493,6 @@ mod tests {
         assert_eq!(s.last_turn, None);
         assert!(s.notices.is_empty());
         assert_eq!(s.context_tokens, None);
-
-        // `new`: `ready` before the plugin checked in (and before the Process File); the first
-        // sessionId only fills it in, with the cwd.
-        let mut r = ready();
-        r["session_id"] = Value::Null;
-        r["cwd"] = Value::Null;
-        let mut n = fold(&[r, perm("t1", None)]);
-        n.apply(&json!({ "type": "session_changed", "session_id": "first", "previous": null, "cwd": "/n" }));
-        assert_eq!(n.session_id.as_deref(), Some("first"));
-        assert_eq!(n.cwd.as_deref(), Some("/n"));
-        assert_eq!(ids(&n), ["t1"]);
     }
 
     #[test]
@@ -467,12 +535,148 @@ mod tests {
         assert_eq!(s.context_tokens, Some(5));
         s.apply(&json!({ "type": "queue", "items": [qi("a"), qi("b")] }));
         assert_eq!(s.queue, [qi("a"), qi("b")]);
-        s.apply(&json!({ "type": "session_info", "mode": "plan", "model": "opus", "context_tokens": 9 }));
+        s.apply(&json!({ "type": "session_info", "mode": "plan", "model": { "id": null, "name": "Sonnet 4.5" }, "context_tokens": 9 }));
         assert_eq!(
-            (s.mode.as_deref(), s.model.as_deref(), s.effort.as_deref()),
-            (Some("plan"), Some("opus"), None)
+            (s.mode.as_deref(), s.model.clone(), s.effort.as_deref()),
+            (
+                Some("plan"),
+                Some(json!({ "id": null, "name": "Sonnet 4.5" })),
+                None
+            )
         );
         assert_eq!(s.context_tokens, Some(9));
+    }
+
+    #[test]
+    fn keeps_the_models_object_from_ready_and_session_info_and_clears_it_when_none() {
+        let s = fold(&[ready()]);
+        assert_eq!(
+            s.model,
+            Some(json!({ "id": "claude-opus-4-7", "name": "Opus 4.7" }))
+        );
+        let mut gone = ready();
+        gone["model"] = Value::Null;
+        let s = fold(&[gone]);
+        assert_eq!(s.model, None);
+    }
+
+    #[test]
+    fn started_fills_in_the_session_that_new_did_not_have_yet() {
+        let mut r = ready();
+        r["session_id"] = Value::Null;
+        r["cwd"] = Value::Null;
+        let mut s = fold(&[r, perm("t1", None)]);
+        s.apply(&json!({ "type": "started", "session_id": "first", "cwd": "/n" }));
+        assert_eq!(s.session_id.as_deref(), Some("first"));
+        assert_eq!(s.cwd.as_deref(), Some("/n"));
+        // The same Session: what the Pane showed stays.
+        assert!(s.ready);
+        assert_eq!(ids(&s), ["t1"]);
+        // A `started` without a cwd leaves the one it had (attach to a claude still starting).
+        let mut s = fold(&[ready()]);
+        s.apply(&json!({ "type": "started", "session_id": "s9" }));
+        assert_eq!(s.session_id.as_deref(), Some("s9"));
+        assert_eq!(s.cwd.as_deref(), Some("/w"));
+    }
+
+    #[test]
+    fn keeps_the_reason_new_failed_and_the_reason_ccrpc_gave_up() {
+        let s = fold(&[
+            ready(),
+            json!({ "type": "start_failed", "message": "No conversation found" }),
+        ]);
+        assert_eq!(s.start_failed.as_deref(), Some("No conversation found"));
+        assert_eq!(s.fatal, None);
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["startFailed"], "No conversation found");
+        assert_eq!(v["fatal"], Value::Null);
+
+        let s = fold(&[json!({ "type": "fatal", "message": "找不到 Holder" })]);
+        assert_eq!(s.fatal.as_deref(), Some("找不到 Holder"));
+        assert_eq!(s.start_failed, None);
+    }
+
+    #[test]
+    fn folds_code_calls_from_ready_their_events_and_their_ends() {
+        let mut r = ready();
+        r["code_calls"] = json!([{ "tool_use_id": "t1", "name": "Read", "input": { "path": "a" }, "code": "read('a')" }]);
+        let mut s = fold(&[r]);
+        assert_eq!(
+            s.code_calls,
+            [json!({
+                "toolUseId": "t1", "name": "Read", "input": { "path": "a" }, "code": "read('a')",
+                "end": null,
+            })]
+        );
+        // A second call of the same id replaces the first, at the end.
+        s.apply(&call("t2", "grep('b')"));
+        s.apply(&call("t1", "read('c')"));
+        let order: Vec<_> = s.code_calls.iter().map(|c| &c["toolUseId"]).collect();
+        assert_eq!(order, [&json!("t2"), &json!("t1")]);
+        assert_eq!(s.code_calls[1]["code"], "read('c')");
+        // Its end; one that never started is ignored.
+        s.apply(&json!({ "type": "code_call_end", "tool_use_id": "t1", "is_error": false, "response": { "ok": 1 } }));
+        s.apply(&json!({ "type": "code_call_end", "tool_use_id": "t9", "is_error": false, "response": 0 }));
+        assert_eq!(
+            s.code_calls[1]["end"],
+            json!({ "isError": false, "response": { "ok": 1 } })
+        );
+        assert_eq!(s.code_calls[0]["end"], Value::Null);
+        assert_eq!(s.code_calls.len(), 2);
+    }
+
+    #[test]
+    fn code_calls_keep_only_the_newest_fifty() {
+        let mut s = fold(&[ready()]);
+        for i in 0..60 {
+            s.apply(&call(&format!("t{i}"), "x"));
+        }
+        assert_eq!(s.code_calls.len(), CODE_CALLS_MAX);
+        assert_eq!(s.code_calls[0]["toolUseId"], "t10");
+        assert_eq!(s.code_calls[CODE_CALLS_MAX - 1]["toolUseId"], "t59");
+    }
+
+    #[test]
+    fn a_code_calls_response_is_dropped_when_it_is_too_long() {
+        let mut s = fold(&[ready(), call("t1", "x"), call("t2", "y")]);
+        let long = "x".repeat(CODE_CALL_RESPONSE_MAX);
+        s.apply(&json!({ "type": "code_call_end", "tool_use_id": "t1", "is_error": false, "response": long }));
+        s.apply(&json!({ "type": "code_call_end", "tool_use_id": "t2", "is_error": true, "response": "short" }));
+        assert_eq!(
+            s.code_calls[0]["end"],
+            json!({ "isError": false, "response": null })
+        );
+        assert_eq!(
+            s.code_calls[1]["end"],
+            json!({ "isError": true, "response": "short" })
+        );
+    }
+
+    #[test]
+    fn code_calls_go_on_aborted_turns_session_exit_and_session_changed() {
+        let mut aborted = end();
+        aborted["aborted"] = json!(true);
+        let s = fold(&[ready(), call("t1", "x"), aborted]);
+        assert!(s.code_calls.is_empty());
+        // A turn that ended by itself keeps them.
+        let s = fold(&[ready(), call("t1", "x"), end()]);
+        assert_eq!(s.code_calls.len(), 1);
+        let s = fold_on(s, &[json!({ "type": "session_exit" })]);
+        assert!(s.code_calls.is_empty());
+        let s = fold_on(
+            s,
+            &[
+                call("t2", "y"),
+                json!({ "type": "session_changed", "session_id": "new", "previous": "old" }),
+            ],
+        );
+        assert!(s.code_calls.is_empty());
+    }
+
+    #[test]
+    fn follow_ups_are_not_this_states_business() {
+        let mut s = fold(&[ready()]);
+        assert!(!s.apply(&json!({ "type": "follow_ups", "items": ["a"] })));
     }
 
     #[test]

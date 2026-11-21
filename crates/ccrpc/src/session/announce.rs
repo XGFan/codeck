@@ -87,8 +87,8 @@ impl Engine {
                 let rid = format!("choice:{}", self.choice_seq);
                 let ev = json!({"type": "choice", "request_id": rid, "title": recognize::TRUST_TITLE,
                     "options": [
-                        {"label": recognize::TRUST_YES, "meaning": "allow", "description": null},
-                        {"label": recognize::TRUST_NO, "meaning": "deny", "description": null}],
+                        {"id": "1", "label": recognize::TRUST_YES, "meaning": "allow", "description": null},
+                        {"id": "2", "label": recognize::TRUST_NO, "meaning": "deny", "description": null}],
                     "tool_use_id": null, "layout": TRUST_LAYOUT, "layout_source": "builtin"});
                 crate::clog!("recognize choice layout={TRUST_LAYOUT} source=builtin");
                 crate::log::screen(lines.iter().map(String::as_str));
@@ -132,20 +132,20 @@ impl Engine {
     }
 
     /// Answers the folder trust dialog: the cursor onto the option, then Enter.
-    pub(super) fn answer_trust(&mut self, request_id: &str, option: &str) -> CmdResult {
-        let want_yes = if recognize::TRUST_YES.starts_with(option) && !option.is_empty() {
-            true
-        } else if recognize::TRUST_NO.starts_with(option) && !option.is_empty() {
-            false
-        } else {
-            return err(
-                "bad_request",
-                format!(
-                    "没有对应的选项：{option}；可选 [{:?}, {:?}]",
-                    recognize::TRUST_YES,
-                    recognize::TRUST_NO
-                ),
-            );
+    pub(super) fn answer_trust(&mut self, request_id: &str, option_id: &str) -> CmdResult {
+        let want_yes = match option_id {
+            "1" => true,
+            "2" => false,
+            _ => {
+                return err(
+                    "bad_request",
+                    format!(
+                        "没有对应的选项：{option_id}；可选 \"1\"（{}）、\"2\"（{}）",
+                        recognize::TRUST_YES,
+                        recognize::TRUST_NO
+                    ),
+                );
+            }
         };
         for _ in 0..3 {
             let now = self.fresh_screen()?;
@@ -414,7 +414,10 @@ impl Engine {
         let rid = format!("choice:{}", self.choice_seq);
         let options: Vec<Value> = opts
             .iter()
-            .map(|o| json!({"label": o.label, "meaning": o.meaning, "description": o.description}))
+            .map(|o| {
+                json!({"id": o.number.to_string(), "label": o.label, "meaning": o.meaning,
+                    "description": o.description})
+            })
             .collect();
         let ev = json!({"type": "choice", "request_id": rid, "title": title, "options": options,
             "tool_use_id": tool, "layout": id, "layout_source": source});
@@ -593,14 +596,14 @@ impl Engine {
         }
     }
 
-    /// Answers the announced choice by an option's text (exact, else a unique prefix).
-    pub(super) fn answer_choice(&mut self, request_id: &str, option: &str) -> CmdResult {
+    /// Answers the announced choice by an option's id.
+    pub(super) fn answer_choice(&mut self, request_id: &str, option_id: &str) -> CmdResult {
         if self
             .announced
             .as_ref()
             .is_some_and(|a| a.is_trust() && a.is(request_id))
         {
-            return self.answer_trust(request_id, option);
+            return self.answer_trust(request_id, option_id);
         }
         match &self.state {
             State::Waiting { .. } => {}
@@ -633,20 +636,19 @@ impl Engine {
             return err("unknown_request", "屏幕上已经不是这个选择");
         }
         let select = l.select;
-        let exact: Vec<_> = opts.iter().filter(|o| o.label == option).collect();
-        let prefix: Vec<_> = opts
+        let Some(pick) = opts
             .iter()
-            .filter(|o| o.label.starts_with(option))
-            .collect();
-        let pick = match (exact.as_slice(), prefix.as_slice()) {
-            ([o], _) | ([], [o]) => o.number,
-            _ => {
-                let labels: Vec<&str> = opts.iter().map(|o| o.label.as_str()).collect();
-                return err(
-                    "bad_request",
-                    format!("没有唯一对应的选项：{option}；可选 {labels:?}"),
-                );
-            }
+            .find(|o| o.number.to_string() == option_id)
+            .map(|o| o.number)
+        else {
+            let shown: Vec<String> = opts
+                .iter()
+                .map(|o| format!("{}（{}）", o.number, o.label))
+                .collect();
+            return err(
+                "bad_request",
+                format!("没有 id 为 {option_id} 的选项；可选 {}", shown.join("、")),
+            );
         };
         // Where `❯` is while the screen still shows this choice.
         let cursor_of = |e: &Engine, s: &Screen| -> Option<u32> {

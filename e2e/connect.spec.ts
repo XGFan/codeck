@@ -589,8 +589,8 @@ test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在�
     agent_id: null,
     from_code: true,
     options: [
-      { label: "Yes", meaning: "allow" },
-      { label: "No", meaning: "deny" },
+      { id: "1", label: "Yes", meaning: "allow" },
+      { id: "2", label: "No", meaning: "deny" },
     ],
     layout_source: "builtin",
   });
@@ -1077,7 +1077,7 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await choice.getByTestId("choice-option").filter({ hasText: "manually approve" }).click();
   await expect(choice).toHaveCount(0);
   await expect(page.getByTestId("turn-end")).toHaveAttribute("data-prompt-id", "P2");
-  expect(await lastSent(page, "answer_choice")).toMatchObject({ option: "Yes, manually approve edits" });
+  expect(await lastSent(page, "answer_choice")).toMatchObject({ request_id: "choice:1", option_id: "2" });
 
   await send(page, "重写第一条");
   const screen = page.getByTestId("screen-card");
@@ -1201,7 +1201,7 @@ test("新建 Session：选目录后选中它，进索引前显示占位且可以
   expect((await probe(page)).guiLog).toContain("new /tmp/mock-new");
 });
 
-test("新建 Session：@ 补全相对它的目录——ccrpc 的 ready 早于进程文件、没有 cwd，cwd 随 session_changed 到来", async ({
+test("新建 Session：@ 补全相对它的目录——ccrpc 的 ready 早于进程文件、没有 cwd，cwd 随 started 到来", async ({
   page,
 }) => {
   await page.goto("/");
@@ -1604,6 +1604,7 @@ test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立�
 test("ccrpc 在连接命令返回前就退出：显示退出横幅而不是一直「连接中」", async ({ page }) => {
   await connectTo(page, REFUSED);
   await expect(page.getByTestId("proc-exit")).toContainText("退出码 1");
+  // The reason is ccrpc's `fatal` message.
   await expect(page.getByTestId("proc-exit")).toContainText("Holder 版本太旧");
   // Only the banner says it: no input box under it.
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
@@ -1615,6 +1616,9 @@ test("Session 在终端里退出后：输入区只剩一行提示，「···」
 }) => {
   await connectTo(page, "（无标题）");
   await expect(page.getByTestId("session-exit")).toContainText("Session 已结束");
+  // ccrpc exits by itself after `session_exit`: that is not a failure, the card stays.
+  await expect(page.getByTestId("proc-exit")).toHaveCount(0);
+  await expect(page.getByText("ccrpc 已退出")).toHaveCount(0);
   await expect(page.getByTestId("connect-input")).toHaveCount(0);
   await inMenu(page, "connect-disconnect", (b) => expect(b).toHaveCount(0));
   // Still in `ccrpc ls` (resumed in the terminal): no Resume, connecting again replaces the ended connection.
@@ -1656,21 +1660,20 @@ test("Resume：ccrpc 在 ready 里就给出 Session ID 时同样连上（不停�
   await expect(page.getByTestId("connect-input")).toBeEnabled();
 });
 
-test("Resume 失败：claude 找不到 Session 时标题栏写明原因，新开的 Pane 关掉", async ({ page }) => {
+test("Resume 失败：ccrpc 报 start_failed 时标题栏写明原因，连接丢掉，不显示「ccrpc 已退出」", async ({ page }) => {
   await page.goto("/");
   await open(page, JWT);
   await page.getByTestId("resume-button").click();
-  // Until the failure is dealt with (the screen read, the Pane closed) it cannot be started again.
-  await expect(page.getByTestId("resume-pending")).toBeVisible();
-  await expect(page.getByTestId("resume-button")).toHaveCount(0);
   const error = page.getByTestId("header").getByTestId("connect-error");
   await expect(error).toHaveText(
     "Resume 失败：No conversation found with session ID: c04e77a2-0003-4000-8000-000000000003",
   );
-  // Read from the Pane, then the Pane closed and the connection dropped: Resume can be tried again.
-  expect(await lastSent(page, "get_screen")).toBeTruthy();
-  expect(await lastSent(page, "exit")).toMatchObject({ close_pane: true });
+  // ccrpc closes the Pane and exits by itself: nothing is sent from here, the connection is dropped, Resume can be
+  // tried again.
+  expect(await lastSent(page, "get_screen")).toBeUndefined();
+  expect(await lastSent(page, "exit")).toBeUndefined();
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(page.getByText("ccrpc 已退出")).toHaveCount(0);
   await expect(page.getByTestId("resume-button")).toBeEnabled();
 });
 
@@ -1683,6 +1686,7 @@ test("Session 已结束的卡片上直接 Resume", async ({ page }) => {
   await send(page, "/exit");
   const card = page.getByTestId("session-exit");
   await expect(card).toContainText("Session 已结束");
+  await expect(page.getByTestId("proc-exit")).toHaveCount(0);
   await card.getByTestId("session-exit-resume").click();
   await expect(page.getByTestId("session-exit")).toHaveCount(0);
   await expect(page.getByTestId("connect-input")).toBeEnabled();
@@ -1698,7 +1702,7 @@ test("目录信任框是选择卡片", async ({ page }) => {
   await card.getByTestId("choice-option").filter({ hasText: "Yes, I trust this folder" }).click();
   await expect(card).toHaveCount(0);
   await expect(state(page)).toContainText("空闲");
-  expect(await lastSent(page, "answer_choice")).toMatchObject({ option: "Yes, I trust this folder" });
+  expect(await lastSent(page, "answer_choice")).toMatchObject({ request_id: "choice:1", option_id: "1" });
 });
 
 /** The input box's words, the image tokens left out. */
@@ -2235,16 +2239,19 @@ test("打开窗口时认领 Host 上的连接：状态和等待作答的卡片�
             input: { command: "ls" },
             agent_id: null,
             options: [
-              { label: "Yes", meaning: "allow" },
-              { label: "No", meaning: "deny" },
+              { id: "1", label: "Yes", meaning: "allow" },
+              { id: "2", label: "No", meaning: "deny" },
             ],
           },
         ],
         progress: null,
         queue: [],
+        codeCalls: [],
         tasks: [],
         lastTurn: null,
         procExit: null,
+        startFailed: null,
+        fatal: null,
         sessionExited: false,
         notices: [],
         feedbackDraft: null,

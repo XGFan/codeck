@@ -20,18 +20,3 @@ export function resumeOffer(o: {
   if (o.ccrpcError) return { kind: "disabled", why: o.ccrpcError };
   return { kind: "enabled" };
 }
-
-/** How claude reports a Session it cannot resume (2.1.318: `No conversation found with session ID: <id>`). */
-const CLAUDE_ERROR = /^(No conversation found|Error:|error:)/;
-
-/**
- * Why a Resume failed, from the Pane's screen once claude exited: the last error line claude printed, else the last
- * non-empty line above the cursor (the shell's prompt that came back, of however many lines, starts below it).
- */
-export function resumeFailure(lines: string[], cursorRow: number | null): string {
-  const rows = lines.map((l) => l.trim());
-  const error = rows.filter((l) => CLAUDE_ERROR.test(l)).at(-1);
-  if (error) return error;
-  const above = (cursorRow != null ? rows.slice(0, cursorRow) : rows.slice(0, -1)).filter(Boolean);
-  return above.at(-1) ?? rows.filter(Boolean).at(-1) ?? "claude 退出了";
-}

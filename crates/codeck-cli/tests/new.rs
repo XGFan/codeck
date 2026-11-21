@@ -50,8 +50,8 @@ fn cwd() -> PathBuf {
 }
 
 const STARTED: &str = r#"
-echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":null,"cwd":"/w","state":"idle"}'
-echo '{"type":"session_changed","session_id":"S-1","previous":null}'
+echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":null,"cwd":"/w","state":"idle"}'
+echo '{"type":"started","session_id":"S-1","cwd":"/w"}'
 IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
 echo '{"type":"response","id":"1","command":"prompt","success":true,"data":{"uuid":"u"}}'
 cat > /dev/null
@@ -102,28 +102,24 @@ fn sends_the_prompt_once_the_session_is_known_then_lets_go() {
 fn the_folder_trust_dialog_is_refused_and_nothing_is_sent() {
     let (dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":null,"cwd":null,"state":"starting"}'
-echo '{"type":"choice","request_id":"choice:1","title":"t","options":[{"label":"Yes, I trust this folder","meaning":"allow","description":null},{"label":"No, exit","meaning":"deny","description":null}],"tool_use_id":null,"layout":"trust_folder","layout_source":"builtin"}'
+echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":null,"cwd":null,"state":"starting"}'
+echo '{"type":"choice","request_id":"choice:1","title":"t","options":[{"id":"1","label":"Yes, I trust this folder","meaning":"allow","description":null},{"id":"2","label":"No, exit","meaning":"deny","description":null}],"tool_use_id":null,"layout":"trust_folder","layout_source":"builtin"}'
 IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
-echo '{"type":"state","state":"exited"}'
-echo '{"type":"session_exit"}'
 echo '{"type":"response","id":"trust","command":"answer_choice","success":false,"error":{"code":"timeout","message":"m"}}'
-IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
-echo '{"type":"response","id":"close","command":"exit","success":true,"data":{}}'
+echo '{"type":"start_failed","message":"claude 没有启动"}'
 cat > /dev/null
 "#,
     );
     let err = start(&env, &NO_LAUNCH, &cwd(), "hello", Duration::from_secs(30)).unwrap_err();
     assert_eq!(err.code, "untrusted_dir");
     assert_eq!(err.message, "目录还没有信任，先在终端里用 claude 打开一次");
-    assert_eq!(err.holder_id, None, "the Pane is closed");
+    assert_eq!(err.holder_id, None, "ccrpc closed the Pane");
     let sent = sent(dir.path());
-    assert_eq!(sent.len(), 2, "the prompt is not sent: {sent:?}");
+    // The prompt is not sent, and ccrpc closes the Pane itself.
+    assert_eq!(sent.len(), 1, "the prompt is not sent: {sent:?}");
     assert_eq!(sent[0]["type"], "answer_choice");
     assert_eq!(sent[0]["request_id"], "choice:1");
-    assert_eq!(sent[0]["option"], "No, exit");
-    assert_eq!(sent[1]["type"], "exit");
-    assert_eq!(sent[1]["close_pane"], true);
+    assert_eq!(sent[0]["option_id"], "2");
 }
 
 #[test]
@@ -154,6 +150,40 @@ exit 3
 }
 
 #[test]
+fn a_fatal_reason_is_the_sentence() {
+    let (_dir, env) = fake(
+        r#"
+echo 'some earlier noise' >&2
+echo '{"type":"fatal","message":"找不到 Holder H9"}'
+echo 'ccrpc: 找不到 Holder H9' >&2
+exit 1
+"#,
+    );
+    let err = start(&env, &NO_LAUNCH, &cwd(), "hello", Duration::from_secs(30)).unwrap_err();
+    assert_eq!(err.code, "ccrpc_failed");
+    assert_eq!(err.message, "ccrpc 提前退出：找不到 Holder H9");
+    assert_eq!(err.holder_id, None);
+}
+
+#[test]
+fn claude_not_starting_is_named_and_the_pane_is_gone() {
+    let (_dir, env) = fake(
+        r#"
+echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":null,"cwd":"/w","state":"starting"}'
+echo '{"type":"start_failed","message":"No conversation found with session ID: x"}'
+exit 1
+"#,
+    );
+    let err = start(&env, &NO_LAUNCH, &cwd(), "hello", Duration::from_secs(30)).unwrap_err();
+    assert_eq!(err.code, "exited");
+    assert_eq!(
+        err.message,
+        "claude 没有启动：No conversation found with session ID: x"
+    );
+    assert_eq!(err.holder_id, None);
+}
+
+#[test]
 fn a_silent_ccrpc_times_out() {
     let (_dir, env) = fake("exec sleep 3\n");
     let err = start(&env, &NO_LAUNCH, &cwd(), "hello", Duration::from_secs(1)).unwrap_err();
@@ -165,7 +195,7 @@ fn a_silent_ccrpc_times_out() {
 fn a_failed_prompt_names_the_pane_left_behind() {
     let (_dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":4,"holder_id":"H1","session_id":"S-1","cwd":"/w","state":"idle"}'
+echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":"S-1","cwd":"/w","state":"idle"}'
 IFS= read -r line
 echo '{"type":"response","id":"1","command":"prompt","success":false,"error":{"code":"not_idle","message":"当前状态为 busy"}}'
 cat > /dev/null

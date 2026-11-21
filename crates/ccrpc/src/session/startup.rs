@@ -100,7 +100,42 @@ pub fn resolve_target(roots: &Roots, target: &str) -> Result<Pane> {
 
 const ATTACH_USAGE: &str = "用法：ccrpc attach [--log FILE] <Holder ID | sessionId>";
 
+/// The error of an ending whose reason already went out as an event (`fork` with an error,
+/// `start_failed`): the process still ends with it, but no `fatal` is added.
+#[derive(Debug)]
+pub struct Reported(pub String);
+
+impl std::fmt::Display for Reported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Reported {}
+
+/// An error that ends `attach` or `new` is the last line of stdout (`fatal`), whether it came
+/// before the engine did (arguments, no Holder, another ccrpc) or from it; `main` writes the same
+/// text to stderr.
+fn with_fatal(r: Result<()>) -> Result<()> {
+    if let Err(e) = &r
+        && e.downcast_ref::<Reported>().is_none()
+    {
+        let v = json!({"type": "fatal", "message": format!("{e:#}")});
+        crate::clog!("out {v}");
+        Out::stdout().send(&v);
+    }
+    r
+}
+
 pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
+    with_fatal(attach(roots, args))
+}
+
+pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
+    with_fatal(new(roots, args))
+}
+
+fn attach(roots: &Roots, args: &[String]) -> Result<()> {
     let mut target = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -141,7 +176,7 @@ pub fn cmd_attach(roots: &Roots, args: &[String]) -> Result<()> {
     run_engine(Engine::open(roots.clone(), &pane, Out::stdout())?)
 }
 
-pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
+fn new(roots: &Roots, args: &[String]) -> Result<()> {
     let (opts, claude_args) = match args.iter().position(|a| a == "--") {
         Some(i) => (&args[..i], &args[i + 1..]),
         None => (args, &[][..]),
@@ -233,6 +268,7 @@ pub fn cmd_new(roots: &Roots, args: &[String]) -> Result<()> {
     toh_args.extend(claude_args.iter().cloned());
     let pane = toh::new_pane(roots, &toh_args)?;
     let mut e = Engine::open(roots.clone(), &pane, Out::stdout())?;
+    e.made_pane = fork.is_none();
     e.fork = fork;
     run_engine(e)
 }

@@ -4,6 +4,7 @@
 import type {
   FeedbackDraft,
   InMsg,
+  ModelInfo,
   ProgressEvent,
   QueueItem,
   RequestEvent,
@@ -62,7 +63,7 @@ export interface ConnState {
   state: StateName;
   waiting: Waiting | null;
   mode: string | null;
-  model: string | null;
+  model: ModelInfo | null;
   effort: string | null;
   contextTokens: number | null;
   requests: Request[];
@@ -74,8 +75,12 @@ export interface ConnState {
   tasks: Task[];
   /** The last turn's end (duration, usage, cost, error, aborted). */
   lastTurn: TurnEndEvent | null;
-  /** ccrpc's process ended (not the Session). */
+  /** ccrpc's process ended (not the Session). After `session_exit` it is expected and not a failure. */
   procExit: { code: number | null; stderr: string } | null;
+  /** `start_failed`'s message: claude did not start (`new`, Resume); ccrpc then exits with 1. */
+  startFailed: string | null;
+  /** `fatal`'s message: why ccrpc could not go on; ccrpc then exits with 1. */
+  fatal: string | null;
   sessionExited: boolean;
   /** A turn ended while this Session was not on screen. */
   unread: boolean;
@@ -139,6 +144,8 @@ export function initial(
     tasks: [],
     lastTurn: null,
     procExit: null,
+    startFailed: null,
+    fatal: null,
     sessionExited: false,
     unread: false,
     notices: [],
@@ -172,9 +179,12 @@ export type HostConn = Pick<
   | "requests"
   | "progress"
   | "queue"
+  | "codeCalls"
   | "tasks"
   | "lastTurn"
   | "procExit"
+  | "startFailed"
+  | "fatal"
   | "sessionExited"
   | "notices"
   | "feedbackDraft"
@@ -197,9 +207,12 @@ export function fromHost(h: HostConn): ConnState {
     requests: h.requests,
     progress: h.progress,
     queue: h.queue,
+    codeCalls: h.codeCalls,
     tasks: h.tasks,
     lastTurn: h.lastTurn,
     procExit: h.procExit,
+    startFailed: h.startFailed,
+    fatal: h.fatal,
     sessionExited: h.sessionExited,
     // The Host numbers its notices apart from `noticeSeq`: negative, so they never share an id with later ones.
     notices: h.notices.map((n) => ({ ...n, id: -n.id })),
@@ -318,9 +331,14 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       return notice(s, `已学会新界面：${m.title}`);
     case "analysis_failed":
       return notice(s, `界面识别失败：${m.error}`);
+    case "started":
+      // The first sessionId after `ready`: the same Session, nothing to reset.
+      return { ...s, sessionId: m.session_id, cwd: m.cwd ?? s.cwd };
+    case "start_failed":
+      return { ...s, startFailed: m.message };
+    case "fatal":
+      return { ...s, fatal: m.message };
     case "session_changed":
-      // The first sessionId after `ready` (`new`): the same Session, nothing to reset.
-      if (m.previous == null) return { ...s, sessionId: m.session_id, cwd: m.cwd ?? s.cwd };
       // Another Session: its requests, queue and tasks start over (ccrpc sends the queue and tasks again).
       return {
         ...initial(s.conn, s.holderId),

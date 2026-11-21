@@ -26,13 +26,8 @@ final class ConnectStore {
     var startFailures: [String: String] = [:]
     /// A Session to open now (a Fork that just got its Session).
     var openRequest: OpenRequest?
-    @ObservationIgnored var failingResumes: Set<String> = []
     /// Resumes and Forks whose call to the Host is on its way (no connection yet), so a second tap is refused at once.
     var pendingStarts: Set<StartKind> = []
-    /// How long a Resume may take to name its Session, counted from the last card it waited on.
-    @ObservationIgnored var resumeTimeout: Duration = .seconds(30)
-    /// When a start last had a card up or just lost one, by conn id.
-    @ObservationIgnored var cardSeenAt: [String: ContinuousClock.Instant] = [:]
     /// Forks whose Session was opened for a card before the Fork was done, by conn id.
     @ObservationIgnored var forkCardsOpened: Set<String> = []
     /// The prompt whose confirm page a `rewind` sent here is opening, by conn id.
@@ -71,8 +66,6 @@ final class ConnectStore {
         started = [:]
         startFailures = [:]
         openRequest = nil
-        failingResumes = []
-        cardSeenAt = [:]
         forkCardsOpened = []
         pendingStarts = []
         moved = [:]
@@ -114,7 +107,6 @@ final class ConnectStore {
         let merged = Self.merged(local: conns, snapshot: states.items, touched: touched, ending: ending)
         for s in states.items where !touched.contains(s.conn) {
             noteMove(from: conns[s.conn], to: s)
-            noteCard(from: conns[s.conn], to: s)
         }
         order = order.filter { merged[$0] != nil } + states.items.map(\.conn).filter { merged[$0] != nil && !order.contains($0) }
         conns = merged
@@ -147,15 +139,8 @@ final class ConnectStore {
     private func store(_ state: ConnState) {
         if conns[state.conn] == nil, !order.contains(state.conn) { order.append(state.conn) }
         noteMove(from: conns[state.conn], to: state)
-        noteCard(from: conns[state.conn], to: state)
         conns[state.conn] = state
         follow(state.conn)
-    }
-
-    /// A start's card is up or just went: the time claude has to name its Session counts from here.
-    private func noteCard(from old: ConnState?, to new: ConnState) {
-        guard starts[new.conn] != nil, !new.requests.isEmpty || old?.requests.isEmpty == false else { return }
-        cardSeenAt[new.conn] = .now
     }
 
     /// The connection went on to another Session: a page open on the old one goes with it (a start's own changes
@@ -184,7 +169,6 @@ final class ConnectStore {
     func remove(conn: String) {
         touched.insert(conn)
         follow(conn, gone: true)
-        cardSeenAt[conn] = nil
         forkCardsOpened.remove(conn)
         rewounds[conn] = nil
         restoredPrompts[conn] = nil
@@ -197,8 +181,8 @@ final class ConnectStore {
         order.removeAll { $0 == conn }
     }
 
-    /// Before a Resume: ended Connects of this Session go (one whose ccrpc still runs, driving nothing, is
-    /// disconnected).
+    /// Before a Resume: ended Connects of this Session go (one whose ccrpc has not ended yet, its Session just over,
+    /// is disconnected: its end is then not kept as one that ended by itself).
     func dropEnded(of sessionId: String) async {
         for c in conns.values where c.sessionId == sessionId && !c.isLive {
             if c.procExit == nil {

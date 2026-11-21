@@ -14,23 +14,16 @@ import {
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import type { ConnState } from "./conn";
+import type { ModelInfo } from "./protocol";
 import { errorKey, isLive, useConnect } from "./store";
 
 const FAMILIES = ["opus", "fable", "sonnet", "haiku"] as const;
 
-/**
- * A model as Claude Code Desktop names it: `claude-opus-4-7` → `Opus 4.7`, `claude-fable-5-1[1m]` →
- * `Fable 5.1 (1M)`; a display name (what `/model` just said it set) or an unknown id stays as it is.
- */
-export function modelLabel(model: string): string {
-  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(model.trim());
-  if (!m) return model;
-  const family = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase();
-  return `${family} ${m[2]}${m[3] ? `.${m[3]}` : ""}${m[4] ? " (1M)" : ""}`;
-}
-
 /** The family a model belongs to, for the check mark among the aliases. */
-export const modelFamily = (model: string | null) => FAMILIES.find((f) => model?.toLowerCase().includes(f)) ?? null;
+export const modelFamily = (model: ModelInfo | null) => {
+  const key = (model?.id ?? model?.name)?.toLowerCase();
+  return FAMILIES.find((f) => key?.includes(f)) ?? null;
+};
 
 /** Effort levels as Desktop shows them: xhigh is 「Extra」. */
 export const EFFORTS = [
@@ -83,7 +76,7 @@ export function ModelPicker({ c }: { c: ConnState }) {
           title={idle ? "切换模型与思考等级" : "空闲时可切换模型与思考等级"}
           className="ml-1 flex h-7 max-w-56 items-center gap-1.5 rounded-lg px-2 text-text/90 hover:bg-selection/60 disabled:hover:bg-transparent data-[state=open]:bg-selection/60"
         >
-          <span className="truncate">{c.model ? modelLabel(c.model) : "模型"}</span>
+          <span className="truncate">{c.model ? c.model.name : "模型"}</span>
           {c.effort && (
             <span data-testid="connect-effort" className="shrink-0 text-secondary">
               {effortLabel(c.effort)}

@@ -17,6 +17,7 @@ import { errorText } from "@/lib/errors";
 import { formatTokens } from "@/lib/format";
 import { useUi } from "@/state/ui";
 import type { ConnState } from "./conn";
+import type { ModelInfo } from "./protocol";
 import { ModelPicker } from "./Model";
 import { resumeOffer } from "./resume";
 import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useConnect } from "./store";
@@ -300,10 +301,13 @@ function ConnectError({ errKey, text }: { errKey: string; text: string }) {
 }
 
 /** Context window size for the ring: 1M for the `[1m]` models, else 200K. */
-const windowOf = (model: string | null) => (model && /\[1m\]|1m/i.test(model) ? 1_000_000 : 200_000);
+const windowOf = (model: ModelInfo | null) => {
+  const key = model?.id ?? model?.name;
+  return key && /\[1m\]|1m/i.test(key) ? 1_000_000 : 200_000;
+};
 
 /** How full the context is, as a small ring (Codex style). */
-function ContextRing({ tokens, model }: { tokens: number; model: string | null }) {
+function ContextRing({ tokens, model }: { tokens: number; model: ModelInfo | null }) {
   const f = Math.min(1, tokens / windowOf(model));
   const c = 2 * Math.PI * 9;
   return (

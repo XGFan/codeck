@@ -27,7 +27,7 @@ use crate::recognize::{self, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
 use crate::toh::{self, Pane};
-use crate::transcript::{self, BgTask, BlockKind, QueueItem, Tailer, TaskKind, TxEvent};
+use crate::transcript::{self, BgTask, BlockKind, QueueItem, Queued, Tailer, TaskKind, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
 mod announce;
@@ -35,6 +35,7 @@ mod btw;
 mod code_calls;
 mod drive;
 mod fork;
+mod model;
 mod reported;
 mod requests;
 mod rewind;
@@ -44,12 +45,13 @@ mod turn;
 
 use self::announce::Announced;
 pub use self::fork::ForkJob;
+use self::model::Model;
 use self::requests::{HookPrompt, HookRequest, PreTool};
 use self::rewind::RewindReq;
-pub use self::startup::{cmd_attach, cmd_new, resolve_target};
+pub use self::startup::{Reported, cmd_attach, cmd_new, resolve_target};
 use self::turn::{Marks, TurnTracker, Typed};
 
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 /// Longest wait between two looks while a command waits.
 const TICK: Duration = Duration::from_millis(50);
 /// Longest wait between two looks when idle (file, Holder and stdin events wake earlier).
@@ -209,7 +211,7 @@ pub struct Engine {
     /// `get_messages` asked and not answered yet, oldest first.
     pages: VecDeque<PendingPage>,
     /// Main line's last model and context size; the permission mode the plugin last saw.
-    model: Option<String>,
+    model: Option<Model>,
     /// The effort level: the TUI's `◉ xhigh · /effort` mark, what `/effort` said it set, else
     /// the last reply's; none for a model without effort levels.
     effort: Option<String>,
@@ -236,6 +238,17 @@ pub struct Engine {
     progress_sent: Option<(String, Instant)>,
     /// The engine cannot go on (no plugin, another ccrpc): `run` returns this error.
     fatal: Option<String>,
+    /// `fatal` was already told to the caller by another event (a failed Fork): `run` returns
+    /// it as [`Reported`].
+    fatal_reported: bool,
+    /// `new` made the Pane for a claude of its own (no `--fork`): one that never gets its
+    /// Session ends with `start_failed`.
+    pub(super) made_pane: bool,
+    /// claude is gone, or never came, before its Session had an id: `run` ends with
+    /// `start_failed`.
+    launch_failed: bool,
+    /// When `ready` went out.
+    ready_at: Option<Instant>,
     holder_id: String,
     shell_pid: u32,
     conn: HolderConn,
@@ -262,7 +275,7 @@ pub struct Engine {
     checkins_seen: HashSet<u32>,
     pf: Option<ProcessFile>,
     session_id: Option<String>,
-    /// `ready` went out: a sessionId learned from now on is announced (`session_changed`).
+    /// `ready` went out: a sessionId learned from now on is announced (`started`).
     ready_sent: bool,
     tailer: Option<Tailer>,
     state: State,
@@ -303,11 +316,17 @@ pub struct Engine {
     /// What the person typed (or a steer sent) waiting in Claude Code's own queue, oldest first:
     /// the transcript's queue minus task notifications and Teammate messages.
     queue: Vec<QueueItem>,
+    /// The image files of what ccrpc sent that waits in that queue, by queue id.
+    queue_images: HashMap<u64, Vec<String>>,
+    /// The image files of the prompt or steer being sent: given to the queue item it becomes.
+    pending_images: Option<Vec<String>>,
     marks: Marks,
     /// Requests that are over (answered here or elsewhere): never matched to a dialog again.
     resolved: HashSet<String>,
     /// The background tasks last sent (`tasks`).
     tasks_sent: Option<Vec<BgTask>>,
+    /// The follow-ups last sent (`follow_ups`).
+    follow_ups_sent: Option<Vec<String>>,
     procfile_warned: bool,
     exited: bool,
     /// Events are suppressed (initial settle).
@@ -328,6 +347,12 @@ pub struct Engine {
     /// starts may not show yet.
     commanded_at: Option<Instant>,
 }
+
+/// How long after `ready` a `new` Pane may go without a claude process before `start_failed`.
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// `start_failed` reads the Pane's screen once it has been still this long (the shell draws its
+/// prompt after what claude left).
+const LAUNCH_SCREEN_SETTLE: Duration = Duration::from_millis(300);
 
 /// A `get_messages` being read on the history thread: answered once the page comes, in the order
 /// the requests came (other commands go on meanwhile).
@@ -414,6 +439,10 @@ impl Engine {
             looked_at: None,
             progress_sent: None,
             fatal: None,
+            fatal_reported: false,
+            made_pane: false,
+            launch_failed: false,
+            ready_at: None,
             holder_id: pane.id.clone(),
             shell_pid: pane.shell_pid,
             conn,
@@ -454,9 +483,12 @@ impl Engine {
             startup_dialog: None,
             follow_ups: VecDeque::new(),
             queue: Vec::new(),
+            queue_images: HashMap::new(),
+            pending_images: None,
             marks: Marks::default(),
             resolved: HashSet::new(),
             tasks_sent: None,
+            follow_ups_sent: None,
             procfile_warned: false,
             exited: false,
             quiet: false,
@@ -752,7 +784,8 @@ impl Engine {
             copied
         };
         let prev = self.session_id.replace(sid.clone());
-        // Also the first one after `ready` (`new`: the plugin checks in after the startup screens).
+        // The first one after `ready` is `started` (`new`: the plugin checks in after the startup
+        // screens).
         if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
             self.rewound = None;
             let cwd = self.pf.as_ref().and_then(|p| p.cwd.clone()).or(cwd);
@@ -763,11 +796,14 @@ impl Engine {
                 self.announced = None;
                 self.tasks_sent = None;
                 self.queue.clear();
+                self.queue_images.clear();
+                self.emit(
+                    json!({"type": "session_changed", "session_id": sid, "previous": prev,
+                    "cwd": cwd}),
+                );
+            } else {
+                self.emit(json!({"type": "started", "session_id": sid, "cwd": cwd}));
             }
-            self.emit(
-                json!({"type": "session_changed", "session_id": sid, "previous": prev,
-                "cwd": cwd}),
-            );
         }
         self.title_tail = Default::default();
         self.code_calls = Default::default();
@@ -782,7 +818,7 @@ impl Engine {
                         TxEvent::UserPrompt { uuid, text, images } => {
                             self.marks.prompt(uuid, text, images)
                         }
-                        TxEvent::Enqueued { content } => self.marks.enqueue(content),
+                        TxEvent::Enqueued { id, content } => self.marks.enqueue(id, content),
                         TxEvent::Block(b) if b.agent_id.is_none() && b.kind == BlockKind::Text => {
                             self.turns.note_history_text(b.text.clone());
                         }
@@ -834,18 +870,25 @@ impl Engine {
     pub fn tick(&mut self) {
         // Pages are answered after the Session ended too (the transcript is still there).
         self.poll_pages();
-        if self.exited {
+        if self.exited || self.launch_failed {
             return;
         }
         if self.conn.poll_closed() {
-            self.set_exited();
+            self.gone();
             return;
         }
         self.size = self.conn.size();
         self.locate_claude();
+        if self.made_pane
+            && self.claude_pid.is_none()
+            && self.ready_at.is_some_and(|t| t.elapsed() >= LAUNCH_TIMEOUT)
+        {
+            self.launch_failed = true;
+            return;
+        }
         if let Some(pid) = self.claude_pid {
             if !::transcript::live::pid_exists(pid) {
-                self.set_exited();
+                self.gone();
                 return;
             }
             if let Some((pf, job)) = procfile::read_with_job(&self.roots, pid) {
@@ -908,6 +951,7 @@ impl Engine {
         self.look_at_screen();
         self.sync_requests();
         self.sync_tasks();
+        self.sync_follow_ups();
     }
 
     /// The permission mode: the mode line under the input box, else what the plugin last saw.
@@ -1045,7 +1089,7 @@ impl Engine {
     }
 
     fn session_info(&self) -> Value {
-        json!({"mode": self.mode(), "model": self.model, "effort": self.effort,
+        json!({"mode": self.mode(), "model": self.model.as_ref(), "effort": self.effort,
             "context_tokens": self.context_tokens, "title": self.title})
     }
 
@@ -1083,7 +1127,7 @@ impl Engine {
         self.feedback_draft_gone();
         let info = self.session_info();
         if self.info_sent.as_ref() != Some(&info)
-            && (info["mode"].is_string() || info["model"].is_string())
+            && (info["mode"].is_string() || info["model"].is_object())
         {
             let mut v = info.clone();
             v["type"] = json!("session_info");
@@ -1145,6 +1189,16 @@ impl Engine {
             paths.push((sdir.as_path(), Recursive));
         }
         self.fs.set(&paths);
+    }
+
+    /// claude is gone, or the Holder is: the Session ended, or (a `new` whose Session had no id
+    /// yet) never started.
+    fn gone(&mut self) {
+        if self.made_pane && self.session_id.is_none() {
+            self.launch_failed = true;
+        } else {
+            self.set_exited();
+        }
     }
 
     fn set_exited(&mut self) {
@@ -1286,15 +1340,33 @@ impl Engine {
     }
 
     /// Claude Code's queue changed: keep the person's part, and tell the caller.
-    fn set_queue(&mut self, items: &[String]) {
+    fn set_queue(&mut self, items: &[Queued]) {
         let mine: Vec<QueueItem> = items
             .iter()
-            .filter(|t| in_queue(t))
-            .map(|t| transcript::queue_item(t))
+            .filter(|q| in_queue(&q.text))
+            .map(|q| {
+                let mut item = transcript::queue_item(q.id, &q.text);
+                if item.images.is_none() {
+                    item.images = self.queue_images.get(&q.id).cloned();
+                }
+                item
+            })
             .collect();
+        self.queue_images
+            .retain(|id, _| items.iter().any(|q| q.id == *id));
         if mine != self.queue {
             self.queue = mine;
             self.emit(json!({"type": "queue", "items": self.queue}));
+        }
+    }
+
+    /// A prompt or steer being sent was enqueued as `id`: its images are the item's.
+    pub(super) fn note_queue_images(&mut self, id: u64, content: &str) {
+        // A send without images leaves the files of an item typed elsewhere meanwhile unknown.
+        if content.contains("[Image #")
+            && let Some(images) = self.pending_images.take_if(|i| !i.is_empty())
+        {
+            self.queue_images.insert(id, images);
         }
     }
 
@@ -1404,7 +1476,10 @@ impl Engine {
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
             Command::StopTask { task_id } => self.stop_task(task_id),
             Command::DismissFeedbackDraft => self.dismiss_feedback_draft(),
-            Command::AnswerChoice { request_id, option } => self.answer_choice(request_id, option),
+            Command::AnswerChoice {
+                request_id,
+                option_id,
+            } => self.answer_choice(request_id, option_id),
             Command::Rewind { uuid } => self.rewind(uuid),
             Command::AnswerRewind { request_id, option } => {
                 self.answer_rewind_cmd(request_id, *option)
@@ -1471,6 +1546,7 @@ impl Engine {
                 }
             }
         };
+        self.pending_images = None;
         if matches!(c, Command::SendKeys { .. } | Command::Abort) {
             self.end_unrecognized();
         }
@@ -1479,6 +1555,7 @@ impl Engine {
 
     fn ready(&mut self) {
         self.ready_sent = true;
+        self.ready_at = Some(Instant::now());
         let version = self.pf.as_ref().and_then(|p| p.version.clone());
         crate::clog!(
             "ccrpc {} holder={} session={} claude={} size={}x{}",
@@ -1500,8 +1577,10 @@ impl Engine {
         // Seen by the first look, before events went out.
         let snapshot = self.snapshot();
         let tasks = snapshot.tasks.clone();
+        let follow_ups = snapshot.follow_ups.clone();
         let v = ready_event(snapshot.to_json(), version, warnings);
         self.tasks_sent = Some(tasks);
+        self.follow_ups_sent = Some(follow_ups);
         self.emit(v);
     }
 
@@ -1510,18 +1589,24 @@ impl Engine {
         self.input = Some(input);
         self.settle();
         if let Some(f) = self.fatal.take() {
-            self.conn.detach();
-            bail!(f);
+            return Err(self.end_with(f));
         }
         self.ready();
+        // Gone before `ready` (its `session_exit` went out to nobody): said now, so that ccrpc
+        // never ends without a word.
+        if self.exited {
+            self.emit(json!({"type": "session_exit"}));
+        }
         // Workflow Runs already there are reported once after `ready`.
         if let Some(t) = self.tailer.as_mut() {
             t.forget_workflows();
         }
         loop {
             if let Some(f) = self.fatal.take() {
-                self.conn.detach();
-                bail!(f);
+                return Err(self.end_with(f));
+            }
+            if self.launch_failed {
+                return Err(self.fail_launch());
             }
             // Between commands only: a command in progress is never cut off.
             if startup::terminated() {
@@ -1561,6 +1646,10 @@ impl Engine {
                 Ok(line) => self.handle_line(&line),
                 Err(TryRecvError::Empty) => {
                     self.tick();
+                    // The Session ended and what was read has been answered.
+                    if self.exited {
+                        break;
+                    }
                     // A SIGTERM during the tick: no queued prompt goes out after it.
                     if !startup::terminated() {
                         self.drain_follow_ups();
@@ -1593,6 +1682,57 @@ impl Engine {
         }
         self.conn.detach();
         Ok(())
+    }
+
+    /// Detaches and makes the error `run` returns for `fatal`.
+    fn end_with(&mut self, fatal: String) -> anyhow::Error {
+        self.conn.detach();
+        if self.fatal_reported {
+            Reported(fatal).into()
+        } else {
+            anyhow::anyhow!(fatal)
+        }
+    }
+
+    /// `start_failed` for a `new` whose claude never got a Session (gone, or not there after
+    /// [`LAUNCH_TIMEOUT`]): says why from the Pane's screen, answers what was read with `exited`,
+    /// ends the Pane's shell and returns the error that ends ccrpc.
+    fn fail_launch(&mut self) -> anyhow::Error {
+        let mut last = (self.conn.generation(), Instant::now());
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while last.1.elapsed() < LAUNCH_SCREEN_SETTLE && Instant::now() < deadline {
+            self.conn.wait_change(last.0, TICK);
+            let generation = self.conn.generation();
+            if generation != last.0 {
+                last = (generation, Instant::now());
+            }
+        }
+        let message = self
+            .screen()
+            .ok()
+            .and_then(|s| fork::exit_line(&s))
+            .unwrap_or_else(|| "claude 没有启动".into());
+        crate::clog!("start failed: {message}");
+        self.emit(json!({"type": "start_failed", "message": message}));
+        let mut lines: Vec<String> = self.deferred.drain(..).collect();
+        if let Some(rx) = &self.input {
+            lines.extend(std::iter::from_fn(|| rx.try_recv().ok()));
+        }
+        for line in lines {
+            if let Ok(r) = rpc::parse_line(&line) {
+                let name = rpc::command_name(&r.command);
+                self.emit(rpc::response_err(
+                    r.id.as_deref(),
+                    name,
+                    "exited",
+                    "Session 没有启动，ccrpc 已结束",
+                ));
+            }
+        }
+        // claude is gone (or never was): what is left is the Pane's login shell.
+        let _ = self.keys(&[b"exit".as_slice(), key::ENTER].concat());
+        self.conn.detach();
+        Reported(message).into()
     }
 
     /// `settled` once nothing more runs by itself after a turn ended: idle for
@@ -1722,6 +1862,7 @@ impl Engine {
                 // A snapshot the command returns (`get_state`, `get_tasks`) is of what is live now.
                 self.sync_requests();
                 self.sync_tasks();
+                self.sync_follow_ups();
                 let v = match self.execute(&command) {
                     Ok(data) => rpc::response_ok(id.as_deref(), name, data),
                     Err((code, msg)) => rpc::response_err(id.as_deref(), name, code, &msg),
@@ -1729,6 +1870,7 @@ impl Engine {
                 // What the command ended is said before its response.
                 self.sync_requests();
                 self.sync_tasks();
+                self.sync_follow_ups();
                 self.emit(v);
             }
             Err(RpcError {
@@ -1867,7 +2009,7 @@ mod tests {
         let mut want = fields;
         want.extend(["type", "protocol", "claude_version", "warnings"].map(String::from));
         assert_eq!(keys(&ready), want);
-        assert_eq!(ready["protocol"], 4);
+        assert_eq!(ready["protocol"], 5);
     }
 
     #[test]

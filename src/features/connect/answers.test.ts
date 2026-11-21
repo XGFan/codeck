@@ -4,8 +4,8 @@ import type { AskQuestion } from "./protocol";
 
 describe("permissionLabel", () => {
   const opts = (allow: string, deny: string) => [
-    { label: allow, meaning: "allow" as const },
-    { label: deny, meaning: "deny" as const },
+    { id: "1", label: allow, meaning: "allow" as const },
+    { id: "2", label: deny, meaning: "deny" as const },
   ];
 
   it("Claude Code's own dialogs keep the fixed words; a learned layout shows the dialog's", () => {

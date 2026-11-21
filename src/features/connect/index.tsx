@@ -13,7 +13,7 @@ import { ErrorNotice, NoticeCard } from "./Notice";
 import { arrived, PENDING_MAX_MS } from "./pending";
 import { ownCard, Requests } from "./Requests";
 import { resumeOffer } from "./resume";
-import { connFor, draftKey, errorKey, isNewUnprompted, lsEntryFor, useConnect, waitingSessions } from "./store";
+import { connFor, draftKey, errorKey, isLive, isNewUnprompted, lsEntryFor, useConnect, waitingSessions } from "./store";
 
 export { ConnectButton, ConnectMenuItems, STATE_WORD, useConnectDebugInfo } from "./Header";
 export { arrived, isFresh } from "./pending";
@@ -186,7 +186,7 @@ function Panel({ c }: { c: ConnState }) {
   const reconnect = useConnect((s) => s.reconnect);
   const dismiss = useConnect((s) => s.dismissNotice);
   const setError = useConnect((s) => s.setError);
-  const live = !c.procExit && !c.sessionExited && c.ready;
+  const live = isLive(c) && c.ready;
   const storeError = useConnect((s) => s.errors[errorKey(c)]);
   const floatRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -241,13 +241,14 @@ function Panel({ c }: { c: ConnState }) {
       className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
     >
       <div className="pointer-events-auto mx-auto flex w-full max-w-(--conv-w) flex-col gap-2">
-        {c.procExit && (
+        {/* After `session_exit` or `start_failed` ccrpc exits by itself: not a failure, the card or error says it. */}
+        {c.procExit && !c.sessionExited && !c.startFailed && (
           <NoticeCard
             tone="error"
             testId="proc-exit"
             icon={<Unplug size={18} strokeWidth={1.7} />}
             title={`ccrpc 已退出（${c.procExit.code == null ? "被信号终止" : `退出码 ${c.procExit.code}`}）`}
-            desc={c.procExit.stderr ? lastLine(c.procExit.stderr) : undefined}
+            desc={c.fatal ?? (c.procExit.stderr ? lastLine(c.procExit.stderr) : undefined)}
             action={
               c.holderId
                 ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" }
@@ -255,7 +256,7 @@ function Panel({ c }: { c: ConnState }) {
             }
           />
         )}
-        {c.sessionExited && !c.procExit && <SessionExited c={c} />}
+        {c.sessionExited && <SessionExited c={c} />}
         {c.notices.map((n) => (
           <NoticeCard
             key={n.id}
@@ -267,7 +268,7 @@ function Panel({ c }: { c: ConnState }) {
         ))}
         {storeError && <ErrorNotice text={storeError} onClose={() => setError(errorKey(c), null)} />}
         {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
-        {!c.procExit && !c.sessionExited && (
+        {isLive(c) && (
           <>
             <Requests c={c} />
             <Composer c={c} />
@@ -323,7 +324,7 @@ function SessionExited({ c }: { c: ConnState }) {
 export function ConnectTail({ promptIds }: { promptIds?: ReadonlySet<string> }) {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
-  if (!c || c.procExit) return null;
+  if (!c || (c.procExit && !c.sessionExited)) return null;
   return (
     <>
       {c.state !== "busy" && c.lastTurn && <LastTurn ev={c.lastTurn} />}

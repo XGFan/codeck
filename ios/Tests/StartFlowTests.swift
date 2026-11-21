@@ -40,28 +40,6 @@ final class StartFlowTests: XCTestCase {
         XCTAssertEqual(StartOffer.fork(cwd: "/work/app", cwdMissing: true, ccrpcError: nil), .disabled("目录 /work/app 已不存在"))
     }
 
-    // MARK: resumeFailure
-
-    private let screen = [
-        #"guofan@MBP work % env "$TOH_ARG_1" "$TOH_ARG_2" claude --resume 597821af-f8eb-49"#,
-        "aa-8fd8-cf72e4e0b5c3 --plugin-dir /tmp/p/ccrpc",
-        "No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3",
-        "guofan@MBP work %",
-        "",
-    ]
-
-    func testResumeFailureTakesClaudesErrorLine() {
-        let error = "No conversation found with session ID: 597821af-f8eb-49aa-8fd8-cf72e4e0b5c3"
-        XCTAssertEqual(StartFlow.resumeFailure(screen, cursorRow: 3), error)
-        XCTAssertEqual(StartFlow.resumeFailure(Array(screen.prefix(3)) + ["~/work on main", "❯", ""], cursorRow: 4), error)
-        XCTAssertEqual(StartFlow.resumeFailure(Array(screen.prefix(3)), cursorRow: 3), error)
-    }
-
-    func testResumeFailureElseTheLastLineAboveTheCursor() {
-        XCTAssertEqual(StartFlow.resumeFailure(["% claude --resume x", "Something unexpected", "% ", ""], cursorRow: 2), "Something unexpected")
-        XCTAssertEqual(StartFlow.resumeFailure(["", " "], cursorRow: 0), "claude 退出了")
-    }
-
     // MARK: Following a started connection
 
     private func conn(session: String?, live: Bool = true, stderr: String? = nil, notice: String? = nil) -> ConnState {
@@ -93,6 +71,19 @@ final class StartFlowTests: XCTestCase {
         // ccrpc ending before the event is a failure too.
         XCTAssertEqual(StartFlow.outcome(.fork(origin: "s1"), conn(session: nil, live: false, stderr: "error: boom")),
                        .failed("error: boom"))
+    }
+
+    func testCcrpcsOwnReasonComesFirst() {
+        var told = conn(session: nil)
+        told.startFailed = "No conversation found with session ID: 597821af"
+        XCTAssertEqual(StartFlow.outcome(.new(cwd: "/w"), told), .failed("No conversation found with session ID: 597821af"))
+        var fatal = conn(session: nil)
+        fatal.fatal = "找不到 Holder H9"
+        XCTAssertEqual(StartFlow.outcome(.resume(sessionId: "s1"), fatal), .failed("找不到 Holder H9"))
+        // ccrpc's own reason wins over its stderr.
+        var both = conn(session: nil, live: false, stderr: "ccrpc: 内部错误")
+        both.fatal = "hook socket 断了"
+        XCTAssertEqual(StartFlow.reason(both), "hook socket 断了")
     }
 
     func testEndingBeforeANameIsAFailureWithItsReason() {
@@ -296,12 +287,10 @@ private final class StubHost: URLProtocol, @unchecked Sendable {
 final class ResumeAgainstHostTests: XCTestCase {
     private let starting = #"{"result": [{"conn": "c1", "state": "starting"}]}"#
     private let named = #"{"result": [{"conn": "c1", "sessionId": "s1", "ready": true, "state": "idle"}]}"#
-    private let commandOK = #"{"result": {"success": true, "data": {"lines": ["claude 没起来", ""], "cursor": [1, 0]}}}"#
 
-    private func store(timeout: Duration = .milliseconds(20)) -> ConnectStore {
+    private func store() -> ConnectStore {
         let store = ConnectStore()
         store.reset(client: StubHost.client())
-        store.resumeTimeout = timeout
         return store
     }
 
@@ -315,7 +304,7 @@ final class ResumeAgainstHostTests: XCTestCase {
 
     func testASecondTapStartsNothing() async {
         StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting])
-        let store = store(timeout: .seconds(60))
+        let store = store()
         async let first: Void = store.resume(sessionId: "s1", cwd: "/w")
         async let second: Void = store.resume(sessionId: "s1", cwd: "/w")
         _ = await (first, second)
@@ -325,7 +314,7 @@ final class ResumeAgainstHostTests: XCTestCase {
 
     func testAResumeThatCouldNotStartCanBeTriedAgain() async {
         StubHost.set(["ccrpc_resume": #"{"error": {"code": "x", "message": "没有 ccrpc"}}"#])
-        let store = store(timeout: .seconds(60))
+        let store = store()
         await store.resume(sessionId: "s1", cwd: "/w")
         XCTAssertFalse(store.isResuming("s1"))
         XCTAssertEqual(store.errors["s1"], "Resume 失败：没有 ccrpc")
@@ -333,108 +322,72 @@ final class ResumeAgainstHostTests: XCTestCase {
 
     func testAForkIsMarkedBeforeTheHostAnswers() async {
         StubHost.set(["ccrpc_fork": #"{"result": "c1"}"#])
-        let store = store(timeout: .seconds(60))
+        let store = store()
         async let first: Void = store.fork(sessionId: "s1", cwd: "/w", title: "t (Fork)")
         async let second: Void = store.fork(sessionId: "s1", cwd: "/w", title: "t (Fork)")
         _ = await (first, second)
         XCTAssertEqual(StubHost.calls.filter { $0 == "ccrpc_fork" }.count, 1)
     }
 
-    func testTheTimeoutGivesUpOnlyOnWhatTheHostSaysNow() async throws {
-        StubHost.set([
-            "ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting, "connect_command": commandOK,
-            "ccrpc_disconnect": #"{"result": null}"#,
-        ])
+    /// ccrpc says why a Resume never got its Session, and closes that Pane itself: one sentence, and nothing here is
+    /// ended or asked.
+    func testAStartFailureResumeIsOneSentenceAndNothingIsEnded() async {
+        StubHost.set([:])
         let store = store()
-        await store.resume(sessionId: "s1", cwd: "/w")
-        try await waitUntil("gave up") { !store.isResuming("s1") }
-        XCTAssertTrue(StubHost.calls.contains("connect_command:exit"))
-        XCTAssertEqual(store.errors["s1"], "Resume 失败：30 秒内没有启动（claude 没起来）")
+        store.starts["c1"] = .resume(sessionId: "s1")
+        var c = ConnState(conn: "c1")
+        c.state = .starting
+        c.startFailed = "No conversation found with session ID: x"
+        store.apply(c)
+        XCTAssertEqual(store.errors["s1"], "Resume 失败：No conversation found with session ID: x")
+        XCTAssertNil(store.starts["c1"])
+        XCTAssertFalse(store.ending.contains("c1"))
+        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
+        XCTAssertFalse(StubHost.calls.contains("ccrpc_disconnect"))
     }
 
-    func testReadyWithoutANameIsNotStarted() async throws {
-        StubHost.set([
-            "ccrpc_resume": #"{"result": "c1"}"#, "connect_states": #"{"result": [{"conn": "c1", "ready": true, "state": "idle"}]}"#,
-            "connect_command": commandOK, "ccrpc_disconnect": #"{"result": null}"#,
-        ])
+    /// `fatal`: ccrpc itself gave up, which is the same sentence.
+    func testAFatalResumeIsOneSentenceToo() async {
+        StubHost.set([:])
         let store = store()
-        await store.resume(sessionId: "s1", cwd: "/w")
-        try await waitUntil("gave up") { !store.isResuming("s1") }
-        XCTAssertTrue(StubHost.calls.contains("connect_command:exit"))
+        store.starts["c1"] = .resume(sessionId: "s1")
+        var c = ConnState(conn: "c1")
+        c.state = .starting
+        c.fatal = "hook socket 断了"
+        store.apply(c)
+        XCTAssertEqual(store.errors["s1"], "Resume 失败：hook socket 断了")
+        XCTAssertNil(store.starts["c1"])
+        XCTAssertFalse(StubHost.calls.contains("ccrpc_disconnect"))
     }
 
     func testASessionThatStartedMeanwhileIsLeftAlone() async throws {
-        // The app was suspended: no event told it the Session started, only the Host's state now does.
-        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": named, "connect_command": commandOK])
+        // The app was suspended: no event told it the Session started, only the Host's state on coming back does.
+        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": named])
         let store = store()
         await store.resume(sessionId: "s1", cwd: "/w")
+        await store.syncStates()
         try await waitUntil("followed") { !store.isResuming("s1") }
-        try await Task.sleep(for: .milliseconds(60))
         XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
         XCTAssertNil(store.errors["s1"])
         XCTAssertEqual(store.started["c1"], "s1")
     }
 
-    func testAHostThatCannotBeAskedProvesNothing() async throws {
-        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_command": commandOK])
+    /// A new Session that never got one: the reason goes where 「正在启动…」 was, and ccrpc's Pane is already gone.
+    func testANewSessionThatFailedSaysWhy() async {
+        StubHost.set([:])
         let store = store()
-        await store.resume(sessionId: "s1", cwd: "/w")
-        try await waitUntil("asked twice") { StubHost.calls.filter { $0 == "connect_states" }.count >= 2 }
-        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
-        XCTAssertTrue(store.isResuming("s1"))
-        store.reset(client: nil)
-    }
-
-    func testNamedDuringTheLastMomentsNothingIsEnded() async throws {
-        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting, "connect_command": commandOK])
-        let store = store()
-        await store.resume(sessionId: "s1", cwd: "/w")
-        try await waitUntil("giving up") { store.failingResumes.contains("c1") }
-        var ready = ConnState(conn: "c1")
-        ready.sessionId = "s1"
-        ready.ready = true
-        store.apply(ready)
-        try await waitUntil("stopped") { !store.failingResumes.contains("c1") }
-        XCTAssertFalse(StubHost.calls.contains("connect_command:exit"))
-        XCTAssertNil(store.errors["s1"])
-    }
-
-    func testACardKeepsTheTimeoutWaiting() async throws {
-        let card = #"{"result": [{"conn": "c1", "state": "starting", "requests": [{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}]}]}"#
-        StubHost.set(["ccrpc_resume": #"{"result": "c1"}"#, "connect_states": card, "connect_command": commandOK])
-        let store = store()
-        await store.resume(sessionId: "s1", cwd: "/w")
-        try await waitUntil("asked twice") { StubHost.calls.filter { $0 == "connect_states" }.count >= 2 }
-        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
-        XCTAssertEqual(store.conn(for: "s1")?.requests.count, 1, "the card is on the Session's page")
-        store.reset(client: nil)
-    }
-
-    func testAnAnsweredCardGivesClaudeTheWholeTimeout() async throws {
-        // Right after the answer the Host has neither a card nor a name.
-        StubHost.set([
-            "ccrpc_resume": #"{"result": "c1"}"#, "connect_states": starting, "connect_command": commandOK,
-            "ccrpc_disconnect": #"{"result": null}"#,
-        ])
-        let store = store(timeout: .milliseconds(400))
-        await store.resume(sessionId: "s1", cwd: "/w")
+        store.starts["c1"] = .new(cwd: "/w")
         var c = ConnState(conn: "c1")
         c.state = .starting
-        c.requests = [try JSONDecoder().decode(
-            ConnRequest.self, from: Data(#"{"type": "choice", "request_id": "choice:1", "title": "Trust?", "options": [{"label": "Yes"}]}"#.utf8)
-        )]
+        c.startFailed = "claude 没有启动"
         store.apply(c)
-        try await Task.sleep(for: .milliseconds(300))
-        c.requests = []
-        store.apply(c)
-        try await waitUntil("the timer ran out") { StubHost.calls.contains("connect_states") }
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertFalse(StubHost.calls.contains { $0.hasPrefix("connect_command") })
-        XCTAssertTrue(store.isResuming("s1"))
-        try await waitUntil("gave up") { !store.isResuming("s1") }
-        XCTAssertTrue(StubHost.calls.contains("connect_command:exit"))
+        XCTAssertEqual(store.startFailures["c1"], "claude 没有启动")
+        XCTAssertNil(store.starts["c1"])
+        XCTAssertFalse(store.ending.contains("c1"))
+        XCTAssertFalse(StubHost.calls.contains("ccrpc_disconnect"))
     }
 
+    /// A start that ended without ccrpc having said why (an older one, or one that was killed): its ccrpc is ended.
     func testANewSessionThatFailedEndsItsCcrpc() async throws {
         StubHost.set(["ccrpc_disconnect": #"{"result": null}"#])
         let store = store()

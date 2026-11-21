@@ -327,6 +327,20 @@ impl Rpc {
         (data, self.seen[before..].to_vec())
     }
 
+    /// ccrpc's exit code, once it has ended on its own within `timeout`.
+    pub(crate) fn wait_exit(&mut self, timeout: Duration) -> Option<i32> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status.code();
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     pub(crate) fn event(&mut self, ty: &str, timeout: Duration) -> Value {
         self.until(ty, timeout, |v| v["type"] == ty)
     }
@@ -434,7 +448,7 @@ pub(crate) fn person_resizes(
 /// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
 pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["protocol"], 4);
+    assert_eq!(ready["protocol"], 5);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.shell_pid = shell_pid(env, &holder);
     assert!(rpc.shell_pid.is_some());

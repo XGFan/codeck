@@ -187,7 +187,7 @@ pub enum Command {
     DismissFeedbackDraft,
     AnswerChoice {
         request_id: String,
-        option: String,
+        option_id: String,
     },
     /// Opens the TUI's Rewind picker on a Main Line prompt and stops at its confirm page.
     Rewind {
@@ -637,7 +637,7 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         }),
         "answer_choice" => Ok(Command::AnswerChoice {
             request_id: req_text(obj, kind, "request_id")?,
-            option: req_text(obj, kind, "option")?,
+            option_id: req_text(obj, kind, "option_id")?,
         }),
         "rewind" => Ok(Command::Rewind {
             uuid: req_text(obj, kind, "uuid")?,
@@ -970,6 +970,20 @@ mod tests {
 
     fn err(line: &str) -> RpcError {
         parse_line(line).expect_err("应该解析失败")
+    }
+
+    #[test]
+    fn answer_choice_takes_an_option_id() {
+        let r = parse(r#"{"type":"answer_choice","request_id":"choice:1","option_id":"2"}"#);
+        assert_eq!(
+            r.command,
+            Command::AnswerChoice {
+                request_id: "choice:1".into(),
+                option_id: "2".into()
+            }
+        );
+        // The label form of protocol 4 is gone.
+        err(r#"{"type":"answer_choice","request_id":"choice:1","option":"Yes"}"#);
     }
 
     #[test]
@@ -1655,6 +1669,10 @@ mod tests {
             "request_end",
             "tasks",
             "fork",
+            "started",
+            "start_failed",
+            "fatal",
+            "follow_ups",
         ] {
             assert!(
                 emitted.contains(name),

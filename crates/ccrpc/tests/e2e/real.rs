@@ -660,21 +660,22 @@ fn learns_an_unknown_dialog() {
     );
     match v["type"].as_str() {
         Some("choice") => {
-            let opts: Vec<&str> = v["options"]
+            let opts: Vec<(&str, &str)> = v["options"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter_map(|o| o["label"].as_str())
+                .filter_map(|o| Some((o["id"].as_str()?, o["label"].as_str()?)))
                 .collect();
             let pick = opts
                 .iter()
-                .find(|l| l.contains("manually approve"))
+                .find(|(_, l)| l.contains("manually approve"))
                 .or_else(|| opts.first())
                 .unwrap()
+                .0
                 .to_string();
             rpc.call(
                 "c1",
-                json!({"type": "answer_choice", "request_id": v["request_id"], "option": pick}),
+                json!({"type": "answer_choice", "request_id": v["request_id"], "option_id": pick}),
             );
         }
         Some("permission_request") => {

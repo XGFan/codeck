@@ -76,14 +76,19 @@ pub(super) fn pick_option(event: &Value, restore: RewindOption) -> (RewindOption
     }
 }
 
-/// What a failed start left on the screen: the last line with text above the cursor (claude's
-/// error, such as `No conversation found with session ID: …`).
+/// What a failed start left on the screen: claude's error (the last line starting with `No
+/// conversation found`, `Error:` or `error:`), else the last line with text above the cursor
+/// (the shell's, such as `command not found`).
 pub(super) fn exit_line(s: &Screen) -> Option<String> {
     let upto = (s.cursor.0 as usize).min(s.lines.len());
-    s.lines[..upto]
-        .iter()
-        .map(|l| l.trim())
-        .rfind(|l| !l.is_empty())
+    let lines = || s.lines.iter().map(|l| l.trim());
+    lines()
+        .rfind(|l| {
+            ["No conversation found", "Error:", "error:"]
+                .iter()
+                .any(|p| l.starts_with(p))
+        })
+        .or_else(|| lines().take(upto).rfind(|l| !l.is_empty()))
         .map(str::to_string)
 }
 
@@ -380,6 +385,7 @@ impl Engine {
         }
         self.end_fork_pane();
         self.fatal = Some(format!("Fork 失败：{message}"));
+        self.fatal_reported = true;
     }
 
     /// Ends the claude of a Fork not made (nothing of it is kept: before the rewind is answered
@@ -468,5 +474,19 @@ mod tests {
             ..Screen::default()
         };
         assert_eq!(exit_line(&empty), None);
+        // claude's own error line wins over what the shell wrote after it.
+        let both = Screen {
+            lines: vec![
+                "Error: Session xyz is already in use".into(),
+                "zsh: command not found: claude".into(),
+                "$ ".into(),
+            ],
+            cursor: (2, 2),
+            ..Screen::default()
+        };
+        assert_eq!(
+            exit_line(&both).as_deref(),
+            Some("Error: Session xyz is already in use")
+        );
     }
 }

@@ -43,8 +43,8 @@ enum StartFlow {
         case failed(String)
     }
 
-    /// Where a started connection is: its state has a Session id (a Fork: its `fork` event came), it ended first,
-    /// or neither yet.
+    /// Where a started connection is: its state has a Session id (a Fork: its `fork` event came), ccrpc said why it
+    /// gave up (`start_failed`, `fatal`), it ended first, or none of these yet.
     static func outcome(_ kind: StartKind, _ c: ConnState?) -> Outcome {
         guard let c else { return .waiting }
         if case .fork = kind {
@@ -55,25 +55,16 @@ enum StartFlow {
         } else if let id = c.sessionId {
             return .ready(sessionId: id)
         }
+        // ccrpc closes that Pane and ends by itself: it goes before the connection does.
+        if c.startFailed != nil || c.fatal != nil { return .failed(reason(c)) }
         return c.isLive ? .waiting : .failed(reason(c))
     }
 
-    /// Why a connection ended: ccrpc's last stderr line, else its last notice.
+    /// Why a connection ended: `start_failed` or `fatal` (ccrpc's own reason), else its last stderr line, else its
+    /// last notice.
     static func reason(_ c: ConnState) -> String {
-        ConnectWords.lastLine(c.procExit?.stderr) ?? c.notices.last?.text
+        c.startFailed ?? c.fatal ?? ConnectWords.lastLine(c.procExit?.stderr) ?? c.notices.last?.text
             ?? c.procExit.map(ConnectWords.procExit) ?? "claude 退出了"
-    }
-
-    /// Why a Resume failed, from the Pane's screen once claude exited: the last error line claude printed, else the
-    /// last non-empty line above the cursor (the shell's prompt that came back starts below it).
-    static func resumeFailure(_ lines: [String], cursorRow: Int?) -> String {
-        let rows = lines.map { $0.trimmingCharacters(in: .whitespaces) }
-        let isError = { (l: String) in
-            l.range(of: #"^(No conversation found|Error:|error:)"#, options: .regularExpression) != nil
-        }
-        if let error = rows.last(where: isError) { return error }
-        let above = (cursorRow.map { Array(rows.prefix(max(0, $0))) } ?? Array(rows.dropLast())).filter { !$0.isEmpty }
-        return above.last ?? rows.last { !$0.isEmpty } ?? "claude 退出了"
     }
 
     /// The Fork's title: the Origin Session's (on one line, without its own `(Fork)` / `(Fork N)`), then

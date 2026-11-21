@@ -159,9 +159,9 @@ private struct ChoiceCard: View {
 
     var body: some View {
         CardShell(title: r.title, status: "等待选择") {
-            ForEach(Array(r.options.enumerated()), id: \.offset) { i, o in
+            ForEach(Array(r.options.enumerated()), id: \.element.id) { i, o in
                 Button {
-                    let cmd: JSONValue = ["type": "answer_choice", "request_id": .string(r.requestId), "option": .string(o.label)]
+                    let cmd: JSONValue = ["type": "answer_choice", "request_id": .string(r.requestId), "option_id": .string(o.id)]
                     Task {
                         await sendAnswer(model.connect, c, cmd, busy: $busy, error: $error, answered: $answered)
                     }

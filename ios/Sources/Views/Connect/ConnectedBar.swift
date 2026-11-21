@@ -125,7 +125,7 @@ private struct QueueChips: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 chip { Text("排队 \(queue.count) 条").foregroundStyle(.secondary) }
-                ForEach(Array(queue.enumerated()), id: \.offset) { _, item in
+                ForEach(queue) { item in
                     chip { Text(item.label).lineLimit(1).frame(maxWidth: 220) }
                 }
             }

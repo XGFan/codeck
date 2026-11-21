@@ -1,4 +1,4 @@
-// The Connect store against a fake backend: early events, Resume's time bound and failure, replacing a connection.
+// The Connect store against a fake backend: early events, Resume's failure, replacing a connection.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InMsg } from "./protocol";
 
@@ -14,8 +14,6 @@ let remoteConn: (conn: string, holderId: string | null) => void;
 let closing: (conn: string) => void;
 /** What `connectSnapshot` answers. */
 let snapshot: () => Promise<string>;
-/** What `get_screen` answers. */
-let screen: { lines: string[]; cursor: [number, number] };
 /** Whether a ccrpc exits when disconnected (else it hangs on). */
 let exitsOnDisconnect: boolean;
 /** Whether commands are answered. */
@@ -24,7 +22,7 @@ let sent: { conn: string; msg: Record<string, unknown> }[];
 let store: typeof import("./store");
 
 const state = () => store.useConnect.getState();
-const ready = (holderId: string, sessionId: string | null, protocol = 4): InMsg => ({
+const ready = (holderId: string, sessionId: string | null, protocol = 5): InMsg => ({
   type: "ready",
   protocol,
   claude_version: "2",
@@ -68,7 +66,6 @@ beforeEach(async () => {
     addEventListener: () => {},
     removeEventListener: () => {},
   });
-  screen = { lines: [], cursor: [0, 0] };
   exitsOnDisconnect = true;
   answers = true;
   sent = [];
@@ -87,9 +84,8 @@ beforeEach(async () => {
     ccrpcSend: async (conn: string, msg: Record<string, unknown>) => {
       sent.push({ conn, msg });
       if (!answers) return;
-      const data = msg.type === "get_screen" ? screen : {};
       queueMicrotask(() =>
-        line(conn, { type: "response", id: msg.id, command: msg.type, success: true, data } as unknown as InMsg),
+        line(conn, { type: "response", id: msg.id, command: msg.type, success: true, data: {} } as unknown as InMsg),
       );
     },
     ccrpcDisconnect: async (conn: string) => {
@@ -150,9 +146,12 @@ describe("connections shared with clients on the LAN", () => {
     requests: [{ type: "permission_request", request_id: "r1" }],
     progress: null,
     queue: [],
+    codeCalls: [],
     tasks: [],
     lastTurn: null,
     procExit: null,
+    startFailed: null,
+    fatal: null,
     sessionExited: false,
     notices: [],
     feedbackDraft: null,
@@ -265,9 +264,9 @@ describe("ready", () => {
     h.api.ccrpcConnect = async () => "c1";
     await state().connect("H1", SID);
     line("c1", ready("H1", SID, 3));
-    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 4");
+    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 5");
     line("c1", ready("H1", SID));
-    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 4");
+    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 5");
   });
 });
 
@@ -322,45 +321,26 @@ describe("Resume", () => {
     expect(state().conns.r1?.resumeOf).toBe(SID);
     line("r1", ready("H9", SID));
     expect(state().resuming[SID]).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(31_000);
     expect(state().errors[SID]).toBeUndefined();
     expect(state().conns.r1?.sessionId).toBe(SID);
   });
 
-  it("not named within 30 s: fails with claude's last line, closes the Pane and drops the connection", async () => {
-    screen = { lines: ["% claude --resume x", "something went wrong", "% "], cursor: [2, 2] };
+  it("claude did not start (start_failed): fails with its reason, drops the connection; ccrpc's exit after it is dropped", async () => {
     await state().resume(SID, "/w");
     line("r1", ready("H9", null));
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(sent).toEqual([]);
-    await vi.advanceTimersByTimeAsync(1 + 300);
-    await flush();
-    expect(sent.map((s) => s.msg)).toEqual([
-      expect.objectContaining({ type: "get_screen" }),
-      expect.objectContaining({ type: "exit", close_pane: true, stop_tasks: true }),
-    ]);
-    expect(state().errors[SID]).toBe("Resume 失败：30 秒内没有启动（something went wrong）");
+    line("r1", { type: "start_failed", message: "No conversation found with session ID: x" });
+    expect(state().errors[SID]).toBe("Resume 失败：No conversation found with session ID: x");
     expect(state().conns.r1).toBeUndefined();
     expect(state().resuming[SID]).toBeUndefined();
-  });
-
-  it("a card waiting at 30 s puts the bound off by another 30 s", async () => {
-    await state().resume(SID, "/w");
-    line("r1", { type: "permission_request", request_id: "p1" } as unknown as InMsg);
-    await vi.advanceTimersByTimeAsync(30_400);
-    expect(state().errors[SID]).toBeUndefined();
-    line("r1", { type: "request_end", request_id: "p1" });
-    await vi.advanceTimersByTimeAsync(30_400);
-    expect(state().errors[SID]).toMatch(/^Resume 失败：30 秒内没有启动/);
-  });
-
-  it("claude exits before naming the Session: fails with its error line", async () => {
-    screen = { lines: ["% claude --resume x", "No conversation found with session ID: x", "% "], cursor: [2, 2] };
-    await state().resume(SID, "/w");
-    line("r1", { type: "session_exit" } as unknown as InMsg);
-    await vi.advanceTimersByTimeAsync(300);
-    await flush();
+    exit("r1", 1, "");
+    expect(state().conns.r1).toBeUndefined();
     expect(state().errors[SID]).toBe("Resume 失败：No conversation found with session ID: x");
+  });
+
+  it("ccrpc cannot go on before naming the Session (fatal): that is the Resume's failure", async () => {
+    await state().resume(SID, "/w");
+    line("r1", { type: "fatal", message: "插件没有报到" });
+    expect(state().errors[SID]).toBe("Resume 失败：插件没有报到");
     expect(state().conns.r1).toBeUndefined();
     expect(state().resuming[SID]).toBeUndefined();
   });
@@ -370,6 +350,35 @@ describe("Resume", () => {
     h.api.ccrpcResume = resume;
     await Promise.all([state().resume(SID, "/w"), state().resume(SID, "/w")]);
     expect(resume).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a new Session that did not start", () => {
+  it("start_failed is said on its page (the connection's id); ccrpc's exit after it is no failure card's business", async () => {
+    h.api.ccrpcNew = async () => "n1";
+    await state().newSession("/w");
+    line("n1", ready("H9", null));
+    line("n1", { type: "start_failed", message: "claude 没有启动" });
+    expect(state().errors.n1).toBe("新建 Session 失败：claude 没有启动");
+    exit("n1", 1, "");
+    expect(state().conns.n1).toMatchObject({ startFailed: "claude 没有启动", procExit: { code: 1, stderr: "" } });
+    expect(store.isLive(state().conns.n1!)).toBe(false);
+  });
+});
+
+describe("the Session ended", () => {
+  it("ccrpc exits by itself after session_exit: the Session stays ended, nothing failed", async () => {
+    h.api.ccrpcConnect = async () => "c1";
+    await state().connect("H1", SID);
+    line("c1", ready("H1", SID));
+    line("c1", { type: "session_exit" });
+    exit("c1", 0, "");
+    expect(state().conns.c1).toMatchObject({ sessionExited: true, procExit: { code: 0, stderr: "" } });
+    expect(state().errors[SID]).toBeUndefined();
+    // Connecting again replaces it.
+    h.api.ccrpcConnect = async () => "c2";
+    await state().connect("H1", SID);
+    expect(Object.keys(state().conns)).toEqual(["c2"]);
   });
 });
 
@@ -437,7 +446,7 @@ describe("Fork", () => {
   it("its rewind's ⚠ card answered: the `fork` event and the card's end come before the answer", async () => {
     await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: "u1", restore: "both" });
     line("f1", ready("H9", null));
-    line("f1", { type: "session_changed", session_id: NEW, previous: null } as unknown as InMsg);
+    line("f1", { type: "started", session_id: NEW, cwd: "/w" } as unknown as InMsg);
     expect(state().forking[SID]).toEqual({ at: "u1", sessionId: NEW });
     const req = {
       type: "rewind",
@@ -477,7 +486,7 @@ describe("Fork", () => {
   it("its rewind's answer refused before any key: the card stays to be answered again", async () => {
     await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: "u1", restore: "both" });
     line("f1", ready("H9", null));
-    line("f1", { type: "session_changed", session_id: NEW, previous: null } as unknown as InMsg);
+    line("f1", { type: "started", session_id: NEW, cwd: "/w" } as unknown as InMsg);
     const req = {
       type: "rewind",
       request_id: "rewind:1",
@@ -502,6 +511,15 @@ describe("Fork", () => {
     await state().answerRewind("f1", req as never, "both");
     expect(state().conns.f1?.requests.length).toBe(1);
     expect(state().forking[SID]).toBeTruthy();
+  });
+
+  it("ccrpc says why it cannot go on (fatal) before exiting: that is the Fork's reason, not stderr", async () => {
+    await state().fork({ sessionId: SID, cwd: "/w", title: "t", at: null, restore: null });
+    line("f1", ready("H9", null));
+    line("f1", { type: "fatal", message: "插件没有报到" });
+    exit("f1", 1, "ccrpc: 插件没有报到\n");
+    await flush();
+    expect(state().errors[SID]).toBe("Fork 失败：插件没有报到");
   });
 
   it("ccrpc exits before its `fork` event: failed on the Origin, the connection dropped", async () => {

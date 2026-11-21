@@ -1,5 +1,5 @@
 {"t": 1793700000000, "dir": "meta", "ls": {"title": "turns", "cwd": "/work/orbit-web", "session_id": "5e1c0b7a-0006-4000-8000-000000000006"}}
-{"dir":"recv","msg":{"claude_version":null,"context_tokens":null,"cwd":null,"holder_id":"m74fb41c09ac2","mode":null,"model":null,"protocol":4,"session_id":null,"size":[120,40],"state":"starting","type":"ready","warnings":[],"effort":null,"waiting":null,"requests":[],"title":null,"queue":[],"follow_ups":[],"tasks":[],"code_calls":[],"feedback_draft":null},"t":1793768101430}
+{"dir":"recv","msg":{"claude_version":null,"context_tokens":null,"cwd":null,"holder_id":"m74fb41c09ac2","mode":null,"model":null,"protocol":5,"session_id":null,"size":[120,40],"state":"starting","type":"ready","warnings":[],"effort":null,"waiting":null,"requests":[],"title":null,"queue":[],"follow_ups":[],"tasks":[],"code_calls":[],"feedback_draft":null},"t":1793768101430}
 {"dir":"recv","msg":{"state":"idle","type":"state","waiting":null},"t":1793768101438}
 {"dir":"recv","msg":{"context_tokens":null,"effort":null,"mode":"manual","model":null,"title":null,"type":"session_info"},"t":1793768101852}
 {"dir":"send","msg":{"id":"s1","text":"MOCK-SLOW please","type":"prompt"},"t":1793768104538}
@@ -9,7 +9,7 @@
 {"dir":"recv","msg":{"elapsed_s":null,"text":"Reticulating…","tokens":null,"type":"progress","verb":"Reticulating"},"t":1793768104936}
 {"dir":"recv","msg":{"elapsed_s":1,"text":"Reticulating… (1s · ↓ 3 tokens)","tokens":3,"type":"progress","verb":"Reticulating"},"t":1793768105943}
 {"dir":"send","msg":{"id":"s2","text":"MOCK-STEERED now","type":"steer"},"t":1793768106749}
-{"dir":"recv","msg":{"command":"steer","data":{"delivered_as":"queued"},"id":"s2","success":true,"type":"response"},"t":1793768106914}
+{"dir":"recv","msg":{"command":"steer","data":{"delivered_as":"queued","queue_id":"q1"},"id":"s2","success":true,"type":"response"},"t":1793768106914}
 {"dir":"recv","msg":{"elapsed_s":2,"text":"Reticulating… (2s · ↓ 6 tokens)","tokens":6,"type":"progress","verb":"Reticulating"},"t":1793768107301}
 {"dir":"recv","msg":{"elapsed_s":3,"text":"Reticulating… (3s · ↓ 9 tokens)","tokens":9,"type":"progress","verb":"Reticulating"},"t":1793768108441}
 {"dir":"recv","msg":{"elapsed_s":5,"text":"Reticulating… (5s · ↓ 11 tokens)","tokens":11,"type":"progress","verb":"Reticulating"},"t":1793768109628}
@@ -22,7 +22,7 @@
 {"dir":"recv","msg":{"index":0,"kind":"user","text":"MOCK-STEERED now","type":"block","uuid":"ebfbaaa0-4334-4339-8f84-7daca88dbbac"},"t":1793768112867}
 {"dir":"recv","msg":{"index":0,"kind":"text","text":"STEER-TURN","type":"block","uuid":"c83ef4dd-a3ad-4b8a-ab0b-227ebbc9c718"},"t":1793768112867}
 {"dir":"recv","msg":{"aborted":false,"restored_text":null,"api_cost":0.0,"background_tasks":[],"duration_ms":30,"error":null,"last_text":"STEER-TURN","prompt_id":"a8e45728-f1b6-4bf6-adde-cd31e744b8a9","trigger":"prompt","type":"turn_end","usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":0,"output_tokens":0}},"t":1793768112868}
-{"dir":"recv","msg":{"context_tokens":10,"effort":null,"mode":"manual","model":"claude-sonnet-4-5","title":null,"type":"session_info"},"t":1793768112868}
+{"dir":"recv","msg":{"context_tokens":10,"effort":null,"mode":"manual","model":{"id":"claude-sonnet-4-5","name":"Sonnet 4.5"},"title":null,"type":"session_info"},"t":1793768112868}
 {"dir":"send","msg":{"id":"f1","text":"MOCK-FAIL","type":"prompt"},"t":1793768112868}
 {"dir":"recv","msg":{"state":"busy","type":"state","waiting":null},"t":1793768112934}
 {"dir":"recv","msg":{"state":"idle","type":"state","waiting":null},"t":1793768112941}

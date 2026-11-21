@@ -37,7 +37,6 @@ extension ConnectStore {
                 "ccrpc_resume", args: ["sessionId": sessionId, "cwd": cwd], as: String.self, timeout: 60
             )
             beginFollowing(conn, kind)
-            watchResumeTimeout(conn, sessionId: sessionId)
         } catch {
             errors[sessionId] = "Resume 失败：\(Self.text(error))"
         }
@@ -97,20 +96,24 @@ extension ConnectStore {
                 if forkCardsOpened.remove(conn) == nil { openRequest = OpenRequest(sessionId: sessionId) }
             }
         case .failed(let reason):
+            // ccrpc now says why itself (`start_failed`, `fatal`) and then closes that Pane and ends: the Host
+            // removes the connection, and nothing here has to end it.
+            let told = conns[conn].map { $0.startFailed != nil || $0.fatal != nil } ?? false
             switch kind {
             case .new:
                 starts[conn] = nil
                 startFailures[conn] = reason
-                endFailedStart(conn)
+                if !told { endFailedStart(conn) }
             case .resume(let sessionId):
-                // `starts` stays until the Pane is read and closed: 「Resume 中…」 until then.
-                Task { await failResume(conn, sessionId: sessionId, timedOut: nil, fallback: reason) }
+                starts[conn] = nil
+                errors[sessionId] = "Resume 失败：\(reason)"
+                if !told { endFailedStart(conn) }
             case .fork(let origin):
                 starts[conn] = nil
                 errors[origin] = "Fork 失败：\(reason)"
                 // Its page was opened for a card: the reason goes there too.
                 if forkCardsOpened.remove(conn) != nil, let id = conns[conn]?.sessionId { errors[id] = "Fork 失败：\(reason)" }
-                endFailedStart(conn)
+                if !told { endFailedStart(conn) }
             }
         }
     }
@@ -121,66 +124,6 @@ extension ConnectStore {
         ending.insert(conn)
         guard let c = conns[conn], c.procExit == nil, let client else { return }
         Task { _ = try? await client.call("ccrpc_disconnect", args: ["conn": conn], as: JSONValue.self) }
-    }
-
-    /// No Session named within 30 s of the last card it waited on (the folder trust dialog, say; claude needs a
-    /// moment after the answer). The timer also runs out while the app is suspended and its socket closed, so only the Host's state just
-    /// asked for counts; a Host that cannot be asked proves nothing, and the next round tries again.
-    private func watchResumeTimeout(_ conn: String, sessionId: String) {
-        Task {
-            while true {
-                try? await Task.sleep(for: resumeTimeout)
-                guard starts[conn] != nil else { return }
-                guard await syncStates(), starts[conn] != nil else { continue }
-                if cardHolds(conn) { continue }
-                await failResume(conn, sessionId: sessionId, timedOut: "30 秒内没有启动", fallback: "claude 没有启动")
-            }
-        }
-    }
-
-    /// A card waits on this start, or went too recently for claude to have had its time.
-    private func cardHolds(_ conn: String) -> Bool {
-        if conns[conn]?.requests.isEmpty == false { return true }
-        guard let seen = cardSeenAt[conn] else { return false }
-        return seen.duration(to: .now) < resumeTimeout
-    }
-
-    /// The Resume is still waiting for its Session, on a connection the Host has (ccrpc's `ready` can come before
-    /// the name does, so only the name counts).
-    private func resumeStillUnnamed(_ conn: String) -> Bool {
-        guard starts[conn] != nil, let c = conns[conn] else { return false }
-        return c.sessionId == nil
-    }
-
-    /// Gives a Resume up: the reason (claude's last line on the Pane) goes on its Session, then the new Pane is
-    /// closed and the connection dropped.
-    private func failResume(_ conn: String, sessionId: String, timedOut: String?, fallback: String) async {
-        // Once: the state and removal events its own exit and Disconnect cause come here too.
-        guard starts[conn] != nil, !failingResumes.contains(conn) else { return }
-        failingResumes.insert(conn)
-        defer { failingResumes.remove(conn) }
-        var line = fallback
-        var paneNote = ""
-        if let c = conns[conn], c.procExit == nil {
-            // Let the shell draw its prompt again, so claude's last line is above the cursor.
-            try? await Task.sleep(for: .milliseconds(300))
-            guard resumeStillUnnamed(conn) else { return }
-            let screen = await command(conn, ["type": "get_screen"])
-            if screen.success, case .array(let rows)? = screen.data?["lines"] {
-                var cursor: Int?
-                if case .array(let pos)? = screen.data?["cursor"], case .number(let row)? = pos.first { cursor = Int(row) }
-                line = StartFlow.resumeFailure(rows.compactMap(\.stringValue), cursorRow: cursor)
-            }
-            guard resumeStillUnnamed(conn) else { return }
-            // `exit` ends the Session: a timeout is checked against the Host once more right before it.
-            if timedOut != nil { guard await syncStates(), resumeStillUnnamed(conn), !cardHolds(conn) else { return } }
-            // `exit` needs claude idle or gone: one still on a screen of its own keeps its Pane, say so.
-            let e = await command(conn, ["type": "exit", "close_pane": true, "stop_tasks": true])
-            if !e.success { paneNote = "；Pane 没有关掉：\(e.errorText)" }
-        }
-        errors[sessionId] = "Resume 失败：\(timedOut.map { "\($0)（\(line)）" } ?? line)\(paneNote)"
-        starts[conn] = nil
-        if let c = conns[conn] { await disconnect(c) } else { ending.insert(conn) }
     }
 
     struct ForkArgs: Encodable, Sendable {

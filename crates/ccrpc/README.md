@@ -76,7 +76,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
 
 ```
-< {"type":"ready","protocol":4,"claude_version":"2.1.317","warnings":[],"state":"idle","waiting":null,"requests":[],"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","size":[120,40],"mode":"manual","model":null,"effort":null,"context_tokens":null,"title":null,"queue":[],"follow_ups":[],"tasks":[],"code_calls":[],"feedback_draft":null}
+< {"type":"ready","protocol":5,"claude_version":"2.1.317","warnings":[],"state":"idle","waiting":null,"requests":[],"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","size":[120,40],"mode":"manual","model":{"id":"claude-sonnet-4-5-20250929","name":"Sonnet 4.5"},"effort":null,"context_tokens":null,"title":null,"queue":[],"follow_ups":[],"tasks":[],"code_calls":[],"feedback_draft":null}
 > {"id":"1","type":"prompt","text":"给 src/util.rs 补一个单元测试"}
 < {"type":"state","state":"busy","waiting":null}
 < {"type":"turn_start","prompt_id":"5d0c…","trigger":"prompt"}
@@ -125,7 +125,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `get_screen` | 立即返回屏幕文本与光标 |
 | `get_tool_result {tool_use_id}` | 立即返回工具结果全文（落盘过的读文件） |
 | `get_image {uuid, index?}` | 立即返回带图提示词里的一张图片（base64） |
-| `answer_choice {request_id, option}` | 按选项文字作答 `choice` |
+| `answer_choice {request_id, option_id}` | 按选项 id（`choice` 的 `options[].id`）作答 `choice`；id 不在选项里报 `bad_request` |
 | `rewind {uuid}` | 在终端的 Rewind 选择器里找到 Main Line 上的这条提示词（或斜杠命令、`!` 命令），停在确认页，返回它写明的代码变化与可选的恢复项 |
 | `answer_rewind {request_id, option \| cancel}` | 作答确认页：`both`（代码与对话）/ `conversation` / `code`，或取消；恢复了对话时返回放回输入框的提示词 |
 | `set_mode {mode}` | 切权限模式：`manual` / `accept_edits` / `plan` / `auto` |
@@ -138,13 +138,16 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 
 | 事件 | 说明 |
 |---|---|
-| `ready` | 连接后的第一条：`protocol`（4）、claude 版本、警告，加 `get_state` 的全部字段（完整快照） |
+| `ready` | 连接后的第一条：`protocol`（5）、claude 版本、警告，加 `get_state` 的全部字段（完整快照） |
+| `started` | `ready` 时还没有 sessionId（`new`、attach 到还停在启动界面的 claude）的，之后得知时发一次，带 `session_id`、`cwd` |
+| `start_failed` | `new`（不带 `--fork`）的 claude 没能启动（`--resume` 找不到 Session、目录信任框答了否、`command not found` 等），带 `message`；ccrpc 随后结束这个 Pane，以退出码 1 结束 |
+| `fatal` | `attach` / `new` 自己没法继续（参数不对、找不到目标、插件未启用……），带 `message`；stdout 的最后一行，退出码 1，同样的文字写到 stderr |
 | `state` | 状态变化，`waiting` 时带子类与 `waitingFor` |
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
 | `turn_start` | 一轮开始：`prompt_id`、`trigger`；每个 `turn_end` 之前恰好一个（连接时已在进行的一轮没有） |
 | `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`restored_text`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
 | `settled` | 一轮结束后不会再自己接着跑（idle 满 1 秒、没有进行中的轮、两个队列都空）时发一次，带仍在运行的后台任务 |
-| `permission_request` | 挂起的审批，`request_id` 与 `tool_use_id` 都是工具调用的 id，后台 Subagent 的带 `agent_id`；`options` 为审批框上的选项（含“总是允许”的全文），`layout_source` 说明是内置识别还是分析器学来的；computer use 的授权框（无编号菜单，按方向键作答）也作为审批发出 |
+| `permission_request` | 挂起的审批，`request_id` 与 `tool_use_id` 都是工具调用的 id，后台 Subagent 的带 `agent_id`；`options` 为审批框上的选项 `{id, label, meaning}`（`id` 是对话框上的编号；含“总是允许”的全文），`layout_source` 说明是内置识别还是分析器学来的；computer use 的授权框（无编号菜单，按方向键作答）也作为审批发出 |
 | `question` | 挂起的 AskUserQuestion（`request_id`、`tool_use_id`） |
 | `rewind` | 回退的确认页：`code`（`{restores, delta, target}`，认不出为 null）、`code_text`（确认页原句）、`warning`、`options`；`rewind` 命令的响应带同一个对象 |
 | `btw` | `/btw` 面板的问题与答案（面板关了以 `request_end` 结束，`close_btw` 可关闭） |
@@ -153,19 +156,20 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `unrecognized` | 屏幕认不出，此时不按任何键（带 `request_id`） |
 | `bash_output` | `!` 命令跑完后的输出（stdout、stderr），带它那条记录的 uuid |
 | `follow_up_failed` | 队列里的 `follow_up` 发不出去，带 `error: {code, message}` |
-| `queue` | Claude Code 的输入队列变了：`items` 每项 `{kind, from, text, editable}`（`typed` 人输入的与插话；`session` 别的 Session 发来的；`agent` 本 Session 的 Subagent / Teammate 发来的） |
+| `follow_ups` | ccrpc 自己的 `follow_up` 队列变了，整份 `items`（同 `get_state` 的 `follow_ups`） |
+| `queue` | Claude Code 的输入队列变了：`items` 每项 `{id, kind, from, text, editable, images}`（`id` 是 ccrpc 入队时给的，`steer` / `prompt` 的响应在 `queued` 时带同一个 `queue_id`；`images` 是经 ccrpc 发出的图片路径，不知道时为 null；`typed` 人输入的与插话；`session` 别的 Session 发来的；`agent` 本 Session 的 Subagent / Teammate 发来的） |
 | `tasks` | 后台任务的列表变了，整份（含状态、`idle`） |
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
 | `workflow` | Workflow Run 的整份状态（阶段、各 agent） |
 | `choice` | 等待在一个非审批、非提问的菜单（如计划审批、启动时的目录信任框、`/add-dir` 的确认框（2.1.326 起没进过的目录先问是否信任、再问是否加入，先后两个 `choice`），以及工具自己画的无编号菜单），用 `answer_choice` 作答；`layout_source` 区分内置布局与分析器学来的 |
 | `layout_learned` / `analysis_failed` | 分析器学到新布局 / 没给出可用的布局 |
-| `session_info` | 权限模式、模型、思考等级、上下文大小、标题变了 |
+| `session_info` | 权限模式、模型（`{id, name}`，`name` 是显示名）、思考等级、上下文大小、标题变了 |
 | `progress` | busy 时屏幕上的进度行（动词、用时、token 数） |
 | `feedback_draft` | 模型起草了产品反馈（输入框上方的卡片）出现 / 消失，带 SendFeedback 的标题与全文 |
 | `code_call` / `code_call_end` | Code Mode 下主线的代码（`REPL`）发起 / 结束了一次工具调用：transcript 要等代码的结果送达才有这些调用，此前由插件的 hook 报来 |
 | `compaction_start` / `compaction_end` | 开始压缩对话（含自动压缩）/ 压缩完成（带压缩前后的上下文 token 数） |
 | `fork` | `new --fork` 做完（成功带新 Session 的 `session_id`，失败带 `error`） |
-| `session_changed` / `session_exit` | sessionId 换了 / Session 结束（二者发出时，所有请求都算结束，不逐个发 `request_end`） |
+| `session_changed` / `session_exit` | 换了 Session（带 `previous`，一定非 null）/ Session 结束（二者发出时，所有请求都算结束，不逐个发 `request_end`；`session_exit` 之后 ccrpc 把已读到的命令答完、自己以退出码 0 退出） |
 
 响应两种：
 

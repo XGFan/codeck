@@ -18,6 +18,8 @@ struct PageConnect: Encodable, Equatable {
     var rewound: Rewound?
     var canFork = false
     var forking = false
+    /// Code Mode: the calls the running code made that the transcript does not have yet (the Host folds them).
+    var codeCalls: [JSONValue] = []
 
     /// `c`: the Session's Connect while it takes commands.
     static func of(_ c: ConnState?, rewinding: String?, rewound: CoDeck.Rewound?, fork: StartOffer, forking: Bool) -> PageConnect {
@@ -27,7 +29,8 @@ struct PageConnect: Encodable, Equatable {
             rewinding: rewinding,
             rewound: rewound.map { Rewound(uuid: $0.uuid, withCode: $0.withCode) },
             canFork: fork == .enabled,
-            forking: forking
+            forking: forking,
+            codeCalls: c?.codeCalls ?? []
         )
     }
 }

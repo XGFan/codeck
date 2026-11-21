@@ -3,7 +3,7 @@
 //! when its stdin closes and the Session keeps running, an approval waiting for a person in the TUI.
 //!
 //! ccrpc's `ready` often precedes the plugin's check-in, so its `session_id` may be null and arrive
-//! later as `session_changed`; the prompt goes out once the Session is known.
+//! later as `started`; the prompt goes out once the Session is known.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
@@ -176,9 +176,18 @@ pub fn start(
 
 enum Failure {
     Error(CliError),
-    /// ccrpc's stdout ended; the reason is whatever it left on stderr.
+    /// ccrpc's stdout ended without a `fatal`: the reason is whatever it left on stderr.
     Exited {
         holder_id: Option<String>,
+    },
+    /// ccrpc gave up (`fatal`), and its reason is the sentence.
+    Fatal {
+        message: String,
+        holder_id: Option<String>,
+    },
+    /// `new` never got a Session (`start_failed`); ccrpc closed the Pane and ended.
+    StartFailed {
+        message: String,
     },
 }
 
@@ -191,7 +200,32 @@ impl Failure {
                 message: reason(),
                 holder_id,
             },
+            Failure::Fatal { message, holder_id } => CliError {
+                code: "ccrpc_failed",
+                message: format!("ccrpc 提前退出：{}", cap(&message, REASON_CHARS)),
+                holder_id,
+            },
+            // The Pane is gone: ccrpc closed it itself.
+            Failure::StartFailed { message } => CliError {
+                code: "exited",
+                message: format!("claude 没有启动：{}", cap(&message, REASON_CHARS)),
+                holder_id: None,
+            },
         }
+    }
+}
+
+/// ccrpc's own endings, which it names itself: `fatal` whenever it cannot go on, `start_failed`
+/// when `new` never got a Session.
+fn ended(v: &Value, holder: &Option<String>) -> Option<Failure> {
+    let message = v["message"].as_str().unwrap_or("").to_owned();
+    match v["type"].as_str() {
+        Some("fatal") => Some(Failure::Fatal {
+            message,
+            holder_id: holder.clone(),
+        }),
+        Some("start_failed") => Some(Failure::StartFailed { message }),
+        _ => None,
     }
 }
 
@@ -219,6 +253,9 @@ fn drive(
     let mut not_ready = "ccrpc 还没有准备好";
     while !(ready && session.is_some()) {
         let v = next(rx, deadline, not_ready, timeout, &holder)?;
+        if let Some(end) = ended(&v, &holder) {
+            return Err(end);
+        }
         match v["type"].as_str() {
             // Any startup screen, some of which pass by themselves: not a failure yet.
             Some("dialog") => not_ready = "新 Session 启动时停在一个对话框上",
@@ -227,7 +264,7 @@ fn drive(
                 session = v["session_id"].as_str().map(str::to_owned);
                 ready = true;
             }
-            Some("session_changed") => session = v["session_id"].as_str().map(str::to_owned),
+            Some("started") => session = v["session_id"].as_str().map(str::to_owned),
             Some("choice") if v["layout"] == TRUST_LAYOUT => {
                 return Err(Failure::Error(refuse_trust(rx, stdin, &v, holder.clone())));
             }
@@ -253,6 +290,9 @@ fn drive(
     let deadline = Instant::now() + timeout;
     loop {
         let v = next(rx, deadline, "提示词还没有送达", timeout, &known)?;
+        if let Some(end) = ended(&v, &known) {
+            return Err(end);
+        }
         match v["type"].as_str() {
             Some("response") if v["id"] == "1" => {
                 if v["success"] == true {
@@ -317,7 +357,7 @@ fn send(stdin: &mut ChildStdin, v: &Value) -> std::io::Result<()> {
 }
 
 /// The folder trust dialog is a security boundary: an AI does not answer it with yes. Answering no
-/// makes this claude exit, so no empty Session is left behind; the Pane's shell is then closed too.
+/// makes this claude exit without a Session, and ccrpc then closes the Pane's shell itself and ends.
 fn refuse_trust(
     rx: &Receiver<Value>,
     stdin: &mut ChildStdin,
@@ -334,7 +374,7 @@ fn refuse_trust(
         .into_iter()
         .flatten()
         .find(|o| o["meaning"] == "deny")
-        .and_then(|o| o["label"].as_str());
+        .and_then(|o| o["id"].as_str());
     let Some(deny) = deny else {
         return refused;
     };
@@ -342,30 +382,17 @@ fn refuse_trust(
         "id": "trust",
         "type": "answer_choice",
         "request_id": choice["request_id"],
-        "option": deny,
+        "option_id": deny,
     });
     if send(stdin, &answer).is_err() {
         return refused;
     }
+    // Not the answer's response: claude exiting can make it report a failure. `start_failed` is
+    // how ccrpc says claude never got a Session and that it closed the Pane.
     let until = Instant::now() + TRUST_ANSWER_WAIT;
-    // Not the answer's response: claude exiting can make it report a failure. Only once claude is gone
-    // does `exit` end the Pane's shell without typing anything at claude.
-    let mut exited = false;
     while let Ok(v) = rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
-        if v["type"] == "session_exit" || (v["type"] == "state" && v["state"] == "exited") {
-            exited = true;
-            break;
-        }
-    }
-    let close = json!({"id": "close", "type": "exit", "close_pane": true});
-    if !exited || send(stdin, &close).is_err() {
-        return refused;
-    }
-    while let Ok(v) = rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
-        if v["type"] == "response" && v["id"] == "close" {
-            if v["success"] == true {
-                refused.holder_id = None;
-            }
+        if v["type"] == "start_failed" {
+            refused.holder_id = None;
             break;
         }
     }

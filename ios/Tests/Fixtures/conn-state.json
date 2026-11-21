@@ -11,9 +11,14 @@
     "waiting_for": "Bash"
   },
   "mode": "plan",
-  "model": "claude-opus-4-7",
+  "model": {
+    "id": "claude-opus-4-7",
+    "name": "Opus 4.7"
+  },
   "effort": "xhigh",
   "contextTokens": 52000,
+  "startFailed": null,
+  "fatal": null,
   "requests": [
     {
       "agent_id": null,
@@ -25,14 +30,17 @@
       "layout_source": "builtin",
       "options": [
         {
+          "id": "1",
           "label": "Yes",
           "meaning": "allow"
         },
         {
+          "id": "2",
           "label": "Yes, and don't ask again for pnpm test commands in /work/app",
           "meaning": "allow_always"
         },
         {
+          "id": "3",
           "label": "No",
           "meaning": "deny"
         }
@@ -95,14 +103,34 @@
     {
       "editable": true,
       "from": null,
+      "id": "q1",
+      "images": [],
       "kind": "typed",
       "text": "and then run lint"
     },
     {
       "editable": false,
       "from": "api",
+      "id": "q2",
+      "images": null,
       "kind": "session",
       "text": "migration is done"
+    }
+  ],
+  "codeCalls": [
+    {
+      "code": "read('w.txt')",
+      "end": {
+        "isError": false,
+        "response": {
+          "lines": 12
+        }
+      },
+      "input": {
+        "file_path": "w.txt"
+      },
+      "name": "Read",
+      "toolUseId": "toolu_c1"
     }
   ],
   "tasks": [

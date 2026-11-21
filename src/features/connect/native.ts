@@ -2,6 +2,7 @@
 // app tells it what the buttons under a prompt show (`window.codeckPage.setConnect`), and a button hands its prompt
 // to the app, which asks and acts natively.
 import { create } from "zustand";
+import type { CodeCall } from "./conn";
 
 /** The app's Connect of the Session on the page, as much as the buttons need. */
 export interface NativeConnect {
@@ -17,6 +18,8 @@ export interface NativeConnect {
   canFork: boolean;
   /** A Fork of this Session is on its way. */
   forking: boolean;
+  /** Code Mode: the calls the running code made that the transcript does not have yet (the Host folds them). */
+  codeCalls: CodeCall[];
 }
 
 declare global {
@@ -35,6 +38,7 @@ const NONE: NativeConnect = {
   rewound: null,
   canFork: false,
   forking: false,
+  codeCalls: [],
 };
 
 /** `c` is null outside the app. */

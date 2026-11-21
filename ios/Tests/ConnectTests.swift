@@ -7,20 +7,21 @@ final class ConnStateDecodingTests: XCTestCase {
     {
       "conn": "c1", "holderId": "h1", "sessionId": "s1", "cwd": "/repo", "claudeVersion": "2.1.0",
       "ready": true, "state": "waiting", "waiting": {"kind": "permission", "waiting_for": "permission prompt"},
-      "mode": "accept_edits", "model": "claude-opus-4-7", "effort": "xhigh", "contextTokens": 51234,
+      "mode": "accept_edits", "model": {"id": "claude-opus-4-7", "name": "Opus 4.7"}, "effort": "xhigh", "contextTokens": 51234,
       "requests": [
         {"type": "permission_request", "request_id": "toolu_1", "tool_use_id": "toolu_1", "tool_name": "Bash",
          "input": {"command": "rm -rf build", "description": "清理"}, "agent_id": null,
-         "options": [{"label": "Yes", "meaning": "allow"},
-                     {"label": "Yes, and don't ask again for rm commands", "meaning": "allow_always"},
-                     {"label": "No", "meaning": "deny"}],
+         "options": [{"id": "1", "label": "Yes", "meaning": "allow"},
+                     {"id": "2", "label": "Yes, and don't ask again for rm commands", "meaning": "allow_always"},
+                     {"id": "3", "label": "No", "meaning": "deny"}],
          "layout_source": "builtin"},
         {"type": "question", "request_id": "toolu_2", "tool_use_id": "toolu_2", "agent_id": "a1b2c3d4e5f6",
          "questions": [{"question": "用哪个方案？", "header": "方案",
                         "options": [{"label": "A", "description": "快"}, {"label": "B", "preview": "x"}],
                         "multiSelect": false}]},
         {"type": "choice", "request_id": "choice:1", "title": "切换模型？",
-         "options": [{"label": "Yes", "meaning": "allow", "description": null}, {"label": "No", "meaning": "deny"}],
+         "options": [{"id": "1", "label": "Yes", "meaning": "allow", "description": null},
+                     {"id": "2", "label": "No", "meaning": "deny"}],
          "tool_use_id": null, "layout": "model_switch", "layout_source": "builtin"},
         {"type": "dialog", "request_id": "dialog:trust", "waiting_for": "trust", "lines": ["", "Trust this folder?", ""]},
         {"type": "unrecognized", "request_id": "unrecognized:cost", "context": "cost", "lines": ["Total cost: $1"]},
@@ -32,8 +33,9 @@ final class ConnStateDecodingTests: XCTestCase {
         {"type": "unknown_without_id"}
       ],
       "progress": {"text": "Thinking… (12s)", "verb": "Thinking", "elapsed_s": 12, "tokens": null},
-      "queue": [{"kind": "typed", "from": null, "text": "先这样", "editable": true},
-                {"kind": "session", "from": "api", "text": "\\n迁移完成\\n第二行", "editable": false}, 3],
+      "queue": [{"id": "q1", "kind": "typed", "from": null, "text": "先这样", "editable": true, "images": []},
+                {"id": "q2", "kind": "session", "from": "api", "text": "\\n迁移完成\\n第二行", "editable": false, "images": null},
+                {"kind": "typed", "text": "没有 id", "editable": true}, 3],
       "tasks": [
         {"id": "b1", "kind": "shell", "tool_use_id": "toolu_9", "description": null, "command": "npm run dev", "status": "running"},
         {"id": "m1", "kind": "monitor", "description": "watch", "status": "completed"},
@@ -41,6 +43,9 @@ final class ConnStateDecodingTests: XCTestCase {
         {"kind": "agent"}
       ],
       "lastTurn": {"type": "turn_end", "duration_ms": 1200},
+      "startFailed": null, "fatal": null,
+      "codeCalls": [{"toolUseId": "toolu_c1", "name": "Read", "input": {"file_path": "w.txt"}, "code": "read('w.txt')",
+                     "end": {"isError": false, "response": {"lines": 12}}}],
       "procExit": null, "sessionExited": false,
       "notices": [{"id": 1, "text": "分析完成"}],
       "feedbackDraft": null, "somethingNew": {"x": 1}
@@ -56,8 +61,10 @@ final class ConnStateDecodingTests: XCTestCase {
         XCTAssertTrue(c.canCommand)
         XCTAssertEqual(c.requests.count, 8)
 
+        XCTAssertEqual(c.model, .init(id: "claude-opus-4-7", name: "Opus 4.7"))
         guard case .permission(let p) = c.requests[0] else { return XCTFail("permission") }
         XCTAssertEqual(p.toolName, "Bash")
+        XCTAssertEqual(p.options?.map(\.id), ["1", "2", "3"])
         XCTAssertEqual(p.toolUseId, "toolu_1")
         XCTAssertEqual(p.allowAlways?.label, "Yes, and don't ask again for rm commands")
         XCTAssertEqual(ConnectWords.inputBlocks(tool: p.toolName, p.input), [
@@ -74,6 +81,7 @@ final class ConnStateDecodingTests: XCTestCase {
         guard case .choice(let ch) = c.requests[2] else { return XCTFail("choice") }
         XCTAssertEqual(ch.title, "切换模型？")
         XCTAssertEqual(ch.options.map(\.label), ["Yes", "No"])
+        XCTAssertEqual(ch.options.map(\.id), ["1", "2"])
 
         guard case .screen(let d) = c.requests[3] else { return XCTFail("dialog") }
         XCTAssertEqual(d.type, "dialog")
@@ -99,9 +107,17 @@ final class ConnStateDecodingTests: XCTestCase {
 
     func testKeepsWhatDecodesAndDropsTheRest() throws {
         let c = try JSONDecoder().decode(ConnState.self, from: Data(Self.stateJSON.utf8))
+        // An item without ccrpc's id is dropped.
         XCTAssertEqual(c.queue.map(\.kind), ["typed", "session"])
+        XCTAssertEqual(c.queue.map(\.id), ["q1", "q2"])
         XCTAssertEqual(c.queue.map(\.editable), [true, false])
         XCTAssertEqual(c.queue.map(\.label), ["先这样", "api：迁移完成"])
+        XCTAssertEqual(c.queue.map(\.images), [[], nil])
+        XCTAssertEqual(c.codeCalls.count, 1)
+        XCTAssertEqual(c.codeCalls.first?["toolUseId"], .string("toolu_c1"))
+        XCTAssertEqual(c.codeCalls.first?["end"]?["response"]?["lines"], .number(12))
+        XCTAssertNil(c.startFailed)
+        XCTAssertNil(c.fatal)
         XCTAssertEqual(c.tasks.first { $0.id == "t1" }?.toolUseId, nil)
         XCTAssertEqual(c.tasks.map(\.id), ["b1", "m1", "t1"])
         XCTAssertEqual(c.runningTasks.map(\.name), ["npm run dev", "docs"])
@@ -117,8 +133,12 @@ final class ConnStateDecodingTests: XCTestCase {
         XCTAssertTrue(c.requests.isEmpty)
         XCTAssertTrue(c.isLive)
         XCTAssertFalse(c.canCommand)
-        // Fields an older Host does not send.
+        // Nothing of a start's failure, and nothing that ran as code.
         XCTAssertNil(c.fork)
+        XCTAssertNil(c.model)
+        XCTAssertNil(c.startFailed)
+        XCTAssertNil(c.fatal)
+        XCTAssertEqual(c.codeCalls, [])
         XCTAssertFalse(c.disconnected)
     }
 
@@ -207,7 +227,16 @@ final class RewindTests: XCTestCase {
         encoder.outputFormatting = .sortedKeys
         XCTAssertEqual(
             String(decoding: try! encoder.encode(busy), as: UTF8.self),
-            #"{"canFork":true,"connected":true,"forking":true,"idle":false}"#
+            #"{"canFork":true,"codeCalls":[],"connected":true,"forking":true,"idle":false}"#
+        )
+        // Code Mode's running calls go with it, as the Host folded them.
+        c.codeCalls = [["toolUseId": "toolu_c1", "name": "Read", "code": "read('w.txt')", "end": nil]]
+        let running = PageConnect.of(c, rewinding: nil, rewound: nil, fork: .hidden, forking: false)
+        XCTAssertEqual(running.codeCalls.count, 1)
+        XCTAssertEqual(running.codeCalls.first?["code"], .string("read('w.txt')"))
+        XCTAssertEqual(
+            String(decoding: try! encoder.encode(running), as: UTF8.self).contains(#""codeCalls":[{"#),
+            true
         )
     }
 
@@ -456,7 +485,7 @@ final class AnswersTests: XCTestCase {
 
     func testPermissionLabel() {
         let opts = { (allow: String, deny: String) in
-            [PermissionRequest.Option(label: allow, meaning: "allow"), .init(label: deny, meaning: "deny")]
+            [PermissionRequest.Option(id: "1", label: allow, meaning: "allow"), .init(id: "2", label: deny, meaning: "deny")]
         }
         let builtin = PermissionRequest(requestId: "r", toolUseId: "r", toolName: "Bash", input: nil, options: opts("Yes", "No"), layoutSource: "builtin")
         XCTAssertEqual(Answers.permissionLabel(builtin, meaning: "allow", fallback: "允许"), "允许")
@@ -511,12 +540,12 @@ final class AnswersTests: XCTestCase {
         XCTAssertEqual(Answers.error(.failed("", code: "timeout")), "作答失败：timeout")
     }
 
-    func testModelLabel() {
-        XCTAssertEqual(ConnectWords.modelLabel("claude-opus-4-7"), "Opus 4.7")
-        XCTAssertEqual(ConnectWords.modelLabel("claude-fable-5-1[1m]"), "Fable 5.1 (1M)")
-        XCTAssertEqual(ConnectWords.modelLabel("claude-sonnet-4-20250514"), "Sonnet 4")
-        XCTAssertEqual(ConnectWords.modelLabel("Sonnet 4.5"), "Sonnet 4.5")
-        XCTAssertEqual(ConnectWords.modelFamily("claude-opus-4-7"), "opus")
+    func testModelFamilyComesFromTheIdOrElseTheName() {
+        XCTAssertEqual(ConnectWords.modelFamily(.init(id: "claude-opus-4-7", name: "Opus 4.7")), "opus")
+        XCTAssertEqual(ConnectWords.modelFamily(.init(id: "claude-sonnet-4-5-20250929", name: "Sonnet 4.5")), "sonnet")
+        // Right after `/model`: only the name, which ccrpc says.
+        XCTAssertEqual(ConnectWords.modelFamily(.init(id: nil, name: "Fable 5.1 (1M)")), "fable")
+        XCTAssertNil(ConnectWords.modelFamily(nil))
     }
 }
 

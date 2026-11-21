@@ -245,6 +245,10 @@
       "description": "Claude Code 输入队列里的一项。typed：人输入的或插话（正文原样，含 [Image #n]）；session：别的 Session 发来的消息；agent：本 Session 的 Subagent / Teammate 发来的消息。",
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "ccrpc 在它入队时给的（q1、q2…），本连接内唯一，项还在队列里时不变。"
+        },
         "kind": {
           "enum": [
             "typed",
@@ -267,13 +271,49 @@
         "editable": {
           "type": "boolean",
           "description": "能否在终端里按 ↑ 取回：只有 typed 为 true。"
+        },
+        "images": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "经这个 ccrpc 发出的带图插话 / 提示词的图片路径（按 [Image #n] 的先后；以 data 给的图片是 ccrpc 存下的路径）；text 里没有 [Image # 时为 []；有图片但 ccrpc 不知道（终端里输入的、连接之前入队的）为 null。"
         }
       },
       "required": [
+        "id",
         "kind",
         "from",
         "text",
-        "editable"
+        "editable",
+        "images"
+      ]
+    },
+    "model": {
+      "description": "主线模型。id：最后一条 assistant 消息的模型 id，`/model` 刚换了模型、新模型还没答话时为 null；name：显示名，`/model` 输出里的（如 Sonnet 4.5），没有则由 id 得出（claude-opus-4-7 → Opus 4.7，claude-fable-5-1[1m] → Fable 5.1 (1M)；不合 claude-<家族>-<主版本>[-<次版本>][-<日期>][[1m]] 形状的 id 原样作 name）。从没见过模型时整个 model 为 null。",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "模型 id。"
+        },
+        "name": {
+          "type": "string",
+          "description": "显示名。"
+        }
+      },
+      "required": [
+        "id",
+        "name"
       ]
     },
     "rewind_code": {
@@ -425,11 +465,7 @@
           "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
         },
         "model": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
+          "$ref": "#/$defs/model"
         },
         "effort": {
           "type": [
@@ -464,7 +500,7 @@
           "items": {
             "type": "string"
           },
-          "description": "队列里的正文。"
+          "description": "ccrpc 自己的 follow_up 队列里的正文。"
         },
         "tasks": {
           "type": "array",
@@ -534,6 +570,10 @@
       "description": "choice 的一个选项。",
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "选项在对话框上的编号（\"1\"、\"2\"…；没有编号的菜单为从 1 起的位置），同一个请求里唯一。"
+        },
         "label": {
           "type": "string",
           "description": "屏幕上的选项全文。"
@@ -556,6 +596,7 @@
         }
       },
       "required": [
+        "id",
         "label",
         "meaning"
       ]
@@ -1586,16 +1627,16 @@
             "minLength": 1,
             "description": "choice 的 request_id。"
           },
-          "option": {
+          "option_id": {
             "type": "string",
             "minLength": 1,
-            "description": "选项文字，完全一致，否则唯一前缀。"
+            "description": "选项的 id（choice 事件 options[].id），必须完全一致；不在选项里回 bad_request。"
           }
         },
         "required": [
           "type",
           "request_id",
-          "option"
+          "option_id"
         ],
         "additionalProperties": false
       },
@@ -1745,6 +1786,10 @@
             "type": "integer",
             "minimum": 0,
             "description": "delivered_as 为 follow_up 时的 follow_up 队列长度。"
+          },
+          "queue_id": {
+            "type": "string",
+            "description": "delivered_as 为 queued 时：它成为的那一项在 queue 事件里的 id。"
           }
         },
         "required": [
@@ -1763,6 +1808,10 @@
               "btw"
             ],
             "description": "queued 为排队送达；本轮恰好结束被当作新提示词时为 prompt。正文是 /btw 时为 btw：答案在面板里，见 btw 事件。"
+          },
+          "queue_id": {
+            "type": "string",
+            "description": "delivered_as 为 queued 时：它成为的那一项在 queue 事件里的 id。"
           }
         },
         "required": [
@@ -2614,7 +2663,7 @@
             "const": "ready"
           },
           "protocol": {
-            "const": 4,
+            "const": 5,
             "description": "协议版本。"
           },
           "claude_version": {
@@ -2637,6 +2686,68 @@
           "protocol",
           "claude_version",
           "warnings"
+        ]
+      },
+      "started": {
+        "title": "started",
+        "description": "ready 时还没有 session id（new；attach 到还停在启动界面的 claude），之后 Session 有了 id 时发一次（Fork 得知新 Session 的 id 时同样）。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "started"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "session id。"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "claude 的工作目录；new 的 ready 早于进程文件时 cwd 为 null，以这里的为准。"
+          }
+        },
+        "required": [
+          "type",
+          "session_id",
+          "cwd"
+        ]
+      },
+      "start_failed": {
+        "title": "start_failed",
+        "description": "new（不带 --fork）的 claude 没能启动：在 Session 得到 id 之前退出了（如 --resume 找不到 Session、目录信任框答了否），或 ready 之后 30 秒内 Pane 的 shell 下一直没有 claude 进程（如 command not found）。发出后 ccrpc 结束这个 Pane，已读到还没执行的命令各回 exited 错误，然后以退出码 1 结束；不发 session_exit 与 fatal。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "start_failed"
+          },
+          "message": {
+            "type": "string",
+            "description": "Pane 屏幕上 claude 留下的原因：最后一行以 No conversation found、Error:、error: 开头的；没有则光标之上最后一个非空行；都没有为「claude 没有启动」。"
+          }
+        },
+        "required": [
+          "type",
+          "message"
+        ]
+      },
+      "fatal": {
+        "title": "fatal",
+        "description": "ccrpc 自己没法继续（任何时候，含 ready 之前：参数不对、找不到目标、已有 ccrpc 连着、插件未启用、toh 失败；之后：hook socket、插件没报到、transcript 路径不对……）：stdout 的最后一行，随后以退出码 1 结束；同样的文字写到 stderr。已经用 fork 的 error 或 start_failed 说过原因的结束不再发。只有 attach 与 new 发。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "fatal"
+          },
+          "message": {
+            "type": "string",
+            "description": "原因，不带 ccrpc: 前缀。"
+          }
+        },
+        "required": [
+          "type",
+          "message"
         ]
       },
       "state": {
@@ -3182,7 +3293,7 @@
       },
       "request_end": {
         "title": "request_end",
-        "description": "ccrpc 报过的请求结束：在这里或终端里作答了、它的工具跑了或被拒、对话框离开屏幕、本轮结束、被另一个界面顶替。/btw 面板关了时 request_id 为 btw。Session 结束或换了 Session（session_exit、previous 非 null 的 session_changed）时所有请求都算结束，不逐个发。",
+        "description": "ccrpc 报过的请求结束：在这里或终端里作答了、它的工具跑了或被拒、对话框离开屏幕、本轮结束、被另一个界面顶替。/btw 面板关了时 request_id 为 btw。Session 结束或换了 Session（session_exit、session_changed）时所有请求都算结束，不逐个发。",
         "type": "object",
         "properties": {
           "type": {
@@ -3286,6 +3397,27 @@
               "$ref": "#/$defs/queue_item"
             },
             "description": "Claude Code 自己的输入队列，先入在前，不含任务通知、Teammate 消息与 Code Mode 的 harness 事件。"
+          }
+        },
+        "required": [
+          "type",
+          "items"
+        ]
+      },
+      "follow_ups": {
+        "title": "follow_ups",
+        "description": "ccrpc 自己的 follow_up 队列变了（入队、发出、撤销、发送失败后移除）：整份，内容同 get_state 的 follow_ups。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "follow_ups"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "队列里的正文，先入在前。"
           }
         },
         "required": [
@@ -3646,24 +3778,18 @@
       },
       "session_changed": {
         "title": "session_changed",
-        "description": "Session 换了。",
+        "description": "换了 Session（/clear、/resume 等）：调用方清空此前 Session 的请求等。第一次得知 Session id 的是 started。",
         "type": "object",
         "properties": {
           "type": {
             "const": "session_changed"
           },
           "session_id": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "description": "新 session id。"
           },
           "previous": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "description": "此前的 session id。"
           },
           "cwd": {
@@ -3671,7 +3797,7 @@
               "string",
               "null"
             ],
-            "description": "claude 的工作目录；new 的 ready 早于进程文件时 cwd 为 null，以这里的为准。"
+            "description": "claude 的工作目录。"
           }
         },
         "required": [
@@ -3748,7 +3874,7 @@
       },
       "session_exit": {
         "title": "session_exit",
-        "description": "Claude Code 已退出。",
+        "description": "Claude Code 已退出。之后 ccrpc 把已读到的命令答完（多数回 exited；get_messages 的页照常答），自己以退出码 0 结束。",
         "type": "object",
         "properties": {
           "type": {
@@ -3775,11 +3901,7 @@
             "description": "权限模式：manual / accept_edits / plan / auto / bypass（输入框下的模式行，看不到时取插件报来的）。"
           },
           "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "主线模型：`/model` 刚设的显示名（如 Sonnet 4.5），否则最后一条 assistant 消息的模型 id。"
+            "$ref": "#/$defs/model"
           },
           "effort": {
             "type": [
@@ -3876,6 +3998,15 @@
           "$ref": "#/$defs/events/ready"
         },
         {
+          "$ref": "#/$defs/events/started"
+        },
+        {
+          "$ref": "#/$defs/events/start_failed"
+        },
+        {
+          "$ref": "#/$defs/events/fatal"
+        },
+        {
           "$ref": "#/$defs/events/state"
         },
         {
@@ -3919,6 +4050,9 @@
         },
         {
           "$ref": "#/$defs/events/queue"
+        },
+        {
+          "$ref": "#/$defs/events/follow_ups"
         },
         {
           "$ref": "#/$defs/events/tasks"
@@ -3973,6 +4107,10 @@
     "permission_option": {
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "选项在对话框上的编号（\"1\"、\"2\"…；没有编号的菜单为从 1 起的位置），同一个请求里唯一。"
+        },
         "label": {
           "type": "string",
           "description": "审批框上该选项的全文（“总是允许”会写明它加的规则）。"
@@ -3988,6 +4126,7 @@
         }
       },
       "required": [
+        "id",
         "label",
         "meaning"
       ]

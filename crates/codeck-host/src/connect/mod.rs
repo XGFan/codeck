@@ -28,8 +28,8 @@ pub type Writer = Arc<dyn Fn(&str, &str) -> relay::R<()> + Send + Sync>;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(150);
 /// A connection's state goes out at most this often (the last change always does).
 const THROTTLE: Duration = Duration::from_millis(100);
-/// How long a new attach waits for the ended connections of its Holder to go (ccrpc detaches once its stdin
-/// closes, and gets SIGTERM after five seconds).
+/// How long a new attach waits for the ended connections of its Holder to go (ccrpc ends by itself once its
+/// Session did; one disconnected detaches once its stdin closes, and gets SIGTERM after five seconds).
 const ENDED_CONN_WAIT: Duration = Duration::from_secs(10);
 
 pub struct ConnectHub {
@@ -188,8 +188,9 @@ impl ConnectHub {
             self.changed(&mut inner, conn);
         }
         drop(inner);
-        // A failed Fork: ccrpc closes the Pane and exits, and the window that did not start it has nothing to show.
-        if v["type"] == "fork" && !v["error"].is_null() {
+        // A failed Fork, or a `new` that never got a Session: ccrpc closes the Pane and exits, and the window that
+        // did not start it has nothing to show.
+        if (v["type"] == "fork" && !v["error"].is_null()) || v["type"] == "start_failed" {
             (self.events)(HostEvent::CcrpcClosing {
                 conn: conn.to_string(),
             });
@@ -304,7 +305,7 @@ impl ConnectHub {
             .map(|s| s.conn.clone())
     }
 
-    /// The connections to `holder_id` whose Session ended: their ccrpc keeps running, attached, driving nothing.
+    /// The connections to `holder_id` whose Session ended: their ccrpc ends by itself, so they go within a moment.
     fn ended_conns_for(&self, holder_id: &str) -> Vec<String> {
         self.conns_for(holder_id, |s| s.session_exited && !s.disconnected)
     }
@@ -536,7 +537,8 @@ impl Host {
             return Ok(conn);
         }
         // claude was started again in this Pane, or the last connection is being disconnected: a ccrpc still attached
-        // must go first, a second attach is refused.
+        // must go first, a second attach is refused. An ended Session's ccrpc ends by itself; one that has not yet is
+        // disconnected, so that it gets SIGTERM should it linger.
         let ended = hub.ended_conns_for(&holder_id);
         for conn in &ended {
             // Replaced, which a client's window must not take for a failure.
@@ -667,7 +669,7 @@ mod tests {
         assert_eq!(f.last_state().holder_id.as_deref(), Some("H1"));
 
         f.line(json!({
-            "type": "ready", "protocol": 4, "holder_id": "H1", "session_id": "s1", "cwd": "/w", "claude_version": "2.1",
+            "type": "ready", "protocol": 5, "holder_id": "H1", "session_id": "s1", "cwd": "/w", "claude_version": "2.1",
             "state": "idle", "waiting": null, "requests": [], "size": [80, 24], "queue": [],
             "tasks": [{ "id": "b1", "kind": "shell", "tool_use_id": null, "description": "sleep", "command": "sleep 9", "status": "running", "idle": false }],
             "warnings": [],
@@ -916,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_fork_is_closing() {
+    fn a_failed_fork_or_a_failed_start_is_closing() {
         let f = fixture();
         f.hub.register("c1", None);
         let closing = |f: &Fixture| {
@@ -928,6 +930,18 @@ mod tests {
         assert!(!closing(&f));
         f.line(json!({ "type": "fork", "error": { "code": "x", "message": "m" } }));
         assert!(closing(&f));
+        // `new`: ccrpc closed that Pane itself and ends with 1.
+        f.line(json!({ "type": "start_failed", "message": "claude 没有启动" }));
+        let events = f.drain();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, HostEvent::CcrpcClosing { .. }))
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            HostEvent::ConnectState(s) if s.start_failed.as_deref() == Some("claude 没有启动")
+        )));
     }
 
     #[test]

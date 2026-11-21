@@ -67,7 +67,7 @@ impl Engine {
             if cond(self) {
                 return true;
             }
-            if self.exited || Instant::now() >= deadline {
+            if self.exited || self.launch_failed || Instant::now() >= deadline {
                 return false;
             }
             self.wake.wait(seen, TICK);
@@ -103,7 +103,7 @@ impl Engine {
             {
                 return Some((v, s));
             }
-            if self.exited || Instant::now() >= deadline {
+            if self.exited || self.launch_failed || Instant::now() >= deadline {
                 return None;
             }
             self.conn.wait_change(seen, TICK);
@@ -280,6 +280,17 @@ impl Engine {
         Ok(paths)
     }
 
+    /// The image paths of checked `parts`, in order.
+    fn part_images(parts: &[rpc::Part]) -> Vec<String> {
+        parts
+            .iter()
+            .filter_map(|p| match p {
+                rpc::Part::Image(path) => Some(path.clone()),
+                rpc::Part::Text(_) => None,
+            })
+            .collect()
+    }
+
     /// `input` checked as when it is sent (follow-ups are checked as they are queued): image
     /// paths made absolute; of `parts`, control characters left out of the text and empty text
     /// items dropped, and without any image they become one `text`. With images, the first item
@@ -377,6 +388,7 @@ impl Engine {
             return self.send_btw(&clean, images);
         }
         let paths = Self::image_paths(images)?;
+        self.pending_images = Some(paths.clone());
         self.clear_input()?;
         self.paste_images(&paths)?;
         let before = self.marks.seq;
@@ -388,6 +400,7 @@ impl Engine {
     /// Checked `parts` with images, pasted one by one, then Enter.
     fn send_parts(&mut self, parts: &[rpc::Part]) -> CmdResult {
         self.require_prompt_ready()?;
+        self.pending_images = Some(Self::part_images(parts));
         self.clear_input()?;
         let before = self.marks.seq;
         let hook_before = self.hook_seq;
@@ -404,27 +417,33 @@ impl Engine {
         // Claude Code may have started a turn just before Enter: then the prompt waits in its queue.
         let queued = |e: &Engine| e.marks.typed_enqueued_after(before, typed);
         let ok = self.wait_after_keys(Duration::from_secs(30), |e| {
-            found(e).is_some() || queued(e) || e.marks.blank_enqueued_after(before)
+            found(e).is_some() || queued(e).is_some() || e.marks.blank_enqueued_after(before)
         });
         if !ok {
             return err("timeout", "30 秒内没在 transcript 里看到这条提示词");
         }
-        if found(self).is_none() && !queued(self) {
+        if found(self).is_none() && queued(self).is_none() {
             // A blank enqueue may be another session's message: it is this prompt only when no
             // user entry follows at once and the text has left the input box.
-            self.wait_after_keys(Duration::from_secs(2), |e| found(e).is_some() || queued(e));
+            self.wait_after_keys(Duration::from_secs(2), |e| {
+                found(e).is_some() || queued(e).is_some()
+            });
             let still_typed = self
                 .screen()
                 .ok()
                 .and_then(|s| recognize::input_text(&s))
                 .is_some_and(|t| t.contains(&typed.needle));
-            if found(self).is_none() && !queued(self) && still_typed {
+            if found(self).is_none() && queued(self).is_none() && still_typed {
                 return err("timeout", "回车后提示词还在输入框里");
             }
         }
         if found(self).is_none() {
             crate::clog!("prompt went into Claude Code's queue");
-            return Ok(json!({"uuid": null, "prompt_id": null, "delivered_as": "queued"}));
+            let queue_id = queued(self).map(|id| format!("q{id}"));
+            return Ok(
+                json!({"uuid": null, "prompt_id": null, "delivered_as": "queued",
+                "queue_id": queue_id}),
+            );
         }
         // The plugin saw it submitted, normally before it reached the transcript.
         let hook_prompt = |e: &Engine| {
@@ -586,6 +605,7 @@ impl Engine {
                 self.require(matches!(self.state, State::Busy), "not_busy")?;
                 match Self::checked_input(input)? {
                     rpc::Input::Parts(parts) => {
+                        self.pending_images = Some(Self::part_images(&parts));
                         self.clear_input()?;
                         let before = self.marks.seq;
                         self.paste_parts(&parts)?;
@@ -607,6 +627,7 @@ impl Engine {
             return self.send_btw(&clean, images);
         }
         let paths = Self::image_paths(images)?;
+        self.pending_images = Some(paths.clone());
         self.clear_input()?;
         self.paste_images(&paths)?;
         let before = self.marks.seq;
@@ -618,15 +639,18 @@ impl Engine {
     /// turn having just ended).
     fn confirm_steer(&mut self, typed: &Typed, before: u64) -> CmdResult {
         let mut how = None;
+        let mut queue_id = None;
         self.wait_after_keys(Duration::from_secs(10), |e| {
-            if e.marks.typed_enqueued_after(before, typed) {
+            if let Some(id) = e.marks.typed_enqueued_after(before, typed) {
                 how = Some("queued");
+                queue_id = Some(format!("q{id}"));
             } else if e.marks.typed_after(before, typed).is_some() {
                 how = Some("prompt");
             }
             how.is_some()
         });
         match how {
+            Some("queued") => Ok(json!({"delivered_as": "queued", "queue_id": queue_id})),
             Some(h) => Ok(json!({"delivered_as": h})),
             None => err("timeout", "10 秒内没在 transcript 里看到这条插话"),
         }
@@ -676,6 +700,8 @@ impl Engine {
         if !self.queue.iter().any(|q| q.editable) {
             return err("bad_request", "队列里没有可取回的消息");
         }
+        // What the items said before they left the queue (their images are forgotten then).
+        let waiting = self.queue.clone();
         // `↑` joins what it takes back with what is in the box, which keeps `!` commands queued.
         self.clear_input()?;
         let before = self.marks.seq;
@@ -705,7 +731,21 @@ impl Engine {
         if let Err((_, m)) = &cleared {
             crate::clog!("input box keeps what was taken back: {m}");
         }
-        let items: Vec<QueueItem> = items.iter().map(|t| transcript::queue_item(t)).collect();
+        let items: Vec<QueueItem> = items
+            .into_iter()
+            .map(|(id, text)| {
+                let id = format!("q{id}");
+                waiting
+                    .iter()
+                    .find(|q| q.id == id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        let mut q = transcript::queue_item(0, &text);
+                        q.id = id;
+                        q
+                    })
+            })
+            .collect();
         Ok(json!({"items": items}))
     }
 
@@ -785,6 +825,14 @@ impl Engine {
             self.keys(&rpc::key_to_bytes(k))?;
         }
         Ok(json!({}))
+    }
+
+    /// `follow_ups` once the follow-up queue changed (queued, sent, cancelled, failed).
+    pub(super) fn sync_follow_ups(&mut self) {
+        let now = self.follow_up_texts();
+        if let Some(ev) = changed_follow_ups(&mut self.follow_ups_sent, now) {
+            self.emit(ev);
+        }
     }
 
     pub(super) fn follow_up_texts(&self) -> Vec<String> {
@@ -877,47 +925,45 @@ impl Engine {
     }
 
     fn exit_claude(&mut self, close_pane: bool, stop_tasks: bool) -> CmdResult {
-        if self.state != State::Exited {
-            self.require(self.state == State::Idle, "not_idle")?;
-            let Some(pid) = self.claude_pid else {
-                return err("not_idle", "还没找到 claude 进程");
-            };
-            self.slash("exit")?;
-            // Background tasks still running make Claude Code ask first: answered only when the
-            // question is the known one (`Some(cursor on "Exit and stop tasks")`).
-            let asked = self.wait_screen(Duration::from_secs(10), |_, s| {
-                if !::transcript::live::pid_exists(pid) {
-                    return Some(None);
-                }
-                recognize::exit_with_tasks(&s.lines).map(Some)
-            });
-            match asked {
-                Some((Some(_), _)) if !stop_tasks => {
-                    self.keys(key::ESC)?;
-                    return err(
-                        "tasks_running",
-                        "还有后台任务在运行：加 stop_tasks 退出并停掉它们",
-                    );
-                }
-                Some((Some(true), _)) => self.keys(key::ENTER)?,
-                Some((Some(false), s)) => return Err(self.unrecognized("exit", Some(&s))),
-                Some((None, _)) => {}
-                // Neither gone nor asking what is known: a screen other than the input box is an
-                // unknown question (no key); at the input box claude may just be slow to exit.
-                None => {
-                    let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
-                    if ::transcript::live::pid_exists(pid) && recognize::input_text(&s).is_none() {
-                        return Err(self.unrecognized("exit", Some(&s)));
-                    }
+        self.require(self.state == State::Idle, "not_idle")?;
+        let Some(pid) = self.claude_pid else {
+            return err("not_idle", "还没找到 claude 进程");
+        };
+        self.slash("exit")?;
+        // Background tasks still running make Claude Code ask first: answered only when the
+        // question is the known one (`Some(cursor on "Exit and stop tasks")`).
+        let asked = self.wait_screen(Duration::from_secs(10), |_, s| {
+            if !::transcript::live::pid_exists(pid) {
+                return Some(None);
+            }
+            recognize::exit_with_tasks(&s.lines).map(Some)
+        });
+        match asked {
+            Some((Some(_), _)) if !stop_tasks => {
+                self.keys(key::ESC)?;
+                return err(
+                    "tasks_running",
+                    "还有后台任务在运行：加 stop_tasks 退出并停掉它们",
+                );
+            }
+            Some((Some(true), _)) => self.keys(key::ENTER)?,
+            Some((Some(false), s)) => return Err(self.unrecognized("exit", Some(&s))),
+            Some((None, _)) => {}
+            // Neither gone nor asking what is known: a screen other than the input box is an
+            // unknown question (no key); at the input box claude may just be slow to exit.
+            None => {
+                let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
+                if ::transcript::live::pid_exists(pid) && recognize::input_text(&s).is_none() {
+                    return Err(self.unrecognized("exit", Some(&s)));
                 }
             }
-            if !self.wait_until(Duration::from_secs(15), |_| {
-                !::transcript::live::pid_exists(pid)
-            }) {
-                return err("timeout", "15 秒内 claude 没有退出");
-            }
-            self.set_exited();
         }
+        if !self.wait_until(Duration::from_secs(15), |_| {
+            !::transcript::live::pid_exists(pid)
+        }) {
+            return err("timeout", "15 秒内 claude 没有退出");
+        }
+        self.set_exited();
         if close_pane {
             // The Pane is a login shell that ran claude; ending it ends the Pane.
             self.keys(&[b"exit".as_slice(), key::ENTER].concat())?;
@@ -938,16 +984,39 @@ impl Engine {
             return;
         };
         self.commanded_at = Some(Instant::now());
-        if let Err((code, msg)) = self.send_input(&input) {
+        let sent = self.send_input(&input);
+        self.pending_images = None;
+        if let Err((code, msg)) = sent {
             self.emit(json!({"type": "follow_up_failed", "text": input.display_text(), "error": {"code": code, "message": msg}}));
         }
     }
+}
+
+/// The `follow_ups` event when `now` differs from what `sent` last said (and remembers `now`).
+fn changed_follow_ups(sent: &mut Option<Vec<String>>, now: Vec<String>) -> Option<Value> {
+    if sent.as_ref() == Some(&now) {
+        return None;
+    }
+    let ev = json!({"type": "follow_ups", "items": now});
+    *sent = Some(now);
+    Some(ev)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rpc::{Input, Part};
+
+    #[test]
+    fn follow_ups_are_sent_only_when_they_change() {
+        let mut sent = Some(Vec::new());
+        assert_eq!(changed_follow_ups(&mut sent, Vec::new()), None);
+        let ev = changed_follow_ups(&mut sent, vec!["a".into()]).unwrap();
+        assert_eq!(ev, json!({"type": "follow_ups", "items": ["a"]}));
+        assert_eq!(changed_follow_ups(&mut sent, vec!["a".into()]), None);
+        let ev = changed_follow_ups(&mut sent, Vec::new()).unwrap();
+        assert_eq!(ev["items"], json!([]));
+    }
 
     #[test]
     fn parts_are_checked_up_front() {

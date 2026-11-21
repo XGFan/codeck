@@ -6,15 +6,16 @@
 // recorded command; each command sent that matches the next recorded one (by type) replays what
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks) are answered from what was replayed (the background tasks from `ready` and the `tasks` events). `new-session` and `resume*` are not listed: `ccrpcNew` opens
-// the first; `ccrpcResume` opens `resume` (its `session_changed` names the Session asked for), or
-// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it). `fork*` are not listed either: `ccrpcFork`
+// the first; `ccrpcResume` opens `resume` (its `started` names the Session asked for), or
+// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it: `start_failed`, then exit 1). A `session_exit`
+// is followed by ccrpc's exit 0 (unless the recording has its own exit line there), as in protocol 5. `fork*` are not listed either: `ccrpcFork`
 // opens `fork` (before a prompt), `fork-session` (the whole Session), `fork-warning` (restoring code: the rewind's ⚠
 // confirm card first) or `fork-failed` (once a test set `forkFails`). A recording whose meta has `on_request`
 // stands for a Session other tests need out of `ccrpc ls`: it is listed once a test (or the console) calls
 // `__cvCcrpc.list(name)`. `__cvCcrpc.remoteConn(name)` and `remoteDisconnect(conn)` stand for an iPhone on the LAN; what
 // has to be there before the app starts (`snapshot`, `lan`) comes from an init script's `window.__cvCcrpcPreset`.
 
-import type { InMsg, LsEntry, QueueItem, RequestEvent, Task } from "@/features/connect/protocol";
+import type { InMsg, LsEntry, ModelInfo, QueueItem, RequestEvent, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
 import type { AnalyzerInfo, AppError, LanStatus, LaunchRule } from "./bindings";
 
@@ -104,13 +105,20 @@ interface Conn {
   remote?: boolean;
 }
 
+/** The display name ccrpc derives from a model id (`claude-opus-4-7` → `Opus 4.7`); anything else as it is. */
+function modelName(model: string): string {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(model.trim());
+  if (!m) return model;
+  return `${m[1]!.charAt(0).toUpperCase()}${m[1]!.slice(1).toLowerCase()} ${m[2]}${m[3] ? `.${m[3]}` : ""}${m[4] ? " (1M)" : ""}`;
+}
+
 /** What `/model <alias>` sets in the mock: the display name ccrpc reports at once, and its effort mark. */
-const MOCK_MODELS: Record<string, { model: string; effort: string | null }> = {
-  default: { model: "Opus 4.7", effort: "xhigh" },
-  opus: { model: "Opus 4.7", effort: "xhigh" },
-  fable: { model: "Fable 5.1", effort: "high" },
-  sonnet: { model: "Sonnet 4.5", effort: null },
-  haiku: { model: "Haiku 4.5", effort: null },
+const MOCK_MODELS: Record<string, { model: ModelInfo; effort: string | null }> = {
+  default: { model: { id: null, name: "Opus 4.7" }, effort: "xhigh" },
+  opus: { model: { id: null, name: "Opus 4.7" }, effort: "xhigh" },
+  fable: { model: { id: null, name: "Fable 5.1" }, effort: "high" },
+  sonnet: { model: { id: null, name: "Sonnet 4.5" }, effort: null },
+  haiku: { model: { id: null, name: "Haiku 4.5" }, effort: null },
 };
 
 type LineCb = (conn: string, msg: InMsg) => void;
@@ -274,12 +282,20 @@ function emit(id: string, msg: InMsg) {
   }
   if (REQUEST_TYPES.has(msg.type)) c.requests.set((msg as RequestEvent).request_id, msg as RequestEvent);
   if (msg.type === "request_end") c.requests.delete(msg.request_id);
-  if (msg.type === "session_exit" || (msg.type === "session_changed" && msg.previous != null)) c.requests.clear();
+  if (msg.type === "session_exit" || msg.type === "session_changed") c.requests.clear();
   if (msg.type === "session_info" || msg.type === "ready") {
     const { mode, model, effort, context_tokens } = msg as unknown as Record<string, unknown>;
     c.info = { mode, model, effort: effort ?? null, context_tokens };
   }
   for (const cb of lineCbs) cb(id, msg);
+}
+
+/** ccrpc's process ends (once). */
+function endProcess(id: string, code: number | null, stderr: string) {
+  const c = conns.get(id);
+  if (!c || c.closed) return;
+  c.closed = true;
+  for (const cb of exitCbs) cb(id, code, stderr);
 }
 
 /** Replays from the cursor up to the next recorded command (or the end). */
@@ -292,14 +308,11 @@ function replay(id: string, rewrite?: { from: unknown; to: unknown }) {
   const step = () => {
     if (i >= out.length) return;
     const l = out[i++]!;
-    if (l.dir === "exit") {
-      c.closed = true;
-      for (const cb of exitCbs) cb(id, l.code ?? null, l.stderr ?? "");
-      return;
-    }
+    if (l.dir === "exit") return endProcess(id, l.code ?? null, l.stderr ?? "");
     let msg = l.msg as unknown as InMsg;
     if (rewrite && msg.type === "response" && msg.id === rewrite.from) msg = { ...msg, id: rewrite.to as string };
     emit(id, msg);
+    if (msg.type === "session_exit" && !out.slice(i).some((x) => x.dir === "exit")) later(() => endProcess(id, 0, ""));
     if (msg.type === "ready" && c.startMs) setTimeout(step, c.startMs);
     else later(step);
   };
@@ -327,6 +340,13 @@ function respond(
 function endRequests(id: string, c: Conn, which: (r: RequestEvent) => boolean) {
   for (const r of [...c.requests.values()].filter(which))
     later(() => emit(id, { type: "request_end", request_id: r.request_id }));
+}
+
+/** claude exited: the state, `session_exit`, then ccrpc itself exits 0. */
+function sessionEnds(id: string) {
+  later(() => emit(id, { type: "state", state: "exited", waiting: null }));
+  later(() => emit(id, { type: "session_exit" }));
+  later(() => endProcess(id, 0, ""));
 }
 
 function synth(id: string, c: Conn, msg: Record<string, unknown>) {
@@ -360,7 +380,10 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
       const next =
         msg.type === "set_model"
-          ? (MOCK_MODELS[String(msg.model)] ?? { model: String(msg.model), effort: null })
+          ? (MOCK_MODELS[String(msg.model)] ?? {
+              model: { id: null, name: modelName(String(msg.model)) },
+              effort: null,
+            })
           : { model: c.info.model, effort: String(msg.level) };
       respond(id, msg, {});
       later(() => emit(id, { type: "session_info", ...c.info, ...next } as unknown as InMsg));
@@ -383,18 +406,14 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
         later(pushLs);
       }
       respond(id, msg, {});
-      later(() => emit(id, { type: "state", state: "exited", waiting: null }));
-      later(() => emit(id, { type: "session_exit" }));
+      sessionEnds(id);
       return;
     }
     // Typed into the TUI; what it does shows on the screen, not in a reply. `/exit` ends claude (the Pane stays).
     case "slash":
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
       respond(id, msg, {});
-      if (String(msg.command).replace(/^\//, "") === "exit") {
-        later(() => emit(id, { type: "state", state: "exited", waiting: null }));
-        later(() => emit(id, { type: "session_exit" }));
-      }
+      if (String(msg.command).replace(/^\//, "") === "exit") sessionEnds(id);
       return;
     // `/rename`, answered once the transcript has the title.
     case "rename":
@@ -583,9 +602,9 @@ export function createMockCcrpc(): CcrpcApi {
       const inReady = !!probe.resumeNamedInReady;
       probe.resumeNamedInReady = false;
       const lines = fx.lines
-        .filter((l) => !(inReady && l.msg?.type === "session_changed"))
+        .filter((l) => !(inReady && l.msg?.type === "started"))
         .map((l) =>
-          l.msg?.type === "session_changed" || (inReady && l.msg?.type === "ready")
+          l.msg?.type === "started" || (inReady && l.msg?.type === "ready")
             ? { ...l, msg: { ...l.msg, session_id: sessionId } }
             : l,
         );

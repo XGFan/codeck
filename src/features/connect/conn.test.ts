@@ -3,6 +3,7 @@ import { apply, initial, rewindAnswered, type ConnState } from "./conn";
 import type {
   InMsg,
   PermissionRequestEvent,
+  QueueItem,
   ReadyEvent,
   RewindRequest,
   StateName,
@@ -26,7 +27,7 @@ const perm = (id: string, agent: string | null = null): PermissionRequestEvent =
 });
 const ready = (o: Partial<ReadyEvent> = {}): ReadyEvent => ({
   type: "ready",
-  protocol: 4,
+  protocol: 5,
   claude_version: "2.1.329",
   warnings: [],
   state: "idle",
@@ -37,7 +38,7 @@ const ready = (o: Partial<ReadyEvent> = {}): ReadyEvent => ({
   cwd: "/w",
   size: [80, 24],
   mode: "manual",
-  model: "m",
+  model: { id: "m", name: "M" },
   effort: null,
   context_tokens: 5,
   title: null,
@@ -101,13 +102,13 @@ describe("conn reducer", () => {
   });
 
   it("takes what waits, the queue, the tasks and the running code calls from ready", () => {
-    const queue = [{ kind: "typed", from: null, text: "再跑一次", editable: true }] as const;
+    const queue: QueueItem[] = [{ id: "q1", kind: "typed", from: null, text: "再跑一次", editable: true, images: [] }];
     const s = fold([
       ready({
         state: "waiting",
         waiting: { kind: "permission", waiting_for: "permission prompt" },
         requests: [perm("t1")],
-        queue: [...queue],
+        queue,
         tasks: [task("b1")],
         code_calls: [{ tool_use_id: "repl_a", name: "Bash", input: { command: "ls" }, code: "toolu_r1" }],
       }),
@@ -123,7 +124,7 @@ describe("conn reducer", () => {
   it("keeps a request until its request_end, whatever the state; its event again updates it in place", () => {
     const waiting = st("waiting", { kind: "permission", waiting_for: "permission prompt" });
     let s = fold([waiting, perm("t1"), perm("t2", "agent-1")]);
-    s = fold([st("busy"), st("idle"), { ...perm("t1"), options: [{ label: "Yes", meaning: "allow" }] }], s);
+    s = fold([st("busy"), st("idle"), { ...perm("t1"), options: [{ id: "1", label: "Yes", meaning: "allow" }] }], s);
     expect(s.requests.map((r) => r.request_id)).toEqual(["t1", "t2"]);
     expect((s.requests[0] as PermissionRequestEvent).options).toHaveLength(1);
     // Screen cards do not replace one another: each goes with its own end.
@@ -159,7 +160,10 @@ describe("conn reducer", () => {
 
   it("starts over on session_changed, keeping what describes the Pane", () => {
     const old = ready({ session_id: "old" });
-    const queued: InMsg = { type: "queue", items: [{ kind: "typed", from: null, text: "q", editable: true }] };
+    const queued: InMsg = {
+      type: "queue",
+      items: [{ id: "q1", kind: "typed", from: null, text: "q", editable: true, images: null }],
+    };
     let s = fold([old, perm("t1"), queued, { type: "tasks", tasks: [task("b1")] }, end]);
     s = apply(s, { type: "session_changed", session_id: "new", previous: "old", cwd: "/w" });
     expect(s.sessionId).toBe("new");
@@ -171,13 +175,29 @@ describe("conn reducer", () => {
     expect(s.tasks).toEqual([]);
     expect(s.lastTurn).toBeNull();
 
-    // `new`: `ready` before the plugin checked in (and before the Process File); the first sessionId only fills it
-    // in, with the cwd.
+    // Every `session_changed` is another Session, whatever it follows.
+    const again = fold([ready({ session_id: "a" }), perm("t1")]);
+    expect(apply(again, { type: "session_changed", session_id: "b", previous: "a", cwd: null }).requests).toEqual([]);
+  });
+
+  it("`started` names the Session after ready (new) without resetting anything", () => {
     let n = fold([ready({ session_id: null, cwd: null }), perm("t1")]);
-    n = apply(n, { type: "session_changed", session_id: "first", previous: null, cwd: "/n" });
+    n = apply(n, { type: "started", session_id: "first", cwd: "/n" });
     expect(n.sessionId).toBe("first");
     expect(n.cwd).toBe("/n");
     expect(n.requests.map((r) => r.request_id)).toEqual(["t1"]);
+  });
+
+  it("keeps why claude did not start and why ccrpc could not go on; the model is {id, name}", () => {
+    expect(fold([{ type: "start_failed", message: "No conversation found" }]).startFailed).toBe(
+      "No conversation found",
+    );
+    expect(fold([{ type: "fatal", message: "插件未启用" }]).fatal).toBe("插件未启用");
+    const s = fold([
+      ready(),
+      { type: "session_info", mode: null, model: { id: null, name: "Sonnet 4.5" }, effort: null, context_tokens: null },
+    ]);
+    expect(s.model).toEqual({ id: null, name: "Sonnet 4.5" });
   });
 
   it("the confirm page's card takes over from the rewind under way for it", () => {

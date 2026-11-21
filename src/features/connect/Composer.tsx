@@ -20,7 +20,7 @@ import { Tasks } from "./Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
 import { caretOnFirstRow } from "./caretRow";
-import { queueText, rememberSteer, takenBack } from "./queue";
+import { queueText, rememberImages, takenBack } from "./queue";
 import { ChipLayer, MirrorText } from "./ImageChips";
 import {
   dropImages,
@@ -275,10 +275,7 @@ export function Composer({ c }: { c: ConnState }) {
     const items = r.data?.items;
     if (!r.success || !Array.isArray(items))
       return setError(`取回排队的消息失败：${r.error?.message ?? r.error?.code ?? ""}`);
-    const back = takenBack(
-      c.conn,
-      (items as QueueItem[]).map((q) => q.text),
-    );
+    const back = takenBack(items as QueueItem[]);
     if (!back.text) return;
     // Before what is in the box, as in the terminal; the caret after what came back.
     update((d) => {
@@ -330,6 +327,8 @@ export function Composer({ c }: { c: ConnState }) {
     const sent = images;
     const gone = new Set(sent.map((i) => i.path));
     const at = Date.now();
+    // Should ↑ take it back from the queue: the item has only the images' paths.
+    rememberImages(sent);
     if (prompt) {
       // A placeholder at the transcript's end at once, and the box is free again (both back if it fails).
       setPending(c.conn, { uuid: null, at });
@@ -363,8 +362,6 @@ export function Composer({ c }: { c: ConnState }) {
       if (c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
     }
     if (prompt) return;
-    // Its images, should ↑ take it back (the queue has only `[Image #n]` for them).
-    if (queued) rememberSteer(c.conn, { text: body, images: sent });
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && queued) void sendNow();
     // Keep what was typed while it was being sent; only the images that went with it go (an image pasted meanwhile
@@ -473,7 +470,7 @@ export function Composer({ c }: { c: ConnState }) {
             icon={<Clock size={18} strokeWidth={1.7} />}
             title={`排队 ${c.queue.length} 条`}
             desc={c.queue.map((q, i) => (
-              <span key={`${i}:${q.text}`} data-testid="queue-item" title={queueText(q)}>
+              <span key={q.id} data-testid="queue-item" title={queueText(q)}>
                 {i > 0 && "；"}
                 {queueText(q)}
               </span>

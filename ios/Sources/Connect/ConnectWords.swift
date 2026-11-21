@@ -51,23 +51,10 @@ enum ConnectWords {
         efforts.first { $0.level == effort }?.label ?? effort.prefix(1).uppercased() + effort.dropFirst()
     }
 
-    /// `claude-opus-4-7` → `Opus 4.7`, `claude-fable-5-1[1m]` → `Fable 5.1 (1M)`; anything else as it is.
-    static func modelLabel(_ model: String) -> String {
-        let pattern = #"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$"#
-        let s = model.trimmingCharacters(in: .whitespaces)
-        guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-              let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s))
-        else { return model }
-        func group(_ i: Int) -> String? { Range(m.range(at: i), in: s).map { String(s[$0]) } }
-        let family = group(1)!.prefix(1).uppercased() + group(1)!.dropFirst().lowercased()
-        let minor = group(3).map { ".\($0)" } ?? ""
-        return "\(family) \(group(2)!)\(minor)\(group(4) != nil ? " (1M)" : "")"
-    }
-
-    /// The alias family a model belongs to, for the check mark.
-    static func modelFamily(_ model: String?) -> String? {
-        guard let model = model?.lowercased() else { return nil }
-        return ["opus", "fable", "sonnet", "haiku"].first { model.contains($0) }
+    /// The alias family a model belongs to, for the check mark: ccrpc's `id`, or its name once `id` is null.
+    static func modelFamily(_ model: ConnState.Model?) -> String? {
+        guard let model = model?.id ?? model?.name else { return nil }
+        return ["opus", "fable", "sonnet", "haiku"].first { model.lowercased().contains($0) }
     }
 
     /// Task kinds in list order (Tasks.tsx `KINDS`).

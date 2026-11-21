@@ -24,6 +24,12 @@ struct ConnState: Decodable, Equatable, Sendable {
         enum CodingKeys: String, CodingKey { case text, verb, elapsedS = "elapsed_s", tokens }
     }
 
+    /// ccrpc's `model`: the alias family comes from `id` (null right after `/model`, before the next answer).
+    struct Model: Decodable, Equatable, Sendable {
+        var id: String?
+        var name: String
+    }
+
     struct ProcExit: Decodable, Equatable, Sendable {
         var code: Int?
         var stderr: String?
@@ -84,7 +90,7 @@ struct ConnState: Decodable, Equatable, Sendable {
     var state: Phase?
     var waiting: Waiting?
     var mode: String?
-    var model: String?
+    var model: Model?
     var effort: String?
     var contextTokens: Double?
     var requests: [ConnRequest] = []
@@ -94,6 +100,12 @@ struct ConnState: Decodable, Equatable, Sendable {
     var lastTurn: LastTurn?
     var procExit: ProcExit?
     var sessionExited = false
+    /// `new` never got a Session (`start_failed`): ccrpc closed that Pane and ended.
+    var startFailed: String?
+    /// Why ccrpc gave up (`fatal`): the reason it ended.
+    var fatal: String?
+    /// The code calls Code Mode ran (`codeCalls`), as the Host folded them: handed on to the Transcript page.
+    var codeCalls: [JSONValue] = []
     var notices: [Notice] = []
     /// The `fork` event of a Fork's connection (nil until it comes; absent from older Hosts).
     var fork: ForkResult?
@@ -103,6 +115,7 @@ struct ConnState: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case conn, holderId, sessionId, cwd, claudeVersion, ready, state, waiting, mode, model, effort, contextTokens
         case requests, progress, queue, tasks, lastTurn, procExit, sessionExited, notices, fork, disconnected
+        case startFailed, fatal, codeCalls
     }
 
     init(conn: String) { self.conn = conn }
@@ -118,7 +131,7 @@ struct ConnState: Decodable, Equatable, Sendable {
         state = c.lenient(String.self, .state).flatMap(Phase.init(rawValue:))
         waiting = c.lenient(Waiting.self, .waiting)
         mode = c.lenient(String.self, .mode)
-        model = c.lenient(String.self, .model)
+        model = c.lenient(Model.self, .model)
         effort = c.lenient(String.self, .effort)
         contextTokens = c.lenient(Double.self, .contextTokens)
         requests = c.lenient(Lossy<ConnRequest>.self, .requests)?.items ?? []
@@ -128,6 +141,9 @@ struct ConnState: Decodable, Equatable, Sendable {
         lastTurn = c.lenient(LastTurn.self, .lastTurn)
         procExit = c.lenient(ProcExit.self, .procExit)
         sessionExited = c.lenient(Bool.self, .sessionExited) ?? false
+        startFailed = c.lenient(String.self, .startFailed)
+        fatal = c.lenient(String.self, .fatal)
+        codeCalls = c.lenient([JSONValue].self, .codeCalls) ?? []
         notices = c.lenient(Lossy<Notice>.self, .notices)?.items ?? []
         fork = c.lenient(ForkResult.self, .fork)
         disconnected = c.lenient(Bool.self, .disconnected) ?? false
@@ -148,13 +164,18 @@ struct ConnState: Decodable, Equatable, Sendable {
 }
 
 /// A message in Claude Code's queue (`queue`): typed here, or sent by another Session or a Subagent.
-struct QueueItem: Decodable, Equatable, Sendable {
+struct QueueItem: Decodable, Equatable, Identifiable, Sendable {
+    /// ccrpc's own id for the item (`q1`, `q2`…), unchanged while it waits.
+    var id: String
     /// `typed`, `session` or `agent`.
     var kind: String
     /// The sender of a message from elsewhere; nil for what was typed.
     var from: String?
     var text: String
     var editable: Bool
+    /// The images the message carries; nil when ccrpc does not know them (typed in the terminal, or queued before
+    /// this connection).
+    var images: [String]?
 
     /// As it reads in the queue: a message from elsewhere as `<sender>：<first line>`, what was typed as it is.
     var label: String {

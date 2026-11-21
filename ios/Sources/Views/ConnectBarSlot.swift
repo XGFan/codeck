@@ -131,14 +131,16 @@ private struct EndedNotice: View {
     let c: ConnState
 
     var body: some View {
-        let crashed = c.procExit != nil && !c.disconnected
+        // ccrpc ends by itself once its Session did (exit code 0): that is the Session's end, not a crash.
+        let sessionEnded = c.sessionExited
+        let crashed = c.procExit != nil && !c.disconnected && !sessionEnded
         HStack(spacing: 10) {
             Image(systemName: crashed ? "exclamationmark.triangle" : c.disconnected ? "cable.connector.slash" : "stop.circle")
                 .foregroundStyle(crashed ? Palette.error : .secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(c.disconnected ? "已 Disconnect" : c.procExit.map(ConnectWords.procExit) ?? "Session 已结束")
+                Text(c.disconnected ? "已 Disconnect" : (crashed ? c.procExit.map(ConnectWords.procExit) : nil) ?? "Session 已结束")
                     .font(.system(size: 15, weight: .semibold))
-                if crashed, let line = ConnectWords.lastLine(c.procExit?.stderr) {
+                if crashed, let line = c.fatal ?? ConnectWords.lastLine(c.procExit?.stderr) {
                     Text(line).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }
             }

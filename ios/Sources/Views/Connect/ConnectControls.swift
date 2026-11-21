@@ -70,7 +70,7 @@ struct ConnectControls: View {
             }
         } label: {
             GlassPillLabel(enabled: enabled) {
-                Text([c.model.map(ConnectWords.modelLabel) ?? "模型", c.effort.map(ConnectWords.effortLabel)]
+                Text([c.model?.name ?? "模型", c.effort.map(ConnectWords.effortLabel)]
                     .compactMap { $0 }
                     .joined(separator: " "))
             }

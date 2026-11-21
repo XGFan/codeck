@@ -1,5 +1,5 @@
-import type { Draft } from "./drafts";
-import { shiftTokens, withoutTokens } from "./imageTokens";
+import type { Draft, DraftImage } from "./drafts";
+import { token } from "./imageTokens";
 import type { QueueItem } from "./protocol";
 
 const firstLine = (s: string) =>
@@ -13,46 +13,41 @@ export function queueText(item: QueueItem): string {
   return item.from ? `${item.from}：${firstLine(item.text)}` : item.text;
 }
 
-const IMAGE_TAG = /\[Image #\d+\]/g;
-/** What a steer and its queued item have in common: the words without the images and whitespace, and how many images. */
-const keyOf = (words: string, images: number) => `${images}:${words.replace(/\s+/g, "")}`;
+const IMAGE_TAG = /\[Image #\d+\] ?/g;
+/** Most images kept: only those of items still in the queue are asked for. */
+const MAX_SENT_IMAGES = 50;
 
-/** Steers sent from here with images, by connection: the queue has only their `[Image #n]`, the images come from here. */
-const withImages = new Map<string, { key: string; draft: Draft }[]>();
+/** Images sent from here, by path: the queue item has only the path and `[Image #n]`, the preview comes from here. */
+const sentImages = new Map<string, DraftImage>();
 
-/** A steer was queued: if it has images, kept to give them back should it be taken back. */
-export function rememberSteer(conn: string, draft: Draft) {
-  if (draft.images.length === 0) return;
-  const key = keyOf(withoutTokens(draft.text), draft.images.length);
-  const kept = (withImages.get(conn) ?? []).filter((s) => s.key !== key);
-  withImages.set(conn, [...kept, { key, draft }].slice(-20));
-}
-
-/** The connection is gone: what it kept goes too. */
-export function forgetSteers(conn: string) {
-  withImages.delete(conn);
+/** Images went out with a prompt or steer: kept to give them back should ↑ take it from the queue. */
+export function rememberImages(images: DraftImage[]) {
+  for (const i of images) {
+    sentImages.delete(i.path);
+    sentImages.set(i.path, i);
+  }
+  for (const path of [...sentImages.keys()].slice(0, Math.max(0, sentImages.size - MAX_SENT_IMAGES)))
+    sentImages.delete(path);
 }
 
 /**
- * What `edit_queue` took back, as a draft: the items one per line, oldest first. One sent from here with images comes
- * back as it was typed, its images too (taken: a later one with the same words is another); elsewhere an image's
- * `[Image #n]` is left out (the image is not to be had), and an item that was only images is gone.
+ * What `edit_queue` took back, as a draft: the items one per line, oldest first. An item's `[Image #n]` are its
+ * `images` in order: one sent from here comes back with its image, any other (path unknown here, or ccrpc does not
+ * know the paths) is left out, and an item that was only such images is gone.
  */
-export function takenBack(conn: string, items: string[]): Draft {
-  const sent = withImages.get(conn) ?? [];
+export function takenBack(items: QueueItem[]): Draft {
   const lines: string[] = [];
   const images: Draft["images"] = [];
   for (const item of items) {
-    const key = keyOf(item.replace(IMAGE_TAG, ""), item.match(IMAGE_TAG)?.length ?? 0);
-    const i = sent.findIndex((s) => s.key === key);
-    if (i >= 0) {
-      const [{ draft }] = sent.splice(i, 1);
-      lines.push(shiftTokens(draft.text, images.length));
-      images.push(...draft.images);
-    } else {
-      const words = item.replace(/\[Image #\d+\] ?/g, "");
-      if (words.trim()) lines.push(words);
-    }
+    let at = 0;
+    const line = item.text.replace(IMAGE_TAG, () => {
+      const path = item.images?.[at++];
+      const image = path ? sentImages.get(path) : undefined;
+      if (!image) return "";
+      images.push(image);
+      return token(images.length);
+    });
+    if (line.trim()) lines.push(line);
   }
   return { text: lines.join("\n"), images };
 }

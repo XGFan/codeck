@@ -11,21 +11,22 @@ use serde_json::{Value, json};
 fn events() -> Vec<Value> {
     vec![
         json!({
-            "type": "ready", "protocol": 4, "holder_id": "h1", "session_id": "s1", "cwd": "/work/app",
+            "type": "ready", "protocol": 5, "holder_id": "h1", "session_id": "s1", "cwd": "/work/app",
             "claude_version": "2.1.318", "warnings": [], "state": "idle", "waiting": null, "requests": [],
-            "size": [120, 40], "mode": "manual", "model": "claude-opus-4-7", "effort": "high",
-            "context_tokens": 51234, "title": "Fix the build", "queue": [], "follow_ups": [], "tasks": [],
-            "code_calls": [], "feedback_draft": null,
+            "size": [120, 40], "mode": "manual", "model": { "id": "claude-opus-4-7", "name": "Opus 4.7" },
+            "effort": "high", "context_tokens": 51234, "title": "Fix the build", "queue": [], "follow_ups": [],
+            "tasks": [], "code_calls": [], "feedback_draft": null,
         }),
+        json!({ "type": "started", "session_id": "s1", "cwd": "/work/app" }),
         json!({ "type": "state", "state": "busy", "waiting": null }),
         json!({ "type": "progress", "text": "Thinking… (12s · ↓ 1.2k tokens)", "verb": "Thinking", "elapsed_s": 12, "tokens": 1200 }),
         json!({
             "type": "permission_request", "request_id": "toolu_1", "tool_use_id": "toolu_1", "tool_name": "Bash",
             "input": { "command": "pnpm test", "description": "Run the tests" }, "agent_id": null, "from_code": false,
             "options": [
-                { "label": "Yes", "meaning": "allow" },
-                { "label": "Yes, and don't ask again for pnpm test commands in /work/app", "meaning": "allow_always" },
-                { "label": "No", "meaning": "deny" },
+                { "id": "1", "label": "Yes", "meaning": "allow" },
+                { "id": "2", "label": "Yes, and don't ask again for pnpm test commands in /work/app", "meaning": "allow_always" },
+                { "id": "3", "label": "No", "meaning": "deny" },
             ],
             "layout_source": "builtin",
         }),
@@ -40,8 +41,8 @@ fn events() -> Vec<Value> {
             "type": "choice", "request_id": "choice:1", "title": "Ready to code?", "tool_use_id": "toolu_3",
             "layout": "plan_approval", "layout_source": "builtin",
             "options": [
-                { "label": "Yes, auto-accept edits", "meaning": "allow", "description": null },
-                { "label": "No, keep planning", "meaning": "deny", "description": "Tell Claude what to change" },
+                { "id": "1", "label": "Yes, auto-accept edits", "meaning": "allow", "description": null },
+                { "id": "2", "label": "No, keep planning", "meaning": "deny", "description": "Tell Claude what to change" },
             ],
         }),
         json!({
@@ -58,8 +59,8 @@ fn events() -> Vec<Value> {
         json!({
             "type": "queue",
             "items": [
-                { "kind": "typed", "from": null, "text": "and then run lint", "editable": true },
-                { "kind": "session", "from": "api", "text": "migration is done", "editable": false },
+                { "id": "q1", "kind": "typed", "from": null, "text": "and then run lint", "editable": true, "images": [] },
+                { "id": "q2", "kind": "session", "from": "api", "text": "migration is done", "editable": false, "images": null },
             ],
         }),
         json!({
@@ -69,8 +70,10 @@ fn events() -> Vec<Value> {
                 "command": "pnpm dev", "status": "running", "idle": false,
             }],
         }),
-        json!({ "type": "session_info", "mode": "plan", "model": "claude-opus-4-7", "effort": "xhigh", "context_tokens": 52000 }),
+        json!({ "type": "session_info", "mode": "plan", "model": { "id": "claude-opus-4-7", "name": "Opus 4.7" }, "effort": "xhigh", "context_tokens": 52000 }),
         json!({ "type": "follow_up_failed", "text": "x", "error": { "code": "busy", "message": "还在忙" } }),
+        json!({ "type": "code_call", "tool_use_id": "toolu_c1", "name": "Read", "input": { "file_path": "w.txt" }, "code": "read('w.txt')" }),
+        json!({ "type": "code_call_end", "tool_use_id": "toolu_c1", "is_error": false, "response": { "lines": 12 } }),
         json!({
             "type": "turn_end", "prompt_id": "p1", "trigger": "prompt", "last_text": "Done.", "error": null,
             "aborted": false, "restored_text": null, "background_tasks": [], "duration_ms": 8123,

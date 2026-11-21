@@ -7,7 +7,6 @@ import { apply, fromHost, initial, rewindAnswered, type ConnState, type HostConn
 import { type Draft, EMPTY_DRAFT, loadDrafts, saveDrafts } from "./drafts";
 import { addWithdrawn, loadWithdrawn, saveWithdrawn } from "./withdrawn";
 import { createLsWatch } from "./lsWatch";
-import { resumeFailure } from "./resume";
 import { forkTitle } from "./fork";
 import {
   PROTOCOL,
@@ -20,7 +19,6 @@ import {
 } from "./protocol";
 import { errorText, isNotFound } from "@/lib/errors";
 import { ALL_SESSIONS } from "@/queries/hooks";
-import { forgetSteers } from "./queue";
 
 interface ConnectStore {
   /** `ccrpcInfo`, asked for when first needed (its first call reads the login shell's environment). */
@@ -120,9 +118,6 @@ interface ConnectStore {
   setDraft(key: string, f: (d: Draft) => Draft): void;
 }
 
-/** How long a Resume may take to name its Session before it counts as failed. */
-const RESUME_TIMEOUT_MS = 30_000;
-
 type Lookup = { ls: LsEntry[]; conns: Record<string, ConnState> };
 
 /** The `ccrpc ls` entry of a CoDeck Session (the Holder's session id is the Session id). */
@@ -160,10 +155,10 @@ export const holderConnected = (s: Pick<Lookup, "conns">, holderId: string) =>
   Object.values(s.conns).some((c) => c.holderId === holderId && isLive(c));
 
 /**
- * A connection still on its Session. After `session_exit` ccrpc keeps running but is on nothing: the
+ * A connection still on its Session. After `session_exit` or `start_failed` ccrpc ends by itself: the
  * Session may come back (`claude --resume` in the terminal) under a new process, which needs a new attach.
  */
-export const isLive = (c: ConnState) => !c.procExit && !c.sessionExited;
+export const isLive = (c: ConnState) => !c.procExit && !c.sessionExited && c.startFailed == null;
 
 export const draftKey = (c: ConnState) => c.sessionId ?? c.conn;
 /** Where a connection's errors are shown: its Session (the connection before it has one). */
@@ -173,8 +168,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
   const client = createCcrpcClient(api);
   /** Connections being disconnected on purpose: their exit is not a failure. */
   const closing = new Set<string>();
-  /** Resume connections being given up (one failure per connection). */
-  const failingResumes = new Set<string>();
   const lsWatch = createLsWatch({
     watch: (on) => api.ccrpcWatchSessions(on),
     onLs: (ls) => set({ ls }),
@@ -223,9 +216,14 @@ export const useConnect = create<ConnectStore>((set, get) => {
         if (open != null && (open === msg.previous || open === before.sessionId)) select(msg.session_id);
         break;
       }
-      case "session_exit":
-        // claude exited before naming the Session: a Resume that did not start (e.g. it cannot find the Session).
-        if (before.resumeOf && !before.sessionId) void failResume(conn, null);
+      case "start_failed":
+        // ccrpc closes the Pane and exits by itself: that exit is expected (the page shows no 「ccrpc 已退出」).
+        if (before.resumeOf && !before.sessionId) failResume(conn, before.resumeOf, msg.message);
+        else setErr(errorKey(after), `新建 Session 失败：${msg.message}`);
+        break;
+      case "fatal":
+        // ccrpc could not go on before the Session was named: for a Resume that is its failure.
+        if (before.resumeOf && !before.sessionId) failResume(conn, before.resumeOf, msg.message);
         break;
       case "turn_end": {
         if (useUi.getState().sessionId !== after.sessionId || document.hidden)
@@ -246,15 +244,16 @@ export const useConnect = create<ConnectStore>((set, get) => {
     client.failPending(conn);
     const c = get().conns[conn];
     // ccrpc itself ended before naming the Session: that Resume is over (its card says why).
-    if (c?.resumeOf && !c.sessionId && !failingResumes.has(conn)) setResuming(c.resumeOf, false);
+    if (c?.resumeOf && !c.sessionId) setResuming(c.resumeOf, false);
     // ccrpc ended before its `fork` event: that Fork failed, nothing of it is kept.
     if (c?.forkOf) {
       if (!closing.has(conn))
         failFork(
           conn,
           c.forkOf,
-          lastLine(stderr).replace(/^ccrpc: /, "") ||
-            (code == null ? "ccrpc 被信号终止" : `ccrpc 退出了（退出码 ${code}）`),
+          c.fatal ??
+            (lastLine(stderr).replace(/^ccrpc: /, "") ||
+              (code == null ? "ccrpc 被信号终止" : `ccrpc 退出了（退出码 ${code}）`)),
         );
       setForking(c.forkOf, null);
       closing.add(conn);
@@ -313,7 +312,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
     // Its exit may still come and is then dropped: nothing would answer what waits on it.
     client.forget(conn);
     closing.delete(conn);
-    forgetSteers(conn);
     set((s) => {
       const conns = { ...s.conns };
       delete conns[conn];
@@ -332,30 +330,12 @@ export const useConnect = create<ConnectStore>((set, get) => {
     }
     removeConn(conn);
   };
-  /**
-   * Gives a Resume up: the reason (claude's last line on the Pane, or `why`) goes on its Session, then the new Pane is
-   * closed and the connection dropped.
-   */
-  const failResume = async (conn: string, timedOut: string | null) => {
-    const c = get().conns[conn];
-    if (!c?.resumeOf || failingResumes.has(conn)) return;
-    const sessionId = c.resumeOf;
-    failingResumes.add(conn);
-    // Let the shell draw its prompt again, so claude's last line is above the cursor.
-    await new Promise((r) => window.setTimeout(r, 300));
-    const r = await get().command(conn, { type: "get_screen" });
-    const lines = r.success && Array.isArray(r.data?.lines) ? (r.data.lines as string[]) : [];
-    const cursor = r.success && Array.isArray(r.data?.cursor) ? Number((r.data.cursor as unknown[])[0]) : null;
-    const line = resumeFailure(lines, cursor);
-    let reason = timedOut ? `${timedOut}（${line}）` : line;
-    // `exit` needs claude idle or gone: one still on a screen of its own keeps its Pane, say so.
-    const e = await get().command(conn, { type: "exit", close_pane: true, stop_tasks: true });
-    if (!e.success) reason += `；Pane 没有关掉：${e.error?.message ?? ""}`;
-    void api.ccrpcGuiLog(conn, `resume failed: ${reason}`);
-    setErr(sessionId, `Resume 失败：${reason}`);
-    await closeAndWait(conn);
-    failingResumes.delete(conn);
+  /** Gives a Resume up: the reason goes on its Session and the connection is dropped (ccrpc closes its Pane itself). */
+  const failResume = (conn: string, sessionId: string, why: string) => {
+    void api.ccrpcGuiLog(conn, `resume failed: ${why}`);
+    setErr(sessionId, `Resume 失败：${why}`);
     setResuming(sessionId, false);
+    removeConn(conn);
   };
   const setResuming = (sessionId: string, on: boolean) =>
     set((s) => {
@@ -624,19 +604,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
       try {
         const conn = await api.ccrpcResume(sessionId, cwd);
         addConn(conn, null, sessionId);
-        // Not while a card waits for you (the folder trust dialog comes before claude names the Session).
-        const check = () => {
-          const c = get().conns[conn];
-          // Gone: unless a later attempt for this Session is on its way.
-          if (!c) {
-            const other = Object.values(get().conns).some((x) => x.resumeOf === sessionId && !x.sessionId && isLive(x));
-            return other ? undefined : setResuming(sessionId, false);
-          }
-          if (c.sessionId || !isLive(c)) return;
-          if (c.requests.length > 0) window.setTimeout(check, RESUME_TIMEOUT_MS);
-          else void failResume(conn, "30 秒内没有启动");
-        };
-        window.setTimeout(check, RESUME_TIMEOUT_MS);
       } catch (e) {
         setErr(sessionId, `Resume 失败：${errorText(e)}`);
         setResuming(sessionId, false);

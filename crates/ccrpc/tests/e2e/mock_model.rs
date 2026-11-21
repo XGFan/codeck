@@ -15,6 +15,17 @@ const MOCK_BTW_LONG: [&str; 3] = [
     "L21\n\nL22\n\nL23\n\nL24\n\nL25 end",
 ];
 
+/// The `id` of the option of a `choice` whose label is `label`.
+fn option_id(choice: &Value, label: &str) -> Value {
+    choice["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["label"] == label)
+        .unwrap_or_else(|| panic!("没有选项 {label}：{choice}"))["id"]
+        .clone()
+}
+
 /// A scripted Anthropic Messages endpoint on loopback. A prompt containing `MOCK-SLOW` is answered
 /// over ~8 s, `MOCK-FAIL` with HTTP 400, `MOCK-TOOL` with a Bash call (`touch mock-tool.txt`),
 /// `MOCK-WRITE <path>` with a Write call, `MOCK-WORKTREE` / `MOCK-EXITWT` with EnterWorktree / ExitWorktree,
@@ -445,6 +456,10 @@ fn mock_model_prompt_if_busy() {
     );
     assert_eq!(fu["delivered_as"], "follow_up", "{fu}");
     assert_eq!(fu["queued"], 1, "{fu}");
+    // The follow-up queue is told as it changes.
+    rpc.until("follow_ups", Duration::from_secs(5), |v| {
+        v["type"] == "follow_ups" && v["items"] == json!(["AFTER-ALL"])
+    });
     // The prompt's turn, the steer's, then the follow-up's; nothing more runs after it.
     let mut ends = vec![];
     while ends.len() < 3 {
@@ -599,13 +614,14 @@ fn mock_model_send_now() {
     rpc.until("streaming", Duration::from_secs(10), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
-    rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
+    let steered = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
     let q = rpc.until("queue", Duration::from_secs(10), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
     });
-    // What was typed, taken back by `↑`.
-    let typed =
-        json!([{"kind": "typed", "from": null, "text": "MOCK-STEERED now", "editable": true}]);
+    // What was typed, taken back by `↑`; the steer's response names the item.
+    let typed = json!([{"id": steered["queue_id"], "kind": "typed", "from": null,
+        "text": "MOCK-STEERED now", "editable": true, "images": []}]);
+    assert!(steered["queue_id"].is_string(), "{steered}");
     assert_eq!(q["items"], typed, "{q}");
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["queue"], typed, "{st}");
@@ -639,8 +655,8 @@ fn mock_model_edit_queue() {
     rpc.until("streaming", Duration::from_secs(10), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
-    rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED first"}));
-    rpc.call(
+    let first = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED first"}));
+    let second = rpc.call(
         "s3",
         json!({"type": "steer", "text": "MOCK-STEERED second", "images": [img]}),
     );
@@ -663,6 +679,15 @@ fn mock_model_edit_queue() {
         })
         .collect();
     assert_eq!(items.len(), 2, "{d}");
+    // Taken back with their ids and the image of the one sent with it.
+    assert_eq!(d["items"][0]["id"], first["queue_id"], "{d}");
+    assert_eq!(d["items"][1]["id"], second["queue_id"], "{d}");
+    assert_eq!(d["items"][0]["images"], json!([]), "{d}");
+    assert_eq!(
+        d["items"][1]["images"],
+        json!([img.display().to_string()]),
+        "{d}"
+    );
     assert_eq!(items[0], "MOCK-STEERED first", "{d}");
     assert!(
         items[1].contains('#') && items[1].ends_with("MOCK-STEERED second"),
@@ -717,6 +742,12 @@ fn mock_model_steer_image() {
     let q = rpc.until("queue", Duration::from_secs(10), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
     });
+    assert_eq!(q["items"][0]["id"], d["queue_id"], "{q}");
+    assert_eq!(
+        q["items"][0]["images"],
+        json!([img.display().to_string()]),
+        "{q}"
+    );
     let item = q["items"][0]["text"].as_str().unwrap_or_default();
     assert!(
         item.contains("[Image #1]") && item.ends_with("MOCK-STEERED with image"),
@@ -882,7 +913,7 @@ fn mock_model_model_and_effort() {
         assert_eq!(c["options"][0]["label"], yes, "{c}");
         rpc.call(
             id,
-            json!({"type": "answer_choice", "request_id": c["request_id"], "option": yes}),
+            json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": c["options"][0]["id"]}),
         );
     };
 
@@ -894,7 +925,7 @@ fn mock_model_model_and_effort() {
     );
     confirm(&mut rpc, "c1", "Switch model?", "Yes, switch to Sonnet 4.5");
     let i = rpc.until("sonnet", Duration::from_secs(10), |v| {
-        v["type"] == "session_info" && v["model"] == "Sonnet 4.5"
+        v["type"] == "session_info" && v["model"] == json!({"id": null, "name": "Sonnet 4.5"})
     });
     assert!(i["effort"].is_null(), "{i}");
 
@@ -904,7 +935,9 @@ fn mock_model_model_and_effort() {
     // The alias follows Claude Code's latest Fable (5.1, then 5.2 from 2.1.322): any version.
     let i = rpc.until("fable", Duration::from_secs(10), |v| {
         v["type"] == "session_info"
-            && v["model"].as_str().is_some_and(|m| m.starts_with("Fable "))
+            && v["model"]["name"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("Fable "))
             && v["effort"].is_string()
     });
     assert_ne!(i["effort"], "low", "{i}");
@@ -923,7 +956,7 @@ fn mock_model_model_and_effort() {
         assert_eq!(v["layout_source"], "builtin", "{v}");
         rpc.call(
             "c2",
-            json!({"type": "answer_choice", "request_id": v["request_id"], "option": v["options"][0]["label"]}),
+            json!({"type": "answer_choice", "request_id": v["request_id"], "option_id": v["options"][0]["id"]}),
         );
         rpc.until("effort low", Duration::from_secs(10), |v| {
             v["type"] == "session_info" && v["effort"] == "low"
@@ -933,7 +966,7 @@ fn mock_model_model_and_effort() {
     assert_eq!(st["state"], "idle", "{st}");
     // The reply on Fable named its model by id.
     assert!(
-        st["model"]
+        st["model"]["id"]
             .as_str()
             .is_some_and(|m| m.starts_with("claude-fable-")),
         "{st}"
@@ -971,10 +1004,12 @@ fn mock_model_add_dir() {
         .filter_map(|o| o["label"].as_str())
         .collect();
     assert_eq!(labels, ["No, leave it out", "Yes, add it"], "{c}");
+    assert_eq!(c["options"][0]["id"], "1", "{c}");
+    assert_eq!(c["options"][1]["id"], "2", "{c}");
     // Answered: the choice ends before the response says so.
     let (_, before) = rpc.call_seeing(
         "c1",
-        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, add it"}),
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, add it")}),
     );
     assert!(
         ended(&before, &c["request_id"]),
@@ -987,7 +1022,7 @@ fn mock_model_add_dir() {
     assert_eq!(c["title"], "Add directory to workspace", "{c}");
     rpc.call(
         "c2",
-        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, for this session"}),
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, for this session")}),
     );
     rpc.until("idle", Duration::from_secs(10), |v| {
         v["type"] == "state" && v["state"] == "idle"
@@ -1305,13 +1340,16 @@ fn mock_model_session() {
     // The folder trust dialog is a choice.
     let c = rpc.until("trust", Duration::from_secs(30), |v| v["type"] == "choice");
     assert_eq!(c["layout"], "trust_folder", "{c}");
-    let d = rpc.call("t1", json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, I trust this folder"}));
+    let d = rpc.call(
+        "t1",
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": "1"}),
+    );
     assert!(d["state"].is_string(), "{d}");
     wait_state(&mut rpc, "idle", 30);
-    // `ready` came before the plugin checked in: the sessionId is announced once known.
+    // `ready` came before the plugin checked in: the sessionId is announced once known, as `started`
+    // (a `session_changed` always has a `previous`).
     assert!(ready["session_id"].is_null(), "{ready}");
-    let ch = rpc.event("session_changed", Duration::from_secs(15));
-    assert!(ch["previous"].is_null(), "{ch}");
+    let ch = rpc.event("started", Duration::from_secs(15));
     assert!(
         ch["session_id"].as_str().is_some_and(|s| s.len() == 36),
         "{ch}"
@@ -1329,7 +1367,11 @@ fn mock_model_session() {
     }
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["mode"], "manual", "{st}");
-    assert_eq!(st["model"], "claude-sonnet-4-5", "{st}");
+    assert_eq!(
+        st["model"],
+        json!({"id": "claude-sonnet-4-5", "name": "Sonnet 4.5"}),
+        "{st}"
+    );
     assert!(st["context_tokens"].as_u64().unwrap_or(0) > 0, "{st}");
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
@@ -1405,6 +1447,9 @@ fn mock_model_session() {
     // Exit, with the Pane.
     let shell_pid = rpc.shell_pid.unwrap();
     rpc.call("x1", json!({"type": "exit", "close_pane": true}));
+    // The Session is over: ccrpc ends by itself, after `session_exit`.
+    rpc.event("session_exit", Duration::from_secs(5));
+    assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(0));
     let deadline = Instant::now() + Duration::from_secs(10);
     while transcript::live::pid_exists(shell_pid) {
         assert!(Instant::now() < deadline, "Pane 没有随 exit 结束");
@@ -2475,7 +2520,7 @@ fn mock_model_follows_the_background_session() {
     assert_eq!(c["title"], "Adding a new directory:", "{c}");
     rpc.call(
         "c1",
-        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, add it"}),
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, add it")}),
     );
     let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
         v["type"] == "choice" || v["type"] == "dialog"
@@ -2483,7 +2528,7 @@ fn mock_model_follows_the_background_session() {
     assert_eq!(c["title"], "Add directory to workspace", "{c}");
     rpc.call(
         "c2",
-        json!({"type": "answer_choice", "request_id": c["request_id"], "option": "Yes, for this session"}),
+        json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, for this session")}),
     );
     wait_state(&mut rpc, "idle", 10);
     rpc.forget();
@@ -2499,7 +2544,7 @@ fn mock_model_follows_the_background_session() {
         {
             rpc.call(
                 "c2",
-                json!({"type": "answer_choice", "request_id": v["request_id"], "option": v["options"][0]["label"]}),
+                json!({"type": "answer_choice", "request_id": v["request_id"], "option_id": v["options"][0]["id"]}),
             );
             break;
         }
@@ -2510,7 +2555,11 @@ fn mock_model_follows_the_background_session() {
     let t = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t["prompt_id"], d["prompt_id"], "{t}");
     let st = rpc.call("g3", json!({"type": "get_state"}));
-    assert_eq!(st["model"], "claude-opus-4-7", "{st}");
+    assert_eq!(
+        st["model"],
+        json!({"id": "claude-opus-4-7", "name": "Opus 4.7"}),
+        "{st}"
+    );
 
     let row = ls();
     assert_eq!(row["session_id"], new, "{row}");
@@ -2703,11 +2752,7 @@ fn mock_model_fork() {
     assert_eq!(done["origin"], origin.as_str(), "{done}");
     assert_eq!(done["text"], "third one", "{done}");
     assert_eq!(done["title"], "origin (Fork)", "{done}");
-    let ch = f1
-        .seen
-        .iter()
-        .find(|v| v["type"] == "session_changed")
-        .cloned();
+    let ch = f1.seen.iter().find(|v| v["type"] == "started").cloned();
     assert_eq!(ch.unwrap()["session_id"], sid.as_str());
     // The copied history comes as no blocks.
     assert!(
@@ -2989,4 +3034,64 @@ fn mock_model_compact() {
         !rpc.seen.iter().any(|v| v["type"] == "compaction_end"),
         "中止的压缩发了 compaction_end"
     );
+}
+
+/// `new` whose claude cannot start (`--resume` of a Session that does not exist): `start_failed`
+/// says why, the Pane is closed, ccrpc ends with 1 and without `session_exit` or `fatal`.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_start_failed() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut cmd = ccrpc_cmd(&env);
+    cmd.args(["new", "--cwd"])
+        .arg(&env.work)
+        .args(["--", "--plugin-dir"])
+        .arg(&env.plugin_dir)
+        .args(["--resume", "00000000-0000-4000-8000-000000000000"]);
+    let mut rpc = Rpc::spawn(cmd);
+    let ready = rpc.event("ready", Duration::from_secs(20));
+    let shell = shell_pid(&env, ready["holder_id"].as_str().unwrap()).unwrap();
+    rpc.shell_pid = Some(shell);
+    let f = rpc.event("start_failed", Duration::from_secs(60));
+    assert!(
+        f["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("No conversation found")),
+        "{f}"
+    );
+    assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(1));
+    // The Pane is gone with ccrpc's `exit` in its shell.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while transcript::live::pid_exists(shell) {
+        assert!(Instant::now() < deadline, "Pane 没有随 start_failed 结束");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    rpc.shell_pid = None;
+    while let Some(v) = rpc.recv(Duration::from_millis(200)) {
+        rpc.seen.push(v);
+    }
+    assert!(
+        !rpc.seen
+            .iter()
+            .any(|v| v["type"] == "session_exit" || v["type"] == "fatal"),
+        "{:?}",
+        rpc.seen
+    );
+}
+
+/// `attach` to a target that is not there: `fatal` is the last line of stdout, and ccrpc ends
+/// with 1.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_fatal() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::attach(&env, &["no-such-target"]);
+    let f = rpc.event("fatal", Duration::from_secs(20));
+    assert!(f["message"].as_str().is_some_and(|m| !m.is_empty()), "{f}");
+    assert!(
+        !f["message"].as_str().unwrap().starts_with("ccrpc: "),
+        "{f}"
+    );
+    assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(1));
+    assert!(rpc.recv(Duration::from_millis(500)).is_none());
 }

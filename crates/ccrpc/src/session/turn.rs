@@ -81,9 +81,10 @@ pub(super) struct Marks {
     pub(super) seq: u64,
     /// Sequence, uuid, text and image count of each user prompt.
     pub(super) prompts: VecDeque<(u64, String, String, usize)>,
-    pub(super) enqueued: VecDeque<(u64, String)>,
-    /// Items `↑` took back out of Claude Code's queue (`popAll`), oldest first.
-    pub(super) popped: VecDeque<(u64, String)>,
+    /// Sequence, queue id and text of each item that was enqueued.
+    pub(super) enqueued: VecDeque<(u64, u64, String)>,
+    /// Items `↑` took back out of Claude Code's queue (`popAll`), oldest first, with their queue ids.
+    pub(super) popped: VecDeque<(u64, u64, String)>,
 }
 
 impl Marks {
@@ -95,28 +96,28 @@ impl Marks {
         }
     }
 
-    pub(super) fn enqueue(&mut self, text: String) {
+    pub(super) fn enqueue(&mut self, id: u64, text: String) {
         self.seq += 1;
-        self.enqueued.push_back((self.seq, text));
+        self.enqueued.push_back((self.seq, id, text));
         if self.enqueued.len() > 64 {
             self.enqueued.pop_front();
         }
     }
 
-    pub(super) fn pop(&mut self, text: String) {
+    pub(super) fn pop(&mut self, id: u64, text: String) {
         self.seq += 1;
-        self.popped.push_back((self.seq, text));
+        self.popped.push_back((self.seq, id, text));
         if self.popped.len() > 64 {
             self.popped.pop_front();
         }
     }
 
     /// What was taken back out of the queue after `after`, in order.
-    pub(super) fn popped_after(&self, after: u64) -> Vec<String> {
+    pub(super) fn popped_after(&self, after: u64) -> Vec<(u64, String)> {
         self.popped
             .iter()
-            .filter(|(s, _)| *s > after)
-            .map(|(_, t)| t.clone())
+            .filter(|(s, ..)| *s > after)
+            .map(|(_, id, t)| (*id, t.clone()))
             .collect()
     }
 
@@ -153,23 +154,38 @@ impl Marks {
     }
 
     /// A prompt sent as `parts` with images that went into Claude Code's queue: the queued text
-    /// shows each image as its `[Image #n]`.
-    pub(super) fn parts_enqueued_after(&self, after: u64, text: &str, images: usize) -> bool {
+    /// shows each image as its `[Image #n]`. The queue id of the item.
+    pub(super) fn parts_enqueued_after(
+        &self,
+        after: u64,
+        text: &str,
+        images: usize,
+    ) -> Option<u64> {
         self.enqueued
             .iter()
-            .any(|(s, t)| *s > after && parts_match(t, text, Some(images)))
+            .find(|(s, _, t)| *s > after && parts_match(t, text, Some(images)))
+            .map(|(_, id, _)| *id)
     }
 
     /// A prompt that went into Claude Code's queue: its text, or (sent with images) ending with it.
-    pub(super) fn prompt_enqueued_after(&self, after: u64, text: &str, images: bool) -> bool {
-        self.enqueued.iter().any(|(s, t)| {
-            *s > after
-                && if images {
-                    t.trim().ends_with(text.trim())
-                } else {
-                    t.trim() == text.trim()
-                }
-        })
+    /// The queue id of the item.
+    pub(super) fn prompt_enqueued_after(
+        &self,
+        after: u64,
+        text: &str,
+        images: bool,
+    ) -> Option<u64> {
+        self.enqueued
+            .iter()
+            .find(|(s, _, t)| {
+                *s > after
+                    && if images {
+                        t.trim().ends_with(text.trim())
+                    } else {
+                        t.trim() == text.trim()
+                    }
+            })
+            .map(|(_, id, _)| *id)
     }
 
     /// An enqueue recorded without its text: input submitted just as a turn began, or a message
@@ -177,7 +193,7 @@ impl Marks {
     pub(super) fn blank_enqueued_after(&self, after: u64) -> bool {
         self.enqueued
             .iter()
-            .any(|(s, t)| *s > after && t.trim().is_empty())
+            .any(|(s, _, t)| *s > after && t.trim().is_empty())
     }
 }
 
@@ -255,8 +271,8 @@ impl Marks {
         }
     }
 
-    /// `typed` went into Claude Code's queue after `after`.
-    pub(super) fn typed_enqueued_after(&self, after: u64, typed: &Typed) -> bool {
+    /// `typed` went into Claude Code's queue after `after`: the queue id of the item.
+    pub(super) fn typed_enqueued_after(&self, after: u64, typed: &Typed) -> Option<u64> {
         if typed.parts {
             self.parts_enqueued_after(after, &typed.text, typed.images)
         } else {
@@ -554,7 +570,7 @@ impl TurnTracker {
             }
             // Taken back into the input box (`↑`, here or in the terminal): it does not run after
             // the turn.
-            TxEvent::Popped { content } => {
+            TxEvent::Popped { content, .. } => {
                 let t = content.trim();
                 self.pending_steers.retain(|s| s.trim() != t);
             }
@@ -799,8 +815,11 @@ impl Engine {
                 }
                 self.marks.prompt(uuid, text, images)
             }
-            TxEvent::Enqueued { content } => self.marks.enqueue(content),
-            TxEvent::Popped { content } => self.marks.pop(content),
+            TxEvent::Enqueued { id, content } => {
+                self.note_queue_images(id, &content);
+                self.marks.enqueue(id, content)
+            }
+            TxEvent::Popped { id, content } => self.marks.pop(id, content),
             TxEvent::Queue(items) => self.set_queue(&items),
             TxEvent::Branch { at_uuid } => {
                 self.rewound = None;
@@ -955,7 +974,7 @@ impl Engine {
         u: &::transcript::pricing::Usage,
     ) {
         if let Some(m) = model.filter(|m| !m.is_empty() && *m != "<synthetic>") {
-            self.model = Some(m.to_string());
+            self.model = Some(Model::replied(self.model.as_ref(), m));
         }
         // Older versions record none: keep what the screen said.
         if let Some(e) = effort.filter(|e| !e.is_empty()) {
@@ -971,10 +990,10 @@ impl Engine {
     /// old effort level, or any: the screen's mark says again.
     pub(super) fn note_setting(&mut self, model: Option<String>, effort: Option<String>) {
         if let Some(m) = model {
-            if self.model.as_deref() != Some(m.as_str()) {
+            if self.model.as_ref().map(|c| c.name.as_str()) != Some(m.as_str()) {
                 self.effort = None;
             }
-            self.model = Some(m);
+            self.model = Some(Model::set(m));
         }
         if let Some(e) = effort {
             self.effort = Some(e);
@@ -1285,6 +1304,7 @@ mod tests {
         submit(&mut t, now, "p1", "go");
         submit(&mut t, now, "p1", "steer");
         let popped = TxEvent::Popped {
+            id: 1,
             content: "steer".into(),
         };
         t.on_tx(&popped, now);
@@ -1518,22 +1538,22 @@ mod tests {
         m.prompt("new".into(), "hello ".into(), 0);
         assert_eq!(m.prompt_after(before, "hello"), Some("new"));
         for i in 0..100 {
-            m.enqueue(format!("s{i}"));
+            m.enqueue(i + 1, format!("s{i}"));
         }
         let b2 = m.seq;
-        m.enqueue("steer".into());
-        assert!(m.prompt_enqueued_after(b2, "steer", false));
-        assert!(!m.prompt_enqueued_after(b2, "s5", false));
+        m.enqueue(101, "steer".into());
+        assert_eq!(m.prompt_enqueued_after(b2, "steer", false), Some(101));
+        assert_eq!(m.prompt_enqueued_after(b2, "s5", false), None);
         // Typed just as a turn began, the enqueue is recorded without its text.
         let b3 = m.seq;
         assert!(!m.blank_enqueued_after(b3));
-        m.enqueue(String::new());
+        m.enqueue(102, String::new());
         assert!(m.blank_enqueued_after(b3));
-        assert!(!m.prompt_enqueued_after(b3, "late", false));
+        assert_eq!(m.prompt_enqueued_after(b3, "late", false), None);
         // With images, the queued text carries the `[Image #n]` placeholders first.
-        m.enqueue("[Image #1] look".into());
-        assert!(m.prompt_enqueued_after(b3, "look", true));
-        assert!(!m.prompt_enqueued_after(b3, "look", false));
+        m.enqueue(103, "[Image #1] look".into());
+        assert_eq!(m.prompt_enqueued_after(b3, "look", true), Some(103));
+        assert_eq!(m.prompt_enqueued_after(b3, "look", false), None);
     }
 
     /// Marks fed from a transcript written as Claude Code records it.
@@ -1546,7 +1566,7 @@ mod tests {
         for e in crate::transcript::Tailer::new(&main).poll() {
             match e {
                 TxEvent::UserPrompt { uuid, text, images } => m.prompt(uuid, text, images),
-                TxEvent::Enqueued { content } => m.enqueue(content),
+                TxEvent::Enqueued { id, content } => m.enqueue(id, content),
                 _ => {}
             }
         }
@@ -1634,8 +1654,8 @@ mod tests {
             None,
             Some(" now"),
         ]));
-        assert!(m.typed_enqueued_after(0, &typed));
-        assert!(!m.typed_enqueued_after(1, &typed));
+        assert_eq!(m.typed_enqueued_after(0, &typed), Some(1));
+        assert_eq!(m.typed_enqueued_after(1, &typed), None);
         // One placeholder short.
         let three = Typed::parts(&parts(&[
             Some("see "),
@@ -1645,18 +1665,24 @@ mod tests {
             Some(" now"),
             None,
         ]));
-        assert!(!m.typed_enqueued_after(0, &three));
+        assert_eq!(m.typed_enqueued_after(0, &three), None);
         // A literal `[Image #9]` typed in the text is not one of the images.
         let m = marks_from(&[
             json!({"type": "queue-operation", "operation": "enqueue", "content": "a [Image #9] b[Image #3]"}),
         ]);
         let literal = Typed::parts(&parts(&[Some("a [Image #9] b"), None]));
-        assert!(m.typed_enqueued_after(0, &literal));
+        assert_eq!(m.typed_enqueued_after(0, &literal), Some(1));
         // The old form keeps its own rule: the text after the leading placeholders.
         let m = marks_from(&[
             json!({"type": "queue-operation", "operation": "enqueue", "content": "[Image #1] look"}),
         ]);
-        assert!(m.typed_enqueued_after(0, &Typed::plain("look".into(), 1)));
-        assert!(!m.typed_enqueued_after(0, &Typed::plain("look".into(), 0)));
+        assert_eq!(
+            m.typed_enqueued_after(0, &Typed::plain("look".into(), 1)),
+            Some(1)
+        );
+        assert_eq!(
+            m.typed_enqueued_after(0, &Typed::plain("look".into(), 0)),
+            None
+        );
     }
 }

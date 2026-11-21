@@ -19,9 +19,18 @@ pub enum QueueKind {
     Agent,
 }
 
+/// An item in Claude Code's queue with the number ccrpc gave it when it was enqueued.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Queued {
+    pub id: u64,
+    pub text: String,
+}
+
 /// A queued item as the caller gets it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueueItem {
+    /// `q<n>`: unique within the connection, unchanged while the item waits.
+    pub id: String,
     pub kind: QueueKind,
     /// The sender of a message from another Session or agent (`from-name`, else `from`).
     pub from: Option<String>,
@@ -30,10 +39,15 @@ pub struct QueueItem {
     pub text: String,
     /// `↑` takes it back into the input box: only what was typed.
     pub editable: bool,
+    /// The image files of a prompt or steer sent through ccrpc, in the order of the `[Image #n]`
+    /// in `text`; `[]` when it has none; null when it has some ccrpc does not know (typed in
+    /// the terminal, queued before ccrpc connected).
+    pub images: Option<Vec<String>>,
 }
 
-/// A queued item's text as the caller gets it.
-pub fn queue_item(text: &str) -> QueueItem {
+/// A queued item's text as the caller gets it. `images` is for the caller to fill in
+/// (see [`QueueItem::images`]); `[]` when the text has no image tag.
+pub fn queue_item(id: u64, text: &str) -> QueueItem {
     let peer = prompt::peer_text(text).and_then(|(source, messages)| match source {
         PeerSource::Session => Some((QueueKind::Session, messages)),
         PeerSource::Agent => Some((QueueKind::Agent, messages)),
@@ -41,6 +55,7 @@ pub fn queue_item(text: &str) -> QueueItem {
     });
     match peer {
         Some((kind, messages)) => QueueItem {
+            id: format!("q{id}"),
             kind,
             from: messages.first().and_then(|m| m.from.clone()),
             text: messages
@@ -49,14 +64,22 @@ pub fn queue_item(text: &str) -> QueueItem {
                 .collect::<Vec<_>>()
                 .join("\n\n"),
             editable: false,
+            images: image_slot(text),
         },
         None => QueueItem {
+            id: format!("q{id}"),
             kind: QueueKind::Typed,
             from: None,
             text: text.to_owned(),
             editable: true,
+            images: image_slot(text),
         },
     }
+}
+
+/// `[]` for a text without image tags, else unknown.
+fn image_slot(text: &str) -> Option<Vec<String>> {
+    (!text.contains("[Image #")).then(Vec::new)
 }
 
 /// Unconfirmed `dequeue` guesses kept ([`Queue::settle_delivered`]).
@@ -65,15 +88,24 @@ const MAX_GUESSES: usize = 8;
 #[derive(Debug, Default)]
 pub(super) struct Queue {
     /// What waits, oldest first, task notifications included.
-    items: Vec<String>,
+    items: Vec<Queued>,
+    /// The last number given: an item gets the next one when it is enqueued, and keeps it while
+    /// it waits (a `dequeue` guess put back included).
+    last_id: u64,
     /// Items `dequeue` was taken to have taken (the oldest of several), not yet confirmed by what
     /// was delivered ([`Queue::settle_delivered`]); the latest last.
-    guesses: Vec<String>,
+    guesses: Vec<Queued>,
 }
 
 impl Queue {
+    /// A replaced main file's new queue goes on counting where the old one stopped: a number
+    /// given to the old file's item is never given again.
+    pub(super) fn continue_numbering(&mut self, old: &Queue) {
+        self.last_id = old.last_id;
+    }
+
     /// What waits now, oldest first.
-    pub(super) fn items(&self) -> &[String] {
+    pub(super) fn items(&self) -> &[Queued] {
         &self.items
     }
 
@@ -83,8 +115,13 @@ impl Queue {
         let before = self.items.len();
         match e.operation.as_deref() {
             Some("enqueue") => {
-                self.items.push(content.clone());
-                out.push(TxEvent::Enqueued { content });
+                self.last_id += 1;
+                let id = self.last_id;
+                self.items.push(Queued {
+                    id,
+                    text: content.clone(),
+                });
+                out.push(TxEvent::Enqueued { id, content });
             }
             // Absorbed into the running turn (or dropped): by its text; failing that, by
             // its text with the opening tag's attributes left out (a relayed message is
@@ -92,7 +129,7 @@ impl Queue {
             // Not queued: a guess, so the `dequeue` behind it took another item, still
             // queued until what was delivered shows which.
             Some("remove") => {
-                if !self.unqueue(&content)
+                if self.unqueue(&content).is_none()
                     && let Some(i) = Self::find_item(&self.guesses, &content)
                 {
                     self.guesses.remove(i);
@@ -111,8 +148,11 @@ impl Queue {
             // `↑` in the TUI takes what can be edited back into the input box, one record
             // per item (2.1.318); one without its text took all of it.
             Some("popAll") if e.content.is_some() => {
-                self.unqueue(&content);
-                out.push(TxEvent::Popped { content });
+                let id = self.unqueue(&content).unwrap_or_else(|| {
+                    self.last_id += 1;
+                    self.last_id
+                });
+                out.push(TxEvent::Popped { id, content });
             }
             Some("popAll") => self.items.clear(),
             _ => {}
@@ -127,25 +167,22 @@ impl Queue {
         }
     }
 
-    /// The queued item with `content` gone: by its text; failing that, by its text with the
-    /// opening tag's attributes left out.
-    fn unqueue(&mut self, content: &str) -> bool {
-        let Some(i) = Self::find_item(&self.items, content) else {
-            return false;
-        };
-        self.items.remove(i);
-        true
+    /// The queued item with `content` gone (its id): by its text; failing that, by its text with
+    /// the opening tag's attributes left out.
+    fn unqueue(&mut self, content: &str) -> Option<u64> {
+        let i = Self::find_item(&self.items, content)?;
+        Some(self.items.remove(i).id)
     }
 
     /// Position of `content` in `items`: by its text; failing that, by its text with the opening
     /// tag's attributes left out.
-    fn find_item(items: &[String], content: &str) -> Option<usize> {
+    fn find_item(items: &[Queued], content: &str) -> Option<usize> {
         items
             .iter()
-            .position(|q| q.trim() == content.trim())
+            .position(|q| q.text.trim() == content.trim())
             .or_else(|| {
                 let key = queue_key(content);
-                items.iter().position(|q| queue_key(q) == key)
+                items.iter().position(|q| queue_key(&q.text) == key)
             })
     }
 
@@ -171,8 +208,8 @@ impl Queue {
             .map(|b| nodes::result_content(b.content.as_deref()).0)
             .collect();
         let prompt = results.is_empty().then(|| prompt::user_text(e));
-        let carries = |item: &str| {
-            let item = item.trim();
+        let carries = |item: &Queued| {
+            let item = item.text.trim();
             !item.is_empty()
                 && (prompt.as_deref().is_some_and(|p| p.trim() == item)
                     || (item.starts_with('<') && results.iter().any(|r| r.contains(item))))
@@ -215,42 +252,56 @@ mod tests {
     #[test]
     fn only_what_was_typed_is_taken_back() {
         let typed = |t: &str| QueueItem {
+            id: "q1".into(),
             kind: QueueKind::Typed,
             from: None,
             text: t.into(),
             editable: true,
+            images: Some(Vec::new()),
         };
-        assert_eq!(queue_item("MOCK-STEERED now"), typed("MOCK-STEERED now"));
-        assert_eq!(queue_item("[Image #1] look"), typed("[Image #1] look"));
+        assert_eq!(queue_item(1, "MOCK-STEERED now"), typed("MOCK-STEERED now"));
+        // Image tags: the files are not known from the text.
+        assert_eq!(
+            queue_item(1, "[Image #1] look"),
+            QueueItem {
+                images: None,
+                ..typed("[Image #1] look")
+            }
+        );
         // A plugin's message is queued as typed.
         assert_eq!(
-            queue_item("The plannotator plugin sent a message:\nFeedback."),
+            queue_item(1, "The plannotator plugin sent a message:\nFeedback."),
             typed("The plannotator plugin sent a message:\nFeedback.")
         );
         // Another Session's, wrapped in Claude Code's lines, its body on several lines.
         let session = "Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/a.sock\" from-name=\"c6\">\nhi\nthere\n</cross-session-message>\n\nThis came from another Claude session";
         assert_eq!(
-            queue_item(session),
+            queue_item(2, session),
             QueueItem {
+                id: "q2".into(),
                 kind: QueueKind::Session,
                 from: Some("c6".into()),
                 text: "hi\nthere".into(),
                 editable: false,
+                images: Some(Vec::new()),
             }
         );
         assert_eq!(
-            queue_item("<agent-message from=\"a\">\nhi\n</agent-message>"),
+            queue_item(3, "<agent-message from=\"a\">\nhi\n</agent-message>"),
             QueueItem {
+                id: "q3".into(),
                 kind: QueueKind::Agent,
                 from: Some("a".into()),
                 text: "hi".into(),
                 editable: false,
+                images: Some(Vec::new()),
             }
         );
-        let v = serde_json::to_value(queue_item("x")).unwrap();
+        let v = serde_json::to_value(queue_item(4, "x")).unwrap();
         assert_eq!(
             v,
-            serde_json::json!({"kind": "typed", "from": null, "text": "x", "editable": true})
+            serde_json::json!({"id": "q4", "kind": "typed", "from": null, "text": "x",
+                "editable": true, "images": []})
         );
     }
 }

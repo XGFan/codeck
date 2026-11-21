@@ -3,7 +3,7 @@
 // events that carry state and control are typed here.
 
 /** The protocol version this app speaks: a `ready` with another one is said on the connection. */
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
 
 export type StateName = "starting" | "idle" | "busy" | "waiting" | "exited";
 export type WaitKind = "permission" | "question" | "dialog";
@@ -16,6 +16,8 @@ export type Meaning = "allow" | "allow_always" | "deny" | "other";
 export type LayoutSource = "builtin" | "learned";
 
 export interface PermissionOption {
+  /** The option's number on the dialog, as a string: unique within the request. */
+  id: string;
   label: string;
   meaning: Meaning;
 }
@@ -77,6 +79,8 @@ export interface CodeCallEndEvent {
   response: unknown;
 }
 export interface ChoiceOption {
+  /** The option's number on the dialog, as a string: unique within the request (`answer_choice`'s `option_id`). */
+  id: string;
   label: string;
   meaning: Meaning;
   description: string | null;
@@ -124,6 +128,8 @@ export interface RequestEndEvent {
 
 /** One item of the TUI's own input queue. */
 export interface QueueItem {
+  /** Given when it was queued (`q1`…): unique on this connection, the same while the item stays in the queue. */
+  id: string;
   /** `typed`: typed or steered (`[Image #n]` where an image is); `session`: from another Session; `agent`: from a Subagent or Teammate of this one. */
   kind: "typed" | "session" | "agent";
   /** Who sent it (`session` / `agent`); null for what was typed. */
@@ -132,6 +138,11 @@ export interface QueueItem {
   text: string;
   /** `edit_queue` (↑) takes it back into the input box: what was typed, not a message. */
   editable: boolean;
+  /**
+   * The paths of the images sent with it, in `[Image #n]` order (`[]` when the text has none); null when ccrpc does not
+   * know them (typed in the terminal, queued before this connection).
+   */
+  images: string[] | null;
 }
 
 export interface Usage {
@@ -156,10 +167,15 @@ export interface TurnEndEvent {
   api_cost: number | null;
 }
 
+/** `id`: the last main-line assistant message's model id (null right after `/model`); `name`: what to show. */
+export interface ModelInfo {
+  id: string | null;
+  name: string;
+}
+
 export interface SessionInfo {
   mode: string | null;
-  /** A model id (`claude-opus-4-7`), or a display name right after `/model` (`Sonnet 4.5`). */
-  model: string | null;
+  model: ModelInfo | null;
   /** low / medium / high / xhigh / max (or auto); null for a model without effort levels. */
   effort: string | null;
   context_tokens: number | null;
@@ -281,8 +297,16 @@ export type EventMsg =
   | ProgressEvent
   /** The feedback draft card above the TUI's input box appeared (a draft) or went away (null). */
   | { type: "feedback_draft"; draft: FeedbackDraft | null }
-  /** `cwd`: where claude runs (`new`'s `ready` comes before claude has a Process File, without it). */
-  | { type: "session_changed"; session_id: string; previous: string | null; cwd: string | null }
+  /** `cwd`: where claude runs. */
+  | { type: "session_changed"; session_id: string; previous: string; cwd: string | null }
+  /** The Session got its id after `ready` (`new`, an attach to claude's start screen, a Fork's new Session). */
+  | { type: "started"; session_id: string; cwd: string | null }
+  /** `new` failed to start claude (not a Fork): ccrpc closes the Pane and exits with 1. */
+  | { type: "start_failed"; message: string }
+  /** ccrpc cannot go on: the last line on stdout, then it exits with 1. */
+  | { type: "fatal"; message: string }
+  /** ccrpc's own follow-up queue changed: all of it. */
+  | { type: "follow_ups"; items: string[] }
   | ForkEvent
   | { type: "session_exit" };
 
