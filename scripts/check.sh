@@ -5,10 +5,12 @@
 # Rust changes → fmt, clippy, tests (plus ccrpc's mock end-to-end tests when ccrpc changed); frontend
 # changes → Prettier, typecheck, lint, vitest, E2E; docs only → nothing.
 #
-# A group that passed is remembered for the content it ran on (every tracked file but Markdown), under
-# <git-common-dir>/codeck-checks: the same content is not checked twice, so running this before a
-# push makes the push's own check instant. It runs on the working tree, so a pass is remembered only
-# when the tracked files are as committed.
+# A group that passed is remembered for the content it ran on, under <git-common-dir>/codeck-checks:
+# the same content is not checked twice, so running this before a push makes the push's own check
+# instant. That content is what the group reads (see the keys below), so a commit to the frontend
+# alone leaves what Rust and ccrpc's end-to-end tests passed on as it was. It runs on the working
+# tree, so a pass is remembered only when the tracked files are as committed.
+#   scripts/check.sh --keys [rev]   prints each group's key at rev (HEAD): why a group runs again
 #
 # Stops what it started when interrupted, or when the process that ran it (git push) is gone.
 set -u
@@ -18,16 +20,41 @@ cd "$root" || exit 1
 me=check
 all=false
 hook=false
+keys=""
 list=""
 while [ $# -gt 0 ]; do
   case $1 in
     --all) all=true ;;
+    --keys) keys=${2:-HEAD}; [ $# -gt 1 ] && shift ;;
     # The pre-push hook: the files the push brings, one per line (removed when done).
     --hook) hook=true; me=pre-push; list=$2; shift ;;
-    *) echo "用法：scripts/check.sh [--all]" >&2; exit 2 ;;
+    *) echo "用法：scripts/check.sh [--all | --keys [rev]]" >&2; exit 2 ;;
   esac
   shift
 done
+
+# What a group passed on: the tracked files it reads, Markdown aside. Rust and the frontend are told
+# apart by what the other alone reads, so a path nobody listed counts for both; each also reads a
+# few of the other's files (the bindings a Rust test compares, the fixture the iPhone tests share
+# with the Host's, the schema a frontend test checks its recordings against). ccrpc's end-to-end
+# tests build ccrpc alone: its crate, the parsing library it uses, and Cargo's files.
+tab=$(printf '\t')
+web_only='src/|e2e/|e2e-host/|public/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript|terminal)\.html$|\.env\.|\.prettier'
+rust_only='crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/'
+key_of() {
+  tree=$(git ls-tree -r "$2" | grep -vE '\.md$')
+  only() { echo "$tree" | grep -E "$tab($1)"; }
+  without() { echo "$tree" | grep -vE "$tab($1)"; }
+  case $1 in
+    rust) { without "$web_only|ios/"; only 'src/ipc/bindings\.ts$|ios/Tests/Fixtures/'; } ;;
+    web) { without "$rust_only|ios/"; only 'crates/ccrpc/docs/protocol\.schema\.json$'; } ;;
+    ccrpc) only 'crates/ccrpc/|crates/transcript/|crates/codeck-host/src/ccrpc/|Cargo\.(toml|lock)$|\.cargo/' ;;
+  esac | git hash-object --stdin
+}
+if [ -n "$keys" ]; then
+  for g in rust ccrpc web; do echo "$g $(key_of "$g" "$keys")"; done
+  exit 0
+fi
 
 if $hook; then
   changed=$(cat "$list")
@@ -68,13 +95,10 @@ if ! $clean && $hook; then
   exit 1
 fi
 
-# What the checks ran on: every tracked file but Markdown (a group may read another's files, such as a
-# fixture the iPhone tests share, so the key is not narrowed to the group's own paths).
-key=$(git ls-tree -r HEAD | grep -vE '\.md$' | git hash-object --stdin)
 dir=$(git rev-parse --git-common-dir)/codeck-checks
 mkdir -p "$dir"
 find "$dir" -name 'ok-*' -mtime +14 -delete 2>/dev/null
-passed() { $clean && [ -e "$dir/ok-$1-$key" ]; }
+passed() { $clean && [ -e "$dir/ok-$1-$(key_of "$1" HEAD)" ]; }
 label() {
   case $1 in
     rust) echo "Rust（fmt、clippy、cargo test）" ;;
@@ -171,7 +195,7 @@ for g in $todo; do
       ;;
   esac
   if $clean; then
-    : >"$dir/ok-$g-$key"
+    : >"$dir/ok-$g-$(key_of "$g" HEAD)"
     echo $(($(date +%s) - start)) >"$dir/secs-$g"
   fi
 done
