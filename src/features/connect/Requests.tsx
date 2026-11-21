@@ -502,15 +502,18 @@ function QuestionHint({ r }: { r: QuestionEvent }) {
   );
 }
 
-/** A question not on a card in the main transcript ([`ownCard`]): a card of its own here. */
+/**
+ * A question not on a card in the main transcript ([`ownCard`]): a card of its own here. It takes the height the
+ * cards are given at most: with more questions than fit they scroll inside it, under its header and above its buttons.
+ */
 function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
   const qs = Array.isArray(r.questions) ? r.questions : [];
   return (
     <section
       data-testid="question-card"
-      className="w-full overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm"
+      className="flex min-h-[140px] w-full flex-col overflow-hidden rounded-lg border border-live-waiting/60 shadow-sm"
     >
-      <div className="flex items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-list px-2.5 py-1.5 text-[12px] text-text/80">
         <MessageCircleQuestionMark size={14} strokeWidth={1.6} className="text-accent" aria-hidden />
         <span className="font-semibold">向你提问</span>
         {qs.length > 1 && <span className="text-secondary">{qs.length} 个问题</span>}
@@ -519,8 +522,8 @@ function QuestionCard({ r, c }: { r: QuestionEvent; c: ConnState }) {
         )}
         <span className="ml-auto text-live-waiting">等待回答</span>
       </div>
-      <div className="bg-ground px-3 py-2.5">
-        <QuestionForm r={r} c={c} />
+      <div className="flex min-h-0 flex-col bg-ground px-3 py-2.5">
+        <QuestionForm r={r} c={c} fit />
       </div>
     </section>
   );

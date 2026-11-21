@@ -511,6 +511,44 @@ test("Code Mode 里从代码发起的提问在输入区的卡片上作答", asyn
     .toMatchObject({ request_id: "repl_e2e_code", answers: [{ options: ["B"] }] });
 });
 
+test("输入区的提问卡片：题目多、窗口矮时题目在卡片里滚动，「提交」一直看得见", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  const options = ["甲", "乙", "丙", "丁"].map((label) => ({ label, description: "说明文字" }));
+  await page.evaluate(
+    (options) =>
+      window.__cvCcrpc!.emit({
+        type: "question",
+        request_id: "repl_e2e_tall",
+        tool_use_id: "repl_e2e_tall",
+        agent_id: null,
+        from_code: true,
+        questions: ["一", "二", "三"].map((n) => ({
+          question: `第${n}题选哪个？`,
+          header: `题${n}`,
+          multiSelect: false,
+          options,
+        })),
+      }),
+    options,
+  );
+  const q = page.getByTestId("question-card");
+  await expect(q).toContainText("第三题选哪个？");
+  // More than fits: the buttons stay in sight, the questions scroll under the card's header.
+  await expect(q.getByTestId("submit-answer")).toBeInViewport({ ratio: 1 });
+  await expect(q.getByTestId("chat-about-question")).toBeInViewport({ ratio: 1 });
+  for (const n of [0, 1, 2]) await q.locator("fieldset").nth(n).getByTestId("question-option").first().click();
+  await expect(q.getByTestId("submit-answer")).toBeInViewport({ ratio: 1 });
+  await q.getByTestId("submit-answer").click();
+  await expect
+    .poll(() => lastSent(page, "answer_question"))
+    .toMatchObject({
+      request_id: "repl_e2e_tall",
+      answers: [{ options: ["甲"] }, { options: ["甲"] }, { options: ["甲"] }],
+    });
+});
+
 test("请求卡片留到 ccrpc 报它结束（request_end），不随状态变化消失", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");
