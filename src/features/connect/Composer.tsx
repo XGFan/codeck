@@ -1,4 +1,4 @@
-import { ArrowUp, Clock, File, Folder, MessageSquareText, Square } from "lucide-react";
+import { ArrowUp, Clock, File, Folder, MessageSquareText, Square, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/ipc";
@@ -8,7 +8,7 @@ import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, usePathCompletions, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
 import type { FeedbackDraft, QueueItem } from "./protocol";
-import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand, typedName } from "./slash";
+import { applyPath, commandOf, matchCommands, pathAt, typedCommand, typedName } from "./slash";
 import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, isDraft, type Draft } from "./drafts";
 import { draftKey, useConnect } from "./store";
@@ -125,7 +125,7 @@ function FeedbackDraftNotice({
 }
 
 /**
- * The input box: idle → `prompt` (a built-in slash command → `slash`; `/rewind` (`/checkpoint`) → 「选回退点」, nothing
+ * The input box: idle → `prompt` (ccrpc handles a slash command itself; `/rewind` (`/checkpoint`) → 「选回退点」, nothing
  * sent); busy → `steer`, as Enter in the terminal (Claude Code's own queue, shown in the TUI and above the box,
  * delivered when the current tool call ends); ⌘Enter while busy also sends the queue at once (`send_now`, ctrl+enter in
  * the terminal: the turn is interrupted); ↑ on the first line while busy takes what waits in the queue back into the box
@@ -285,6 +285,15 @@ export function Composer({ c }: { c: ConnState }) {
     });
   };
 
+  /** ✕ on a queued item: Claude Code's queue has no such key, ccrpc takes the item out and queues the others again. */
+  const cancelQueued = async (id: string) => {
+    setSending(true);
+    setError(null);
+    const r = await command(c.conn, { type: "cancel_queue", queue_id: id });
+    setSending(false);
+    if (!r.success) setError(`撤回排队的消息失败：${r.error?.message ?? r.error?.code ?? ""}`);
+  };
+
   const submit = async (now = false) => {
     const body = text.trim();
     if (live && state === "waiting") return focusFirstCard();
@@ -300,18 +309,16 @@ export function Composer({ c }: { c: ConnState }) {
     let msg: Record<string, unknown>;
     // With images: the words and the images in the order they are in the box (`parts`), else the text alone.
     const content = images.length ? { parts: toParts(body, images) } : { text: body };
-    let list: SlashCommand[] | undefined;
-    if (body.startsWith("/")) {
-      setSending(true);
-      list = await commandList();
-      setSending(false);
-    }
     // Words go as `prompt` with `if_busy: "steer"` either way: ccrpc picks prompt or steer by the state as it runs
-    // (a background task's notice may start a turn, or the turn end, just before).
-    if (state === "idle") {
-      const command = slashCommand(body, images.length > 0, list);
-      msg = command != null ? { type: "slash", command } : { type: "prompt", ...content, if_busy: "steer" };
-    } else if (state === "busy") {
+    // (a background task's notice may start a turn, or the turn end, just before), and runs a slash command itself.
+    if (state === "idle") msg = { type: "prompt", ...content, if_busy: "steer" };
+    else if (state === "busy") {
+      let list: SlashCommand[] | undefined;
+      if (body.startsWith("/")) {
+        setSending(true);
+        list = await commandList();
+        setSending(false);
+      }
       // A panel opened from the queue would hold the turn until someone closes it in the terminal.
       const panel = commandOf(body, list);
       if (panel?.source === "builtin" && panel.interactive)
@@ -324,12 +331,14 @@ export function Composer({ c }: { c: ConnState }) {
     scrollToBottom();
     // Meant as a new prompt (idle when sent): its placeholder and the box cleared at once.
     const prompt = msg.type === "prompt" && state === "idle";
+    // A command may leave no prompt (a panel, a local command): nothing is shown or cleared until ccrpc says which.
+    const early = prompt && !(body.startsWith("/") && !body.includes("\n") && images.length === 0);
     const sent = images;
     const gone = new Set(sent.map((i) => i.path));
     const at = Date.now();
     // Should ↑ take it back from the queue: the item has only the images' paths.
     rememberImages(sent);
-    if (prompt) {
+    if (early) {
       // A placeholder at the transcript's end at once, and the box is free again (both back if it fails).
       setPending(c.conn, { uuid: null, at });
       // What was typed meanwhile stays: without the sent images (their tokens by image, not by number).
@@ -338,7 +347,7 @@ export function Composer({ c }: { c: ConnState }) {
     const r = await command(c.conn, msg);
     setSending(false);
     if (!r.success) {
-      if (prompt) {
+      if (early) {
         setPending(c.conn, null);
         // Back in the box, its images first (what was typed meanwhile numbered after them).
         update((d) => {
@@ -350,18 +359,19 @@ export function Composer({ c }: { c: ConnState }) {
       return setError(`发送失败：${r.error?.message ?? r.error?.code ?? ""}`);
     }
     // How ccrpc delivered it: a new prompt (also when sent while busy and the turn had ended meanwhile), or into
-    // Claude Code's queue (a steer, or the turn had not quite ended): shown in the queue card, not as a prompt yet.
+    // Claude Code's queue (a steer, or the turn had not quite ended): shown in the queue card, not as a prompt yet; or
+    // `command` (a panel or a local command that leaves no record): no uuid, no prompt, the box is just cleared.
     const queued = r.data?.delivered_as === "queued";
     const uuid = !queued && typeof r.data?.uuid === "string" ? r.data.uuid : null;
     if (uuid) markFresh(uuid);
-    if (prompt) setPending(c.conn, uuid ? { uuid, at } : null);
-    if (prompt || uuid) {
+    if (early || (prompt && uuid)) setPending(c.conn, uuid ? { uuid, at } : null);
+    if (early || uuid) {
       // A new prompt: what was rewound becomes another Branch (the marker goes once that is indexed).
       rewoundSent(c.conn);
       // It is in the transcript by now: indexed at once, not after the watcher's debounce.
       if (c.sessionId) void api.syncSession(c.sessionId).catch(() => {});
     }
-    if (prompt) return;
+    if (early) return;
     // ⌘Enter: what was just queued goes out now, with anything queued before it.
     if (now && queued) void sendNow();
     // Keep what was typed while it was being sent; only the images that went with it go (an image pasted meanwhile
@@ -470,9 +480,24 @@ export function Composer({ c }: { c: ConnState }) {
             icon={<Clock size={18} strokeWidth={1.7} />}
             title={`排队 ${c.queue.length} 条`}
             desc={c.queue.map((q, i) => (
-              <span key={q.id} data-testid="queue-item" title={queueText(q)}>
-                {i > 0 && "；"}
-                {queueText(q)}
+              <span key={q.id} className="group/queued">
+                <span data-testid="queue-item" title={queueText(q)}>
+                  {i > 0 && "；"}
+                  {queueText(q)}
+                </span>
+                {q.editable && (
+                  <button
+                    type="button"
+                    title="撤回这条"
+                    aria-label="撤回这条"
+                    data-testid="queue-cancel"
+                    disabled={!live || state !== "busy" || sending}
+                    onClick={() => void cancelQueued(q.id)}
+                    className="ml-1 inline-flex size-4 items-center justify-center rounded align-middle text-secondary opacity-0 group-hover/queued:opacity-100 hover:bg-selection/60 hover:text-text focus-visible:opacity-100 disabled:opacity-40"
+                  >
+                    <X size={12} aria-hidden />
+                  </button>
+                )}
               </span>
             ))}
             action={{

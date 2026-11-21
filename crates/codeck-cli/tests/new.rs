@@ -50,7 +50,7 @@ fn cwd() -> PathBuf {
 }
 
 const STARTED: &str = r#"
-echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":null,"cwd":"/w","state":"idle"}'
+echo '{"type":"ready","protocol":6,"holder_id":"H1","session_id":null,"cwd":"/w","state":"idle"}'
 echo '{"type":"started","session_id":"S-1","cwd":"/w"}'
 IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
 echo '{"type":"response","id":"1","command":"prompt","success":true,"data":{"uuid":"u"}}'
@@ -102,11 +102,11 @@ fn sends_the_prompt_once_the_session_is_known_then_lets_go() {
 fn the_folder_trust_dialog_is_refused_and_nothing_is_sent() {
     let (dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":null,"cwd":null,"state":"starting"}'
+echo '{"type":"ready","protocol":6,"holder_id":"H1","session_id":null,"cwd":null,"state":"starting"}'
 echo '{"type":"choice","request_id":"choice:1","title":"t","options":[{"id":"1","label":"Yes, I trust this folder","meaning":"allow","description":null},{"id":"2","label":"No, exit","meaning":"deny","description":null}],"tool_use_id":null,"layout":"trust_folder","layout_source":"builtin"}'
 IFS= read -r line; printf '%s\n' "$line" >> "$D/sent"
 echo '{"type":"response","id":"trust","command":"answer_choice","success":false,"error":{"code":"timeout","message":"m"}}'
-echo '{"type":"start_failed","message":"claude 没有启动"}'
+echo '{"type":"start_failed","code":"untrusted","message":"没有信任这个目录"}'
 cat > /dev/null
 "#,
     );
@@ -120,6 +120,21 @@ cat > /dev/null
     assert_eq!(sent[0]["type"], "answer_choice");
     assert_eq!(sent[0]["request_id"], "choice:1");
     assert_eq!(sent[0]["option_id"], "2");
+}
+
+#[test]
+fn an_untrusted_folder_reported_without_the_dialog_is_named_the_same() {
+    let (_dir, env) = fake(
+        r#"
+echo '{"type":"ready","protocol":6,"holder_id":"H1","session_id":null,"cwd":"/w","state":"starting"}'
+echo '{"type":"start_failed","code":"untrusted","message":"没有信任这个目录"}'
+exit 1
+"#,
+    );
+    let err = start(&env, &NO_LAUNCH, &cwd(), "hello", Duration::from_secs(30)).unwrap_err();
+    assert_eq!(err.code, "untrusted_dir");
+    assert_eq!(err.message, "目录还没有信任，先在终端里用 claude 打开一次");
+    assert_eq!(err.holder_id, None);
 }
 
 #[test]
@@ -169,8 +184,8 @@ exit 1
 fn claude_not_starting_is_named_and_the_pane_is_gone() {
     let (_dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":null,"cwd":"/w","state":"starting"}'
-echo '{"type":"start_failed","message":"No conversation found with session ID: x"}'
+echo '{"type":"ready","protocol":6,"holder_id":"H1","session_id":null,"cwd":"/w","state":"starting"}'
+echo '{"type":"start_failed","code":"exited","message":"No conversation found with session ID: x"}'
 exit 1
 "#,
     );
@@ -195,7 +210,7 @@ fn a_silent_ccrpc_times_out() {
 fn a_failed_prompt_names_the_pane_left_behind() {
     let (_dir, env) = fake(
         r#"
-echo '{"type":"ready","protocol":5,"holder_id":"H1","session_id":"S-1","cwd":"/w","state":"idle"}'
+echo '{"type":"ready","protocol":6,"holder_id":"H1","session_id":"S-1","cwd":"/w","state":"idle"}'
 IFS= read -r line
 echo '{"type":"response","id":"1","command":"prompt","success":false,"error":{"code":"not_idle","message":"当前状态为 busy"}}'
 cat > /dev/null

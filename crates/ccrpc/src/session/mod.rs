@@ -2,8 +2,7 @@
 //! and the transcript tail; it executes commands in order and emits events. Commands that wait
 //! keep ticking, so events keep flowing while they wait, and stdin is still read: commands that
 //! neither write to the Pane nor wait are answered at once, `abort` runs once the waiting command
-//! has pressed its last key, the rest run after it (follow-ups are only sent from the top level
-//! loop, never from inside a waiting command).
+//! has pressed its last key, the rest run after it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::net::UnixStream;
@@ -51,7 +50,7 @@ use self::rewind::RewindReq;
 pub use self::startup::{Reported, cmd_attach, cmd_new, resolve_target};
 use self::turn::{Marks, TurnTracker, Typed};
 
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 /// Longest wait between two looks while a command waits.
 const TICK: Duration = Duration::from_millis(50);
 /// Longest wait between two looks when idle (file, Holder and stdin events wake earlier).
@@ -65,10 +64,12 @@ const MOVED_GRACE: Duration = Duration::from_secs(5);
 /// After Stop, how long to wait for the transcript to catch up (the turn's last message and its
 /// `turn_duration` marker are written around the same moment) before `turn_end`.
 const STOP_CATCH_UP: Duration = Duration::from_secs(2);
-/// A follow-up goes out only after the Session has been idle this long: right after Stop, Claude
-/// Code starts a turn of its own for what it queued (a background task's notification), and a
-/// prompt typed then lands in its queue instead.
-const FOLLOW_UP_SETTLE: Duration = Duration::from_secs(1);
+/// `settled` is said only after the Session has been idle this long: right after Stop, Claude
+/// Code starts a turn of its own for what it queued (a background task's notification).
+const STOP_SETTLE: Duration = Duration::from_secs(1);
+/// A `prompt` that is a slash command and left the input box is a command without a record
+/// (a panel) when neither a record nor a turn shows up this long after.
+const COMMAND_QUIET: Duration = Duration::from_secs(2);
 /// How long `compact` waits for the compact boundary (a long conversation takes a while to sum up).
 const COMPACT_TIMEOUT: Duration = Duration::from_secs(600);
 /// Idle this long without a compact boundary: the compaction failed or was aborted.
@@ -110,7 +111,7 @@ pub const WORK_SIZE: (u16, u16) = (120, 40);
 /// this long to redraw.
 const GROW_SETTLE: Duration = Duration::from_millis(800);
 /// Claude Code versions the built-in layouts were probed on.
-pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316", "2.1.317"];
+pub const TESTED_CLAUDE_VERSIONS: &[&str] = &["2.1.316", "2.1.317", "2.1.329"];
 /// At most this many analyses an hour.
 const MAX_ANALYSES_PER_HOUR: usize = 10;
 
@@ -247,8 +248,15 @@ pub struct Engine {
     /// claude is gone, or never came, before its Session had an id: `run` ends with
     /// `start_failed`.
     launch_failed: bool,
+    /// The failed launch is claude not showing up in the Pane (`no_claude`), not claude ending.
+    launch_no_claude: bool,
+    /// The last startup screen reported was the folder trust dialog, and it was not answered Yes
+    /// here: claude ending now means it was declined (`untrusted`).
+    startup_trust: bool,
     /// When `ready` went out.
     ready_at: Option<Instant>,
+    /// When the screen of a Pane still without claude was last read for claude's error.
+    launch_looked: Option<Instant>,
     holder_id: String,
     shell_pid: u32,
     conn: HolderConn,
@@ -311,8 +319,6 @@ pub struct Engine {
     /// The startup screens' request id: one for the whole startup (until the folder trust dialog
     /// or the Process File).
     startup_dialog: Option<String>,
-    /// Queued follow-ups (checked: image paths absolute).
-    follow_ups: VecDeque<rpc::Input>,
     /// What the person typed (or a steer sent) waiting in Claude Code's own queue, oldest first:
     /// the transcript's queue minus task notifications and Teammate messages.
     queue: Vec<QueueItem>,
@@ -325,8 +331,6 @@ pub struct Engine {
     resolved: HashSet<String>,
     /// The background tasks last sent (`tasks`).
     tasks_sent: Option<Vec<BgTask>>,
-    /// The follow-ups last sent (`follow_ups`).
-    follow_ups_sent: Option<Vec<String>>,
     procfile_warned: bool,
     exited: bool,
     /// Events are suppressed (initial settle).
@@ -343,13 +347,16 @@ pub struct Engine {
     compacted: Option<Value>,
     /// A turn ended since the last `settled`: one goes out once the Session stays quiet.
     settle_armed: bool,
-    /// When a command that may write to the Pane last ran (a follow-up sent included): a turn it
+    /// When a command that may write to the Pane last ran : a turn it
     /// starts may not show yet.
     commanded_at: Option<Instant>,
 }
 
 /// How long after `ready` a `new` Pane may go without a claude process before `start_failed`.
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// From this long after `ready`, a `new` Pane without a claude process whose screen shows claude's
+/// own error has failed: the shell needs a moment to start claude at all.
+const LAUNCH_ERROR_AFTER: Duration = Duration::from_secs(5);
 /// `start_failed` reads the Pane's screen once it has been still this long (the shell draws its
 /// prompt after what claude left).
 const LAUNCH_SCREEN_SETTLE: Duration = Duration::from_millis(300);
@@ -385,8 +392,6 @@ fn serves_in_wait(c: &Command) -> bool {
             | Command::GetTasks
             | Command::GetToolResult { .. }
             | Command::GetImage { .. }
-            | Command::FollowUp { .. }
-            | Command::CancelFollowUp { .. }
     )
 }
 
@@ -442,7 +447,10 @@ impl Engine {
             fatal_reported: false,
             made_pane: false,
             launch_failed: false,
+            launch_no_claude: false,
+            startup_trust: false,
             ready_at: None,
+            launch_looked: None,
             holder_id: pane.id.clone(),
             shell_pid: pane.shell_pid,
             conn,
@@ -481,14 +489,12 @@ impl Engine {
             startup_checked: None,
             startup_last: None,
             startup_dialog: None,
-            follow_ups: VecDeque::new(),
             queue: Vec::new(),
             queue_images: HashMap::new(),
             pending_images: None,
             marks: Marks::default(),
             resolved: HashSet::new(),
             tasks_sent: None,
-            follow_ups_sent: None,
             procfile_warned: false,
             exited: false,
             quiet: false,
@@ -879,12 +885,35 @@ impl Engine {
         }
         self.size = self.conn.size();
         self.locate_claude();
+        if launch_timed_out(
+            self.made_pane,
+            self.claude_pid.is_some(),
+            self.ready_at.map(|t| t.elapsed()),
+        ) {
+            self.launch_failed = true;
+            self.launch_no_claude = true;
+            return;
+        }
+        // claude that ended before ccrpc saw its process (a `--resume` of a Session that is not
+        // there is over within a moment) left its error on the screen: that is not waited out.
         if self.made_pane
             && self.claude_pid.is_none()
-            && self.ready_at.is_some_and(|t| t.elapsed() >= LAUNCH_TIMEOUT)
+            && self
+                .ready_at
+                .is_some_and(|t| t.elapsed() >= LAUNCH_ERROR_AFTER)
+            && self
+                .launch_looked
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
         {
-            self.launch_failed = true;
-            return;
+            self.launch_looked = Some(Instant::now());
+            if self
+                .screen()
+                .ok()
+                .is_some_and(|s| fork::claude_error_line(&s).is_some())
+            {
+                self.launch_failed = true;
+                return;
+            }
         }
         if let Some(pid) = self.claude_pid {
             if !::transcript::live::pid_exists(pid) {
@@ -946,12 +975,12 @@ impl Engine {
         self.refresh_announcement();
         self.watch_rewind();
         self.see_btw();
+        self.end_stopped_agent_requests();
         self.sync_requests();
         self.announce_requests();
         self.look_at_screen();
         self.sync_requests();
         self.sync_tasks();
-        self.sync_follow_ups();
     }
 
     /// The permission mode: the mode line under the input box, else what the plugin last saw.
@@ -1381,7 +1410,6 @@ impl Engine {
             size: self.size,
             info: self.session_info(),
             queue: &self.queue,
-            follow_ups: self.follow_up_texts(),
             tasks: self.tasks(),
             code_calls: self.code_calls.open(),
             feedback_draft: self.feedback.as_ref().map_or(Value::Null, public_draft),
@@ -1471,7 +1499,6 @@ impl Engine {
     pub fn execute(&mut self, c: &Command) -> CmdResult {
         let res = match c {
             Command::Prompt { input, if_busy } => self.prompt_cmd(input, *if_busy),
-            Command::CancelFollowUp { index } => self.cancel_follow_up(*index),
             Command::SetMode { mode } => self.set_mode(*mode),
             Command::GetTasks => Ok(json!({"tasks": self.tasks()})),
             Command::StopTask { task_id } => self.stop_task(task_id),
@@ -1485,11 +1512,11 @@ impl Engine {
                 self.answer_rewind_cmd(request_id, *option)
             }
             Command::Steer { input } => self.steer_input(input),
-            Command::FollowUp { input } => self.queue_follow_up(input),
             Command::Abort => self.abort(),
             Command::CloseBtw => self.close_btw(),
             Command::SendNow => self.send_now(),
             Command::EditQueue => self.edit_queue(),
+            Command::CancelQueue { id } => self.cancel_queue(id),
             Command::AnswerPermission {
                 request_id,
                 decision,
@@ -1577,10 +1604,8 @@ impl Engine {
         // Seen by the first look, before events went out.
         let snapshot = self.snapshot();
         let tasks = snapshot.tasks.clone();
-        let follow_ups = snapshot.follow_ups.clone();
         let v = ready_event(snapshot.to_json(), version, warnings);
         self.tasks_sent = Some(tasks);
-        self.follow_ups_sent = Some(follow_ups);
         self.emit(v);
     }
 
@@ -1652,7 +1677,6 @@ impl Engine {
                     }
                     // A SIGTERM during the tick: no queued prompt goes out after it.
                     if !startup::terminated() {
-                        self.drain_follow_ups();
                         self.check_settled();
                     }
                     self.wake.wait(seen, IDLE_TICK);
@@ -1707,13 +1731,18 @@ impl Engine {
                 last = (generation, Instant::now());
             }
         }
-        let message = self
-            .screen()
-            .ok()
-            .and_then(|s| fork::exit_line(&s))
-            .unwrap_or_else(|| "claude 没有启动".into());
-        crate::clog!("start failed: {message}");
-        self.emit(json!({"type": "start_failed", "message": message}));
+        let screen = self.screen().ok();
+        let claude_error = screen
+            .as_ref()
+            .is_some_and(|s| fork::claude_error_line(s).is_some());
+        let screen_line = screen.as_ref().and_then(fork::exit_line);
+        let (code, message) = start_failure(
+            self.launch_no_claude && !claude_error,
+            self.startup_trust,
+            screen_line,
+        );
+        crate::clog!("start failed ({code}): {message}");
+        self.emit(json!({"type": "start_failed", "code": code, "message": message}));
         let mut lines: Vec<String> = self.deferred.drain(..).collect();
         if let Some(rx) = &self.input {
             lines.extend(std::iter::from_fn(|| rx.try_recv().ok()));
@@ -1736,18 +1765,16 @@ impl Engine {
     }
 
     /// `settled` once nothing more runs by itself after a turn ended: idle for
-    /// [`FOLLOW_UP_SETTLE`] (Claude Code starts a turn for what waits in its own queue right after
-    /// Stop), no turn open, both queues empty, no command lately. Only between commands (a
-    /// follow-up being sent has left the queue but not opened its turn yet).
+    /// [`STOP_SETTLE`] (Claude Code starts a turn for what waits in its own queue right after
+    /// Stop), no turn open, its queue empty, no command lately. Only between commands.
     fn check_settled(&mut self) {
-        let quiet = |t: Option<Instant>| t.is_none_or(|t| t.elapsed() >= FOLLOW_UP_SETTLE);
+        let quiet = |t: Option<Instant>| t.is_none_or(|t| t.elapsed() >= STOP_SETTLE);
         if !self.settle_armed
             || self.state != State::Idle
             || self.turns.active()
-            || !self.follow_ups.is_empty()
             || !self.queue.is_empty()
             || !self.deferred.is_empty()
-            || self.idle_at.is_none_or(|t| t.elapsed() < FOLLOW_UP_SETTLE)
+            || self.idle_at.is_none_or(|t| t.elapsed() < STOP_SETTLE)
             || !quiet(self.commanded_at)
         {
             return;
@@ -1783,8 +1810,7 @@ impl Engine {
         self.startup_dialog = None;
     }
 
-    /// While a command waits: lines from stdin that neither write to the Pane nor wait (reads, the
-    /// follow-up queue) and bad lines are answered at once; at an abort point (the command pressed
+    /// While a command waits: lines from stdin that neither write to the Pane nor wait (reads) and bad lines are answered at once; at an abort point (the command pressed
     /// its last key) an `abort` runs now, once there is a turn to abort. Never ahead of a line
     /// that came earlier: once one waits for the command to end, the ones after it wait too.
     /// Everything else runs after the command, in order. Only the `abort` waits (up to 10 s for
@@ -1862,7 +1888,6 @@ impl Engine {
                 // A snapshot the command returns (`get_state`, `get_tasks`) is of what is live now.
                 self.sync_requests();
                 self.sync_tasks();
-                self.sync_follow_ups();
                 let v = match self.execute(&command) {
                     Ok(data) => rpc::response_ok(id.as_deref(), name, data),
                     Err((code, msg)) => rpc::response_err(id.as_deref(), name, code, &msg),
@@ -1870,7 +1895,6 @@ impl Engine {
                 // What the command ended is said before its response.
                 self.sync_requests();
                 self.sync_tasks();
-                self.sync_follow_ups();
                 self.emit(v);
             }
             Err(RpcError {
@@ -1902,7 +1926,6 @@ struct Snapshot<'a> {
     /// `session_info`'s fields.
     info: Value,
     queue: &'a [QueueItem],
-    follow_ups: Vec<String>,
     tasks: Vec<BgTask>,
     /// Code Mode: the calls reported with `code_call` and not ended.
     code_calls: Vec<Value>,
@@ -1921,11 +1944,38 @@ impl Snapshot<'_> {
             v[k] = self.info[k].clone();
         }
         v["queue"] = json!(self.queue);
-        v["follow_ups"] = json!(self.follow_ups);
         v["tasks"] = json!(self.tasks);
         v["code_calls"] = json!(self.code_calls);
         v["feedback_draft"] = self.feedback_draft.clone();
         v
+    }
+}
+
+/// A `new` Pane has had no claude process for [`LAUNCH_TIMEOUT`] since `ready`.
+fn launch_timed_out(made_pane: bool, has_claude: bool, since_ready: Option<Duration>) -> bool {
+    made_pane && !has_claude && since_ready.is_some_and(|t| t >= LAUNCH_TIMEOUT)
+}
+
+/// `start_failed`'s `code` and `message`: `no_claude` when claude never showed up in the Pane,
+/// `untrusted` when it ended right after the folder trust dialog was the last screen reported,
+/// else `exited` (claude that ended before ccrpc saw its process, leaving its own error on the
+/// screen, is this too: the caller passes `no_claude` only without such an error). `screen_line` is what the Pane's screen says went wrong.
+fn start_failure(
+    no_claude: bool,
+    trust_shown: bool,
+    screen_line: Option<String>,
+) -> (&'static str, String) {
+    let line = || {
+        screen_line
+            .clone()
+            .unwrap_or_else(|| "claude 没有启动".into())
+    };
+    if no_claude {
+        ("no_claude", line())
+    } else if trust_shown {
+        ("untrusted", "没有信任这个目录".into())
+    } else {
+        ("exited", line())
     }
 }
 
@@ -1974,11 +2024,39 @@ mod tests {
         "context_tokens",
         "title",
         "queue",
-        "follow_ups",
         "tasks",
         "code_calls",
         "feedback_draft",
     ];
+
+    #[test]
+    fn a_pane_without_claude_times_out_after_thirty_seconds() {
+        let at = |s: u64| Some(Duration::from_secs(s));
+        assert!(!launch_timed_out(true, false, at(29)));
+        assert!(launch_timed_out(true, false, at(30)));
+        // Not before `ready`, not with claude there, not for a Pane that was not made here.
+        assert!(!launch_timed_out(true, false, None));
+        assert!(!launch_timed_out(true, true, at(60)));
+        assert!(!launch_timed_out(false, false, at(60)));
+    }
+
+    #[test]
+    fn start_failure_codes() {
+        let line = || Some("No conversation found with session ID: x".to_string());
+        assert_eq!(
+            start_failure(false, false, line()),
+            ("exited", "No conversation found with session ID: x".into())
+        );
+        assert_eq!(
+            start_failure(false, true, line()),
+            ("untrusted", "没有信任这个目录".into())
+        );
+        assert_eq!(
+            start_failure(true, false, None),
+            ("no_claude", "claude 没有启动".into())
+        );
+        assert_eq!(start_failure(true, false, line()).1, line().unwrap());
+    }
 
     #[test]
     fn ready_and_get_state_say_every_field() {
@@ -1994,7 +2072,6 @@ mod tests {
             size: (120, 40),
             info,
             queue: &[],
-            follow_ups: Vec::new(),
             tasks: Vec::new(),
             code_calls: Vec::new(),
             feedback_draft: Value::Null,
@@ -2009,7 +2086,7 @@ mod tests {
         let mut want = fields;
         want.extend(["type", "protocol", "claude_version", "warnings"].map(String::from));
         assert_eq!(keys(&ready), want);
-        assert_eq!(ready["protocol"], 5);
+        assert_eq!(ready["protocol"], 6);
     }
 
     #[test]

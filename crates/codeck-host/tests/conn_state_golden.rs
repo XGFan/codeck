@@ -11,10 +11,10 @@ use serde_json::{Value, json};
 fn events() -> Vec<Value> {
     vec![
         json!({
-            "type": "ready", "protocol": 5, "holder_id": "h1", "session_id": "s1", "cwd": "/work/app",
+            "type": "ready", "protocol": 6, "holder_id": "h1", "session_id": "s1", "cwd": "/work/app",
             "claude_version": "2.1.318", "warnings": [], "state": "idle", "waiting": null, "requests": [],
             "size": [120, 40], "mode": "manual", "model": { "id": "claude-opus-4-7", "name": "Opus 4.7" },
-            "effort": "high", "context_tokens": 51234, "title": "Fix the build", "queue": [], "follow_ups": [],
+            "effort": "high", "context_tokens": 51234, "title": "Fix the build", "queue": [],
             "tasks": [], "code_calls": [], "feedback_draft": null,
         }),
         json!({ "type": "started", "session_id": "s1", "cwd": "/work/app" }),
@@ -57,6 +57,14 @@ fn events() -> Vec<Value> {
         json!({ "type": "state", "state": "waiting", "waiting": { "kind": "permission", "waiting_for": "Bash" } }),
         json!({ "type": "request_end", "request_id": "choice:1" }),
         json!({
+            "type": "dialog", "request_id": "dialog:1", "waiting_for": "an unfamiliar dialog", "lines": ["a box"],
+            "analyzing": true,
+        }),
+        json!({
+            "type": "dialog", "request_id": "dialog:1", "waiting_for": "an unfamiliar dialog", "lines": ["a box"],
+            "analyzing": false,
+        }),
+        json!({
             "type": "queue",
             "items": [
                 { "id": "q1", "kind": "typed", "from": null, "text": "and then run lint", "editable": true, "images": [] },
@@ -71,15 +79,16 @@ fn events() -> Vec<Value> {
             }],
         }),
         json!({ "type": "session_info", "mode": "plan", "model": { "id": "claude-opus-4-7", "name": "Opus 4.7" }, "effort": "xhigh", "context_tokens": 52000 }),
-        json!({ "type": "follow_up_failed", "text": "x", "error": { "code": "busy", "message": "还在忙" } }),
         json!({ "type": "code_call", "tool_use_id": "toolu_c1", "name": "Read", "input": { "file_path": "w.txt" }, "code": "read('w.txt')" }),
         json!({ "type": "code_call_end", "tool_use_id": "toolu_c1", "is_error": false, "response": { "lines": 12 } }),
         json!({
             "type": "turn_end", "prompt_id": "p1", "trigger": "prompt", "last_text": "Done.", "error": null,
-            "aborted": false, "restored_text": null, "background_tasks": [], "duration_ms": 8123,
+            "aborted": false, "restored_text": null, "restored_uuid": null, "background_tasks": [], "duration_ms": 8123,
             "usage": { "input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 0 },
             "api_cost": 0.0123,
         }),
+        json!({ "type": "analysis_failed", "error": "超时", "title": "a box" }),
+        json!({ "type": "start_failed", "code": "exited", "message": "claude 没有启动" }),
     ]
 }
 

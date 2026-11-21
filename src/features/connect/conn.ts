@@ -10,6 +10,7 @@ import type {
   RequestEvent,
   RewindOption,
   RewindRequest,
+  StartFailedCode,
   StateName,
   Task,
   TurnEndEvent,
@@ -77,8 +78,8 @@ export interface ConnState {
   lastTurn: TurnEndEvent | null;
   /** ccrpc's process ended (not the Session). After `session_exit` it is expected and not a failure. */
   procExit: { code: number | null; stderr: string } | null;
-  /** `start_failed`'s message: claude did not start (`new`, Resume); ccrpc then exits with 1. */
-  startFailed: string | null;
+  /** `start_failed`: claude did not start (`new`, Resume); ccrpc then exits with 1. */
+  startFailed: { code: StartFailedCode; message: string } | null;
   /** `fatal`'s message: why ccrpc could not go on; ccrpc then exits with 1. */
   fatal: string | null;
   sessionExited: boolean;
@@ -110,11 +111,6 @@ export interface ConnState {
    */
   rewound: Rewound | null;
   pending: PendingPrompt | null;
-  /**
-   * The text of the prompt Claude Code just put back in its input box (Esc before any reply, `turn_end`'s
-   * `restored_text`), until the transcript's prompt is found for it (then kept by id) or a new turn starts.
-   */
-  withdrawnText: string | null;
 }
 
 export function initial(
@@ -157,7 +153,6 @@ export function initial(
     rewinding: null,
     rewound: null,
     pending: null,
-    withdrawnText: null,
   };
 }
 
@@ -294,8 +289,6 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         progress: m.state === "busy" ? s.progress : null,
         // Prompts are picked while idle.
         picking: s.picking && m.state === "idle",
-        // A new turn: the last prompt is no longer the one taken back.
-        withdrawnText: m.state === "busy" ? null : s.withdrawnText,
       };
     }
     case "turn_end":
@@ -305,7 +298,6 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         lastTurn: m,
         // An aborted turn's code is stopped: what it was doing is never written, so nothing would take these over.
         codeCalls: m.aborted ? [] : s.codeCalls,
-        withdrawnText: m.aborted && m.restored_text ? m.restored_text : null,
       };
     case "rewind":
       // The confirm page the `rewind` under way opened: its card takes over from 「正在准备回退…」.
@@ -325,8 +317,6 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       return s.state === "busy" ? { ...s, progress: m } : s;
     case "feedback_draft":
       return { ...s, feedbackDraft: m.draft };
-    case "follow_up_failed":
-      return notice(s, `排队的消息没有发出：${m.error.message}`);
     case "layout_learned":
       return notice(s, `已学会新界面：${m.title}`);
     case "analysis_failed":
@@ -335,7 +325,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
       // The first sessionId after `ready`: the same Session, nothing to reset.
       return { ...s, sessionId: m.session_id, cwd: m.cwd ?? s.cwd };
     case "start_failed":
-      return { ...s, startFailed: m.message };
+      return { ...s, startFailed: { code: m.code, message: m.message } };
     case "fatal":
       return { ...s, fatal: m.message };
     case "session_changed":

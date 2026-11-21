@@ -100,6 +100,7 @@ impl Engine {
                 });
                 self.startup_last = Some(lines);
                 self.startup_dialog = None;
+                self.startup_trust = true;
                 self.emit_request(ev);
             }
             return;
@@ -117,8 +118,9 @@ impl Engine {
                     id
                 }
             };
+            self.startup_trust = false;
             self.emit_request(json!({"type": "dialog", "request_id": id,
-                "waiting_for": "startup", "lines": lines}));
+                "waiting_for": "startup", "analyzing": false, "lines": lines}));
         }
     }
 
@@ -162,6 +164,7 @@ impl Engine {
                     return err("timeout", "回车后 10 秒内信任框没有关闭");
                 }
                 self.announced = None;
+                self.startup_trust = !want_yes;
                 return Ok(json!({"state": self.state.name()}));
             }
             self.keys(if want_yes { key::DOWN } else { key::UP })?;
@@ -325,14 +328,12 @@ impl Engine {
                 let again = self.reported.dialog_for(&waiting_for).is_some();
                 if again || self.waiting_age() >= MATCH_GRACE {
                     // Known layouts may only be cut off: look again at WORK_SIZE first.
-                    if self.grow() || self.analyzing(&s, &waiting_for) {
+                    if self.grow() {
                         return;
                     }
                     // Cannot tie the dialog to a request: hand the screen to the caller.
-                    let id = self.dialog_id(&waiting_for);
-                    self.announced = Some(Announced::Dialog(id.clone()));
-                    self.emit_request(json!({"type": "dialog", "request_id": id,
-                        "waiting_for": waiting_for, "lines": s.lines}));
+                    let analyzing = self.analyzing(&s, &waiting_for);
+                    self.announce_dialog(&waiting_for, s.lines, analyzing);
                 }
             }
             WaitKind::Question => {
@@ -371,14 +372,46 @@ impl Engine {
                 if self.waiting_age() < MATCH_GRACE && self.library.choice_title_on(&s.lines) {
                     return;
                 }
-                if self.grow() || self.analyzing(&s, &waiting_for) {
+                if self.grow() {
                     return;
                 }
-                let id = self.dialog_id(&waiting_for);
-                self.announced = Some(Announced::Dialog(id.clone()));
-                self.emit_request(json!({"type": "dialog", "request_id": id,
-                    "waiting_for": waiting_for, "lines": s.lines}));
+                let analyzing = self.analyzing(&s, &waiting_for);
+                self.announce_dialog(&waiting_for, s.lines, analyzing);
             }
+        }
+    }
+
+    /// Reports the screen as a `dialog`; `analyzing` while the analyzer works on it (the request
+    /// is updated in place when that ends, see [`Self::poll_analysis`]).
+    fn announce_dialog(&mut self, waiting_for: &str, lines: Vec<String>, analyzing: bool) {
+        let id = self.dialog_id(waiting_for);
+        self.announced = Some(Announced::Dialog(id.clone()));
+        self.emit_request(json!({"type": "dialog", "request_id": id,
+            "waiting_for": waiting_for, "analyzing": analyzing, "lines": lines}));
+    }
+
+    /// The analysis ended: the dialog reported meanwhile is over if a layout was learned (a
+    /// `choice` follows), else it is reported again, in place, without `analyzing`.
+    fn end_analyzing_dialog(&mut self, learned: bool) {
+        let Some(mut ev) = self
+            .reported
+            .events()
+            .into_iter()
+            .find(|e| e["type"] == "dialog" && e["analyzing"] == true)
+        else {
+            return;
+        };
+        if learned {
+            if let Some(id) = ev["request_id"].as_str() {
+                self.reported.answered(id);
+            }
+            if matches!(self.announced, Some(Announced::Dialog(_))) {
+                self.announced = None;
+            }
+            self.sync_requests();
+        } else {
+            ev["analyzing"] = json!(false);
+            self.emit_request(ev);
         }
     }
 
@@ -432,7 +465,8 @@ impl Engine {
     }
 
     /// Hands an unrecognized dialog to the analyzer (once per dialog, rate-limited). True while
-    /// its analysis is in flight: the dialog is not reported as unrecognized meanwhile.
+    /// its analysis is in flight (started now, or by an earlier call): the caller reports the
+    /// dialog with `analyzing` meanwhile.
     pub(super) fn analyzing(&mut self, s: &Screen, waiting_for: &str) -> bool {
         // One analysis at a time; meanwhile nothing else is reported for the dialog.
         if self.analysis.is_some() {
@@ -550,6 +584,7 @@ impl Engine {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.analysis = None;
+                self.end_analyzing_dialog(false);
                 self.emit(json!({"type": "analysis_failed", "error": "分析器线程意外结束"}));
                 return;
             }
@@ -577,6 +612,7 @@ impl Engine {
         if let Err(e) = analysis_records::write(&analysis_records::dir(), &record) {
             crate::clog!("analysis record: {e:#}");
         }
+        self.end_analyzing_dialog(res.is_ok());
         match res {
             Ok((id, kind, title, path)) => self
                 .emit(json!({"type": "layout_learned", "layout": id,

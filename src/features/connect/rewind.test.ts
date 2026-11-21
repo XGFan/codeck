@@ -48,15 +48,17 @@ describe("rewind", () => {
     const nodes = [
       prompt("p1"),
       reply("a1"),
-      prompt("c1", { kind: "command", name: "/oh-my-claudecode:autopilot", args: "build it" }),
+      prompt("c1", { kind: "command", name: "/oh-my-claudecode:autopilot", args: "build it", system: false }),
       prompt("o1", { kind: "commandOutput" }),
-      prompt("b1", { kind: "command", name: "!", args: "echo bang" }),
+      prompt("b1", { kind: "command", name: "!", args: "echo bang", system: false }),
+      prompt("x1", { kind: "command", name: "/context", args: "", system: true }),
       prompt("n1", { kind: "taskNotification", taskId: null, toolUseId: null, status: null, summary: null }),
       prompt("p2"),
       reply("a2"),
       prompt("p3"),
     ];
-    // Command output and notifications are not typed: no 「回退」.
+    // Command output and notifications are not typed, a command recorded as a system entry is not in the terminal's
+    // picker: no 「回退」.
     expect(mainLinePrompts(nodes, [])).toEqual({ ids: ["p1", "c1", "b1", "p2", "p3"], wholeMain: true });
     // A branch point on the Main Line's own head changes nothing; another Branch's head ends the Main Line part.
     expect(mainLinePrompts(nodes, [point("p2", "p2")])).toEqual({

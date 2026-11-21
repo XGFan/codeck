@@ -309,7 +309,7 @@ private struct ScreenCard: View {
     var body: some View {
         CardShell(
             title: r.type == "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : "认不出的屏幕（\(r.context ?? "")）",
-            status: "等待处理"
+            status: r.analyzing ? "正在识别界面…" : "等待处理"
         ) {
             ScreenLines(lines: r.lines)
             HStack(spacing: 12) {

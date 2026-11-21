@@ -11,9 +11,10 @@ enum ComposerAction: Equatable {
     }
 }
 
-/// The input box (Composer.tsx): idle → `prompt`, or `slash` for a built-in command; busy → `steer` (插话, delivered
-/// when the current tool call ends); waiting → nothing (the card comes first). Photos are saved on the Host first and sent as `parts`, the
-/// text before the images. With the box empty while busy, the button stops the turn (`abort`).
+/// The input box (Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call ends);
+/// waiting → nothing (the card comes first). ccrpc runs a slash command itself, so a built-in command goes as a prompt
+/// too. Photos are saved on the Host first and sent as `parts`, the text before the images. With the box empty while
+/// busy, the button stops the turn (`abort`).
 struct Composer: View {
     let c: ConnState
     let sessionId: String
@@ -132,31 +133,34 @@ struct Composer: View {
         trait.userInterfaceStyle == .dark ? UIColor(rgb: 0xFFFFFF, alpha: 0.18) : UIColor(rgb: 0x787880, alpha: 0.32)
     })
 
+    /// The command `send` puts on the wire: `prompt` with `if_busy: "steer"` in either case, since ccrpc picks prompt
+    /// or steer by the state as it runs and runs a slash command itself; the text before the images.
+    static func command(type _: String, text: String, paths: [String]) -> [String: JSONValue] {
+        var cmd: [String: JSONValue] = ["type": "prompt", "if_busy": "steer"]
+        if paths.isEmpty {
+            cmd["text"] = .string(text)
+        } else {
+            let parts: [JSONValue] = text.isEmpty ? [] : [["text": .string(text)]]
+            cmd["parts"] = .array(parts + paths.map { ["image": .string($0)] })
+        }
+        return cmd
+    }
+
     private func send(_ type: String) async {
         guard canSend else { return }
         let body = body_
         let paths = images.compactMap(\.path)
         if let refused = SlashRules.refusedHere(body) { return model.connect.setError(sessionId, refused) }
-        var list: [SlashCommand]?
-        if body.hasPrefix("/") {
+        if type == "steer", body.hasPrefix("/") {
+            // A panel opened from the queue would hold the turn until someone closes it.
             sending = true
-            list = await model.connect.slashCommands(cwd: c.cwd)
+            let list = await model.connect.slashCommands(cwd: c.cwd)
             sending = false
+            if let refused = SlashRules.refusedWhileBusy(body, list) {
+                return model.connect.setError(sessionId, refused)
+            }
         }
-        if type == "steer", let refused = SlashRules.refusedWhileBusy(body, list) {
-            return model.connect.setError(sessionId, refused)
-        }
-        // Words go as `prompt` with `if_busy: "steer"` from either button: ccrpc picks prompt or steer by the state as
-        // it runs (a background task's notice may start a turn, or the turn end, just before).
-        var cmd: [String: JSONValue] = ["type": "prompt", "if_busy": "steer"]
-        if type == "prompt", let command = SlashRules.slashCommand(body, withImages: !paths.isEmpty, list) {
-            cmd = ["type": "slash", "command": .string(command)]
-        } else if paths.isEmpty {
-            cmd["text"] = .string(body)
-        } else {
-            let text: [JSONValue] = body.isEmpty ? [] : [["text": .string(body)]]
-            cmd["parts"] = .array(text + paths.map { ["image": .string($0)] })
-        }
+        let cmd = Self.command(type: type, text: body, paths: paths)
         let (keptText, keptImages) = (text, images)
         sending = true
         text = ""

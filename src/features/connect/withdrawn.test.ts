@@ -1,34 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { asstNode, otherNode, text, userNode } from "@/mocks/data/builders";
-import { addWithdrawn, hideNodes, loadWithdrawn, withdrawnPrompt } from "./withdrawn";
+import { userNode } from "@/mocks/data/builders";
+import { addWithdrawn, hideNodes, loadWithdrawn } from "./withdrawn";
 
-const att = (id: string) =>
-  otherNode(id, 3, { kind: "attachment", attachmentType: "skill_listing", text: "" }, { hidden: true });
-
-describe("withdrawnPrompt", () => {
-  it("finds the last prompt with no reply after it that reads the restored text", () => {
-    const nodes = [
-      userNode("u1", 1, "先看看"),
-      asstNode("a1", 2, [text("好")]),
-      userNode("u2", 3, "改成\n两行"),
-      att("t"),
-    ];
-    expect(withdrawnPrompt(nodes, "改成 两行")).toBe("u2");
-  });
-
-  it("not a prompt with a reply after it, one with other text, or a command", () => {
-    const replied = [userNode("u1", 1, "改一下"), asstNode("a1", 2, [text("好")])];
-    expect(withdrawnPrompt(replied, "改一下")).toBeNull();
-    expect(withdrawnPrompt([userNode("u1", 1, "别的")], "改一下")).toBeNull();
-    const cmd = userNode("c1", 1, "/model", { origin: { kind: "command", name: "/model", args: "" } });
-    expect(withdrawnPrompt([cmd], "/model")).toBeNull();
-  });
-
-  it("passes over a prompt taken back already: the same words sent again and taken back again", () => {
-    const nodes = hideNodes([userNode("u1", 1, "再看看"), userNode("u2", 2, "再看看")], ["u1"]);
-    expect(withdrawnPrompt(nodes, "再看看")).toBe("u2");
-  });
-
+describe("hideNodes", () => {
   it("hides the nodes by id", () => {
     const nodes = [userNode("u1", 1, "a"), userNode("u2", 2, "b")];
     expect(hideNodes(nodes, ["u2"]).map((n) => n.hidden)).toEqual([false, true]);

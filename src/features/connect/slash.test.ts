@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "@/ipc/bindings";
-import { applyPath, commandOf, matchCommands, pathAt, slashCommand, typedCommand } from "./slash";
+import { applyPath, commandOf, matchCommands, pathAt, typedCommand } from "./slash";
 
 const cmd = (name: string, source: SlashCommand["source"] = "builtin"): SlashCommand => ({
   name,
@@ -56,23 +56,6 @@ describe("commandOf", () => {
     // Only a plugin's: a project command in a folder keeps its full name.
     expect(commandOf("/test", LIST)).toBeNull();
     expect(commandOf("autopilot", LIST)).toBeNull();
-  });
-});
-
-describe("slashCommand", () => {
-  it("sends built-in and unknown commands as `slash`, custom ones and the rest as `prompt`", () => {
-    expect(slashCommand("/compact keep the API notes", false, LIST)).toBe("compact keep the API notes");
-    expect(slashCommand("/doctor", false, LIST)).toBe("doctor");
-    expect(slashCommand("/cost", false, undefined)).toBeNull();
-    expect(slashCommand("/Users/me/shot.png 这是什么", false, LIST)).toBeNull();
-    expect(slashCommand("/release v1", false, LIST)).toBeNull();
-    expect(slashCommand("/kit:review", false, LIST)).toBeNull();
-    // A plugin's skill by its short name is a prompt too.
-    expect(slashCommand("/autopilot go", false, LIST)).toBeNull();
-    expect(slashCommand("/compact\nmore", false, LIST)).toBeNull();
-    expect(slashCommand("/cost", true, LIST)).toBeNull();
-    expect(slashCommand("/", false, LIST)).toBeNull();
-    expect(slashCommand("hello", false, LIST)).toBeNull();
   });
 });
 

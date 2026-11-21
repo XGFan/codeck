@@ -338,7 +338,8 @@ fn hidden_entries_follow_the_default_rules() {
     assert_eq!(origins.len(), 5);
     assert!(origins.contains(&&PromptOrigin::Command {
         name: "/release".into(),
-        args: "v1.2.0".into()
+        args: "v1.2.0".into(),
+        system: false,
     }));
     // The `local_command` system entry is the command's output.
     assert!(origins.contains(&&PromptOrigin::CommandOutput));
@@ -1574,9 +1575,11 @@ fn local_commands_recorded_as_system_entries_show_as_commands() {
     };
     assert_eq!(
         origin("c1"),
+        // Marked: the terminal's Rewind list does not have a command recorded this way.
         Some(PromptOrigin::Command {
             name: "/rename".into(),
-            args: "wmc template issue".into()
+            args: "wmc template issue".into(),
+            system: true,
         })
     );
     assert_eq!(origin("o1"), Some(PromptOrigin::CommandOutput));

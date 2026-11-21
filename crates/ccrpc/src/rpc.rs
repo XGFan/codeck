@@ -40,7 +40,7 @@ pub enum Part {
     Image(String),
 }
 
-/// What `prompt`, `steer` and `follow_up` type into the input box.
+/// What `prompt` and `steer` type into the input box.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     /// `text` with `images`: the image files pasted by path before the text.
@@ -71,8 +71,8 @@ impl Input {
         }
     }
 
-    /// The text for showing (queued follow-ups): `text`, or the parts' text joined with an
-    /// `[Image]` where each image goes.
+    /// The text for showing: `text`, or the parts' text joined with an `[Image]` where each
+    /// image goes.
     pub fn display_text(&self) -> String {
         match self {
             Input::Text { text, .. } => text.clone(),
@@ -91,7 +91,6 @@ impl Input {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IfBusy {
     Steer,
-    FollowUp,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,10 +102,6 @@ pub enum Command {
     Steer {
         input: Input,
     },
-    /// Sent as `prompt` once idle.
-    FollowUp {
-        input: Input,
-    },
     Abort,
     /// Closes the `/btw` panel.
     CloseBtw,
@@ -114,6 +109,11 @@ pub enum Command {
     SendNow,
     /// `↑` on the empty input box: take what waits in Claude Code's queue back for editing.
     EditQueue,
+    /// Takes one editable item (`queue_id`: `id` is the request's) out of Claude Code's queue, the
+    /// others stay in their order.
+    CancelQueue {
+        id: String,
+    },
     AnswerPermission {
         request_id: String,
         decision: Decision,
@@ -172,10 +172,6 @@ pub enum Command {
     GetImage {
         uuid: String,
         index: usize,
-    },
-    /// Drops queued follow-ups: the one at `index`, or all.
-    CancelFollowUp {
-        index: Option<usize>,
     },
     SetMode {
         mode: PermissionMode,
@@ -605,19 +601,8 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
                 None | Some(Value::Null) => None,
                 Some(v) => Some(match v.as_str() {
                     Some("steer") => IfBusy::Steer,
-                    Some("follow_up") => IfBusy::FollowUp,
-                    _ => return Err("prompt 的 if_busy 只能是 steer 或 follow_up".into()),
+                    _ => return Err("prompt 的 if_busy 只能是 steer".into()),
                 }),
-            },
-        }),
-        "cancel_follow_up" => Ok(Command::CancelFollowUp {
-            index: match obj.get("index") {
-                None | Some(Value::Null) => None,
-                Some(v) => Some(
-                    v.as_u64()
-                        .ok_or("cancel_follow_up 的 index 必须是非负整数")?
-                        as usize,
-                ),
             },
         }),
         "set_mode" => {
@@ -666,13 +651,13 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
         "steer" => Ok(Command::Steer {
             input: parse_input(obj, kind)?,
         }),
-        "follow_up" => Ok(Command::FollowUp {
-            input: parse_input(obj, kind)?,
-        }),
         "abort" => Ok(Command::Abort),
         "close_btw" => Ok(Command::CloseBtw),
         "send_now" => Ok(Command::SendNow),
         "edit_queue" => Ok(Command::EditQueue),
+        "cancel_queue" => Ok(Command::CancelQueue {
+            id: req_text(obj, kind, "queue_id")?,
+        }),
         "answer_permission" => {
             let request_id = req_text(obj, kind, "request_id")?;
             let decision = parse_decision(obj)?;
@@ -847,11 +832,11 @@ pub fn command_name(c: &Command) -> &'static str {
     match c {
         Command::Prompt { .. } => "prompt",
         Command::Steer { .. } => "steer",
-        Command::FollowUp { .. } => "follow_up",
         Command::Abort => "abort",
         Command::CloseBtw => "close_btw",
         Command::SendNow => "send_now",
         Command::EditQueue => "edit_queue",
+        Command::CancelQueue { .. } => "cancel_queue",
         Command::AnswerPermission { .. } => "answer_permission",
         Command::AnswerQuestion { .. } | Command::ChatAboutQuestion { .. } => "answer_question",
         Command::Slash { .. } => "slash",
@@ -866,7 +851,6 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::GetScreen => "get_screen",
         Command::GetToolResult { .. } => "get_tool_result",
         Command::GetImage { .. } => "get_image",
-        Command::CancelFollowUp { .. } => "cancel_follow_up",
         Command::SetMode { .. } => "set_mode",
         Command::GetTasks => "get_tasks",
         Command::DismissFeedbackDraft => "dismiss_feedback_draft",
@@ -1033,22 +1017,18 @@ mod tests {
         );
         assert_eq!(want.typed_text(), "AAA ");
         assert_eq!(want.display_text(), "AAA [Image][Image]");
-        for kind in ["steer", "follow_up"] {
-            let r = parse(&format!(
-                r#"{{"type":"{kind}","parts":[{{"image":"a.png"}},{{"text":" look"}}],"text":null}}"#
-            ));
-            let input = match r.command {
-                Command::Steer { input } | Command::FollowUp { input } => input,
-                c => panic!("{c:?}"),
-            };
-            assert_eq!(
-                input,
-                Input::Parts(vec![
-                    Part::Image("a.png".into()),
-                    Part::Text(" look".into())
-                ])
-            );
-        }
+        let r =
+            parse(r#"{"type":"steer","parts":[{"image":"a.png"},{"text":" look"}],"text":null}"#);
+        let Command::Steer { input } = r.command else {
+            panic!("{:?}", r.command)
+        };
+        assert_eq!(
+            input,
+            Input::Parts(vec![
+                Part::Image("a.png".into()),
+                Part::Text(" look".into())
+            ])
+        );
         // The old form stays.
         let r = parse(r#"{"type":"prompt","text":"look","images":["a.png"]}"#);
         assert_eq!(
@@ -1065,7 +1045,7 @@ mod tests {
         for line in [
             r#"{"type":"prompt","parts":[{"text":"a"}],"text":"a"}"#,
             r#"{"type":"steer","parts":[{"text":"a"}],"images":[]}"#,
-            r#"{"type":"follow_up","parts":[]}"#,
+            r#"{"type":"steer","parts":[]}"#,
             r#"{"type":"prompt","parts":{"text":"a"}}"#,
             r#"{"type":"prompt","parts":["a"]}"#,
             r#"{"type":"prompt","parts":[{"text":"a","image":"b.png"}]}"#,
@@ -1091,11 +1071,7 @@ mod tests {
                 },
             }
         );
-        for (v, want) in [
-            ("\"steer\"", Some(IfBusy::Steer)),
-            ("\"follow_up\"", Some(IfBusy::FollowUp)),
-            ("null", None),
-        ] {
+        for (v, want) in [("\"steer\"", Some(IfBusy::Steer)), ("null", None)] {
             assert_eq!(
                 parse(&format!(r#"{{"type":"prompt","text":"hi","if_busy":{v}}}"#)).command,
                 Command::Prompt {
@@ -1104,7 +1080,7 @@ mod tests {
                 }
             );
         }
-        for v in ["\"queue\"", "1", "true"] {
+        for v in ["\"queue\"", "\"follow_up\"", "1", "true"] {
             let line = format!(r#"{{"type":"prompt","text":"hi","if_busy":{v}}}"#);
             assert_eq!(err(&line).code, "bad_request", "{line}");
         }
@@ -1118,13 +1094,21 @@ mod tests {
             }
         );
         assert_eq!(
-            parse(r#"{"type":"follow_up","text":"next"}"#),
+            parse(r#"{"type":"cancel_queue","queue_id":"q1"}"#),
             Request {
                 id: None,
-                command: Command::FollowUp {
-                    input: Input::text("next"),
-                },
+                command: Command::CancelQueue { id: "q1".into() },
             }
+        );
+        err(r#"{"type":"cancel_queue"}"#);
+        // ccrpc's own follow-up queue is gone.
+        assert_eq!(
+            err(r#"{"type":"follow_up","text":"x"}"#).code,
+            "unknown_command"
+        );
+        assert_eq!(
+            err(r#"{"type":"cancel_follow_up"}"#).code,
+            "unknown_command"
         );
         assert_eq!(
             parse(r#"{"type":"abort"}"#),
@@ -1571,11 +1555,11 @@ mod tests {
         for name in [
             "prompt",
             "steer",
-            "follow_up",
             "abort",
             "close_btw",
             "send_now",
             "edit_queue",
+            "cancel_queue",
             "answer_permission",
             "answer_question",
             "slash",
@@ -1590,7 +1574,6 @@ mod tests {
             "get_screen",
             "get_tool_result",
             "get_image",
-            "cancel_follow_up",
             "set_mode",
             "get_tasks",
             "stop_task",
@@ -1672,7 +1655,6 @@ mod tests {
             "started",
             "start_failed",
             "fatal",
-            "follow_ups",
         ] {
             assert!(
                 emitted.contains(name),

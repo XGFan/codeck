@@ -36,6 +36,9 @@ struct Prompt {
     at_ms: Option<f64>,
     /// A slash or `!` command (whether one was typed while busy is not known).
     command: bool,
+    /// A command Claude Code records as a `system` entry (`/context`, `/rename`): the picker does
+    /// not list it.
+    system: bool,
 }
 
 /// How long the announced confirm page may be away (the Process File flickers; someone answered
@@ -44,6 +47,22 @@ const CONFIRM_GONE: Duration = Duration::from_millis(500);
 
 /// Slack between the age a confirm page shows (`5s ago`, as drawn) and the transcript's time.
 const AGE_SLACK_SECS: f64 = 3.0;
+
+/// The index of the prompt `uuid` among what the picker lists. Commands the picker does not list
+/// are taken out of `prompts`; one of them as the target is `not_in_picker` at once.
+fn pick_target(prompts: &mut Vec<Prompt>, uuid: &str) -> std::result::Result<usize, CmdErr> {
+    let Some(target) = prompts.iter().position(|p| p.uuid == uuid && !p.queued) else {
+        return err("not_found", "这条不是 Main Line 上的提示词");
+    };
+    if prompts[target].system {
+        return err("not_in_picker", "终端的回退列表不列这条命令");
+    }
+    prompts.retain(|p| !p.system);
+    Ok(prompts
+        .iter()
+        .position(|p| p.uuid == uuid)
+        .expect("the target is not a system command"))
+}
 
 fn ambiguous() -> CmdResult {
     err(
@@ -151,12 +170,13 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
                 return None;
             };
             let command = matches!(origin, PromptOrigin::Command { .. });
+            let system = matches!(origin, PromptOrigin::Command { system: true, .. });
             let text = match origin {
                 PromptOrigin::Human => typed.get(&n.id).and_then(|t| t.0.clone()).unwrap_or(text),
-                PromptOrigin::Command { name, args } if name == "!" => {
+                PromptOrigin::Command { name, args, .. } if name == "!" => {
                     format!("! {}", args.trim())
                 }
-                PromptOrigin::Command { name, args } => {
+                PromptOrigin::Command { name, args, .. } => {
                     format!("{name} {}", args.trim()).trim_end().to_string()
                 }
                 _ => return None,
@@ -167,6 +187,7 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
                 uuid: n.id,
                 text,
                 command,
+                system,
             })
         })
         .collect()
@@ -220,9 +241,7 @@ impl Engine {
         {
             prompts.truncate(cut);
         }
-        let Some(target) = prompts.iter().position(|p| p.uuid == uuid && !p.queued) else {
-            return err("not_found", "这条不是 Main Line 上的提示词");
-        };
+        let target = pick_target(&mut prompts, uuid)?;
         // The Session may have moved on while the transcript was read: Esc would interrupt it.
         self.require(self.state == State::Idle, "not_idle")?;
         self.rewind = Some(RewindReq {
@@ -518,7 +537,38 @@ mod tests {
             queued: false,
             at_ms,
             command: false,
+            system: false,
         }
+    }
+
+    fn command(text: &str, system: bool) -> Prompt {
+        Prompt {
+            command: true,
+            system,
+            ..prompt(text, None)
+        }
+    }
+
+    #[test]
+    fn a_system_command_is_not_in_the_picker() {
+        let list = || {
+            vec![
+                prompt("a", None),
+                command("/context", true),
+                command("/model x", false),
+                prompt("b", None),
+            ]
+        };
+        // As the target: told at once.
+        let e = pick_target(&mut list(), "/context").unwrap_err();
+        assert_eq!(e.0, "not_in_picker");
+        // Not the target: left out of what the picker is walked against.
+        let mut prompts = list();
+        assert_eq!(pick_target(&mut prompts, "b"), Ok(2));
+        let left: Vec<_> = prompts.iter().map(|p| p.uuid.as_str()).collect();
+        assert_eq!(left, ["a", "/model x", "b"]);
+        assert_eq!(pick_target(&mut list(), "/model x"), Ok(1));
+        assert_eq!(pick_target(&mut list(), "zzz").unwrap_err().0, "not_found");
     }
 
     fn page(quote: &[&str], ago: Option<&str>) -> RewindConfirm {

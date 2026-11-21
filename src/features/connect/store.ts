@@ -108,8 +108,6 @@ interface ConnectStore {
   clearRewound(conn: string): void;
   /** A prompt went out: the line about the kept draft goes (the marker stays until the new Branch is indexed). */
   rewoundSent(conn: string): void;
-  /** The prompt taken back (`withdrawnText`) is this one in the transcript. */
-  withdrawnFound(conn: string, id: string): void;
   /** The placeholder bubble of a prompt being sent (`uuid` once ccrpc answers), or none. */
   setPending(conn: string, p: PendingPrompt | null): void;
   dismissNotice(conn: string, id: number): void;
@@ -230,6 +228,14 @@ export const useConnect = create<ConnectStore>((set, get) => {
           update(conn, (c) => ({ ...c, unread: true }));
         // Taken back before any reply: as in the terminal, the prompt goes back into the input box (an empty one).
         const back = msg.aborted ? msg.restored_text : null;
+        // And out of the conversation: ccrpc says which prompt that was (the node id is its transcript uuid).
+        if (msg.aborted && msg.restored_uuid && after.sessionId) {
+          const all = addWithdrawn(get().withdrawn, after.sessionId, msg.restored_uuid);
+          if (all !== get().withdrawn) {
+            set({ withdrawn: all });
+            saveWithdrawn(all);
+          }
+        }
         const dk = draftKey(after);
         const draft = get().drafts[dk] ?? EMPTY_DRAFT;
         if (back && !draft.text.trim() && draft.images.length === 0) get().setDraft(dk, (d) => ({ ...d, text: back }));
@@ -738,16 +744,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
 
     setPending(conn, p) {
       update(conn, (c) => (c.pending === p ? c : { ...c, pending: p }));
-    },
-
-    withdrawnFound(conn, id) {
-      const sid = get().conns[conn]?.sessionId;
-      update(conn, (c) => (c.withdrawnText ? { ...c, withdrawnText: null } : c));
-      if (!sid) return;
-      const all = addWithdrawn(get().withdrawn, sid, id);
-      if (all === get().withdrawn) return;
-      set({ withdrawn: all });
-      saveWithdrawn(all);
     },
 
     rewoundSent(conn) {

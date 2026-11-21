@@ -135,6 +135,10 @@ pub enum PromptOrigin {
     Command {
         name: String,
         args: String,
+        /// Claude Code recorded it as a `system` / `local_command` entry (`/context`,
+        /// `/rename`…; `/model`, `/effort` and `!` commands are `user` entries): the terminal's
+        /// Rewind list has only what is recorded as `user` entries, so not this one (2.1.329).
+        system: bool,
     },
     CommandOutput,
     /// A background task's notice (`<task-notification>`): an agent, a shell command, a Monitor,

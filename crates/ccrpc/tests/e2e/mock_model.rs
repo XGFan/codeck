@@ -341,7 +341,6 @@ fn mock_model_turns() {
         "context_tokens",
         "title",
         "queue",
-        "follow_ups",
         "tasks",
         "code_calls",
         "feedback_draft",
@@ -426,8 +425,8 @@ fn mock_model_turns() {
     assert_eq!(t3["aborted"], false);
 }
 
-/// `prompt` with `if_busy` while a turn runs: `steer` goes into Claude Code's queue as a steer,
-/// `follow_up` into ccrpc's queue (sent after the turns); without it, `not_idle` as before.
+/// `prompt` with `if_busy` while a turn runs: `steer` goes into Claude Code's queue as a steer;
+/// without it, `not_idle` as before.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_prompt_if_busy() {
@@ -450,70 +449,19 @@ fn mock_model_prompt_if_busy() {
         json!({"type": "prompt", "text": "MOCK-STEERED now", "if_busy": "steer"}),
     );
     assert_eq!(st["delivered_as"], "queued", "{st}");
-    let fu = rpc.call(
-        "p4",
-        json!({"type": "prompt", "text": "AFTER-ALL", "if_busy": "follow_up"}),
-    );
-    assert_eq!(fu["delivered_as"], "follow_up", "{fu}");
-    assert_eq!(fu["queued"], 1, "{fu}");
-    // The follow-up queue is told as it changes.
-    rpc.until("follow_ups", Duration::from_secs(5), |v| {
-        v["type"] == "follow_ups" && v["items"] == json!(["AFTER-ALL"])
-    });
-    // The prompt's turn, the steer's, then the follow-up's; nothing more runs after it.
+    // The prompt's turn, then the steer's; nothing more runs after it.
     let mut ends = vec![];
-    while ends.len() < 3 {
-        let v = rpc.until("turn_end", Duration::from_secs(90), |v| {
-            v["type"] == "turn_end" || v["type"] == "follow_up_failed"
-        });
-        assert_ne!(v["type"], "follow_up_failed", "{v}");
-        ends.push(v);
+    while ends.len() < 2 {
+        ends.push(rpc.event("turn_end", Duration::from_secs(90)));
     }
     assert_eq!(ends[1]["last_text"], "STEER-TURN", "{:?}", ends);
-    assert!(
-        rpc.seen
-            .iter()
-            .any(|v| v["type"] == "block" && v["kind"] == "user" && v["text"] == "AFTER-ALL"),
-        "follow_up 没发出"
-    );
-    rpc.event("settled", Duration::from_secs(10));
-}
-
-/// `prompt` with `if_busy: "follow_up"` while idle but with follow-ups still waiting to go out:
-/// queued after them instead of going first.
-#[test]
-#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
-fn mock_model_prompt_if_busy_keeps_the_follow_up_order() {
-    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
-    let mut rpc = Rpc::start(&env);
-    start_session(&mut rpc, &env);
-
-    rpc.forget();
-    rpc.call("p1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
-        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    // ccrpc's follow-up queue is gone.
+    rpc.send(json!({"id": "p5", "type": "follow_up", "text": "x"}));
+    let e = rpc.until("响应 p5", Duration::from_secs(10), |v| {
+        v["type"] == "response" && v["id"] == "p5"
     });
-    rpc.call("f1", json!({"type": "follow_up", "text": "FIRST-QUEUED"}));
-    wait_state(&mut rpc, "idle", 90);
-    // The follow-up goes out once idle for 1 s: this comes before that.
-    let r = rpc.call(
-        "p2",
-        json!({"type": "prompt", "text": "SECOND-QUEUED", "if_busy": "follow_up"}),
-    );
-    assert_eq!(r["delivered_as"], "follow_up", "{r}");
-    assert_eq!(r["queued"], 2, "{r}");
-    let mut order = vec![];
-    while order.len() < 2 {
-        let v = rpc.until("user block", Duration::from_secs(60), |v| {
-            (v["type"] == "block"
-                && v["kind"] == "user"
-                && matches!(v["text"].as_str(), Some("FIRST-QUEUED" | "SECOND-QUEUED")))
-                || v["type"] == "follow_up_failed"
-        });
-        assert_ne!(v["type"], "follow_up_failed", "{v}");
-        order.push(v["text"].as_str().unwrap().to_string());
-    }
-    assert_eq!(order, ["FIRST-QUEUED", "SECOND-QUEUED"]);
+    assert_eq!(e["error"]["code"], "unknown_command", "{e}");
+    rpc.event("settled", Duration::from_secs(10));
 }
 
 /// `rename`: `/rename`, answered once the transcript has the title; `session_info` and
@@ -717,6 +665,83 @@ fn mock_model_edit_queue() {
     assert_eq!(r["error"]["code"], "not_busy", "{r}");
 }
 
+/// `cancel_queue`: one of two queued steers is taken out, the other stays in Claude Code's queue
+/// (with a new id) and is the only one delivered; a steer that is not in the queue is `not_found`.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_cancel_queue() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    let img = env.work.join("dot.png");
+    std::fs::write(&img, red_dot_png()).unwrap();
+
+    rpc.forget();
+    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
+    let first = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED first"}));
+    let second = rpc.call(
+        "s3",
+        json!({"type": "steer", "text": "MOCK-STEERED second", "images": [img]}),
+    );
+    rpc.until("queue", Duration::from_secs(10), |v| {
+        v["type"] == "queue" && v["items"].as_array().is_some_and(|a| a.len() == 2)
+    });
+
+    rpc.send(json!({"id": "c0", "type": "cancel_queue", "queue_id": "q99999"}));
+    let e = rpc.until("响应 c0", Duration::from_secs(10), |v| v["id"] == "c0");
+    assert_eq!(e["error"]["code"], "not_found", "{e}");
+
+    let c = rpc.call(
+        "c1",
+        json!({"type": "cancel_queue", "queue_id": first["queue_id"]}),
+    );
+    assert_eq!(c["removed"]["id"], first["queue_id"], "{c}");
+    assert_eq!(c["removed"]["text"], "MOCK-STEERED first", "{c}");
+    let requeued = c["requeued"].as_array().unwrap();
+    assert_eq!(requeued.len(), 1, "{c}");
+    assert_ne!(
+        requeued[0], second["queue_id"],
+        "新入队的项应有新的 id：{c}"
+    );
+    // Only the second is left, with its image, under the new id.
+    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+        v["type"] == "queue"
+            && v["items"]
+                .as_array()
+                .is_some_and(|a| a.len() == 1 && a[0]["id"] == requeued[0])
+    });
+    let item = &q["items"][0];
+    assert!(
+        image_tags_as_hash(item["text"].as_str().unwrap()).ends_with("MOCK-STEERED second"),
+        "{q}"
+    );
+    assert_eq!(item["images"], json!([img.display().to_string()]), "{q}");
+
+    // The turn ends; the second runs as the turn after it, the first never does.
+    rpc.event("turn_end", Duration::from_secs(30));
+    let t2 = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
+    settle_idle(&mut rpc);
+    let users: Vec<String> = rpc.call("m1", json!({"type": "get_messages"}))["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["kind"] == "user")
+        .map(|b| b["text"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        !users.iter().any(|t| t.contains("MOCK-STEERED first")),
+        "{users:?}"
+    );
+    assert!(
+        users.iter().any(|t| t.contains("MOCK-STEERED second")),
+        "{users:?}"
+    );
+}
+
 /// A steer with an image while busy: pasted by path like a prompt's, it waits in Claude Code's
 /// queue with its `[Image #1]` placeholder, on the scripted model (no credits).
 #[test]
@@ -839,29 +864,9 @@ fn mock_model_interleaved_parts() {
         "MOCK-STEERED see # and # now",
         "{q}"
     );
-    // A follow-up with parts shows `[Image]` where its image goes while it waits.
-    let f = rpc.call(
-        "f1",
-        json!({"type": "follow_up", "parts": [{"text": "later "}, {"image": a}]}),
-    );
-    assert_eq!(f["queued"], 1, "{f}");
-    let g = rpc.call("g1", json!({"type": "get_state"}));
-    assert_eq!(g["follow_ups"], json!(["later [Image]"]), "{g}");
     rpc.event("turn_end", Duration::from_secs(30));
     let t2 = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
-    let u = rpc.until("follow-up", Duration::from_secs(30), |v| {
-        v["type"] == "follow_up_failed"
-            || (v["type"] == "block"
-                && v["kind"] == "user"
-                && v["text"].as_str().is_some_and(|t| t.starts_with("later")))
-    });
-    assert_eq!(
-        image_tags_as_hash(u["text"].as_str().unwrap_or_default()),
-        "later #",
-        "{u}"
-    );
-    rpc.event("turn_end", Duration::from_secs(30));
     settle_idle(&mut rpc);
 
     // After an image the box is a prompt, whatever the text starts with.
@@ -1380,24 +1385,22 @@ fn mock_model_session() {
         p["verb"].is_string() && p["text"].as_str().unwrap().contains('…'),
         "{p}"
     );
-    // A follow-up queued while busy, with an image: sent as a prompt once idle.
+    // A prompt with an image once idle.
     let img = env.work.join("dot.png");
     std::fs::write(&img, red_dot_png()).unwrap();
-    let q = rpc.call(
-        "f1",
-        json!({"type": "follow_up", "text": "after-image", "images": [img]}),
-    );
-    assert_eq!(q["queued"], 1, "{q}");
     rpc.event("turn_end", Duration::from_secs(30));
-    let u = rpc.until("follow-up", Duration::from_secs(30), |v| {
-        v["type"] == "follow_up_failed"
-            || (v["type"] == "block"
-                && v["kind"] == "user"
-                && v["text"]
-                    .as_str()
-                    .is_some_and(|t| t.contains("after-image")))
+    settle_idle(&mut rpc);
+    rpc.call(
+        "f1",
+        json!({"type": "prompt", "text": "after-image", "images": [img]}),
+    );
+    let u = rpc.until("prompt block", Duration::from_secs(30), |v| {
+        v["type"] == "block"
+            && v["kind"] == "user"
+            && v["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("after-image"))
     });
-    assert_eq!(u["type"], "block", "follow_up 没发出去：{u}");
     rpc.event("turn_end", Duration::from_secs(30));
     // Its block names the image, which comes back as sent; Claude Code's note of where it came
     // from is not a block.
@@ -1949,7 +1952,7 @@ fn mock_model_abort_restores_the_prompt() {
     start_session(&mut rpc, &env);
 
     rpc.forget();
-    rpc.call(
+    let p = rpc.call(
         "p1",
         json!({"type": "prompt", "text": "MOCK-SLOW taken back"}),
     );
@@ -1957,6 +1960,9 @@ fn mock_model_abort_restores_the_prompt() {
     let t = rpc.event("turn_end", Duration::from_secs(15));
     assert_eq!(t["aborted"], true, "{t}");
     assert_eq!(t["restored_text"], "MOCK-SLOW taken back", "{t}");
+    // The prompt's record, by uuid: the caller hides it without matching text.
+    assert!(p["uuid"].is_string(), "{p}");
+    assert_eq!(t["restored_uuid"], p["uuid"], "{t}");
 
     // The next prompt clears the box first.
     rpc.forget();
@@ -1967,14 +1973,15 @@ fn mock_model_abort_restores_the_prompt() {
     let t = rpc.event("turn_end", Duration::from_secs(15));
     assert_eq!(t["aborted"], true, "{t}");
     assert_eq!(t["restored_text"], Value::Null, "{t}");
+    assert_eq!(t["restored_uuid"], Value::Null, "{t}");
 }
 
-/// A follow-up queued while a background task ends during the turn's last answer: right after
-/// Stop, Claude Code runs the task's notification as a turn of its own; the follow-up goes out
-/// after that turn instead of racing it into Claude Code's queue (and being reported failed).
+/// A background task ends during the turn's last answer: right after Stop, Claude Code runs the
+/// task's notification as a turn of its own. `settled` comes only after that turn, not between the
+/// two.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
-fn mock_model_follow_up() {
+fn mock_model_task_notification() {
     let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
     let mut rpc = Rpc::start(&env);
     start_session(&mut rpc, &env);
@@ -1985,60 +1992,18 @@ fn mock_model_follow_up() {
     rpc.until("tool_use", Duration::from_secs(30), |v| {
         v["kind"] == "tool_use"
     });
-    let q = rpc.call("f1", json!({"type": "follow_up", "text": "AFTER-BG"}));
-    assert_eq!(q["queued"], 1, "{q}");
-    // The prompt's turn, the notification's, then the follow-up's.
+    // The prompt's turn, then the notification's.
     let mut ends = vec![];
-    while ends.len() < 3 {
-        let v = rpc.until("turn_end", Duration::from_secs(90), |v| {
-            v["type"] == "turn_end" || v["type"] == "follow_up_failed"
-        });
-        assert_ne!(v["type"], "follow_up_failed", "{v}");
-        ends.push(v);
+    while ends.len() < 2 {
+        ends.push(rpc.event("turn_end", Duration::from_secs(90)));
     }
-    // `settled` only once all of it ran: not between the turns (a task and then a follow-up
-    // still to come), once after the last.
+    assert_eq!(ends[1]["trigger"], "task_notification", "{ends:?}");
     assert!(
         !rpc.seen.iter().any(|v| v["type"] == "settled"),
         "最后一轮之前就发了 settled"
     );
     let st = rpc.event("settled", Duration::from_secs(10));
     assert_eq!(st["background_tasks"], json!([]), "{st}");
-    let users: Vec<String> = rpc.call("m1", json!({"type": "get_messages"}))["blocks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|b| b["kind"] == "user")
-        .map(|b| b["text"].as_str().unwrap_or("").to_string())
-        .collect();
-    let notified = users
-        .iter()
-        .position(|t| t.contains("<task-notification>"))
-        .unwrap_or_else(|| panic!("没有后台任务的通知：{users:?}"));
-    let after = users
-        .iter()
-        .position(|t| t == "AFTER-BG")
-        .unwrap_or_else(|| panic!("follow_up 没发出：{users:?}"));
-    assert!(
-        notified < after,
-        "follow_up 应在通知那一轮之后发出：{users:?}"
-    );
-    // Sent as a prompt of its own, not typed into the notification's turn (Claude Code's queue).
-    let transcript = std::fs::read_dir(env.cc_dir.join("projects"))
-        .unwrap()
-        .flatten()
-        .flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten())
-        .find(|f| f.path().extension().is_some_and(|e| e == "jsonl"))
-        .map(|f| std::fs::read_to_string(f.path()).unwrap())
-        .unwrap();
-    let enqueues: Vec<&str> = transcript
-        .lines()
-        .filter(|l| l.contains(r#""operation":"enqueue""#) && !l.contains("task-notification"))
-        .collect();
-    assert!(
-        enqueues.is_empty(),
-        "follow_up 进了 Claude Code 的队列：{enqueues:?}"
-    );
     // Reads and nothing new running: no second `settled`.
     let quiet_until = Instant::now() + Duration::from_secs(3);
     while let Some(v) = rpc.recv(quiet_until.saturating_duration_since(Instant::now())) {
@@ -2046,20 +2011,24 @@ fn mock_model_follow_up() {
     }
 }
 
-/// While a command waits (here `prompt` of a slash command that opens a panel and leaves no record,
-/// ~30 s), commands that neither write nor wait are answered at once, in between, and `abort` runs
-/// at once; anything after a command that has to wait waits too (on the scripted model).
+/// While a command waits (here `compact` with a slow answer, ~8 s), commands that neither write nor
+/// wait are answered at once, in between, and `abort` runs at once; anything after a command that
+/// has to wait waits too (on the scripted model).
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_reads_while_waiting() {
     let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
     let mut rpc = Rpc::start(&env);
     start_session(&mut rpc, &env);
+    // Something to summarize (compact of an empty conversation fails at once).
+    rpc.call("p0", json!({"type": "prompt", "text": "hello"}));
+    rpc.event("turn_end", Duration::from_secs(30));
+    settle_idle(&mut rpc);
 
     rpc.forget();
-    rpc.send(json!({"id": "w1", "type": "prompt", "text": "/status"}));
-    // The panel is up (a dialog): the prompt now waits for the transcript.
-    wait_state(&mut rpc, "waiting", 10);
+    rpc.send(json!({"id": "w1", "type": "compact", "instructions": "MOCK-SLOW"}));
+    // The summary is being made: compact now waits for the compact boundary.
+    wait_state(&mut rpc, "busy", 10);
     let answered = |rpc: &Rpc, id: &str| {
         rpc.seen
             .iter()
@@ -2068,10 +2037,6 @@ fn mock_model_reads_while_waiting() {
     let t = Instant::now();
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert!(st["state"].is_string(), "{st}");
-    let q = rpc.call("f1", json!({"type": "follow_up", "text": "LATER"}));
-    assert_eq!(q["queued"], 1, "{q}");
-    let c = rpc.call("c1", json!({"type": "cancel_follow_up"}));
-    assert_eq!(c["removed"], 1, "{c}");
     // get_messages too: its page is answered once read, the prompt still waiting.
     let m = rpc.call("m1", json!({"type": "get_messages", "limit": 5}));
     assert!(m["blocks"].is_array(), "{m}");
@@ -2080,9 +2045,9 @@ fn mock_model_reads_while_waiting() {
         "等待中的命令期间只读命令没有立即作答：{:?}",
         t.elapsed()
     );
-    assert!(!answered(&rpc, "w1"), "prompt 没在等待：{:?}", rpc.seen);
-    // The prompt pressed its last key and only waits: `abort` runs now (Esc closes the panel),
-    // and the prompt still ends on its own afterwards.
+    assert!(!answered(&rpc, "w1"), "compact 没在等待：{:?}", rpc.seen);
+    // compact pressed its last key and only waits: `abort` runs now, and compact still ends on
+    // its own afterwards (it failed).
     let t = Instant::now();
     let a = rpc.call("a1", json!({"type": "abort"}));
     assert!(
@@ -2091,16 +2056,16 @@ fn mock_model_reads_while_waiting() {
         t.elapsed()
     );
     assert_eq!(a["state"], "idle", "{a}");
-    assert!(!answered(&rpc, "w1"), "prompt 在 abort 之前就结束了");
-    // A command that writes waits for the prompt (already in manual mode: set_mode presses no
-    // key), and so does a read sent after it (never ahead of a command received earlier).
+    assert!(!answered(&rpc, "w1"), "compact 在 abort 之前就结束了");
+    // A command that writes waits for compact (already in manual mode: set_mode presses no key),
+    // and so does a read sent after it (never ahead of a command received earlier).
     rpc.send(json!({"id": "k2", "type": "set_mode", "mode": "manual"}));
     rpc.send(json!({"id": "g2", "type": "get_state"}));
     let r = rpc.until("w1", Duration::from_secs(40), |v| v["id"] == "w1");
-    assert_eq!(r["error"]["code"], "timeout", "{r}");
+    assert_eq!(r["error"]["code"], "compact_failed", "{r}");
     assert!(
         !answered(&rpc, "k2") && !answered(&rpc, "g2"),
-        "排在后面的命令先于 prompt 作答：{:?}",
+        "排在后面的命令先于 compact 作答：{:?}",
         rpc.seen
     );
     let k = rpc.until("k2", Duration::from_secs(5), |v| v["id"] == "k2");
@@ -2112,42 +2077,6 @@ fn mock_model_reads_while_waiting() {
     let g = rpc.until("g2", Duration::from_secs(5), |v| v["id"] == "g2");
     assert_eq!(g["data"]["state"], "idle", "{g}");
     settle_idle(&mut rpc);
-}
-
-/// `abort` sent while a follow-up goes out ends the follow-up's turn (it runs once the follow-up
-/// has been typed, during the wait for the transcript or right after it), and the follow-up is not
-/// reported failed (on the scripted model).
-#[test]
-#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
-fn mock_model_abort_follow_up() {
-    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
-    let mut rpc = Rpc::start(&env);
-    start_session(&mut rpc, &env);
-
-    rpc.forget();
-    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.call(
-        "f1",
-        json!({"type": "follow_up", "text": "MOCK-SLOW again"}),
-    );
-    let t1 = rpc.event("turn_end", Duration::from_secs(60));
-    assert_eq!(t1["aborted"], false, "{t1}");
-    // The follow-up is being sent: its prompt shows up in the transcript.
-    rpc.until("follow-up", Duration::from_secs(20), |v| {
-        v["type"] == "block" && v["kind"] == "user" && v["text"] == "MOCK-SLOW again"
-    });
-    rpc.send(json!({"id": "a1", "type": "abort"}));
-    let a = rpc.until("a1", Duration::from_secs(15), |v| v["id"] == "a1");
-    assert_eq!(a["success"], true, "{a}");
-    let t2 = rpc.until("turn_end", Duration::from_secs(15), |v| {
-        v["type"] == "turn_end" || v["type"] == "follow_up_failed"
-    });
-    assert_eq!(t2["type"], "turn_end", "{t2}");
-    assert_eq!(t2["aborted"], true, "{t2}");
-    assert!(
-        !t2["last_text"].as_str().is_some_and(|t| t.contains("slow")),
-        "{t2}"
-    );
 }
 
 /// `exit` while a background task runs: Claude Code asks first; without `stop_tasks` the question is
@@ -3052,7 +2981,9 @@ fn mock_model_start_failed() {
     let ready = rpc.event("ready", Duration::from_secs(20));
     let shell = shell_pid(&env, ready["holder_id"].as_str().unwrap()).unwrap();
     rpc.shell_pid = Some(shell);
-    let f = rpc.event("start_failed", Duration::from_secs(60));
+    // Well before the 30 s a Pane without claude is given: claude's error is on the screen.
+    let f = rpc.event("start_failed", Duration::from_secs(20));
+    assert_eq!(f["code"], "exited", "{f}");
     assert!(
         f["message"]
             .as_str()
@@ -3094,4 +3025,70 @@ fn mock_model_fatal() {
     );
     assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(1));
     assert!(rpc.recv(Duration::from_millis(500)).is_none());
+}
+
+/// A folder not trusted yet, the trust dialog answered No: claude ends before the Session has an
+/// id, `start_failed` says `untrusted`, the Pane is closed and ccrpc ends with 1.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_start_failed_untrusted() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let fresh = fresh_dir.path().canonicalize().unwrap();
+    let mut rpc = Rpc::start_in(&env, &fresh, &[]);
+    let ready = rpc.event("ready", Duration::from_secs(20));
+    let shell = shell_pid(&env, ready["holder_id"].as_str().unwrap()).unwrap();
+    rpc.shell_pid = Some(shell);
+    let c = rpc.until("trust", Duration::from_secs(30), |v| v["type"] == "choice");
+    assert_eq!(c["layout"], "trust_folder", "{c}");
+    rpc.send(
+        json!({"id": "t1", "type": "answer_choice", "request_id": c["request_id"],
+        "option_id": option_id(&c, "No, exit")}),
+    );
+    let f = rpc.event("start_failed", Duration::from_secs(60));
+    assert_eq!(f["code"], "untrusted", "{f}");
+    assert_eq!(f["message"], "没有信任这个目录", "{f}");
+    assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(1));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while transcript::live::pid_exists(shell) {
+        assert!(Instant::now() < deadline, "Pane 没有随 start_failed 结束");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    rpc.shell_pid = None;
+}
+
+/// `prompt` with a slash command, whatever it does: a panel that leaves no record (`/cost`) is
+/// delivered `as "command"` within a few seconds, not after 30 s; a local command with a record
+/// (`/rename`) has its uuid; a Tab in a prompt is recorded as spaces and still confirmed.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_prompt_slash_and_tab() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+
+    rpc.forget();
+    let t = Instant::now();
+    let c = rpc.call("c1", json!({"type": "prompt", "text": "/cost"}));
+    assert_eq!(c["delivered_as"], "command", "{c}");
+    assert_eq!(
+        (&c["uuid"], &c["prompt_id"]),
+        (&Value::Null, &Value::Null),
+        "{c}"
+    );
+    assert!(t.elapsed() < Duration::from_secs(15), "{:?}", t.elapsed());
+    // Whatever it left on the screen is closed again.
+    rpc.call("k1", json!({"type": "send_keys", "keys": ["esc"]}));
+    settle_idle(&mut rpc);
+
+    let r = rpc.call("r1", json!({"type": "prompt", "text": "/rename e2e-title"}));
+    assert_eq!(r["delivered_as"], "prompt", "{r}");
+    assert!(r["uuid"].is_string(), "{r}");
+    settle_idle(&mut rpc);
+
+    let t = Instant::now();
+    let p = rpc.call("p1", json!({"type": "prompt", "text": "a\tb\tc"}));
+    assert!(p["uuid"].is_string(), "{p}");
+    assert!(t.elapsed() < Duration::from_secs(15), "{:?}", t.elapsed());
+    rpc.event("turn_end", Duration::from_secs(30));
 }

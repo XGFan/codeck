@@ -162,9 +162,9 @@ fn prompt_text(turn: &Turn<'_>) -> Option<String> {
         return None;
     };
     let mut out = match origin {
-        PromptOrigin::Command { name, args } if name == "!" => format!("!{args}"),
-        PromptOrigin::Command { name, args } if args.is_empty() => name.clone(),
-        PromptOrigin::Command { name, args } => format!("{name} {args}"),
+        PromptOrigin::Command { name, args, .. } if name == "!" => format!("!{args}"),
+        PromptOrigin::Command { name, args, .. } if args.is_empty() => name.clone(),
+        PromptOrigin::Command { name, args, .. } => format!("{name} {args}"),
         _ => text.clone(),
     };
     if !images.is_empty() {

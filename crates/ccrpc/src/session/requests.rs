@@ -573,9 +573,8 @@ impl Engine {
     }
 
     /// Refusing a tool's own dialog ends only the tool, the turn goes on: the message goes in as
-    /// an interjection while it does, else (the turn ended, or another dialog came up) it waits
-    /// in the follow-up queue for the next idle. How it was delivered, as `steer` says it, or
-    /// `follow_up`.
+    /// an interjection while it does, else (the turn ended, or another dialog came up) it goes as
+    /// a prompt once idle. How it was delivered, as `steer` or `prompt` say it.
     fn deliver_after_tool_deny(&mut self, msg: &str) -> std::result::Result<Value, CmdErr> {
         self.wait_until(Duration::from_secs(3), |e| {
             !matches!(e.state, State::Waiting { .. })
@@ -583,13 +582,18 @@ impl Engine {
         if self.state == State::Busy {
             match self.steer(msg, &[]) {
                 Ok(sent) => return Ok(sent["delivered_as"].clone()),
-                // Refused before the message was written (a follow-up clears the box again).
+                // Refused before the message was written.
                 Err(("not_busy" | "unrecognized_screen" | "input_not_empty", _)) => {}
                 Err(e) => return Err(e),
             }
         }
-        self.follow_ups.push_back(rpc::Input::text(msg));
-        Ok(json!("follow_up"))
+        if !self.wait_until(Duration::from_secs(10), |e| {
+            e.state == State::Idle && !e.turns.active()
+        }) {
+            return err("timeout", "拒绝后 10 秒内没有回到 idle，说明没有发出");
+        }
+        self.send_prompt(msg)?;
+        Ok(json!("prompt"))
     }
 
     /// Picks option `number` of the dialog on screen: its number key in a numbered menu; in a

@@ -24,8 +24,9 @@ pub struct ConnState {
     pub model: Option<Value>,
     pub effort: Option<String>,
     pub context_tokens: Option<u64>,
-    /// Why `new` never got a Session (`start_failed`): ccrpc closed that Pane and ended.
-    pub start_failed: Option<String>,
+    /// Why `new` never got a Session (`start_failed`): ccrpc closed that Pane and ended. ccrpc's
+    /// `{code, message}` as it wrote it.
+    pub start_failed: Option<Value>,
     /// Why ccrpc gave up (`fatal`): the reason it ended, in one line.
     pub fatal: Option<String>,
     /// What waits for an answer, as cards, in the order ccrpc reported them.
@@ -51,7 +52,7 @@ pub struct ConnState {
 }
 
 /// The protocol version this Host understands.
-const PROTOCOL: u64 = 5;
+const PROTOCOL: u64 = 6;
 /// A connection's state goes whole to every client on each change: keep only the newest code calls.
 const CODE_CALLS_MAX: usize = 50;
 /// A code call's return value longer than this is dropped (the phone renders it whole).
@@ -242,10 +243,6 @@ impl ConnState {
                 self.progress = Some(m.clone());
             }
             "feedback_draft" => self.feedback_draft = some(&m["draft"]),
-            "follow_up_failed" => self.notice(format!(
-                "排队的消息没有发出：{}",
-                m["error"]["message"].as_str().unwrap_or("")
-            )),
             "layout_learned" => self.notice(format!(
                 "已学会新界面：{}",
                 m["title"].as_str().unwrap_or("")
@@ -286,11 +283,11 @@ impl ConnState {
                 self.feedback_draft = None;
                 self.code_calls.clear();
             }
-            "start_failed" => self.start_failed = text(&m["message"]),
+            "start_failed" => {
+                self.start_failed = Some(json!({ "code": m["code"], "message": m["message"] }))
+            }
             "fatal" => self.fatal = text(&m["message"]),
             "fork" => self.fork = Some(m.clone()),
-            // ccrpc's own follow_up queue: only its own client shows it.
-            "follow_ups" => return false,
             // Responses, and content events (block text, branch, workflow): not state.
             _ => return false,
         }
@@ -340,7 +337,7 @@ mod tests {
     fn end() -> Value {
         json!({
             "type": "turn_end", "prompt_id": "p", "trigger": "prompt", "last_text": "ok", "error": null,
-            "aborted": false, "background_tasks": [], "duration_ms": 10,
+            "aborted": false, "restored_text": null, "restored_uuid": null, "background_tasks": [], "duration_ms": 10,
             "usage": { "input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 },
             "api_cost": 0,
         })
@@ -348,7 +345,7 @@ mod tests {
 
     fn ready() -> Value {
         json!({
-            "type": "ready", "protocol": 5, "holder_id": "h1", "session_id": "old", "cwd": "/w",
+            "type": "ready", "protocol": 6, "holder_id": "h1", "session_id": "old", "cwd": "/w",
             "claude_version": "2.1", "state": "idle", "waiting": null, "requests": [], "size": [80, 24],
             "mode": "manual", "model": { "id": "claude-opus-4-7", "name": "Opus 4.7" },
             "context_tokens": 5, "queue": [], "code_calls": [], "tasks": [], "warnings": [],
@@ -438,6 +435,17 @@ mod tests {
     }
 
     #[test]
+    fn an_analyzed_dialog_updates_itself_when_the_analysis_gives_up() {
+        let analyzing = json!({ "type": "dialog", "request_id": "dialog:1", "waiting_for": "x", "lines": ["a"], "analyzing": true });
+        let mut s = fold(std::slice::from_ref(&analyzing));
+        assert_eq!(s.requests, [analyzing]);
+        let done = json!({ "type": "dialog", "request_id": "dialog:1", "waiting_for": "x", "lines": ["a"], "analyzing": false });
+        s.apply(&done);
+        assert_eq!(ids(&s), ["dialog:1"]);
+        assert_eq!(s.requests, [done]);
+    }
+
+    #[test]
     fn ready_carries_the_requests_tasks_and_queue_and_a_wrong_protocol_is_a_notice() {
         let item = json!({ "id": "q1", "kind": "typed", "from": null, "text": "a", "editable": true, "images": [] });
         let task = json!({ "id": "b1", "kind": "shell", "tool_use_id": null, "description": null, "command": "sleep 9", "status": "running", "idle": false });
@@ -457,7 +465,7 @@ mod tests {
         old["protocol"] = json!(4);
         let s = fold(&[old]);
         assert_eq!(s.notices.len(), 1);
-        assert_eq!(s.notices[0].text, "ccrpc 版本不匹配：协议 4，需要 5");
+        assert_eq!(s.notices[0].text, "ccrpc 版本不匹配：协议 4，需要 6");
     }
 
     #[test]
@@ -581,14 +589,19 @@ mod tests {
 
     #[test]
     fn keeps_the_reason_new_failed_and_the_reason_ccrpc_gave_up() {
-        let s = fold(&[
-            ready(),
-            json!({ "type": "start_failed", "message": "No conversation found" }),
-        ]);
-        assert_eq!(s.start_failed.as_deref(), Some("No conversation found"));
+        let failed =
+            json!({ "type": "start_failed", "code": "exited", "message": "No conversation found" });
+        let s = fold(&[ready(), failed]);
+        assert_eq!(
+            s.start_failed,
+            Some(json!({ "code": "exited", "message": "No conversation found" }))
+        );
         assert_eq!(s.fatal, None);
         let v = serde_json::to_value(&s).unwrap();
-        assert_eq!(v["startFailed"], "No conversation found");
+        assert_eq!(
+            v["startFailed"],
+            json!({ "code": "exited", "message": "No conversation found" })
+        );
         assert_eq!(v["fatal"], Value::Null);
 
         let s = fold(&[json!({ "type": "fatal", "message": "找不到 Holder" })]);
@@ -674,27 +687,20 @@ mod tests {
     }
 
     #[test]
-    fn follow_ups_are_not_this_states_business() {
-        let mut s = fold(&[ready()]);
-        assert!(!s.apply(&json!({ "type": "follow_ups", "items": ["a"] })));
-    }
-
-    #[test]
     fn notices_keep_the_last_five() {
         let mut s = fold(&[]);
         for i in 0..7 {
             s.apply(&json!({ "type": "layout_learned", "layout": "l", "kind": "k", "title": format!("t{i}"), "path": "p" }));
         }
-        s.apply(&json!({ "type": "follow_up_failed", "text": "x", "error": { "code": "c", "message": "忙" } }));
         s.apply(&json!({ "type": "analysis_failed", "error": "超时" }));
         let texts: Vec<_> = s.notices.iter().map(|n| n.text.as_str()).collect();
         assert_eq!(
             texts,
             [
+                "已学会新界面：t3",
                 "已学会新界面：t4",
                 "已学会新界面：t5",
                 "已学会新界面：t6",
-                "排队的消息没有发出：忙",
                 "界面识别失败：超时"
             ]
         );

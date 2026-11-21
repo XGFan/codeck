@@ -1,24 +1,10 @@
 // A prompt taken back: Esc before any reply makes Claude Code put it back in its input box and out of the
 // conversation, while the transcript keeps it (and the next prompt follows it with no reply between, which is also how
 // two prompts sent in quick succession and answered together look: the transcript alone cannot tell them apart). ccrpc's
-// aborted `turn_end` says so (`restored_text`, the input box showing the prompt again); the prompt is found by that text
-// and hidden from then on, remembered per Session.
+// aborted `turn_end` says so (`restored_text`, the input box showing the prompt again) and names the prompt
+// (`restored_uuid`): it is hidden from then on, remembered per Session.
 
 import type { Node } from "@/ipc/bindings";
-
-const squeeze = (t: string) => t.replace(/\s+/g, "");
-
-/** The id of the last typed prompt when it has no reply after it and reads `text` (spacing aside), else null. */
-export function withdrawnPrompt(nodes: readonly Node[], text: string): string | null {
-  for (let i = nodes.length - 1; i >= 0; i--) {
-    const n = nodes[i]!;
-    if (n.body.kind === "assistant") return null;
-    if (n.body.kind !== "userPrompt" || n.hidden) continue;
-    if (n.body.origin.kind !== "human") return null;
-    return squeeze(n.body.text) === squeeze(text) ? n.id : null;
-  }
-  return null;
-}
 
 const KEY = "codeck.withdrawn";
 /** Sessions remembered, newest last (the oldest go). */

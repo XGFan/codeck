@@ -63,7 +63,7 @@ enum StartFlow {
     /// Why a connection ended: `start_failed` or `fatal` (ccrpc's own reason), else its last stderr line, else its
     /// last notice.
     static func reason(_ c: ConnState) -> String {
-        c.startFailed ?? c.fatal ?? ConnectWords.lastLine(c.procExit?.stderr) ?? c.notices.last?.text
+        c.startFailed?.message ?? c.fatal ?? ConnectWords.lastLine(c.procExit?.stderr) ?? c.notices.last?.text
             ?? c.procExit.map(ConnectWords.procExit) ?? "claude 退出了"
     }
 

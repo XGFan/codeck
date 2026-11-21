@@ -495,13 +495,6 @@
           },
           "description": "Claude Code 自己的输入队列（插话、人在 TUI 里忙时输入的、别的 Session 或 Agent 发来的消息），不含任务通知、Teammate 消息与 Code Mode 的 harness 事件，先入在前。"
         },
-        "follow_ups": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "ccrpc 自己的 follow_up 队列里的正文。"
-        },
         "tasks": {
           "type": "array",
           "items": {
@@ -534,7 +527,6 @@
         "context_tokens",
         "title",
         "queue",
-        "follow_ups",
         "tasks",
         "code_calls",
         "feedback_draft"
@@ -804,9 +796,6 @@
           "$ref": "#/$defs/commands/steer"
         },
         {
-          "$ref": "#/$defs/commands/follow_up"
-        },
-        {
           "$ref": "#/$defs/commands/abort"
         },
         {
@@ -817,6 +806,9 @@
         },
         {
           "$ref": "#/$defs/commands/edit_queue"
+        },
+        {
+          "$ref": "#/$defs/commands/cancel_queue"
         },
         {
           "$ref": "#/$defs/commands/answer_permission"
@@ -861,9 +853,6 @@
           "$ref": "#/$defs/commands/get_image"
         },
         {
-          "$ref": "#/$defs/commands/cancel_follow_up"
-        },
-        {
           "$ref": "#/$defs/commands/set_mode"
         },
         {
@@ -892,7 +881,7 @@
     "commands": {
       "prompt": {
         "title": "prompt",
-        "description": "发送提示词；idle 且上一轮已结束时可用。带 if_busy 时 busy / waiting 也可用。",
+        "description": "发送提示词；idle 且上一轮已结束时可用。带 if_busy 时 busy 也可用。单行、不带图片、以 /名字 开头的正文照常粘贴并回车，命令离开输入框而之后 2 秒内既没有记录也没有开一轮时成功，delivered_as 为 command（调用方不必自己判断哪些是不留记录的内置命令）。",
         "type": "object",
         "properties": {
           "type": {
@@ -926,10 +915,9 @@
           },
           "if_busy": {
             "enum": [
-              "steer",
-              "follow_up"
+              "steer"
             ],
-            "description": "Session 忙时怎么办（执行时判定，缺省报 not_idle）：steer 在 busy 时按 steer 发出（waiting 时对话框盖住输入框，改进 follow_up 队列），follow_up 进 ccrpc 的 follow_up 队列（idle 但队列不空时也进，排在已有的后面）。"
+            "description": "Session 忙时怎么办（执行时判定，缺省报 not_idle）：steer 在 busy 时按 steer 发出；waiting（对话框盖住输入框）时报 not_idle，message 为「有请求在等作答」。"
           }
         },
         "required": [
@@ -1039,77 +1027,6 @@
         ],
         "additionalProperties": false
       },
-      "follow_up": {
-        "title": "follow_up",
-        "description": "进 ccrpc 队列，idle 时按 prompt 依次发出；除 exited 外可用。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "follow_up"
-          },
-          "id": {
-            "$ref": "#/$defs/id"
-          },
-          "text": {
-            "type": "string",
-            "minLength": 1,
-            "description": "提示词正文。"
-          },
-          "images": {
-            "type": "array",
-            "items": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "$ref": "#/$defs/image_data"
-                }
-              ]
-            },
-            "description": "图片：Host 上的文件路径，或 base64 内容（image_data）；发出时同 prompt，正文之前逐个粘贴。"
-          },
-          "parts": {
-            "$ref": "#/$defs/parts"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "oneOf": [
-          {
-            "required": [
-              "text"
-            ],
-            "not": {
-              "required": [
-                "parts"
-              ]
-            }
-          },
-          {
-            "required": [
-              "parts"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "images"
-                  ]
-                }
-              ]
-            }
-          }
-        ],
-        "additionalProperties": false
-      },
       "abort": {
         "title": "abort",
         "description": "发 Esc 中止；busy / waiting 时可用。",
@@ -1175,6 +1092,29 @@
         },
         "required": [
           "type"
+        ],
+        "additionalProperties": false
+      },
+      "cancel_queue": {
+        "title": "cancel_queue",
+        "description": "撤回 Claude Code 队列里的一条（须 editable）：TUI 只有 ↑ 把能编辑的全部取回，所以同 edit_queue 取回全部并清空输入框，再把其余各项按原先后逐条重新插话（带上各自的 images），重新入队的项得到新的 id。检查（not_busy、not_found、bad_request、unsupported）都在按任何键之前；取回时队列已送出为 delivered。重新发的过程中本轮恰好结束时，后面的项照 steer 的规则成为提示词，不算错误。busy 时可用。",
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "cancel_queue"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "queue_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "要撤回的那一项在 queue 里的 id（id 字段是命令自己的关联 id）。"
+          }
+        },
+        "required": [
+          "type",
+          "queue_id"
         ],
         "additionalProperties": false
       },
@@ -1522,28 +1462,6 @@
         ],
         "additionalProperties": false
       },
-      "cancel_follow_up": {
-        "title": "cancel_follow_up",
-        "description": "撤销 follow_up 队列里的条目，任意状态可用。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "cancel_follow_up"
-          },
-          "id": {
-            "$ref": "#/$defs/id"
-          },
-          "index": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "队列里的序号（0 起），不带则全部撤销。"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "additionalProperties": false
-      },
       "set_mode": {
         "title": "set_mode",
         "description": "按 shift+tab 切换权限模式；idle / busy 时可用。",
@@ -1642,7 +1560,7 @@
       },
       "rewind": {
         "title": "rewind",
-        "description": "idle 时打开终端的 Rewind 选择器（输入框为空时的 Esc Esc），按文字找到 Main Line 上的这条提示词、回车，停在确认页；确认页引用的须是这条提示词。终端停在确认页（waiting）期间这次回退是挂起的请求，用 answer_rewind 作答。",
+        "description": "idle 时打开终端的 Rewind 选择器（输入框为空时的 Esc Esc），按文字找到 Main Line 上的这条提示词、回车，停在确认页；确认页引用的须是这条提示词。终端停在确认页（waiting）期间这次回退是挂起的请求，用 answer_rewind 作答。 记成 system 条目的本地命令（/context、/rename 等）终端的回退列表不列，uuid 是它时立即报 not_in_picker，不打开选择器。",
         "type": "object",
         "properties": {
           "type": {
@@ -1756,7 +1674,7 @@
     "response_data": {
       "prompt": {
         "title": "prompt",
-        "description": "提示词对应的用户消息 uuid 与插件给的 prompt id；if_busy 生效时为 steer 或 follow_up 的结果。",
+        "description": "提示词对应的用户消息 uuid 与插件给的 prompt id；if_busy 生效时为 steer 的结果。",
         "type": "object",
         "properties": {
           "uuid": {
@@ -1764,7 +1682,7 @@
               "string",
               "null"
             ],
-            "description": "transcript 里该用户消息的 uuid；进了 Claude Code 的队列、或 if_busy 生效时没有（或为 null）。"
+            "description": "transcript 里该用户消息的 uuid；进了 Claude Code 的队列、delivered_as 为 command、或 if_busy 生效时没有（或为 null）。"
           },
           "prompt_id": {
             "type": [
@@ -1778,14 +1696,9 @@
               "prompt",
               "queued",
               "btw",
-              "follow_up"
+              "command"
             ],
-            "description": "prompt：作为新提示词提交；queued：进了 Claude Code 的队列（回车前它恰好自己开始了一轮，或 if_busy: steer 按插话发出），之后在工具调用之间或本轮结束后送达；btw：正文是 /btw，答案在面板里，见 btw 事件，uuid 与 prompt_id 不存在；follow_up：if_busy 生效，进了 ccrpc 的 follow_up 队列。"
-          },
-          "queued": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "delivered_as 为 follow_up 时的 follow_up 队列长度。"
+            "description": "prompt：作为新提示词提交（斜杠命令有记录或开了一轮的也是）；queued：进了 Claude Code 的队列（回车前它恰好自己开始了一轮，或 if_busy: steer 按插话发出），之后在工具调用之间或本轮结束后送达；btw：正文是 /btw，答案在面板里，见 btw 事件，uuid 与 prompt_id 不存在；command：单行、不带图片、以 /名字 开头的正文，命令离开了输入框，之后 2 秒内既没有记录也没有开一轮（面板、对话框或不留记录的本地命令，如 /cost、/status），uuid 与 prompt_id 为 null，弹出的界面照常由 choice / dialog 等事件报出。"
           },
           "queue_id": {
             "type": "string",
@@ -1816,21 +1729,6 @@
         },
         "required": [
           "delivered_as"
-        ]
-      },
-      "follow_up": {
-        "title": "follow_up",
-        "description": "队列长度。",
-        "type": "object",
-        "properties": {
-          "queued": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "队列长度。"
-          }
-        },
-        "required": [
-          "queued"
         ]
       },
       "abort": {
@@ -1875,6 +1773,28 @@
           "items"
         ]
       },
+      "cancel_queue": {
+        "title": "cancel_queue",
+        "description": "撤回结果。",
+        "type": "object",
+        "properties": {
+          "removed": {
+            "$ref": "#/$defs/queue_item",
+            "description": "被拿掉的那一项（同 queue 项）。"
+          },
+          "requeued": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "重新入队的各项的新 queue_id，先后同原来；重新发时本轮恰好结束而成为提示词的项不在其中。"
+          }
+        },
+        "required": [
+          "removed",
+          "requeued"
+        ]
+      },
       "answer_permission": {
         "title": "answer_permission",
         "description": "作答后的状态。",
@@ -1891,10 +1811,9 @@
             "type": "string",
             "enum": [
               "prompt",
-              "queued",
-              "follow_up"
+              "queued"
             ],
-            "description": "拒绝工具自己弹的对话框（computer use 的授权框）且有 message 时 message 的去向：本轮继续时作为插话（同 steer 的 delivered_as），本轮已结束或又停在别的对话框时为 follow_up（排进 follow_up 队列）。"
+            "description": "拒绝工具自己弹的对话框（computer use 的授权框）且有 message 时 message 的去向：本轮继续时作为插话（同 steer 的 delivered_as），本轮已结束或又停在别的对话框时等回到 idle 作为提示词（prompt）。"
           }
         },
         "required": [
@@ -2123,29 +2042,6 @@
           "data"
         ]
       },
-      "cancel_follow_up": {
-        "title": "cancel_follow_up",
-        "description": "撤销结果。",
-        "type": "object",
-        "properties": {
-          "removed": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "撤销的条数"
-          },
-          "follow_ups": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "队列里剩下的。"
-          }
-        },
-        "required": [
-          "removed",
-          "follow_ups"
-        ]
-      },
       "set_mode": {
         "title": "set_mode",
         "description": "切换后的模式。",
@@ -2306,16 +2202,6 @@
         {
           "properties": {
             "command": {
-              "const": "follow_up"
-            },
-            "data": {
-              "$ref": "#/$defs/response_data/follow_up"
-            }
-          }
-        },
-        {
-          "properties": {
-            "command": {
               "const": "abort"
             },
             "data": {
@@ -2350,6 +2236,16 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/edit_queue"
+            }
+          }
+        },
+        {
+          "properties": {
+            "command": {
+              "const": "cancel_queue"
+            },
+            "data": {
+              "$ref": "#/$defs/response_data/cancel_queue"
             }
           }
         },
@@ -2490,16 +2386,6 @@
             },
             "data": {
               "$ref": "#/$defs/response_data/get_image"
-            }
-          }
-        },
-        {
-          "properties": {
-            "command": {
-              "const": "cancel_follow_up"
-            },
-            "data": {
-              "$ref": "#/$defs/response_data/cancel_follow_up"
             }
           }
         },
@@ -2663,7 +2549,7 @@
             "const": "ready"
           },
           "protocol": {
-            "const": 5,
+            "const": 6,
             "description": "协议版本。"
           },
           "claude_version": {
@@ -2722,13 +2608,22 @@
           "type": {
             "const": "start_failed"
           },
+          "code": {
+            "enum": [
+              "untrusted",
+              "exited",
+              "no_claude"
+            ],
+            "description": "untrusted：目录信任框答了否（在 ccrpc 里或终端里）——claude 在 Session 得到 id 之前退出，而退出前报出的最后一个界面是目录信任框，message 固定为「没有信任这个目录」；exited：claude 在 Session 得到 id 之前退出了的其余情形（如 --resume 找不到 Session）；no_claude：ready 之后 30 秒内 Pane 的 shell 下没有出现 claude 进程。"
+          },
           "message": {
             "type": "string",
-            "description": "Pane 屏幕上 claude 留下的原因：最后一行以 No conversation found、Error:、error: 开头的；没有则光标之上最后一个非空行；都没有为「claude 没有启动」。"
+            "description": "untrusted 为「没有信任这个目录」；其余为 Pane 屏幕上 claude 留下的原因：最后一行以 No conversation found、Error:、error: 开头的；没有则光标之上最后一个非空行；都没有为「claude 没有启动」。"
           }
         },
         "required": [
           "type",
+          "code",
           "message"
         ]
       },
@@ -2980,6 +2875,13 @@
               "null"
             ],
             "description": "中止时 Claude Code 把这一轮的提示词放回了输入框（回复开始前按 Esc），为这条提示词的全文；否则为 null。"
+          },
+          "restored_uuid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "restored_text 非 null 时这条提示词在 transcript 里的 uuid，调用方按它隐藏对话记录里的那条提示词；不知道、或 restored_text 为 null 时为 null。"
           }
         },
         "required": [
@@ -2993,12 +2895,13 @@
           "duration_ms",
           "usage",
           "api_cost",
-          "restored_text"
+          "restored_text",
+          "restored_uuid"
         ]
       },
       "settled": {
         "title": "settled",
-        "description": "一轮结束后，Session 不会再自己接着跑：idle 已满 1 秒（Claude Code 刚 Stop 时会先为它自己队列里的东西起一轮）、没有进行中的轮、ccrpc 的 follow_up 队列与 Claude Code 的队列都空、1 秒内没有执行过会写入的命令。每段活动之后发一次，下一轮结束后才会再发；连接时就闲着的不发。仍在运行的后台任务结束时会再起一轮（结果通知）。",
+        "description": "一轮结束后，Session 不会再自己接着跑：idle 已满 1 秒（Claude Code 刚 Stop 时会先为它自己队列里的东西起一轮）、没有进行中的轮、Claude Code 的队列空、1 秒内没有执行过会写入的命令。每段活动之后发一次，下一轮结束后才会再发；连接时就闲着的不发。仍在运行的后台任务结束时会再起一轮（结果通知）。",
         "type": "object",
         "properties": {
           "type": {
@@ -3210,6 +3113,10 @@
             "type": "string",
             "description": "进程文件原值；启动界面为 startup。"
           },
+          "analyzing": {
+            "type": "boolean",
+            "description": "分析器正在分析这个界面（最长 60 秒）：分析结束时，学会了则先 request_end（这个 dialog）再发 layout_learned 与 choice；没学会则同一个 request_id 的 dialog 再发一次（analyzing 为 false，按 id 原地更新）并发 analysis_failed；分析期间界面自己没了照常 request_end。不在分析时为 false。"
+          },
           "lines": {
             "type": "array",
             "items": {
@@ -3222,6 +3129,7 @@
           "type",
           "request_id",
           "waiting_for",
+          "analyzing",
           "lines"
         ]
       },
@@ -3348,41 +3256,6 @@
           "stderr"
         ]
       },
-      "follow_up_failed": {
-        "title": "follow_up_failed",
-        "description": "队列里的 follow_up 发送失败。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "follow_up_failed"
-          },
-          "text": {
-            "type": "string",
-            "description": "正文。"
-          },
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "$ref": "#/$defs/error_code"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "失败原因。"
-          }
-        },
-        "required": [
-          "type",
-          "text",
-          "error"
-        ]
-      },
       "queue": {
         "title": "queue",
         "description": "Claude Code 的输入队列变了（入队、在本轮里送达、按 send_now 或本轮结束后发出、在 TUI 里按 ↑ 取回）。",
@@ -3397,27 +3270,6 @@
               "$ref": "#/$defs/queue_item"
             },
             "description": "Claude Code 自己的输入队列，先入在前，不含任务通知、Teammate 消息与 Code Mode 的 harness 事件。"
-          }
-        },
-        "required": [
-          "type",
-          "items"
-        ]
-      },
-      "follow_ups": {
-        "title": "follow_ups",
-        "description": "ccrpc 自己的 follow_up 队列变了（入队、发出、撤销、发送失败后移除）：整份，内容同 get_state 的 follow_ups。",
-        "type": "object",
-        "properties": {
-          "type": {
-            "const": "follow_ups"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "队列里的正文，先入在前。"
           }
         },
         "required": [
@@ -4046,13 +3898,7 @@
           "$ref": "#/$defs/events/bash_output"
         },
         {
-          "$ref": "#/$defs/events/follow_up_failed"
-        },
-        {
           "$ref": "#/$defs/events/queue"
-        },
-        {
-          "$ref": "#/$defs/events/follow_ups"
         },
         {
           "$ref": "#/$defs/events/tasks"

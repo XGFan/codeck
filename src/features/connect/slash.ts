@@ -44,20 +44,6 @@ export function commandOf(body: string, list: SlashCommand[] | undefined): Slash
   return short.length === 1 ? short[0]! : null;
 }
 
-/**
- * What ccrpc's `slash` should type for `body`, or null to send it as a `prompt`. Built-in commands
- * (and command-like names not in the loaded list) go as `slash`: a local command or a panel leaves
- * nothing in the transcript a `prompt` could wait for. Custom commands and skills, a path such as
- * `/Users/…`, a multi-line text, one with images, or anything while the list is unknown go as `prompt`.
- */
-export function slashCommand(body: string, withImages: boolean, list: SlashCommand[] | undefined): string | null {
-  if (!list || !body.startsWith("/") || withImages || body.includes("\n")) return null;
-  const name = body.slice(1).split(/\s/, 1)[0]!;
-  if (!/^[\w.:-]+$/.test(name)) return null;
-  const known = commandOf(body, list);
-  return known && known.source !== "builtin" ? null : body.slice(1);
-}
-
 /** A path being typed: `partial` spans `start`–`end` of the text; `files` when files are offered too. */
 export interface PathAt {
   partial: string;

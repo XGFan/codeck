@@ -27,7 +27,7 @@ const perm = (id: string, agent: string | null = null): PermissionRequestEvent =
 });
 const ready = (o: Partial<ReadyEvent> = {}): ReadyEvent => ({
   type: "ready",
-  protocol: 5,
+  protocol: 6,
   claude_version: "2.1.329",
   warnings: [],
   state: "idle",
@@ -43,7 +43,6 @@ const ready = (o: Partial<ReadyEvent> = {}): ReadyEvent => ({
   context_tokens: 5,
   title: null,
   queue: [],
-  follow_ups: [],
   tasks: [],
   code_calls: [],
   feedback_draft: null,
@@ -76,6 +75,7 @@ const end: TurnEndEvent = {
   error: null,
   aborted: false,
   restored_text: null,
+  restored_uuid: null,
   background_tasks: [],
   duration_ms: 10,
   usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
@@ -83,16 +83,6 @@ const end: TurnEndEvent = {
 };
 
 describe("conn reducer", () => {
-  it("remembers the prompt Claude Code took back until a new turn starts", () => {
-    const back: TurnEndEvent = { ...end, aborted: true, last_text: null, restored_text: "再看看" };
-    expect(fold([back]).withdrawnText).toBe("再看看");
-    // Not when the turn ended otherwise.
-    expect(fold([back, end]).withdrawnText).toBeNull();
-    expect(fold([{ ...end, aborted: true, restored_text: null }]).withdrawnText).toBeNull();
-    expect(fold([back, st("busy")]).withdrawnText).toBeNull();
-    expect(fold([back, st("idle")]).withdrawnText).toBe("再看看");
-  });
-
   it("keeps the feedback draft card from ready or its event until it is gone or the Session ended", () => {
     const draft = { title: "T", tool_use_id: "toolu_1", input: { title: "T", details: "- d" } };
     const s = fold([ready({ feedback_draft: draft })]);
@@ -121,6 +111,21 @@ describe("conn reducer", () => {
     expect(apply(s, { type: "tasks", tasks: [task("b1", "completed")] }).tasks).toEqual([task("b1", "completed")]);
   });
 
+  it("a dialog being analyzed is updated in place by its second event, and ends with its request_end", () => {
+    const dialog = (analyzing: boolean): InMsg => ({
+      type: "dialog",
+      request_id: "dialog:1",
+      waiting_for: "x",
+      lines: ["a"],
+      analyzing,
+    });
+    let s = fold([dialog(true)]);
+    expect(s.requests).toMatchObject([{ request_id: "dialog:1", analyzing: true }]);
+    s = fold([dialog(false)], s);
+    expect(s.requests).toMatchObject([{ request_id: "dialog:1", analyzing: false }]);
+    expect(fold([{ type: "request_end", request_id: "dialog:1" }], s).requests).toEqual([]);
+  });
+
   it("keeps a request until its request_end, whatever the state; its event again updates it in place", () => {
     const waiting = st("waiting", { kind: "permission", waiting_for: "permission prompt" });
     let s = fold([waiting, perm("t1"), perm("t2", "agent-1")]);
@@ -130,7 +135,7 @@ describe("conn reducer", () => {
     // Screen cards do not replace one another: each goes with its own end.
     s = fold(
       [
-        { type: "dialog", request_id: "dialog:1", waiting_for: "x", lines: ["a"] },
+        { type: "dialog", request_id: "dialog:1", waiting_for: "x", lines: ["a"], analyzing: false },
         { type: "unrecognized", request_id: "unrecognized:2", context: "c", lines: ["b"] },
         { type: "request_end", request_id: "t1" },
         { type: "request_end", request_id: "dialog:1" },
@@ -189,9 +194,10 @@ describe("conn reducer", () => {
   });
 
   it("keeps why claude did not start and why ccrpc could not go on; the model is {id, name}", () => {
-    expect(fold([{ type: "start_failed", message: "No conversation found" }]).startFailed).toBe(
-      "No conversation found",
-    );
+    expect(fold([{ type: "start_failed", code: "exited", message: "No conversation found" }]).startFailed).toEqual({
+      code: "exited",
+      message: "No conversation found",
+    });
     expect(fold([{ type: "fatal", message: "插件未启用" }]).fatal).toBe("插件未启用");
     const s = fold([
       ready(),

@@ -7,8 +7,9 @@
 // followed it, with the response's id rewritten. Queries the recording does not have (get_state,
 // get_tasks) are answered from what was replayed (the background tasks from `ready` and the `tasks` events). `new-session` and `resume*` are not listed: `ccrpcNew` opens
 // the first; `ccrpcResume` opens `resume` (its `started` names the Session asked for), or
-// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it: `start_failed`, then exit 1). A `session_exit`
-// is followed by ccrpc's exit 0 (unless the recording has its own exit line there), as in protocol 5. `fork*` are not listed either: `ccrpcFork`
+// `resume-failed` for the Session `RESUME_FAILS` (claude cannot find it: `start_failed`, then exit 1); `ccrpcNew` opens
+// `new-failed` once a test set `newFails`. A `session_exit`
+// is followed by ccrpc's exit 0 (unless the recording has its own exit line there), as in protocol 6. `fork*` are not listed either: `ccrpcFork`
 // opens `fork` (before a prompt), `fork-session` (the whole Session), `fork-warning` (restoring code: the rewind's ⚠
 // confirm card first) or `fork-failed` (once a test set `forkFails`). A recording whose meta has `on_request`
 // stands for a Session other tests need out of `ccrpc ls`: it is listed once a test (or the console) calls
@@ -163,6 +164,8 @@ export interface CcrpcProbe {
   forks: { sessionId: string; cwd: string; at: string | null; restore: string | null; title: string }[];
   /** Set by a test: the next Fork fails (`fork-failed.jsonl`). */
   forkFails?: boolean;
+  /** Set by a test: the next 「新建 Session」 fails (`new-failed.jsonl`). */
+  newFails?: boolean;
   /** Set by a test: 「新建 Session」's claude takes this long after `ready` to start and name the Session. */
   newStartMs?: number;
   /** Recordings with `on_request` a test put into `ccrpc ls`, by name. */
@@ -252,7 +255,7 @@ function lsNow(): LsEntry[] {
   return fixtures
     .filter(
       (f) =>
-        f.name !== "new-session" &&
+        !f.name.startsWith("new-") &&
         !f.name.startsWith("resume-") &&
         f.name !== "resume" &&
         !f.name.startsWith("fork") &&
@@ -370,6 +373,18 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       later(() => emit(id, { type: "queue", items: c.queue.filter((q) => !q.editable) }));
       return respond(id, msg, { items });
     }
+    // ✕ on a queued item: it leaves the queue, the others are queued again (under new ids, in their order).
+    case "cancel_queue": {
+      if ((c.state as { state?: string } | null)?.state !== "busy") return respond(id, msg, null, "not_busy");
+      const removed = c.queue.find((q) => q.id === msg.queue_id);
+      if (!removed) return respond(id, msg, null, "not_found", "not_found");
+      if (!removed.editable) return respond(id, msg, null, "bad_request", "bad_request");
+      const kept = c.queue.filter((q) => q !== removed);
+      const items = kept.map((q) => (q.editable ? { ...q, id: `${q.id}r` } : q));
+      const requeued = items.filter((q, i) => q !== kept[i]).map((q) => q.id);
+      later(() => emit(id, { type: "queue", items }));
+      return respond(id, msg, { removed, requeued });
+    }
     // ctrl+enter: the TUI's queue goes out at once.
     case "send_now":
       later(() => emit(id, { type: "queue", items: [] }));
@@ -409,12 +424,16 @@ function synth(id: string, c: Conn, msg: Record<string, unknown>) {
       sessionEnds(id);
       return;
     }
-    // Typed into the TUI; what it does shows on the screen, not in a reply. `/exit` ends claude (the Pane stays).
-    case "slash":
+    // A slash command no recording has: it leaves the input box and nothing else is said (a panel or a local command that
+    // leaves no record, as ccrpc finds after 2 s). `/exit` ends claude (the Pane stays).
+    case "prompt": {
+      const text = String(msg.text ?? "");
+      if (!text.startsWith("/")) return respond(id, msg, null, `录制里没有 ${String(msg.type)}`);
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
-      respond(id, msg, {});
-      if (String(msg.command).replace(/^\//, "") === "exit") sessionEnds(id);
+      respond(id, msg, { delivered_as: "command", uuid: null, prompt_id: null });
+      if (/^\/exit(\s|$)/.test(text)) sessionEnds(id);
       return;
+    }
     // `/rename`, answered once the transcript has the title.
     case "rename":
       if (c.state && (c.state as { state?: string }).state !== "idle") return respond(id, msg, null, "not_idle");
@@ -629,8 +648,10 @@ export function createMockCcrpc(): CcrpcApi {
       return open({ ...fx, lines });
     },
     ccrpcNew: async () => {
-      const fx = fixtures.find((f) => f.name === "new-session");
-      if (!fx) throw appError("internal", "没有 new-session 的录制");
+      const name = probe.newFails ? "new-failed" : "new-session";
+      probe.newFails = false;
+      const fx = fixtures.find((f) => f.name === name);
+      if (!fx) throw appError("internal", `没有 ${name} 的录制`);
       return open(fx, probe.newStartMs);
     },
     ccrpcSend: async (id, m) => {
@@ -646,7 +667,9 @@ export function createMockCcrpc(): CcrpcApi {
       // recording has it next (whatever the app was showing).
       const next = c.fx.lines[c.cursor];
       const as = msg.type === "prompt" && msg.if_busy === "steer" && next?.msg?.type === "steer" ? "steer" : msg.type;
-      if (next?.dir === "send" && next.msg?.type === as) {
+      // A slash command replays only its own recording (the next one may be another command).
+      const slash = [msg.text, next?.msg?.text].some((t) => typeof t === "string" && t.startsWith("/"));
+      if (next?.dir === "send" && next.msg?.type === as && (!slash || next.msg?.text === msg.text)) {
         c.cursor++;
         replay(id, { from: next.msg?.id, to: msg.id });
         return;

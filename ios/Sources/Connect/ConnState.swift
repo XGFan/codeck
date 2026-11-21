@@ -75,6 +75,13 @@ struct ConnState: Decodable, Equatable, Sendable {
         }
     }
 
+    /// Why `new` never got a Session (`start_failed`): ccrpc's `{code, message}`.
+    struct StartFailed: Decodable, Equatable, Sendable {
+        /// `untrusted`, `exited` or `no_claude`.
+        var code: String?
+        var message: String
+    }
+
     struct Notice: Decodable, Equatable, Sendable {
         var id: Int
         var text: String
@@ -101,7 +108,7 @@ struct ConnState: Decodable, Equatable, Sendable {
     var procExit: ProcExit?
     var sessionExited = false
     /// `new` never got a Session (`start_failed`): ccrpc closed that Pane and ended.
-    var startFailed: String?
+    var startFailed: StartFailed?
     /// Why ccrpc gave up (`fatal`): the reason it ended.
     var fatal: String?
     /// The code calls Code Mode ran (`codeCalls`), as the Host folded them: handed on to the Transcript page.
@@ -141,7 +148,7 @@ struct ConnState: Decodable, Equatable, Sendable {
         lastTurn = c.lenient(LastTurn.self, .lastTurn)
         procExit = c.lenient(ProcExit.self, .procExit)
         sessionExited = c.lenient(Bool.self, .sessionExited) ?? false
-        startFailed = c.lenient(String.self, .startFailed)
+        startFailed = c.lenient(StartFailed.self, .startFailed)
         fatal = c.lenient(String.self, .fatal)
         codeCalls = c.lenient([JSONValue].self, .codeCalls) ?? []
         notices = c.lenient(Lossy<Notice>.self, .notices)?.items ?? []

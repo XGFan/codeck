@@ -291,7 +291,7 @@ impl Engine {
             .collect()
     }
 
-    /// `input` checked as when it is sent (follow-ups are checked as they are queued): image
+    /// `input` checked as when it is sent (steer's parts are checked likewise): image
     /// paths made absolute; of `parts`, control characters left out of the text and empty text
     /// items dropped, and without any image they become one `text`. With images, the first item
     /// cannot be text starting with `!` (a `!` command) or `/` (a slash command).
@@ -348,7 +348,7 @@ impl Engine {
         Ok(input)
     }
 
-    /// `prompt` / `follow_up`: `text` after `images`, or `parts` in order.
+    /// `prompt`: `text` after `images`, or `parts` in order.
     pub(super) fn send_input(&mut self, input: &rpc::Input) -> CmdResult {
         match input {
             rpc::Input::Text { text, images } => self.send_prompt_with(text, images),
@@ -394,7 +394,14 @@ impl Engine {
         let before = self.marks.seq;
         let hook_before = self.hook_seq;
         self.paste_and_submit(&clean)?;
-        self.confirm_prompt(&Typed::plain(clean, paths.len()), before, hook_before)
+        // A one-line `/name …` may be a command that leaves no record (a panel).
+        let slash = paths.is_empty() && is_slash_command(&clean);
+        self.confirm_prompt(
+            &Typed::plain(clean, paths.len()),
+            before,
+            hook_before,
+            slash,
+        )
     }
 
     /// Checked `parts` with images, pasted one by one, then Enter.
@@ -407,20 +414,54 @@ impl Engine {
         self.paste_parts(parts)?;
         self.input_box_now()?;
         self.keys(key::ENTER)?;
-        self.confirm_prompt(&Typed::parts(parts), before, hook_before)
+        self.confirm_prompt(&Typed::parts(parts), before, hook_before, false)
     }
 
     /// After Enter: waits for the transcript to record `typed` (markers after `before`, hook
     /// prompts after `hook_before`).
-    fn confirm_prompt(&mut self, typed: &Typed, before: u64, hook_before: u64) -> CmdResult {
+    /// A `slash` command that left the input box and neither left a record nor opened a turn
+    /// within [`COMMAND_QUIET`] was a panel or another command that records nothing: delivered
+    /// `as "command"`.
+    fn confirm_prompt(
+        &mut self,
+        typed: &Typed,
+        before: u64,
+        hook_before: u64,
+        slash: bool,
+    ) -> CmdResult {
         let found = |e: &Engine| e.marks.typed_after(before, typed).map(str::to_string);
         // Claude Code may have started a turn just before Enter: then the prompt waits in its queue.
         let queued = |e: &Engine| e.marks.typed_enqueued_after(before, typed);
+        let mut left_since: Option<Instant> = None;
         let ok = self.wait_after_keys(Duration::from_secs(30), |e| {
-            found(e).is_some() || queued(e).is_some() || e.marks.blank_enqueued_after(before)
+            if found(e).is_some() || queued(e).is_some() || e.marks.blank_enqueued_after(before) {
+                return true;
+            }
+            if !slash || e.hook_prompts.iter().any(|(seq, ..)| *seq > hook_before) {
+                return false;
+            }
+            let in_box = e
+                .screen()
+                .ok()
+                .and_then(|s| recognize::input_text(&s))
+                .is_some_and(|t| t.contains(&typed.needle));
+            if in_box {
+                left_since = None;
+            } else {
+                left_since.get_or_insert_with(Instant::now);
+            }
+            left_since.is_some_and(|t| t.elapsed() >= COMMAND_QUIET)
         });
         if !ok {
             return err("timeout", "30 秒内没在 transcript 里看到这条提示词");
+        }
+        if slash
+            && found(self).is_none()
+            && queued(self).is_none()
+            && !self.marks.blank_enqueued_after(before)
+        {
+            crate::clog!("command left no record");
+            return Ok(json!({"uuid": null, "prompt_id": null, "delivered_as": "command"}));
         }
         if found(self).is_none() && queued(self).is_none() {
             // A blank enqueue may be another session's message: it is this prompt only when no
@@ -565,9 +606,8 @@ impl Engine {
     }
 
     /// `prompt`: sent now when idle; with `if_busy`, while busy it goes as a steer (waiting: a
-    /// dialog covers the input box, so into the follow-up queue) or into the follow-up queue,
-    /// decided as it runs (no race between reading the state and choosing the command). A
-    /// follow-up also queues while idle when others still wait to go out (it goes after them).
+    /// dialog covers the input box, so `not_idle`), decided as it runs (no race between reading
+    /// the state and choosing the command).
     pub(super) fn prompt_cmd(
         &mut self,
         input: &rpc::Input,
@@ -575,26 +615,9 @@ impl Engine {
     ) -> CmdResult {
         match (if_busy, &self.state) {
             (Some(rpc::IfBusy::Steer), State::Busy) => self.steer_input(input),
-            (Some(rpc::IfBusy::FollowUp), State::Idle) if !self.follow_ups.is_empty() => {
-                let mut v = self.queue_follow_up(input)?;
-                v["delivered_as"] = json!("follow_up");
-                Ok(v)
-            }
-            (Some(_), State::Busy | State::Waiting { .. }) => {
-                let mut v = self.queue_follow_up(input)?;
-                v["delivered_as"] = json!("follow_up");
-                Ok(v)
-            }
+            (Some(rpc::IfBusy::Steer), State::Waiting { .. }) => err("not_idle", "有请求在等作答"),
             _ => self.send_input(input),
         }
-    }
-
-    /// `follow_up`: into ccrpc's queue, image paths checked now (not only when sent).
-    pub(super) fn queue_follow_up(&mut self, input: &rpc::Input) -> CmdResult {
-        self.require(true, "")?;
-        let input = Self::checked_input(input)?;
-        self.follow_ups.push_back(input);
-        Ok(json!({"queued": self.follow_ups.len()}))
     }
 
     /// `steer`: `text` after `images`, or `parts` in order.
@@ -700,6 +723,13 @@ impl Engine {
         if !self.queue.iter().any(|q| q.editable) {
             return err("bad_request", "队列里没有可取回的消息");
         }
+        let items = self.take_back_queue()?;
+        Ok(json!({"items": items}))
+    }
+
+    /// `↑`: everything editable leaves the queue, the input box is emptied again. The items,
+    /// oldest first; `delivered` when the queue went out meanwhile.
+    fn take_back_queue(&mut self) -> std::result::Result<Vec<QueueItem>, CmdErr> {
         // What the items said before they left the queue (their images are forgotten then).
         let waiting = self.queue.clone();
         // `↑` joins what it takes back with what is in the box, which keeps `!` commands queued.
@@ -746,7 +776,69 @@ impl Engine {
                     })
             })
             .collect();
-        Ok(json!({"items": items}))
+        Ok(items)
+    }
+
+    /// `cancel_queue`: takes the item `id` out of Claude Code's queue. The TUI only has `↑` for
+    /// all that can be edited, so everything is taken back and the others are sent again as
+    /// steers, in their order (as prompts if the turn ends meanwhile). Everything that can fail
+    /// is checked before the first key.
+    pub(super) fn cancel_queue(&mut self, id: &str) -> CmdResult {
+        self.require(self.state == State::Busy, "not_busy")?;
+        let Some(target) = self.queue.iter().find(|q| q.id == id) else {
+            return err("not_found", format!("队列里没有 {id}"));
+        };
+        if !target.editable {
+            return err("bad_request", format!("{id} 不能撤回"));
+        }
+        let mut again = Vec::new();
+        for q in self.queue.iter().filter(|q| q.editable && q.id != id) {
+            let Some(input) = queue_input(&q.text, q.images.as_deref()) else {
+                return err(
+                    "unsupported",
+                    "队列里有终端里带图片输入的消息，ccrpc 放不回去",
+                );
+            };
+            again.push((q.id.clone(), input));
+        }
+        let taken = self.take_back_queue()?;
+        let Some(removed) = taken.iter().find(|q| q.id == id).cloned() else {
+            // The target went out while the others were taken back: those go back in.
+            let _ = self.requeue(&again);
+            return err("delivered", "排队的消息已经送出");
+        };
+        let requeued = self.requeue(&again)?;
+        Ok(json!({"removed": removed, "requeued": requeued}))
+    }
+
+    /// Sends `items` again in order, as steers while the turn runs, else as prompts. The queue ids
+    /// of those that were queued.
+    fn requeue(
+        &mut self,
+        items: &[(String, rpc::Input)],
+    ) -> std::result::Result<Vec<String>, CmdErr> {
+        let mut ids = Vec::new();
+        for (id, input) in items {
+            // Only what `↑` really took back goes in again.
+            if self
+                .marks
+                .popped
+                .iter()
+                .all(|(_, n, _)| format!("q{n}") != *id)
+            {
+                continue;
+            }
+            let sent = if self.state == State::Busy {
+                self.steer_input(input)
+            } else {
+                self.send_input(input)
+            };
+            let sent = sent.map_err(|(code, msg)| (code, format!("{msg}（{id} 没有放回）")))?;
+            if let Some(q) = sent["queue_id"].as_str() {
+                ids.push(q.to_string());
+            }
+        }
+        Ok(ids)
     }
 
     pub(super) fn slash(&mut self, command: &str) -> CmdResult {
@@ -825,41 +917,6 @@ impl Engine {
             self.keys(&rpc::key_to_bytes(k))?;
         }
         Ok(json!({}))
-    }
-
-    /// `follow_ups` once the follow-up queue changed (queued, sent, cancelled, failed).
-    pub(super) fn sync_follow_ups(&mut self) {
-        let now = self.follow_up_texts();
-        if let Some(ev) = changed_follow_ups(&mut self.follow_ups_sent, now) {
-            self.emit(ev);
-        }
-    }
-
-    pub(super) fn follow_up_texts(&self) -> Vec<String> {
-        self.follow_ups
-            .iter()
-            .map(rpc::Input::display_text)
-            .collect()
-    }
-
-    pub(super) fn cancel_follow_up(&mut self, index: Option<usize>) -> CmdResult {
-        let removed = match index {
-            Some(i) if i < self.follow_ups.len() => {
-                self.follow_ups.remove(i);
-                1
-            }
-            Some(i) => {
-                return err(
-                    "bad_request",
-                    format!(
-                        "follow_up 队列只有 {} 条，没有第 {i} 条",
-                        self.follow_ups.len()
-                    ),
-                );
-            }
-            None => std::mem::take(&mut self.follow_ups).len(),
-        };
-        Ok(json!({"removed": removed, "follow_ups": self.follow_up_texts()}))
     }
 
     pub(super) fn mode_now(&self) -> Option<rpc::PermissionMode> {
@@ -970,53 +1027,82 @@ impl Engine {
         }
         Ok(json!({}))
     }
-
-    /// Sends the next follow-up when the Session is idle with no turn open. Only called from the
-    /// top-level loop.
-    pub(super) fn drain_follow_ups(&mut self) {
-        if self.state != State::Idle
-            || self.turns.active()
-            || self.idle_at.is_none_or(|t| t.elapsed() < FOLLOW_UP_SETTLE)
-        {
-            return;
-        }
-        let Some(input) = self.follow_ups.pop_front() else {
-            return;
-        };
-        self.commanded_at = Some(Instant::now());
-        let sent = self.send_input(&input);
-        self.pending_images = None;
-        if let Err((code, msg)) = sent {
-            self.emit(json!({"type": "follow_up_failed", "text": input.display_text(), "error": {"code": code, "message": msg}}));
-        }
-    }
 }
 
-/// The `follow_ups` event when `now` differs from what `sent` last said (and remembers `now`).
-fn changed_follow_ups(sent: &mut Option<Vec<String>>, now: Vec<String>) -> Option<Value> {
-    if sent.as_ref() == Some(&now) {
-        return None;
+/// What a queued item's text and images (as `queue` says them) send again: the text split at its
+/// `[Image #n]` tags into `parts`. None when the images are not known, or do not fit the tags.
+fn queue_input(text: &str, images: Option<&[String]>) -> Option<rpc::Input> {
+    let images = images?;
+    if images.is_empty() {
+        return Some(rpc::Input::text(text));
     }
-    let ev = json!({"type": "follow_ups", "items": now});
-    *sent = Some(now);
-    Some(ev)
+    let mut parts = Vec::new();
+    let mut rest = text;
+    let mut paths = images.iter();
+    while let Some(at) = rest.find("[Image #") {
+        let tail = &rest[at + "[Image #".len()..];
+        let digits = tail.chars().take_while(char::is_ascii_digit).count();
+        if digits == 0 || !tail[digits..].starts_with(']') {
+            return None;
+        }
+        parts.push(rpc::Part::Text(rest[..at].to_string()));
+        parts.push(rpc::Part::Image(paths.next()?.clone()));
+        rest = &tail[digits + 1..];
+    }
+    parts.push(rpc::Part::Text(rest.to_string()));
+    paths.next().is_none().then_some(rpc::Input::Parts(parts))
+}
+
+/// A single line starting with `/name`: a slash command.
+fn is_slash_command(text: &str) -> bool {
+    !text.contains('\n')
+        && text
+            .strip_prefix('/')
+            .is_some_and(|r| r.starts_with(|c: char| !c.is_whitespace()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rpc::{Input, Part};
 
     #[test]
-    fn follow_ups_are_sent_only_when_they_change() {
-        let mut sent = Some(Vec::new());
-        assert_eq!(changed_follow_ups(&mut sent, Vec::new()), None);
-        let ev = changed_follow_ups(&mut sent, vec!["a".into()]).unwrap();
-        assert_eq!(ev, json!({"type": "follow_ups", "items": ["a"]}));
-        assert_eq!(changed_follow_ups(&mut sent, vec!["a".into()]), None);
-        let ev = changed_follow_ups(&mut sent, Vec::new()).unwrap();
-        assert_eq!(ev["items"], json!([]));
+    fn slash_commands_are_single_lines_starting_with_a_name() {
+        assert!(is_slash_command("/cost"));
+        assert!(is_slash_command("/rename new name"));
+        assert!(!is_slash_command("/ x"));
+        assert!(!is_slash_command("/cost\nmore"));
+        assert!(!is_slash_command("look /cost"));
     }
+
+    #[test]
+    fn a_queued_item_is_sent_again_with_its_images_in_place() {
+        use rpc::{Input, Part};
+        let imgs = |v: &[&str]| Some(v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            queue_input("plain", imgs(&[]).as_deref()),
+            Some(Input::text("plain"))
+        );
+        assert_eq!(
+            queue_input("see [Image #2] now", imgs(&["/a.png"]).as_deref()),
+            Some(Input::Parts(vec![
+                Part::Text("see ".into()),
+                Part::Image("/a.png".into()),
+                Part::Text(" now".into()),
+            ]))
+        );
+        // Images the caller does not know, or that do not fit the tags.
+        assert_eq!(queue_input("[Image #1]", None), None);
+        assert_eq!(
+            queue_input("[Image #1] [Image #2]", imgs(&["/a.png"]).as_deref()),
+            None
+        );
+        assert_eq!(
+            queue_input("[Image #1]", imgs(&["/a.png", "/b.png"]).as_deref()),
+            None
+        );
+    }
+
+    use rpc::{Input, Part};
 
     #[test]
     fn parts_are_checked_up_front() {

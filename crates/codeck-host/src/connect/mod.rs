@@ -669,7 +669,7 @@ mod tests {
         assert_eq!(f.last_state().holder_id.as_deref(), Some("H1"));
 
         f.line(json!({
-            "type": "ready", "protocol": 5, "holder_id": "H1", "session_id": "s1", "cwd": "/w", "claude_version": "2.1",
+            "type": "ready", "protocol": 6, "holder_id": "H1", "session_id": "s1", "cwd": "/w", "claude_version": "2.1",
             "state": "idle", "waiting": null, "requests": [], "size": [80, 24], "queue": [],
             "tasks": [{ "id": "b1", "kind": "shell", "tool_use_id": null, "description": "sleep", "command": "sleep 9", "status": "running", "idle": false }],
             "warnings": [],
@@ -931,7 +931,7 @@ mod tests {
         f.line(json!({ "type": "fork", "error": { "code": "x", "message": "m" } }));
         assert!(closing(&f));
         // `new`: ccrpc closed that Pane itself and ends with 1.
-        f.line(json!({ "type": "start_failed", "message": "claude 没有启动" }));
+        f.line(json!({ "type": "start_failed", "code": "exited", "message": "claude 没有启动" }));
         let events = f.drain();
         assert!(
             events
@@ -940,7 +940,7 @@ mod tests {
         );
         assert!(events.iter().any(|e| matches!(
             e,
-            HostEvent::ConnectState(s) if s.start_failed.as_deref() == Some("claude 没有启动")
+            HostEvent::ConnectState(s) if s.start_failed == Some(json!({ "code": "exited", "message": "claude 没有启动" }))
         )));
     }
 

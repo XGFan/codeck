@@ -18,10 +18,10 @@ final class ConnStateGoldenTests: XCTestCase {
         XCTAssertEqual(c.model, .init(id: "claude-opus-4-7", name: "Opus 4.7"))
         XCTAssertEqual(c.effort, "xhigh")
         XCTAssertEqual(c.contextTokens, 52000)
-        XCTAssertNil(c.startFailed)
+        XCTAssertEqual(c.startFailed, .init(code: "exited", message: "claude 没有启动"))
         XCTAssertNil(c.fatal)
 
-        XCTAssertEqual(c.requests.map(\.id), ["toolu_1", "toolu_2", "rewind:1"])
+        XCTAssertEqual(c.requests.map(\.id), ["toolu_1", "toolu_2", "rewind:1", "dialog:1"])
         guard case .permission(let p) = c.requests[0] else { return XCTFail("permission_request") }
         XCTAssertEqual(p.requestId, "toolu_1")
         XCTAssertEqual(p.toolUseId, "toolu_1")
@@ -36,6 +36,10 @@ final class ConnStateGoldenTests: XCTestCase {
         XCTAssertEqual(rw.codeText, "The code will be restored -1 in w.txt.")
         XCTAssertEqual(rw.options, [.both, .conversation])
         XCTAssertEqual(RewindWords.codeLine(rw.code, rw.codeText), "这条提示词及之后的对话会被移除；代码会恢复：w.txt（−1）")
+        // A dialog ccrpc's analyzer had given up on: it says so again with the same request id.
+        guard case .screen(let d) = c.requests[3] else { return XCTFail("dialog") }
+        XCTAssertEqual(d.requestId, "dialog:1")
+        XCTAssertFalse(d.analyzing)
 
         XCTAssertEqual(c.queue.map(\.id), ["q1", "q2"])
         XCTAssertEqual(c.queue.map(\.kind), ["typed", "session"])
@@ -55,8 +59,7 @@ final class ConnStateGoldenTests: XCTestCase {
         XCTAssertEqual(c.codeCalls.first?["code"], .string("read('w.txt')"))
         XCTAssertEqual(c.codeCalls.first?["end"]?["isError"], .bool(false))
         XCTAssertEqual(c.codeCalls.first?["end"]?["response"]?["lines"], .number(12))
-        XCTAssertEqual(c.notices.count, 1)
-        XCTAssertTrue(c.notices[0].text.hasPrefix("排队的消息没有发出"))
+        XCTAssertEqual(c.notices, [.init(id: 1, text: "界面识别失败：超时")])
         XCTAssertNil(c.procExit)
         XCTAssertFalse(c.sessionExited)
         XCTAssertTrue(c.canCommand)

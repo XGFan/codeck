@@ -227,6 +227,32 @@ mod tests {
     }
 
     #[test]
+    fn a_dialog_under_analysis_is_updated_in_place_or_ended() {
+        let now = Instant::now();
+        let dialog = |analyzing: bool| {
+            json!({"type": "dialog", "request_id": "dialog:1", "waiting_for": "dialog open",
+                "analyzing": analyzing, "lines": []})
+        };
+        let on_screen = Facts {
+            announced: Some("dialog:1".into()),
+            waiting: true,
+            ..Facts::default()
+        };
+        // The analysis failed: the same request, `analyzing` off, nothing ends.
+        let mut r = Reported::default();
+        assert!(r.upsert(dialog(true)).is_empty());
+        assert!(r.upsert(dialog(false)).is_empty());
+        assert_eq!(r.events(), [dialog(false)]);
+        assert!(r.sync(&on_screen, now).is_empty());
+        // A layout was learned: the dialog ends at once, said once.
+        let mut r = Reported::default();
+        r.upsert(dialog(true));
+        r.answered("dialog:1");
+        assert_eq!(ends(&r.sync(&on_screen, now)), ["dialog:1"]);
+        assert!(r.sync(&on_screen, now).is_empty());
+    }
+
+    #[test]
     fn a_permission_ends_once_when_its_request_is_over() {
         let now = Instant::now();
         let mut r = Reported::default();

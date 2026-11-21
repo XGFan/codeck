@@ -30,10 +30,9 @@ struct ConnectedBar: View {
         VStack(spacing: 0) {
             if requests.isEmpty {
                 VStack(spacing: 8) {
-                    if store.rewinding[c.conn] != nil || c.state == .waiting && c.waiting?.kind != "question" {
-                        // ccrpc is finding the prompt in the terminal's Rewind picker; or waiting with nothing to
-                        // show yet: the analyzer may be looking at the screen.
-                        Text(store.rewinding[c.conn] != nil ? "正在准备回退…" : "正在识别界面…")
+                    if store.rewinding[c.conn] != nil {
+                        // ccrpc is finding the prompt in the terminal's Rewind picker.
+                        Text("正在准备回退…")
                             .font(.footnote)
                             .foregroundStyle(Palette.warnText)
                             .padding(.horizontal, 14)
@@ -44,7 +43,7 @@ struct ConnectedBar: View {
                     if let error {
                         ErrorLine(text: error) { store.setError(sessionId, nil) }
                     }
-                    if !c.queue.isEmpty { QueueChips(queue: c.queue) }
+                    if !c.queue.isEmpty { QueueChips(queue: c.queue, c: c, sessionId: sessionId) }
                     if Self.showsControls(
                         state: c.state, atBottom: atBottom, focused: focused,
                         hasError: error != nil, hasQueue: !c.queue.isEmpty
@@ -117,21 +116,46 @@ struct ConnectedBar: View {
     }
 }
 
-/// What waits in Claude Code's own queue.
+/// What waits in Claude Code's own queue; a message typed here can be taken back before it goes.
 private struct QueueChips: View {
     let queue: [QueueItem]
+    let c: ConnState
+    let sessionId: String
+    @Environment(HostModel.self) private var model
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 chip { Text("排队 \(queue.count) 条").foregroundStyle(.secondary) }
                 ForEach(queue) { item in
-                    chip { Text(item.label).lineLimit(1).frame(maxWidth: 220) }
+                    chip {
+                        HStack(spacing: 4) {
+                            Text(item.label).lineLimit(1).frame(maxWidth: 220)
+                            if item.editable {
+                                Button { cancel(item) } label: {
+                                    // Wide enough for a finger: the mark itself is small.
+                                    Image(systemName: "xmark").font(.caption2)
+                                        .frame(minWidth: 28, minHeight: 36)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("撤回这条")
+                            }
+                        }
+                    }
                 }
             }
             .font(.footnote)
         }
         .scrollClipDisabled()
+    }
+
+    private func cancel(_ item: QueueItem) {
+        let store = model.connect
+        Task {
+            let r = await store.command(c.conn, ["type": "cancel_queue", "queue_id": .string(item.id)])
+            if !r.success { store.setError(sessionId, "撤回排队的消息失败：\(r.errorText)") }
+        }
     }
 
     private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {

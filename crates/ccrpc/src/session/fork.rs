@@ -81,14 +81,27 @@ pub(super) fn pick_option(event: &Value, restore: RewindOption) -> (RewindOption
 /// (the shell's, such as `command not found`).
 pub(super) fn exit_line(s: &Screen) -> Option<String> {
     let upto = (s.cursor.0 as usize).min(s.lines.len());
-    let lines = || s.lines.iter().map(|l| l.trim());
-    lines()
+    claude_error_line(s).or_else(|| {
+        s.lines
+            .iter()
+            .map(|l| l.trim())
+            .take(upto)
+            .rfind(|l| !l.is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// claude's own error on the screen (not the shell's): the last line starting with `No
+/// conversation found`, `Error:` or `error:`.
+pub(super) fn claude_error_line(s: &Screen) -> Option<String> {
+    s.lines
+        .iter()
+        .map(|l| l.trim())
         .rfind(|l| {
             ["No conversation found", "Error:", "error:"]
                 .iter()
                 .any(|p| l.starts_with(p))
         })
-        .or_else(|| lines().take(upto).rfind(|l| !l.is_empty()))
         .map(str::to_string)
 }
 

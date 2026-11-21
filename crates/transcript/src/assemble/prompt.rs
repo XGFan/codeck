@@ -175,6 +175,7 @@ pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
         return PromptOrigin::Command {
             name: format!("/{}", name.trim_start_matches('/')),
             args: tag(t, "command-args").unwrap_or_default(),
+            system: e.system_record,
         };
     }
     // A `!` shell command: typed by the user, like a slash command.
@@ -184,6 +185,7 @@ pub fn classify(e: &RawEntry, text: &str) -> PromptOrigin {
         return PromptOrigin::Command {
             name: "!".into(),
             args: line,
+            system: false,
         };
     }
     if t.starts_with("<local-command-stdout>")
@@ -242,8 +244,8 @@ pub fn is_human_prompt(e: &RawEntry) -> bool {
 /// the text; whitespace collapsed, truncated to [`TITLE_CHARS`] characters.
 pub fn title_text(origin: &PromptOrigin, text: &str) -> String {
     let raw = match origin {
-        PromptOrigin::Command { name, args } if name == "!" => format!("!{args}"),
-        PromptOrigin::Command { name, args } => format!("{name} {args}"),
+        PromptOrigin::Command { name, args, .. } if name == "!" => format!("!{args}"),
+        PromptOrigin::Command { name, args, .. } => format!("{name} {args}"),
         _ => text.to_owned(),
     };
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -609,7 +611,8 @@ mod tests {
             o,
             PromptOrigin::Command {
                 name: "/release".into(),
-                args: "v1.2.0".into()
+                args: "v1.2.0".into(),
+                system: false,
             }
         );
         assert_eq!(title_text(&o, cmd), "/release v1.2.0");
@@ -625,7 +628,8 @@ mod tests {
             o,
             PromptOrigin::Command {
                 name: "!".into(),
-                args: "goland .".into()
+                args: "goland .".into(),
+                system: false,
             }
         );
         assert_eq!(title_text(&o, bang), "!goland .");

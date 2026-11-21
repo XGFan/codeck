@@ -22,6 +22,23 @@ fn launched(i: &Value) -> Option<(String, TaskKind)> {
     }
 }
 
+/// The requests of background Subagents that are no longer running (stopped, finished or killed):
+/// a Subagent's `agent_id` is its task's id. Its dialog is not shown until answered on the
+/// screen, and a stopped one never gets a result that would end the request.
+fn stopped_agents_requests(requests: &[HookRequest], tasks: &[BgTask]) -> Vec<String> {
+    requests
+        .iter()
+        .filter(|r| {
+            r.agent_id.as_deref().is_some_and(|a| {
+                tasks
+                    .iter()
+                    .any(|t| t.id == a && t.kind == TaskKind::Agent && t.status != "running")
+            })
+        })
+        .map(|r| r.id.clone())
+        .collect()
+}
+
 /// Stop's `background_tasks` (Claude Code's running tasks) into `tasks`: running ones ccrpc did not
 /// see start (`seen`: in the transcript) are added. A Monitor tool's task is listed as a `shell`
 /// there; seen start (plugin or transcript), it keeps its kind. A teammate (Agent with `name`) is
@@ -86,6 +103,18 @@ impl Engine {
         let now = self.tasks();
         if let Some(ev) = changed_tasks(&mut self.tasks_sent, now) {
             self.emit(ev);
+        }
+    }
+
+    /// Ends the requests of background Subagents whose task is no longer running (see
+    /// [`stopped_agents_requests`]): `request_end` follows from the request list.
+    pub(super) fn end_stopped_agent_requests(&mut self) {
+        if self.requests.iter().all(|r| r.agent_id.is_none()) {
+            return;
+        }
+        for id in stopped_agents_requests(&self.requests, &self.tasks()) {
+            crate::clog!("request {id} ended: its background Subagent stopped");
+            self.resolve(&id);
         }
     }
 
@@ -372,6 +401,42 @@ mod tests {
         };
         let ev = changed_tasks(&mut sent, vec![stopped]).unwrap();
         assert_eq!(ev["tasks"][0]["status"], "killed");
+    }
+
+    #[test]
+    fn a_stopped_background_subagent_ends_its_requests() {
+        let request = |id: &str, agent: Option<&str>| HookRequest {
+            id: id.into(),
+            tool_name: "Bash".into(),
+            input: Value::Null,
+            agent_id: agent.map(str::to_string),
+            at: Instant::now(),
+            away_since: None,
+            reply: None,
+            in_tool: false,
+        };
+        let task = |id: &str, status: &str| BgTask {
+            id: id.into(),
+            kind: TaskKind::Agent,
+            tool_use_id: None,
+            description: None,
+            command: None,
+            status: status.into(),
+            idle: false,
+        };
+        let requests = [
+            request("main", None),
+            request("a1-req", Some("a1")),
+            request("a2-req", Some("a2")),
+            request("unknown", Some("a3")),
+        ];
+        let tasks = [task("a1", "stopped"), task("a2", "running")];
+        // Only the stopped one's; a main-line request and an unknown agent's stay.
+        assert_eq!(stopped_agents_requests(&requests, &tasks), ["a1-req"]);
+        for status in ["completed", "failed", "killed"] {
+            let tasks = [task("a2", status)];
+            assert_eq!(stopped_agents_requests(&requests, &tasks), ["a2-req"]);
+        }
     }
 
     #[test]

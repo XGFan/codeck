@@ -1,0 +1,4 @@
+{"t": 1793700002100, "dir": "recv", "msg": {"type": "ready", "protocol": 6, "holder_id": "mnewfailed001", "session_id": null, "cwd": "/Users/dev/Developer/lumen-api", "claude_version": "2.1.318", "state": "starting", "size": [120, 40], "mode": "manual", "model": null, "context_tokens": null, "warnings": [], "effort": null, "waiting": null, "requests": [], "title": null, "queue": [], "tasks": [], "code_calls": [], "feedback_draft": null}}
+{"t": 1793700002110, "dir": "recv", "msg": {"type": "state", "state": "idle", "waiting": null}}
+{"t": 1793700002120, "dir": "recv", "msg": {"type": "start_failed", "code": "exited", "message": "claude 没有启动"}}
+{"t": 1793700002130, "dir": "exit", "code": 1, "stderr": ""}

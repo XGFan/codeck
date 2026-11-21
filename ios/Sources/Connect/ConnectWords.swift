@@ -181,17 +181,6 @@ enum SlashRules {
         return short.count == 1 ? short[0] : nil
     }
 
-    /// What ccrpc's `slash` should type for `body`, or nil to send it as a `prompt`. Built-in commands (and
-    /// command-like names not in the list) go as `slash`: a local command or a panel leaves nothing in the transcript
-    /// a `prompt` could wait for. Custom commands and skills, a path such as `/Users/…`, a multi-line text, one with
-    /// images, or anything while the list is unknown go as `prompt`.
-    static func slashCommand(_ body: String, withImages: Bool, _ list: [SlashCommand]?) -> String? {
-        guard list != nil, body.hasPrefix("/"), !withImages, !body.contains(where: \.isNewline) else { return nil }
-        guard typedName(body).range(of: #"^[A-Za-z0-9_.:-]+$"#, options: .regularExpression) != nil else { return nil }
-        if let known = commandOf(body, list), known.source != "builtin" { return nil }
-        return String(body.dropFirst())
-    }
-
     /// Why `body` is not sent at all: going back to a prompt means picking it in the transcript, not here.
     static func refusedHere(_ body: String) -> String? {
         body.range(of: #"^/(rewind|checkpoint)(\s|$)"#, options: .regularExpression) == nil

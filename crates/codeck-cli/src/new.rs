@@ -25,6 +25,8 @@ use crate::common::{CliError, cap};
 /// How long ccrpc may take to start the Session, and how long the first prompt may take to go out.
 const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 const TRUST_LAYOUT: &str = "trust_folder";
+/// The one sentence for a folder nobody trusted yet, whichever way it is found out.
+const UNTRUSTED_DIR: &str = "目录还没有信任，先在终端里用 claude 打开一次";
 /// ccrpc needs up to 10 s to see the folder trust dialog close.
 const TRUST_ANSWER_WAIT: Duration = Duration::from_secs(15);
 /// After closing its stdin, how long ccrpc gets to detach before we exit without it.
@@ -187,6 +189,7 @@ enum Failure {
     },
     /// `new` never got a Session (`start_failed`); ccrpc closed the Pane and ended.
     StartFailed {
+        code: String,
         message: String,
     },
 }
@@ -205,8 +208,14 @@ impl Failure {
                 message: format!("ccrpc 提前退出：{}", cap(&message, REASON_CHARS)),
                 holder_id,
             },
-            // The Pane is gone: ccrpc closed it itself.
-            Failure::StartFailed { message } => CliError {
+            // The Pane is gone: ccrpc closed it itself. A folder trust dialog answered no is not a
+            // failure to start claude but a folder to trust first, however it was answered.
+            Failure::StartFailed { code, .. } if code == "untrusted" => CliError {
+                code: "untrusted_dir",
+                message: UNTRUSTED_DIR.to_owned(),
+                holder_id: None,
+            },
+            Failure::StartFailed { message, .. } => CliError {
                 code: "exited",
                 message: format!("claude 没有启动：{}", cap(&message, REASON_CHARS)),
                 holder_id: None,
@@ -224,7 +233,10 @@ fn ended(v: &Value, holder: &Option<String>) -> Option<Failure> {
             message,
             holder_id: holder.clone(),
         }),
-        Some("start_failed") => Some(Failure::StartFailed { message }),
+        Some("start_failed") => Some(Failure::StartFailed {
+            code: v["code"].as_str().unwrap_or("").to_owned(),
+            message,
+        }),
         _ => None,
     }
 }
@@ -366,7 +378,7 @@ fn refuse_trust(
 ) -> CliError {
     let mut refused = CliError {
         code: "untrusted_dir",
-        message: "目录还没有信任，先在终端里用 claude 打开一次".to_owned(),
+        message: UNTRUSTED_DIR.to_owned(),
         holder_id: holder,
     };
     let deny = choice["options"]

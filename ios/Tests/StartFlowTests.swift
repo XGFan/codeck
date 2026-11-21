@@ -75,7 +75,7 @@ final class StartFlowTests: XCTestCase {
 
     func testCcrpcsOwnReasonComesFirst() {
         var told = conn(session: nil)
-        told.startFailed = "No conversation found with session ID: 597821af"
+        told.startFailed = .init(code: "exited", message: "No conversation found with session ID: 597821af")
         XCTAssertEqual(StartFlow.outcome(.new(cwd: "/w"), told), .failed("No conversation found with session ID: 597821af"))
         var fatal = conn(session: nil)
         fatal.fatal = "找不到 Holder H9"
@@ -337,7 +337,7 @@ final class ResumeAgainstHostTests: XCTestCase {
         store.starts["c1"] = .resume(sessionId: "s1")
         var c = ConnState(conn: "c1")
         c.state = .starting
-        c.startFailed = "No conversation found with session ID: x"
+        c.startFailed = .init(code: "exited", message: "No conversation found with session ID: x")
         store.apply(c)
         XCTAssertEqual(store.errors["s1"], "Resume 失败：No conversation found with session ID: x")
         XCTAssertNil(store.starts["c1"])
@@ -379,7 +379,7 @@ final class ResumeAgainstHostTests: XCTestCase {
         store.starts["c1"] = .new(cwd: "/w")
         var c = ConnState(conn: "c1")
         c.state = .starting
-        c.startFailed = "claude 没有启动"
+        c.startFailed = .init(code: "no_claude", message: "claude 没有启动")
         store.apply(c)
         XCTAssertEqual(store.startFailures["c1"], "claude 没有启动")
         XCTAssertNil(store.starts["c1"])

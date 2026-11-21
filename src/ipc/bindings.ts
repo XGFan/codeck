@@ -543,7 +543,13 @@ export type ProjectSummary = {
 
 export type PromptOrigin = { kind: "human" } | 
 /**  `<command-name>name</command-name>…<command-args>args</command-args>`. */
-{ kind: "command"; name: string; args: string } | { kind: "commandOutput" } | 
+{ kind: "command"; name: string; args: string; 
+/**
+ *  Claude Code recorded it as a `system` / `local_command` entry (`/context`,
+ *  `/rename`…; `/model`, `/effort` and `!` commands are `user` entries): the terminal's
+ *  Rewind list has only what is recorded as `user` entries, so not this one (2.1.329).
+ */
+system: boolean } | { kind: "commandOutput" } | 
 /**
  *  A background task's notice (`<task-notification>`): an agent, a shell command, a Monitor,
  *  a Workflow…; `summary` is unescaped.

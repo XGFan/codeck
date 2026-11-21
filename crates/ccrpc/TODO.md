@@ -41,18 +41,16 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 - 第一次查找 transcript 时偶发的文件系统错误会让已有 transcript 之后按实时读，重放历史 block
 - 连续两次审批合并成同一段 waiting 的情形只做了逻辑处理（插件报来前一个的 PostToolUse 后重新认定），没有端到端用例
 - 同时有几个后台 Subagent 在等审批、且工具输入里都没有可在审批框里比对的内容时，认不出屏幕上是哪个，改发 `dialog`
-- 后台 Subagent 的请求留到插件报来它的结果才结束：Subagent 被停掉、没有结果时它一直挂着，会妨碍认定连接前就在等的审批框
 - Workflow Run 偶尔只读到 `journal.jsonl`：`workflow` 事件的 `name` 为 null、`phases` 为空直到结束（端到端偶发，`workflows/<runId>.json` 没被读到）
 - 插件装在用户级：每次工具调用都会起一次 `ccrpc hook` 进程（不在 clay Pane 里立即退出），换了 ccrpc 可执行文件的位置要重新 `ccrpc plugin install`
 - Subagent Run 文件变短（被替换）时从头重读，会重发其中的 block
 - 原样重发的判定只认纯文字提示词：带图片的提示词重发也会报 `branch`；带图片的提示词也不参与 Branch 的分叉判定
 - `get_messages` 的第一次要读完整个主文件（连接时就在后台开始），几十 MB 的 transcript 要等几秒
 - 普通对话框等待（非审批）里连续出现两个菜单时，第二个 choice 会被吞掉（与 `dialog:` 公告的既有行为相同）
-- 分析进行中（最长 60 秒）整个等待都不报告，换成别的认不出的屏幕也要等它结束才降级为 `dialog`
+- 分析进行中（最长 60 秒）换成别的认不出的屏幕，仍显示原来那个 `analyzing: true` 的 `dialog`，要等分析结束才更新
 - 审批类工具若以审批之外的 waitingFor 出现、又被学成标题不像审批的 choice，会盖住工具（未见过）
 - 按数字键作答（编号审批框、choice、提问）时，若对话框恰在核对屏幕与按键之间被人关掉，数字会落到输入框；输入框为空且有反馈草稿卡片时，`2` 会把草稿发给 Anthropic（窗口很短，未见过）
-- 提示词里有制表符时 `prompt` 等不到 transcript 里的这条（30 秒超时，2026-11-05 rewind 实测时发现；Claude Code 大概改写了制表符，比对时没对上）
-- rewind：终端的回退列表不列出部分本地命令（实测 `/context` 不在，其余如 `/model`、`/rename` 未测），CoDeck 仍给它们「回退」，点了要把选择器从下到上走一遍才报 `not_in_picker`；哪些命令被列出待实测后排除
+- rewind：终端的回退列表按记录的条目类型决定列不列本地命令（2.1.329 实测：记成 `user` 条目的 `/model`、`/effort`、`!` 命令列，记成 `system` / `local_command` 条目的 `/context`、`/rename` 不列），ccrpc 照此排除；其余本地命令没有逐个实测
 - rewind：文字相同的提示词靠选择器里的先后对应，再以确认页上的发送时间逐页核对；其中有插话（选择器是否列出未实测）时报 `ambiguous`，只能在终端里回退。在终端里直接回退过、还没发新提示词时，ccrpc 不知道终端的对话已变短，同样文字且发送时间落在同一档（如都是 2h ago）的提示词仍可能对应错
 
 ## 维护

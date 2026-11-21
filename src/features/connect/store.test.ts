@@ -1,6 +1,6 @@
 // The Connect store against a fake backend: early events, Resume's failure, replacing a connection.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { InMsg } from "./protocol";
+import type { InMsg, TurnEndEvent } from "./protocol";
 
 type Fn = (...a: never[]) => unknown;
 const h = vi.hoisted(() => ({ api: {} as Record<string, Fn> }));
@@ -22,7 +22,7 @@ let sent: { conn: string; msg: Record<string, unknown> }[];
 let store: typeof import("./store");
 
 const state = () => store.useConnect.getState();
-const ready = (holderId: string, sessionId: string | null, protocol = 5): InMsg => ({
+const ready = (holderId: string, sessionId: string | null, protocol = 6): InMsg => ({
   type: "ready",
   protocol,
   claude_version: "2",
@@ -40,7 +40,6 @@ const ready = (holderId: string, sessionId: string | null, protocol = 5): InMsg 
   context_tokens: null,
   title: null,
   queue: [],
-  follow_ups: [],
   tasks: [],
   code_calls: [],
   feedback_draft: null,
@@ -264,9 +263,9 @@ describe("ready", () => {
     h.api.ccrpcConnect = async () => "c1";
     await state().connect("H1", SID);
     line("c1", ready("H1", SID, 3));
-    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 5");
+    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 6");
     line("c1", ready("H1", SID));
-    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 5");
+    expect(state().errors[SID]).toBe("ccrpc 版本不匹配：协议 3，需要 6");
   });
 });
 
@@ -328,7 +327,7 @@ describe("Resume", () => {
   it("claude did not start (start_failed): fails with its reason, drops the connection; ccrpc's exit after it is dropped", async () => {
     await state().resume(SID, "/w");
     line("r1", ready("H9", null));
-    line("r1", { type: "start_failed", message: "No conversation found with session ID: x" });
+    line("r1", { type: "start_failed", code: "exited", message: "No conversation found with session ID: x" });
     expect(state().errors[SID]).toBe("Resume 失败：No conversation found with session ID: x");
     expect(state().conns.r1).toBeUndefined();
     expect(state().resuming[SID]).toBeUndefined();
@@ -358,11 +357,44 @@ describe("a new Session that did not start", () => {
     h.api.ccrpcNew = async () => "n1";
     await state().newSession("/w");
     line("n1", ready("H9", null));
-    line("n1", { type: "start_failed", message: "claude 没有启动" });
+    line("n1", { type: "start_failed", code: "no_claude", message: "claude 没有启动" });
     expect(state().errors.n1).toBe("新建 Session 失败：claude 没有启动");
     exit("n1", 1, "");
-    expect(state().conns.n1).toMatchObject({ startFailed: "claude 没有启动", procExit: { code: 1, stderr: "" } });
+    expect(state().conns.n1).toMatchObject({
+      startFailed: { code: "no_claude", message: "claude 没有启动" },
+      procExit: { code: 1, stderr: "" },
+    });
     expect(store.isLive(state().conns.n1!)).toBe(false);
+  });
+});
+
+describe("a prompt taken back (Esc before any reply)", () => {
+  const turnEnd = (o: Partial<TurnEndEvent>): InMsg => ({
+    type: "turn_end",
+    prompt_id: "p",
+    trigger: "prompt",
+    last_text: null,
+    error: null,
+    aborted: true,
+    restored_text: "再看看",
+    restored_uuid: "u2",
+    background_tasks: [],
+    duration_ms: null,
+    usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    api_cost: null,
+    ...o,
+  });
+
+  it("remembers the uuid ccrpc names for the Session, once; none named or not aborted: nothing hidden", async () => {
+    h.api.ccrpcConnect = async () => "c1";
+    await state().connect("H1", SID);
+    line("c1", ready("H1", SID));
+    line("c1", turnEnd({ restored_uuid: null }));
+    line("c1", turnEnd({ aborted: false }));
+    expect(state().withdrawn).toEqual({});
+    line("c1", turnEnd({}));
+    line("c1", turnEnd({}));
+    expect(state().withdrawn).toEqual({ [SID]: ["u2"] });
   });
 });
 

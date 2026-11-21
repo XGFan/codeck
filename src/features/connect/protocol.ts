@@ -3,7 +3,7 @@
 // events that carry state and control are typed here.
 
 /** The protocol version this app speaks: a `ready` with another one is said on the connection. */
-export const PROTOCOL = 5;
+export const PROTOCOL = 6;
 
 export type StateName = "starting" | "idle" | "busy" | "waiting" | "exited";
 export type WaitKind = "permission" | "question" | "dialog";
@@ -99,6 +99,8 @@ export interface DialogEvent {
   request_id: string;
   waiting_for: string;
   lines: string[];
+  /** The analyzer is still looking at the screen: the same `request_id` comes again with false when it learned nothing. */
+  analyzing: boolean;
 }
 export interface UnrecognizedEvent {
   type: "unrecognized";
@@ -160,6 +162,8 @@ export interface TurnEndEvent {
   aborted: boolean;
   /** Aborted before any reply: Claude Code put the prompt (this text) back in its input box. */
   restored_text: string | null;
+  /** The transcript uuid of that prompt (hidden from the conversation); null when `restored_text` is, or ccrpc does not know. */
+  restored_uuid: string | null;
   /** The background tasks still running. */
   background_tasks: Task[];
   duration_ms: number | null;
@@ -194,7 +198,6 @@ export interface Snapshot extends SessionInfo {
   title: string | null;
   /** What waits in the TUI's own queue, oldest first. */
   queue: QueueItem[];
-  follow_ups: string[];
   tasks: Task[];
   /** Code Mode: the calls the main line's code made that have not ended. */
   code_calls: OpenCodeCall[];
@@ -286,7 +289,6 @@ export type EventMsg =
   | RequestEndEvent
   /** The background tasks changed: all of them. */
   | { type: "tasks"; tasks: Task[] }
-  | { type: "follow_up_failed"; text: string; error: { code: string; message: string } }
   /** The TUI's own input queue changed: steers and what the person typed while busy, oldest first. */
   | { type: "queue"; items: QueueItem[] }
   | CodeCallEvent
@@ -301,14 +303,18 @@ export type EventMsg =
   | { type: "session_changed"; session_id: string; previous: string; cwd: string | null }
   /** The Session got its id after `ready` (`new`, an attach to claude's start screen, a Fork's new Session). */
   | { type: "started"; session_id: string; cwd: string | null }
-  /** `new` failed to start claude (not a Fork): ccrpc closes the Pane and exits with 1. */
-  | { type: "start_failed"; message: string }
+  /**
+   * `new` failed to start claude (not a Fork): ccrpc closes the Pane and exits with 1. `code`: `untrusted` (the
+   * directory trust box was answered no), `exited` (claude exited before the Session had an id), `no_claude` (no claude
+   * process in the Pane after 30 seconds).
+   */
+  | { type: "start_failed"; code: StartFailedCode; message: string }
   /** ccrpc cannot go on: the last line on stdout, then it exits with 1. */
   | { type: "fatal"; message: string }
-  /** ccrpc's own follow-up queue changed: all of it. */
-  | { type: "follow_ups"; items: string[] }
   | ForkEvent
   | { type: "session_exit" };
+
+export type StartFailedCode = "untrusted" | "exited" | "no_claude";
 
 /** `ccrpc new --fork` is done (ADR-0009): the Fork's Session, or why it failed (ccrpc then closes the Pane and exits). */
 export type ForkEvent =

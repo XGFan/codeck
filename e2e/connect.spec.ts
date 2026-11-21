@@ -689,7 +689,7 @@ test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点�
   await expect(page.getByTestId("connect-input")).toBeFocused();
 });
 
-test("回复前按 Esc 撤回的提示词：从对话里拿掉、文字回到输入框，显示系统消息时标「已撤回」，再发同样的话照常显示", async ({
+test("回复前按 Esc 撤回的提示词：按 ccrpc 报的 uuid 从对话里拿掉、文字回到输入框，显示系统消息时标「已撤回」，再发同样的话照常显示", async ({
   page,
 }) => {
   await connectTo(page, TOOLS);
@@ -719,6 +719,7 @@ test("回复前按 Esc 撤回的提示词：从对话里拿掉、文字回到输
       error: null,
       aborted: true,
       restored_text: "改成两行\n的那个",
+      restored_uuid: "e2e-taken-back",
       background_tasks: [],
       duration_ms: 300,
       usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
@@ -739,6 +740,24 @@ test("回复前按 Esc 撤回的提示词：从对话里拿掉、文字回到输
   await append("e2e-sent-again");
   await expect(bubble("e2e-sent-again")).toBeVisible();
   await expect(bubble("e2e-taken-back")).toHaveCount(0);
+  // Taken back with no uuid said: nothing is hidden.
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "turn_end",
+      prompt_id: null,
+      trigger: "prompt",
+      last_text: null,
+      error: null,
+      aborted: true,
+      restored_text: "改成两行\n的那个",
+      restored_uuid: null,
+      background_tasks: [],
+      duration_ms: 300,
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      api_cost: 0,
+    }),
+  );
+  await expect(bubble("e2e-sent-again")).toBeVisible();
 });
 
 test("作答时选项旁显示 preview：先是第一项的，悬停、键盘焦点所在或选中的那项的", async ({ page }) => {
@@ -867,7 +886,9 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件
   await expect(input).toHaveValue("/add-dir ../infra-modules/");
   await expect(menu).toHaveCount(0);
   await input.press("Enter");
-  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "add-dir ../infra-modules/" });
+  await expect
+    .poll(() => lastSent(page, "prompt"))
+    .toMatchObject({ text: "/add-dir ../infra-modules/", if_busy: "steer" });
   // Esc hides the list only.
   await input.fill("/add-dir ../");
   await expect(menu).toBeVisible();
@@ -1046,7 +1067,6 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await send(page, "顺便把标题也改了", "Meta");
   await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "顺便把标题也改了", if_busy: "steer" });
   await expect.poll(async () => (await probe(page)).sent.filter((s) => s.msg.type === "send_now").length).toBe(2);
-  expect(await lastSent(page, "follow_up")).toBeUndefined();
 
   const card = page.getByTestId("permission-card");
   await expect(card).toContainText("README.md");
@@ -1310,9 +1330,7 @@ test("clay 里未进索引的 Session：Connect 后不发提示词就关闭，�
   await expect(page.getByTestId("transcript-error")).toHaveCount(0);
 });
 
-test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash，自定义命令走 prompt，打开的面板可关闭", async ({
-  page,
-}) => {
+test("斜杠命令：输入 / 列出补全，Tab 补全；一律走 prompt、不留占位气泡，打开的面板可关闭", async ({ page }) => {
   await page.goto("/");
   await page.locator('[data-testid=session-row][data-session-id="c1a70000-0000-4000-8000-0000000000c1"]').click();
   await pick(page, "connect-button");
@@ -1337,8 +1355,11 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   await expect(input).toHaveValue("/release-notes ");
   await expect(menu).toHaveCount(0);
   await input.press("Enter");
-  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "release-notes" });
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "/release-notes", if_busy: "steer" });
   await expect(input).toHaveValue("");
+  // `delivered_as: "command"`: no prompt, no placeholder.
+  await expect(page.getByTestId("pending-prompt")).toHaveCount(0);
+  expect((await probe(page)).sent.some((s) => s.msg.type === "slash")).toBe(false);
 
   // Esc only hides the list.
   await input.fill("/co");
@@ -1358,7 +1379,8 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   await expect(state(page)).toContainText("空闲");
   await input.fill("/cost");
   await input.press("Enter");
-  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "cost" });
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "/cost", if_busy: "steer" });
+  await expect(page.getByTestId("pending-prompt")).toHaveCount(0);
   const screen = page.getByTestId("screen-card");
   await expect(screen).toContainText("Total cost");
   await screen.getByTestId("screen-close").click();
@@ -1369,7 +1391,7 @@ test("斜杠命令：输入 / 列出补全，Tab 补全；内置命令走 slash�
   // `/btw` answers in a panel, nothing in the transcript: its answer shows on a card of its own.
   await input.fill("/btw 这个端口是谁占的");
   await input.press("Enter");
-  await expect.poll(() => lastSent(page, "slash")).toMatchObject({ command: "btw 这个端口是谁占的" });
+  await expect.poll(() => lastSent(page, "prompt")).toMatchObject({ text: "/btw 这个端口是谁占的" });
   const btw = page.getByTestId("btw-card");
   await expect(btw).toContainText("/btw 这个端口是谁占的");
   await expect(btw).toContainText("已回答");
@@ -2040,7 +2062,6 @@ test("回退：/rewind 进入选回退点，Esc 与「取消」退出；点「�
   await expect(pick).toHaveCount(0);
   // Neither reaches the terminal.
   const types = (await probe(page)).sent.map((x) => x.msg.type);
-  expect(types).not.toContain("slash");
   expect(types).not.toContain("prompt");
 
   await send(page, "/rewind");
@@ -2264,4 +2285,136 @@ test("打开窗口时认领 Host 上的连接：状态和等待作答的卡片�
   await open(page, TOOLS);
   await expect(page.getByTestId("connect-panel")).toBeVisible();
   await expect(page.getByTestId("permission-card")).toBeVisible();
+});
+
+test("新建 Session 失败：页面上写明原因，没有输入框，不显示「ccrpc 已退出」", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => ((window.__cvCcrpc as unknown as { newFails: boolean }).newFails = true));
+  await page.getByTestId("new-session").click();
+  await page.getByTestId("new-session-other").click();
+  await expect(page.getByTestId("header").getByTestId("connect-error")).toHaveText(
+    "新建 Session 失败：claude 没有启动",
+  );
+  await expect(page.getByTestId("connect-input")).toHaveCount(0);
+  await expect(page.getByText("ccrpc 已退出")).toHaveCount(0);
+  expect(await lastSent(page, "exit")).toBeUndefined();
+});
+
+test("排队：悬停可撤回的项，点「✕」发出 cancel_queue，该项从卡片里消失；别的 Session 发来的没有按钮", async ({
+  page,
+}) => {
+  await connectTo(page, RICH);
+  await expect(state(page)).toContainText("空闲");
+  const item = (id: string, text: string, editable: boolean) => ({
+    id,
+    kind: editable ? "typed" : "session",
+    from: editable ? null : "codeck-99",
+    text,
+    editable,
+    images: [],
+  });
+  await page.evaluate(
+    (items) => {
+      window.__cvCcrpc!.emit({ type: "state", state: "busy", waiting: null });
+      window.__cvCcrpc!.emit({ type: "queue", items });
+    },
+    [item("qa", "先把测试补上", true), item("qb", "合并前先拉一下 main。", false), item("qc", "再改文案", true)],
+  );
+  const card = page.getByTestId("queue");
+  await expect(card.getByTestId("queue-item")).toHaveCount(3);
+  // Only what was typed here can be taken back.
+  await expect(card.getByTestId("queue-cancel")).toHaveCount(2);
+  const cancel = card.getByTestId("queue-cancel").first();
+  await expect(cancel).toHaveCSS("opacity", "0");
+  await card.getByTestId("queue-item").first().hover();
+  await expect(cancel).toHaveCSS("opacity", "1");
+  await expect(cancel).toHaveAttribute("title", "撤回这条");
+  await cancel.click();
+  await expect.poll(() => lastSent(page, "cancel_queue")).toMatchObject({ queue_id: "qa" });
+  await expect(card.getByTestId("queue-item")).toHaveText(["codeck-99：合并前先拉一下 main。", "；再改文案"]);
+  await expect(card.getByTestId("queue-cancel")).toHaveCount(1);
+  await expect(page.getByTestId("connect-error")).toHaveCount(0);
+
+  // Refused: said above the input box, the item stays.
+  await page.evaluate(() => (window.__cvCcrpc!.failNext = "cancel_queue"));
+  await card.getByTestId("queue-item").last().hover();
+  await card.getByTestId("queue-cancel").click();
+  await expect(page.getByTestId("connect-error")).toContainText("撤回排队的消息失败");
+  await expect(card.getByTestId("queue-item")).toHaveCount(2);
+});
+
+test("识别中的界面：卡片写「正在识别界面…」，没学会时原地恢复，学会了换成选择卡片", async ({ page }) => {
+  await connectTo(page, RICH);
+  await expect(state(page)).toContainText("空闲");
+  const dialog = (id: string, analyzing: boolean) => ({
+    type: "dialog",
+    request_id: id,
+    waiting_for: "dialog open",
+    lines: ["  Something new", "  1. Continue", "  2. Cancel"],
+    analyzing,
+  });
+  const emit = (msg: unknown) => page.evaluate((m) => window.__cvCcrpc!.emit(m as Record<string, unknown>), msg);
+  await emit({ type: "state", state: "waiting", waiting: { kind: "dialog", waiting_for: "dialog open" } });
+  await emit(dialog("dialog:7", true));
+  const card = page.getByTestId("screen-card");
+  await expect(card).toContainText("正在识别界面…");
+  await expect(card).toContainText("Something new");
+  // Learned nothing: the same card, updated in place.
+  await emit(dialog("dialog:7", false));
+  await expect(card).toHaveCount(1);
+  await expect(card).not.toContainText("正在识别界面…");
+  await expect(card).toContainText("等待处理");
+
+  // Learned: the dialog ends, its choice comes.
+  await emit(dialog("dialog:8", true));
+  await expect(card).toHaveCount(2);
+  await emit({ type: "request_end", request_id: "dialog:8" });
+  await emit({
+    type: "choice",
+    request_id: "choice:8",
+    title: "Something new",
+    options: [
+      { id: "1", label: "Continue", meaning: "allow", description: null },
+      { id: "2", label: "Cancel", meaning: "deny", description: null },
+    ],
+    tool_use_id: null,
+    layout: "something-new",
+    layout_source: "learned",
+  });
+  await expect(page.getByTestId("choice-card")).toBeVisible();
+  await expect(card).toHaveCount(1);
+  await emit({ type: "request_end", request_id: "dialog:7" });
+  await expect(card).toHaveCount(0);
+});
+
+test("回退：Claude Code 记成 system 条目的本地命令（/context）没有「回退」按钮，/model 这类有", async ({ page }) => {
+  await connectRewind(page);
+  const buttons = page.getByTestId("transcript").getByTestId("rewind-button");
+  await expect(buttons).toHaveCount(2);
+  const command = (id: string, name: string, system: boolean) => ({
+    id,
+    timestampMs: Date.now(),
+    hidden: false,
+    inherited: false,
+    body: {
+      kind: "userPrompt",
+      text: name,
+      images: [],
+      origin: { kind: "command", name, args: "", system },
+      relayed: [],
+    },
+  });
+  await page.evaluate(
+    ({ sid, nodes }) => {
+      for (const n of nodes) window.__cvMock!.appendNode(sid, n as never);
+      window.__cvMock!.emit("sessionsChanged", { changed: [sid], removed: [], projectsChanged: false });
+    },
+    { sid: REDIS, nodes: [command("e2e-context", "/context", true), command("e2e-model", "/model", false)] },
+  );
+  await expect(promptRow(page, "e2e-context")).toBeVisible();
+  await expect(promptRow(page, "e2e-model")).toBeVisible();
+  await expect(promptRow(page, "e2e-context").getByTestId("rewind-button")).toHaveCount(0);
+  await expect(promptRow(page, "e2e-context").getByTestId("fork-button")).toHaveCount(0);
+  await expect(promptRow(page, "e2e-model").getByTestId("rewind-button")).toHaveCount(1);
+  await expect(buttons).toHaveCount(3);
 });

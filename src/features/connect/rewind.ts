@@ -52,9 +52,11 @@ export function mainLinePrompts(nodes: Node[], branchPoints: BranchPoint[]): { i
     if (offMain.has(n.id)) return { ids, wholeMain: false };
     // Hidden (shown with the hidden entries): a prompt taken back is not in the terminal's picker.
     if (n.hidden) continue;
-    // Typed prompts and slash / `!` commands: the terminal's Rewind picker lists them all.
-    if (n.body.kind === "userPrompt" && (n.body.origin.kind === "human" || n.body.origin.kind === "command"))
-      ids.push(n.id);
+    // Typed prompts and slash / `!` commands the terminal's Rewind picker lists; not the local commands Claude Code
+    // records as system entries (`/context`, `/rename`).
+    if (n.body.kind !== "userPrompt") continue;
+    const o = n.body.origin;
+    if (o.kind === "human" || (o.kind === "command" && !o.system)) ids.push(n.id);
   }
   return { ids, wholeMain: true };
 }

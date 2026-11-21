@@ -103,6 +103,10 @@ pub struct RawEntry {
     /// `compact_boundary`.
     #[serde(default, deserialize_with = "lenient::object")]
     pub compact_metadata: Option<RawCompactMetadata>,
+    /// Not in the file: the entry was a `system` / `local_command` one, rewritten as the `user`
+    /// entry it stands for ([`RawEntry::normalize_local_command`]).
+    #[serde(skip)]
+    pub system_record: bool,
 }
 
 /// `attachment` of a `queued_command` entry: input that arrived while Claude was busy (a prompt
@@ -224,6 +228,7 @@ impl RawEntry {
         self.entry_type = Some("user".to_owned());
         self.subtype = None;
         self.message = Some(message);
+        self.system_record = true;
     }
 
     /// Unix milliseconds parsed from `timestamp`.

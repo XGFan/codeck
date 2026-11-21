@@ -274,9 +274,11 @@ struct ScreenRequest: Decodable, Equatable, Sendable {
     /// What the dialog waits for (`dialog`), or where ccrpc met the screen (`unrecognized`).
     var context: String?
     var lines: [String]
+    /// A `dialog` ccrpc's analyzer is reading right now: it says so again with the same `request_id` when done.
+    var analyzing = false
 
     enum CodingKeys: String, CodingKey {
-        case requestId = "request_id", type, waitingFor = "waiting_for", context, lines
+        case requestId = "request_id", type, waitingFor = "waiting_for", context, lines, analyzing
     }
 
     init(from decoder: Decoder) throws {
@@ -285,5 +287,6 @@ struct ScreenRequest: Decodable, Equatable, Sendable {
         type = try c.decode(String.self, forKey: .type)
         context = c.lenient(String.self, .context) ?? c.lenient(String.self, .waitingFor)
         lines = c.lenient(Lossy<String>.self, .lines)?.items ?? []
+        analyzing = c.lenient(Bool.self, .analyzing) ?? false
     }
 }

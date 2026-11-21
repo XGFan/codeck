@@ -3,7 +3,6 @@ import {
   MessageCircleQuestionMark,
   MonitorDot,
   RotateCcw,
-  ScanSearch,
   ShieldQuestionMark,
   Sparkles,
   Terminal,
@@ -51,17 +50,6 @@ export function Requests({ c }: { c: ConnState }) {
           tone="wait"
           icon={<RotateCcw size={18} strokeWidth={1.7} />}
           title="正在准备回退…"
-        />
-      );
-    // Waiting with nothing to show yet: the analyzer may be looking at the screen.
-    if (c.state === "waiting" && c.waiting?.kind !== "question")
-      return (
-        <NoticeCard
-          testId="analyzing"
-          tone="wait"
-          icon={<ScanSearch size={18} strokeWidth={1.7} />}
-          title="正在识别界面…"
-          desc="Claude Code 弹出了认不出的对话框，分析器在看屏幕。"
         />
       );
     return null;
@@ -130,7 +118,7 @@ function ScreenCard({ r, c }: { r: Extract<Request, { type: "dialog" | "unrecogn
     <Shell
       icon={<MonitorDot size={14} strokeWidth={1.6} />}
       title={r.type === "dialog" ? "Claude Code 停在一个 ccrpc 认不出的界面" : `认不出的屏幕（${r.context}）`}
-      status="等待处理"
+      status={r.type === "dialog" && r.analyzing ? "正在识别界面…" : "等待处理"}
       testid="screen-card"
     >
       <pre className="max-h-64 overflow-auto rounded bg-terminal p-2 font-mono text-[11px] leading-[1.45] text-[#e4e4e6]">

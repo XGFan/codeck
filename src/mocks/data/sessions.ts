@@ -310,7 +310,9 @@ function turnNodes(prefix: string, startMs: number, turns: Turn[], inheritedCoun
     const t0 = startMs + i * 3 * MIN;
     const uInherited = nodes.length < inheritedCount;
     const cmd = turn.u.match(/^(\/\S+|!)\s*(.*)$/s);
-    const origin = cmd ? ({ kind: "command", name: cmd[1]!, args: cmd[2]! } as const) : undefined;
+    // Local commands Claude Code records as system entries, which the terminal's Rewind list leaves out.
+    const system = cmd != null && ["/context", "/rename"].includes(cmd[1]!);
+    const origin = cmd ? ({ kind: "command", name: cmd[1]!, args: cmd[2]!, system } as const) : undefined;
     const id = `${prefix}-u${i}`;
     const images = Array.from({ length: turn.images ?? 0 }, (_, ordinal) => ({
       nodeId: id,

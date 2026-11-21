@@ -448,7 +448,7 @@ pub(crate) fn person_resizes(
 /// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
 pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
-    assert_eq!(ready["protocol"], 5);
+    assert_eq!(ready["protocol"], 6);
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.shell_pid = shell_pid(env, &holder);
     assert!(rpc.shell_pid.is_some());

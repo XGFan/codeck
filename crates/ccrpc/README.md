@@ -76,7 +76,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 一次交互。`>` 是调用方写入的一行，`<` 是 ccrpc 输出的一行：
 
 ```
-< {"type":"ready","protocol":5,"claude_version":"2.1.317","warnings":[],"state":"idle","waiting":null,"requests":[],"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","size":[120,40],"mode":"manual","model":{"id":"claude-sonnet-4-5-20250929","name":"Sonnet 4.5"},"effort":null,"context_tokens":null,"title":null,"queue":[],"follow_ups":[],"tasks":[],"code_calls":[],"feedback_draft":null}
+< {"type":"ready","protocol":6,"claude_version":"2.1.317","warnings":[],"state":"idle","waiting":null,"requests":[],"holder_id":"m9523c50cf1","session_id":"6f0e2b7c-4d31-4f6a-9c2e-08b1d5a7c340","cwd":"/Users/me/proj","size":[120,40],"mode":"manual","model":{"id":"claude-sonnet-4-5-20250929","name":"Sonnet 4.5"},"effort":null,"context_tokens":null,"title":null,"queue":[],"tasks":[],"code_calls":[],"feedback_draft":null}
 > {"id":"1","type":"prompt","text":"给 src/util.rs 补一个单元测试"}
 < {"type":"state","state":"busy","waiting":null}
 < {"type":"turn_start","prompt_id":"5d0c…","trigger":"prompt"}
@@ -108,11 +108,11 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 
 | 命令 | 说明 |
 |---|---|
-| `prompt {text, images?}` / `prompt {parts}` | `idle` 时写提示词并回车，等 transcript 确认；带 `if_busy: "steer" \| "follow_up"` 时忙也不报错，执行时按当时的状态改作 `steer` 或 `follow_up`；`images` 为图片文件路径或 `{"data": base64, "media_type"}`（ccrpc 存成文件），先粘贴路径；`parts` 为按顺序排列的 `{"text": …}` 与 `{"image": 路径}`，逐项粘贴，图片落在文字中间（不能与 `text`、`images` 同给）；以 `!` 开头的照终端在 shell 模式里运行 |
+| `prompt {text, images?}` / `prompt {parts}` | `idle` 时写提示词并回车，等 transcript 确认；带 `if_busy: "steer"` 时忙也不报错，执行时按当时的状态改作 `steer`（有请求在等作答时报 `not_idle`）；`images` 为图片文件路径或 `{"data": base64, "media_type"}`（ccrpc 存成文件），先粘贴路径；`parts` 为按顺序排列的 `{"text": …}` 与 `{"image": 路径}`，逐项粘贴，图片落在文字中间（不能与 `text`、`images` 同给）；以 `!` 开头的照终端在 shell 模式里运行；单行、以 `/名字` 开头的命令离开输入框后 2 秒内没有记录也没开一轮（`/cost`、`/status` 这类面板）时成功，`delivered_as` 为 `command` |
 | `steer {text, images?}` / `steer {parts}` | `busy` 时写入，在本轮工具调用之间送达（可带图片，同 `prompt`） |
-| `follow_up {text, images?}` / `follow_up {parts}` | 进 ccrpc 队列，变成 `idle` 后依次按 `prompt` 发出（可带图片） |
 | `abort` | 发 `Esc`，等状态离开 `busy` / `waiting` |
 | `edit_queue` | `busy` 且 `queue` 里有 `editable` 的项时，同终端里在空输入框按 `↑`：把 Claude Code 队列里人输入的内容取回、清空输入框，返回取回的各条，供编辑后重发 |
+| `cancel_queue {queue_id}` | `busy` 时撤回 Claude Code 队列里的一条（须 `editable`）：取回全部、其余各条按原先后重新插话，返回被拿掉的那一项与重新入队的新 `queue_id` |
 | `answer_permission {request_id, decision, message?}` | 作答审批（经插件；后台 Subagent 的审批按屏幕选项键），`message` 只能配 `deny`，作为反馈交给模型 |
 | `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项、自由文本，多选题可两者一起）；带 `chat: true` 时是对话框的 Chat about this（先聊聊），已答的题一并带上 |
 | `slash {command}` | 输入 `/<command>` 后回车 |
@@ -129,7 +129,6 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `rewind {uuid}` | 在终端的 Rewind 选择器里找到 Main Line 上的这条提示词（或斜杠命令、`!` 命令），停在确认页，返回它写明的代码变化与可选的恢复项 |
 | `answer_rewind {request_id, option \| cancel}` | 作答确认页：`both`（代码与对话）/ `conversation` / `code`，或取消；恢复了对话时返回放回输入框的提示词 |
 | `set_mode {mode}` | 切权限模式：`manual` / `accept_edits` / `plan` / `auto` |
-| `cancel_follow_up {index?}` | 撤销排队的 follow_up（不带 `index` 全部撤销） |
 | `get_tasks` / `stop_task {task_id}` | 列出 / 停止后台 Subagent、shell、Monitor、Workflow Run；一轮结束、等消息的 Teammate 带 `idle: true`；列表变化时发 `tasks` 事件 |
 | `dismiss_feedback_draft` | 关掉模型起草的反馈卡片（终端里的 `0`）；发送只能在终端里做 |
 | `exit {close_pane?, stop_tasks?}` | 退出 claude；`close_pane` 时连 Pane 一起结束；还有后台任务时只在带 `stop_tasks` 时停掉它们退出，否则报 `tasks_running` |
@@ -140,23 +139,21 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 |---|---|
 | `ready` | 连接后的第一条：`protocol`（5）、claude 版本、警告，加 `get_state` 的全部字段（完整快照） |
 | `started` | `ready` 时还没有 sessionId（`new`、attach 到还停在启动界面的 claude）的，之后得知时发一次，带 `session_id`、`cwd` |
-| `start_failed` | `new`（不带 `--fork`）的 claude 没能启动（`--resume` 找不到 Session、目录信任框答了否、`command not found` 等），带 `message`；ccrpc 随后结束这个 Pane，以退出码 1 结束 |
+| `start_failed` | `new`（不带 `--fork`）的 claude 没能启动（`--resume` 找不到 Session、目录信任框答了否、`command not found` 等），带 `code`（`untrusted` / `exited` / `no_claude`）与 `message`；ccrpc 随后结束这个 Pane，以退出码 1 结束 |
 | `fatal` | `attach` / `new` 自己没法继续（参数不对、找不到目标、插件未启用……），带 `message`；stdout 的最后一行，退出码 1，同样的文字写到 stderr |
 | `state` | 状态变化，`waiting` 时带子类与 `waitingFor` |
 | `block` | 一个新内容块（落盘的大工具结果带 `persisted`，Workflow Run 里的带 `run_id`） |
 | `turn_start` | 一轮开始：`prompt_id`、`trigger`；每个 `turn_end` 之前恰好一个（连接时已在进行的一轮没有） |
-| `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`restored_text`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
+| `turn_end` | 一轮（一条提示词）结束：`prompt_id`、`trigger`、`last_text`、`error`、`aborted`、`restored_text`、`restored_uuid`、`background_tasks`、`duration_ms`、`usage`、`api_cost` |
 | `settled` | 一轮结束后不会再自己接着跑（idle 满 1 秒、没有进行中的轮、两个队列都空）时发一次，带仍在运行的后台任务 |
 | `permission_request` | 挂起的审批，`request_id` 与 `tool_use_id` 都是工具调用的 id，后台 Subagent 的带 `agent_id`；`options` 为审批框上的选项 `{id, label, meaning}`（`id` 是对话框上的编号；含“总是允许”的全文），`layout_source` 说明是内置识别还是分析器学来的；computer use 的授权框（无编号菜单，按方向键作答）也作为审批发出 |
 | `question` | 挂起的 AskUserQuestion（`request_id`、`tool_use_id`） |
 | `rewind` | 回退的确认页：`code`（`{restores, delta, target}`，认不出为 null）、`code_text`（确认页原句）、`warning`、`options`；`rewind` 命令的响应带同一个对象 |
 | `btw` | `/btw` 面板的问题与答案（面板关了以 `request_end` 结束，`close_btw` 可关闭） |
 | `request_end` | 报过的请求（`permission_request`、`question`、`choice`、`rewind`、`dialog`、`unrecognized`、`btw`）结束了，带 `request_id`；每个请求事件都有 `request_id`，调用方按它增改、按 `request_end` 删除，不必猜 |
-| `dialog` | 其余对话框与启动界面（带 `request_id`） |
+| `dialog` | 其余对话框与启动界面（带 `request_id`）；认不出的交给分析器期间立即报出、带 `analyzing: true`，结束时按 `request_id` 原地更新或 `request_end` |
 | `unrecognized` | 屏幕认不出，此时不按任何键（带 `request_id`） |
 | `bash_output` | `!` 命令跑完后的输出（stdout、stderr），带它那条记录的 uuid |
-| `follow_up_failed` | 队列里的 `follow_up` 发不出去，带 `error: {code, message}` |
-| `follow_ups` | ccrpc 自己的 `follow_up` 队列变了，整份 `items`（同 `get_state` 的 `follow_ups`） |
 | `queue` | Claude Code 的输入队列变了：`items` 每项 `{id, kind, from, text, editable, images}`（`id` 是 ccrpc 入队时给的，`steer` / `prompt` 的响应在 `queued` 时带同一个 `queue_id`；`images` 是经 ccrpc 发出的图片路径，不知道时为 null；`typed` 人输入的与插话；`session` 别的 Session 发来的；`agent` 本 Session 的 Subagent / Teammate 发来的） |
 | `tasks` | 后台任务的列表变了，整份（含状态、`idle`） |
 | `branch` | Main Line 换到了另一个 Branch，`at_uuid` 之后已发的 block 作废 |
@@ -183,8 +180,8 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 - 必须装 ccrpc 插件（[ADR-0003](docs/adr/0003-require-ccrpc-plugin.md)）：只含 hooks，只在 clay Pane 里生效，不占上下文，不改变 Claude Code 的表现（人在 TUI 上看到、能做的与没有插件时一样）。不加 MCP、channel，不用 `-p`。
 - 写只经 Holder 的 PTY 与插件的审批回复；读用 transcript、进程文件、屏幕与插件报来的事件；Claude Code 配置目录下的文件只读（插件由 `claude plugin` 命令安装），ToH 状态目录里的文件不读，只用 `toh` 命令与 Holder socket。
 - 只服务本机 clay 里的 Session，调用方也只在 Host 本机；与人共用 Pane，读不懂屏幕时才调尺寸（[ADR-0001](docs/adr/0001-share-the-pane-and-resize-only-when-unreadable.md)）。
-- 命令按到达顺序逐条执行；排队只有 `follow_up`。例外：命令等待期间，不写入、不等待的命令（`get_state`、`get_screen`、`get_messages` 等）立即作答（`get_messages` 读好再回，后面的命令不等它），`abort` 在那条命令按完最后一个键后立即执行；它们只可能先于正在执行的那条，绝不先于更早收到的命令（见 spec 5 节）。
-- 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316 / 2.1.317，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
+- 命令按到达顺序逐条执行；排队只有 Claude Code 自己的队列（`queue`）。例外：命令等待期间，不写入、不等待的命令（`get_state`、`get_screen`、`get_messages` 等）立即作答（`get_messages` 读好再回，后面的命令不等它），`abort` 在那条命令按完最后一个键后立即执行；它们只可能先于正在执行的那条，绝不先于更早收到的命令（见 spec 5 节）。
+- 屏幕识别只认布局库里的布局：实测的内置布局（Claude Code 2.1.316 / 2.1.317 / 2.1.329，默认与全屏 TUI），或分析器分析得出的布局（[ADR-0002](docs/adr/0002-ai-learned-layouts-take-effect-at-once.md)）；认不出、分析不出就发 `unrecognized` 或 `dialog`，不猜、不按键。
 
 ## 测试
 
@@ -200,7 +197,7 @@ cargo test
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-`mock_model_turns`、`mock_model_session`、`mock_model_tools`、`mock_model_follow_up` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、后台任务的通知那一轮之后才发 follow_up、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion；`mock_model_shared_pane` 覆盖与人共用 Pane（跟随人设的尺寸、读不出审批选项时调成 120×40）。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（CoDeck Connect 功能 E2E 的回放 fixture 由此而来）。
+`mock_model_turns`、`mock_model_session`、`mock_model_tools`、`mock_model_task_notification` 用测试里自带的本地 mock 模型（不消耗额度、不需要 key），覆盖插话在 Stop 之后自成一轮、后台任务的通知那一轮之后才发 `settled`、API 报错结束一轮、目录信任框、状态栏与进度事件、分页、`--log` 与 `exit`、审批的选项（`options`）、带 message 的拒绝与 AskUserQuestion；`mock_model_shared_pane` 覆盖与人共用 Pane（跟随人设的尺寸、读不出审批选项时调成 120×40）。设 `CCRPC_E2E_WIRE_DIR=目录` 时把每个 ccrpc 的收发原样录成 jsonl（CoDeck Connect 功能 E2E 的回放 fixture 由此而来）。
 
 可选变量：`CCRPC_E2E_TUI=fullscreen`（用全屏 TUI 跑）、`CCRPC_E2E_BASE_URL`、`CCRPC_E2E_MODEL`、`CCRPC_E2E_TOH`（用哪个 `toh`；缺省用仓库同级目录的 `toh/target/debug/toh`，没有则用 PATH 里的）。
 

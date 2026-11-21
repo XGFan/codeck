@@ -121,7 +121,8 @@ impl Marks {
             .collect()
     }
 
-    /// A slash or `!` command's record is rebuilt as `/name args` / `! cmd`: spaces typed in it
+    /// Whitespace does not count (Claude Code records a Tab as 4 spaces). A slash or `!` command's
+    /// record is rebuilt as `/name args` / `! cmd`: spaces typed in it
     /// need not match, nor a plugin's name the command was typed without (see [`same_command`]).
     pub(super) fn prompt_after(&self, after: u64, text: &str) -> Option<&str> {
         let slash = text.trim_start().starts_with(['/', '!']);
@@ -129,8 +130,18 @@ impl Marks {
             .iter()
             .rev()
             .find(|(s, _, t, _)| {
-                *s > after && (t.trim() == text.trim() || (slash && same_command(t, text)))
+                *s > after && (recognize::same_text(t, text) || (slash && same_command(t, text)))
             })
+            .map(|(_, u, _, _)| u.as_str())
+    }
+
+    /// The uuid of the latest prompt recorded with this text (the prompt a turn's `restored_text`
+    /// puts back), whitespace and image tags aside.
+    pub(super) fn prompt_uuid(&self, text: &str) -> Option<&str> {
+        self.prompts
+            .iter()
+            .rev()
+            .find(|(_, _, t, _)| parts_match(t, text, None) || ends_with_text(t, text))
             .map(|(_, u, _, _)| u.as_str())
     }
 
@@ -139,7 +150,7 @@ impl Marks {
         self.prompts
             .iter()
             .rev()
-            .find(|(s, _, t, _)| *s > after && t.trim().ends_with(text.trim()))
+            .find(|(s, _, t, _)| *s > after && ends_with_text(t, text))
             .map(|(_, u, _, _)| u.as_str())
     }
 
@@ -180,9 +191,9 @@ impl Marks {
             .find(|(s, _, t)| {
                 *s > after
                     && if images {
-                        t.trim().ends_with(text.trim())
+                        ends_with_text(t, text)
                     } else {
-                        t.trim() == text.trim()
+                        recognize::same_text(t, text)
                     }
             })
             .map(|(_, id, _)| *id)
@@ -254,7 +265,7 @@ impl Typed {
         if self.parts {
             parts_match(reported, &self.text, None)
         } else {
-            reported.trim().ends_with(self.text.trim())
+            ends_with_text(reported, &self.text)
         }
     }
 }
@@ -279,6 +290,12 @@ impl Marks {
             self.prompt_enqueued_after(after, &typed.text, typed.images > 0)
         }
     }
+}
+
+/// `recorded` ends with `typed`, whitespace left out as in [`recognize::same_text`].
+fn ends_with_text(recorded: &str, typed: &str) -> bool {
+    let squeeze = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    squeeze(recorded).ends_with(&squeeze(typed))
 }
 
 /// A command's record (`recorded`, as `/name args` or `! cmd`) and what was typed: the same once
@@ -842,7 +859,10 @@ impl Engine {
                 TurnOut::Started(v) => self.emit(v),
                 TurnOut::Stopped(bg) => self.note_running_tasks(&bg),
                 TurnOut::End(mut v, prompt) => {
-                    v["restored_text"] = json!(self.restored(&v, prompt));
+                    let restored = self.restored(&v, prompt);
+                    v["restored_uuid"] =
+                        json!(restored.as_deref().and_then(|t| self.marks.prompt_uuid(t)));
+                    v["restored_text"] = json!(restored);
                     v["background_tasks"] = json!(self.running_tasks());
                     self.settle_armed = true;
                     self.emit(v)
@@ -1342,8 +1362,7 @@ mod tests {
         submit(&mut t, now, "p1", "MOCK-BG go");
         stop(&mut t, now, "p1", "started");
         // Right after Stop the notification's turn begins (before the marker came): the first
-        // turn ends first, and a follow-up must wait (a turn is open) until the notification's
-        // own Stop.
+        // turn ends first and the notification's turn is open until its own Stop.
         let out = submit(
             &mut t,
             now,
@@ -1493,8 +1512,10 @@ mod tests {
         m.prompt("u1".into(), "/release v1".into(), 0);
         assert_eq!(m.prompt_after(0, "/release  v1 "), Some("u1"));
         assert_eq!(m.prompt_after(1, "/release v1"), None);
+        // Plain text ignores whitespace too (a Tab is recorded as 4 spaces), but not other text.
         m.prompt("u2".into(), "hello world".into(), 0);
-        assert_eq!(m.prompt_after(0, "hello  world"), None);
+        assert_eq!(m.prompt_after(0, "hello  world"), Some("u2"));
+        assert_eq!(m.prompt_after(0, "hello there"), None);
     }
 
     #[test]
@@ -1639,6 +1660,36 @@ mod tests {
         let only = Typed::parts(&parts(&[None]));
         assert_eq!((only.text.as_str(), only.needle.as_str()), ("", "[Image #"));
         assert_eq!(m.typed_after(0, &only), Some("u2"));
+    }
+
+    #[test]
+    fn a_restored_prompt_is_found_by_its_text() {
+        let m = marks_from(&[
+            json!({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "first"}}),
+            json!({"type": "user", "uuid": "u2", "message": {"role": "user", "content": "second\tone"}}),
+        ]);
+        assert_eq!(m.prompt_uuid("second one"), Some("u2"));
+        assert_eq!(m.prompt_uuid("first"), Some("u1"));
+        assert_eq!(m.prompt_uuid("third"), None);
+    }
+
+    #[test]
+    fn a_tab_recorded_as_spaces_still_matches() {
+        let m = marks_from(&[json!({"type": "user", "uuid": "u1",
+            "message": {"role": "user", "content": "a    b    c"}})]);
+        assert_eq!(
+            m.typed_after(0, &Typed::plain("a\tb\tc".into(), 0)),
+            Some("u1")
+        );
+        assert_eq!(m.typed_after(0, &Typed::plain("a b d".into(), 0)), None);
+        assert!(Typed::plain("a\tb\tc".into(), 0).hook_matches("a    b    c"));
+        let q = marks_from(&[
+            json!({"type": "queue-operation", "operation": "enqueue", "content": "a    b"}),
+        ]);
+        assert_eq!(
+            q.typed_enqueued_after(0, &Typed::plain("a\tb".into(), 0)),
+            Some(1)
+        );
     }
 
     #[test]

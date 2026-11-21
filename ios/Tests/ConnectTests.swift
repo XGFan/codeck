@@ -23,7 +23,8 @@ final class ConnStateDecodingTests: XCTestCase {
          "options": [{"id": "1", "label": "Yes", "meaning": "allow", "description": null},
                      {"id": "2", "label": "No", "meaning": "deny"}],
          "tool_use_id": null, "layout": "model_switch", "layout_source": "builtin"},
-        {"type": "dialog", "request_id": "dialog:trust", "waiting_for": "trust", "lines": ["", "Trust this folder?", ""]},
+        {"type": "dialog", "request_id": "dialog:trust", "waiting_for": "trust", "lines": ["", "Trust this folder?", ""],
+         "analyzing": true},
         {"type": "unrecognized", "request_id": "unrecognized:cost", "context": "cost", "lines": ["Total cost: $1"]},
         {"type": "rewind", "request_id": "rw1", "uuid": "u", "text": "hi", "code": {"restores": false, "delta": null, "target": null}, "code_text": "The code will be unchanged.", "warning": null,
          "options": [{"option": "conversation", "label": "Restore conversation"}, {"option": "both", "label": "Restore code and conversation"},
@@ -86,9 +87,11 @@ final class ConnStateDecodingTests: XCTestCase {
         guard case .screen(let d) = c.requests[3] else { return XCTFail("dialog") }
         XCTAssertEqual(d.type, "dialog")
         XCTAssertEqual(d.context, "trust")
+        XCTAssertTrue(d.analyzing)
         guard case .screen(let u) = c.requests[4] else { return XCTFail("unrecognized") }
         XCTAssertEqual(u.context, "cost")
         XCTAssertEqual(u.lines, ["Total cost: $1"])
+        XCTAssertFalse(u.analyzing)
 
         let btw = try JSONDecoder().decode(ConnRequest.self, from: Data(#"{"type":"btw","request_id":"btw","question":"q","answering":false,"text":"a"}"#.utf8))
         guard case .btw(let b) = btw else { return XCTFail("btw") }
@@ -140,6 +143,13 @@ final class ConnStateDecodingTests: XCTestCase {
         XCTAssertNil(c.fatal)
         XCTAssertEqual(c.codeCalls, [])
         XCTAssertFalse(c.disconnected)
+    }
+
+    /// `start_failed` is ccrpc's `{code, message}` as it wrote it.
+    func testStartFailedCarriesItsCode() throws {
+        let json = #"{"conn": "c1", "startFailed": {"code": "untrusted", "message": "没有信任这个目录"}}"#
+        let c = try JSONDecoder().decode(ConnState.self, from: Data(json.utf8))
+        XCTAssertEqual(c.startFailed, .init(code: "untrusted", message: "没有信任这个目录"))
     }
 
     func testForkAndDisconnected() throws {
@@ -572,11 +582,6 @@ final class SlashRulesTests: XCTestCase {
         XCTAssertNil(SlashRules.commandOf("autopilot", list))
     }
 
-    func testBuiltInAndUnknownCommandsGoAsSlash() {
-        XCTAssertEqual(SlashRules.slashCommand("/compact keep the API notes", withImages: false, list), "compact keep the API notes")
-        XCTAssertEqual(SlashRules.slashCommand("/doctor", withImages: false, list), "doctor")
-    }
-
     func testGoingBackToAPromptIsRefusedHere() {
         XCTAssertEqual(SlashRules.refusedHere("/rewind"), "回退请点对话里提示词下方的「回退」")
         XCTAssertEqual(SlashRules.refusedHere("/checkpoint now"), "回退请点对话里提示词下方的「回退」")
@@ -584,16 +589,21 @@ final class SlashRulesTests: XCTestCase {
         XCTAssertNil(SlashRules.refusedHere("rewind"))
     }
 
-    func testTheRestGoesAsAPrompt() {
-        XCTAssertNil(SlashRules.slashCommand("/cost", withImages: false, nil), "list unknown")
-        XCTAssertNil(SlashRules.slashCommand("/Users/me/shot.png 这是什么", withImages: false, list))
-        XCTAssertNil(SlashRules.slashCommand("/release v1", withImages: false, list))
-        XCTAssertNil(SlashRules.slashCommand("/kit:review", withImages: false, list))
-        XCTAssertNil(SlashRules.slashCommand("/autopilot go", withImages: false, list))
-        XCTAssertNil(SlashRules.slashCommand("/compact\nmore", withImages: false, list))
-        XCTAssertNil(SlashRules.slashCommand("/cost", withImages: true, list))
-        XCTAssertNil(SlashRules.slashCommand("/", withImages: false, list))
-        XCTAssertNil(SlashRules.slashCommand("hello", withImages: false, list))
+    /// ccrpc runs a slash command itself now: a built-in one goes as a plain `prompt`, idle or busy.
+    @MainActor
+    func testABuiltInCommandGoesAsAPrompt() {
+        for type in ["prompt", "steer"] {
+            let cmd = Composer.command(type: type, text: "/cost", paths: [])
+            XCTAssertEqual(cmd["type"], .string("prompt"))
+            XCTAssertEqual(cmd["if_busy"], .string("steer"))
+            XCTAssertEqual(cmd["text"], .string("/cost"))
+            XCTAssertNil(cmd["parts"])
+        }
+        let withImage = Composer.command(type: "prompt", text: "/cost", paths: ["/i/1.jpg"])
+        guard case .array(let parts)? = withImage["parts"] else { return XCTFail("parts") }
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(parts[0]["text"], .string("/cost"))
+        XCTAssertEqual(parts[1]["image"], .string("/i/1.jpg"))
     }
 
     func testAPanelIsRefusedWhileBusy() {

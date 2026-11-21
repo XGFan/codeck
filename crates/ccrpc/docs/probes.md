@@ -2,6 +2,15 @@
 
 环境：Claude Code 2.1.316（macOS，原生构建），ToH clay，PTY 80×24；模型 DeepSeek `deepseek-flash`（Anthropic 兼容接口 `https://api.deepseek.com/anthropic`）；独立 `CLAUDE_CONFIG_DIR` 与 `TOH_STATE_DIR`。按键用传统 xterm 编码（数字、方向键、`Esc`、`\r`、`ESC[Z`）全部生效。
 
+## 2.1.329
+
+依据：mock 端到端 38 个用例在 2.1.329 上全过（2026-11-22）；真实模型的端到端与 hooks 探针没有重跑。实测到的：
+
+- 提示词里的制表符：Claude Code 把每个 Tab 记成 4 个空格（`a\tb\tc` 记为 `a    b    c`），transcript 的比对因此不计空白。
+- 回退列表只列记成 `user` 条目的提示词与命令（提示词、`/model`、`/effort`、`!` 命令）；记成 `system` / `local_command` 条目的本地命令（`/context`、`/rename`）不列；`/cost` 不留记录，屏幕上是面板。
+- `--resume` 一个不存在的 Session：claude 打印 `No conversation found with session ID: <id>` 后退出。
+
+
 ## 进程文件
 
 - 首次启动的 onboarding（主题、安全提示）与目录信任对话框期间**没有**进程文件，`sessions/` 下只有 `<pid>.<hash>.key`。进程文件在进入主界面后才出现，初始 `status: idle`。
