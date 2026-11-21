@@ -399,14 +399,18 @@ pub fn relayed_messages(origin: &PromptOrigin, text: &str) -> Vec<RelayedMessage
             }
             found
                 .into_iter()
-                .map(|m| RelayedMessage {
-                    event: teammate_event(&m),
-                    preview: preview_of(m.summary.as_deref(), &m.body),
-                    from: m.teammate_id,
-                    address: None,
-                    color: m.color,
-                    summary: m.summary,
-                    body: m.body,
+                .map(|m| {
+                    let event = teammate_event(&m);
+                    let summary = own_summary(m.summary, &m.body);
+                    RelayedMessage {
+                        event,
+                        preview: preview_of(summary.as_deref(), &m.body),
+                        from: m.teammate_id,
+                        address: None,
+                        color: m.color,
+                        summary,
+                        body: m.body,
+                    }
                 })
                 .collect()
         }
@@ -573,7 +577,20 @@ fn attr(s: &str, name: &str) -> Option<String> {
     let start = open.find(&key)? + key.len();
     let end = open[start..].find('"')? + start;
     let v = open[start..end].trim();
-    (!v.is_empty()).then(|| v.to_owned())
+    // Claude Code escapes what it writes into an attribute (`&quot;` for a quote in a summary).
+    (!v.is_empty()).then(|| unescape_xml(v))
+}
+
+/// A relayed message's `summary` when it says something of its own. For a sender that gave none,
+/// Claude Code fills in the start of the message cut off with `…`, which only repeats the body.
+fn own_summary(summary: Option<String>, body: &str) -> Option<String> {
+    let s = summary?;
+    let squeeze = |t: &str| t.split_whitespace().collect::<String>();
+    let cut = s.trim_end().strip_suffix('…').map(squeeze);
+    match cut {
+        Some(head) if squeeze(body).starts_with(&head) => None,
+        _ => Some(s),
+    }
 }
 
 /// A coordinator message without Claude Code's wrapper sentences.
@@ -803,6 +820,37 @@ mod tests {
         assert_eq!(m[0].from.as_deref(), Some("line-a"));
         assert_eq!(m[0].summary.as_deref(), Some("Stage one"));
         assert_eq!(m[0].body, "Stage one done.");
+    }
+
+    #[test]
+    fn a_summary_is_unescaped_and_dropped_when_it_only_starts_the_body() {
+        // As recorded (2.1.329): no summary given, so Claude Code wrote the message's start, cut
+        // off, with its quotes escaped.
+        let body = "协议 6 冲突：`cancel_queue {id}` 的 `id` 是同一个键（`{\"id\":\"c1\",\"type\":\"cancel_queue\"}` 写不出来）。别的端请按 `queue_id` 发。";
+        let m = relayed(&[
+            (
+                r#"teammate_id="ccrpc6" color="yellow" summary="协议 6 冲突：`cancel_queue {id}` 的 `id` 是同一个键（`{&quot;id&quot;:&quot;c1&quot;,&quot;type&quot;:&quot;canc…""#,
+                body.into(),
+            ),
+            // A summary of the sender's own, with a quote in it.
+            (
+                r#"teammate_id="a" summary="Review: &quot;REQUEST CHANGES&quot; &amp; why""#,
+                "Review: two defects.".into(),
+            ),
+            // A heading that starts the body, not cut off: the sender's own.
+            (
+                r#"teammate_id="a" summary="五条结论""#,
+                "五条结论（已复核）：\n1. …".into(),
+            ),
+        ]);
+        assert_eq!(m[0].summary, None);
+        assert_eq!(m[0].preview, body);
+        assert_eq!(
+            m[1].summary.as_deref(),
+            Some(r#"Review: "REQUEST CHANGES" & why"#)
+        );
+        assert_eq!(m[1].preview, r#"Review: "REQUEST CHANGES" & why"#);
+        assert_eq!(m[2].summary.as_deref(), Some("五条结论"));
     }
 
     #[test]

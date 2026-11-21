@@ -4,7 +4,23 @@
 
 import type { PromptOrigin, RelayedMessage, TeammateEvent } from "@/ipc/bindings";
 
-const attr = (attrs: string, name: string) => new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1]?.trim() || null;
+const unescapeXml = (s: string) =>
+  s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+const attr = (attrs: string, name: string) => {
+  const v = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1]?.trim();
+  return v ? unescapeXml(v) : null;
+};
+const squeeze = (s: string) => s.replace(/\s+/g, "");
+/** A summary of the sender's own: not the start of the message cut off with `…`, which Claude Code fills in for none. */
+const ownSummary = (summary: string | null, body: string) =>
+  summary?.trimEnd().endsWith("…") && squeeze(body).startsWith(squeeze(summary.trimEnd().slice(0, -1)))
+    ? null
+    : summary;
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 function jsonObject(body: string): Record<string, unknown> | null {
@@ -68,8 +84,8 @@ export function relayedOf(origin: PromptOrigin, text: string): RelayedMessage[] 
   if (origin.kind === "teammate") {
     const out = [...text.matchAll(/<teammate-message\b([^>]*)>([\s\S]*?)<\/teammate-message>/g)].map((m) => {
       const from = attr(m[1]!, "teammate_id");
-      const summary = attr(m[1]!, "summary");
       const body = m[2]!.trim();
+      const summary = ownSummary(attr(m[1]!, "summary"), body);
       return {
         from,
         address: null,
