@@ -189,7 +189,7 @@ test("在 App 里，提示词下的「回退」「Fork」按 App 给的状态显
   await setConnect({ canFork: true, connected: true, idle: true });
   await expect(page.getByTestId("rewind-button")).toHaveCount(2);
   await metas.nth(1).getByTestId("rewind-button").click();
-  expect((await posted()).filter((m) => m.type !== "ready" && m.type !== "scroll")).toEqual([
+  expect((await posted()).filter((m) => m.type !== "ready")).toEqual([
     { type: "fork", nodeId: "91d5-u1" },
     { type: "rewind", nodeId: "91d5-u1" },
   ]);

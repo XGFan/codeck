@@ -52,7 +52,6 @@ struct TranscriptWebView: UIViewRepresentable {
     var onCopy: (String) -> Void
     var bottomInset: CGFloat
     var topInset: CGFloat
-    var onAtBottom: (Bool) -> Void
     var connect = PageConnect()
     /// 「回退」 was tapped under the prompt with this uuid.
     var onRewind: (String) -> Void = { _ in }
@@ -124,8 +123,6 @@ struct TranscriptWebView: UIViewRepresentable {
             writtenInsets = nil
             writtenConnect = nil
             readyFallback?.cancel()
-            // A load may come from inside a view update: not a place to change state.
-            Task { [weak self] in self?.parent.onAtBottom(true) }
             web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20))
         }
 
@@ -177,7 +174,6 @@ struct TranscriptWebView: UIViewRepresentable {
             case "rewind": if let id = body["nodeId"] as? String { parent.onRewind(id) }
             case "fork": if let id = body["nodeId"] as? String { parent.onFork(id) }
             case "copyText": if let text = body["text"] as? String { parent.onCopy(text) }
-            case "scroll": if let atBottom = body["atBottom"] as? Bool { parent.onAtBottom(atBottom) }
             default: break
             }
         }

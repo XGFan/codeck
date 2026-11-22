@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Above the input box: the permission mode (idle or busy), the model with its effort (idle only), and background
-/// tasks while some run.
+/// The input card's bottom row, before its button: the permission mode (idle or busy), the model with its effort
+/// (idle only), and while background tasks run one button for them all (each kind's icon, how many), so the row keeps
+/// its width however many kinds run.
 struct ConnectControls: View {
     let c: ConnState
     let sessionId: String
@@ -9,24 +10,18 @@ struct ConnectControls: View {
     @Environment(HostModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 6) {
-            modeMenu
+        HStack(spacing: 0) {
+            modeMenu.layoutPriority(1)
             modelMenu
-            let running = c.workingTasks.count
-            if running > 0 || showingTasks {
-                Button {
-                    showingTasks = true
-                } label: {
-                    GlassPillLabel { Text("\(running) 个任务") }
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            let running = c.workingTasks
+            if !running.isEmpty || showingTasks { tasksButton(running) }
         }
     }
 
     private var modeMenu: some View {
         let enabled = c.canCommand && (c.state == .idle || c.state == .busy)
+        let label = ConnectWords.modeLabel(c.mode)
         return Menu {
             Section("权限模式") {
                 Picker("权限模式", selection: Binding(get: { c.mode ?? "" }, set: { setMode($0) })) {
@@ -34,11 +29,16 @@ struct ConnectControls: View {
                 }
             }
         } label: {
-            GlassPillLabel(enabled: enabled) {
-                if c.mode == "auto" {
-                    Text(ConnectWords.modeLabel(c.mode)).foregroundStyle(Palette.warnText)
+            FooterMenuLabel(enabled: enabled) {
+                if ConnectWords.isRiskyMode(c.mode) {
+                    Text(label)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Palette.warnText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Palette.warn.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
                 } else {
-                    Text(ConnectWords.modeLabel(c.mode))
+                    Text(label)
                 }
             }
         }
@@ -69,15 +69,42 @@ struct ConnectControls: View {
                 }
             }
         } label: {
-            GlassPillLabel(enabled: enabled) {
+            FooterMenuLabel(enabled: enabled) {
                 Text([c.model?.name ?? "模型", c.effort.map(ConnectWords.effortLabel)]
                     .compactMap { $0 }
                     .joined(separator: " "))
+                    .truncationMode(.tail)
             }
         }
         .menuOrder(.fixed)
         .tint(Color(uiColor: .label))
         .disabled(!enabled)
+    }
+
+    private func tasksButton(_ running: [ConnTask]) -> some View {
+        Button {
+            showingTasks = true
+        } label: {
+            HStack(spacing: 5) {
+                HStack(spacing: -6) {
+                    ForEach(ConnectWords.taskKinds(of: running), id: \.self) { kind in
+                        Image(systemName: ConnectWords.taskKind(kind).symbol)
+                            .font(.system(size: 10, weight: .medium))
+                            .frame(width: 22, height: 22)
+                            .background(Color(uiColor: .systemGray5), in: Circle())
+                            .overlay(Circle().strokeBorder(Color(uiColor: .systemBackground), lineWidth: 1.5))
+                    }
+                }
+                Text("\(running.count)").fontWeight(.semibold).monospacedDigit()
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(running.count) 个后台任务")
     }
 
     private func setMode(_ mode: String) {
@@ -98,5 +125,24 @@ struct ConnectControls: View {
             let r = await store.command(c.conn, cmd)
             if !r.success { store.setError(sessionId, "\(what)失败：\(r.errorText)") }
         }
+    }
+}
+
+/// A menu's label in the input card's bottom row: small secondary text with a chevron, 44 high for a finger.
+private struct FooterMenuLabel<Content: View>: View {
+    let enabled: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 4) {
+            content
+            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+        }
+        .font(.footnote)
+        .lineLimit(1)
+        .foregroundStyle(enabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+        .padding(.horizontal, 8)
+        .frame(height: 44)
+        .contentShape(Rectangle())
     }
 }

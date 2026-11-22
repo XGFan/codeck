@@ -565,6 +565,20 @@ final class AnswersTests: XCTestCase {
         XCTAssertEqual(ConnectWords.modelFamily(.init(id: nil, name: "Fable 5.1 (1M)")), "fable")
         XCTAssertNil(ConnectWords.modelFamily(nil))
     }
+
+    func testBypassPermissionsHasANameAndTheWarningColorButIsNotOffered() {
+        XCTAssertEqual(ConnectWords.modeLabel("bypass"), "跳过审批")
+        XCTAssertTrue(ConnectWords.isRiskyMode("bypass"))
+        XCTAssertTrue(ConnectWords.isRiskyMode("auto"))
+        XCTAssertFalse(ConnectWords.isRiskyMode("accept_edits"))
+        // ccrpc's set_mode passes it by: not among the modes to pick.
+        XCTAssertFalse(ConnectWords.modes.contains { $0.id == "bypass" })
+    }
+
+    func testTaskKindsKeepTheirOrderAndPutANewKindLast() {
+        let tasks = ["monitor", "future", "shell", "shell"].enumerated().map { ConnTask(id: "t\($0)", kind: $1, status: "running") }
+        XCTAssertEqual(ConnectWords.taskKinds(of: tasks), ["shell", "monitor", "future"])
+    }
 }
 
 /// Mirrors src/features/connect/slash.test.ts.

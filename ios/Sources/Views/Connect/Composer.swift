@@ -1,6 +1,11 @@
 import PhotosUI
 import SwiftUI
 
+/// The button's fill while it cannot be used.
+private let offFill = Color(uiColor: UIColor { trait in
+    trait.userInterfaceStyle == .dark ? UIColor(rgb: 0xFFFFFF, alpha: 0.18) : UIColor(rgb: 0x787880, alpha: 0.32)
+})
+
 /// The button at the end of the input box.
 enum ComposerAction: Equatable {
     case stop, steer, send
@@ -11,16 +16,17 @@ enum ComposerAction: Equatable {
     }
 }
 
-/// The input box (Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call ends);
+/// The input card (Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call ends);
 /// waiting → nothing (the card comes first). ccrpc runs a slash command itself, so a built-in command goes as a prompt
 /// too. Photos are saved on the Host first and sent as `parts`, the text before the images. With the box empty while
-/// busy, the button stops the turn (`abort`).
-struct Composer: View {
+/// busy, the button stops the turn (`abort`). Its bottom row holds `footer` (the controls) and the button.
+struct Composer<Footer: View>: View {
     let c: ConnState
     let sessionId: String
     @Binding var text: String
     @Binding var images: [ComposerImage]
     var focused: FocusState<Bool>.Binding
+    @ViewBuilder let footer: Footer
     @Environment(HostModel.self) private var model
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var sending = false
@@ -32,37 +38,42 @@ struct Composer: View {
     private var live: Bool { c.canCommand }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            VStack(alignment: .leading, spacing: 0) {
-                if !images.isEmpty {
-                    thumbnails
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                }
-                HStack(alignment: .bottom, spacing: 2) {
-                    PhotosPicker(selection: $pickerItems, maxSelectionCount: 6, matching: .images) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 20))
-                            .foregroundStyle(Palette.accentText)
-                            .frame(width: 44, height: 44)
-                    }
-                    .disabled(!live)
-                    .accessibilityLabel("添加图片")
-                    .padding(.vertical, 4)
-                    TextField(placeholder, text: $text, axis: .vertical)
-                        .font(.system(size: 16))
-                        .lineLimit(1...6)
-                        .focused(focused)
-                        .disabled(!live)
-                        .padding(.vertical, 15)
-                }
-                .padding(.leading, 4)
-                .padding(.trailing, 16)
+        VStack(alignment: .leading, spacing: 0) {
+            if !images.isEmpty {
+                thumbnails
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
             }
-            .glass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .opacity(live && c.state != .waiting ? 1 : 0.6)
-            sendButton
+            HStack(alignment: .bottom, spacing: 2) {
+                PhotosPicker(selection: $pickerItems, maxSelectionCount: 6, matching: .images) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 20))
+                        .foregroundStyle(Palette.accentText)
+                        .frame(width: 44, height: 44)
+                }
+                .disabled(!live)
+                .accessibilityLabel("添加图片")
+                .padding(.vertical, 2)
+                TextField(placeholder, text: $text, axis: .vertical)
+                    .font(.system(size: 16))
+                    .lineLimit(1...6)
+                    .focused(focused)
+                    .disabled(!live)
+                    .padding(.vertical, 13)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 16)
+            Rectangle().fill(Palette.hairline).frame(height: 0.5).padding(.leading, 12)
+            HStack(spacing: 0) {
+                footer
+                sendButton
+            }
+            .padding(.leading, 2)
+            .padding(.trailing, 6)
+            .padding(.vertical, 2)
         }
+        .glass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .opacity(live && c.state != .waiting ? 1 : 0.6)
         .sensoryFeedback(.success, trigger: sent)
         .onChange(of: pickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -90,10 +101,9 @@ struct Composer: View {
             Button { Task { await abort() } } label: {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(.white)
-                    .frame(width: 14, height: 14)
-                    .frame(width: 52, height: 52)
+                    .frame(width: 12, height: 12)
+                    .frame(width: 40, height: 40)
                     .background(Palette.accent, in: Circle())
-                    .shadow(color: .black.opacity(0.12), radius: 9, y: 6)
             }
             .accessibilityLabel("中止")
             .buttonStyle(.plain)
@@ -104,11 +114,11 @@ struct Composer: View {
             // 插话: delivered when the current tool call ends.
             Button { Task { await send("steer") } } label: {
                 Text("插话")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 20)
-                    .frame(height: 52)
-                    .background(canSend ? Palette.accent : Self.offFill, in: Capsule())
+                    .padding(.horizontal, 16)
+                    .frame(height: 40)
+                    .background(canSend ? Palette.accent : offFill, in: Capsule())
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
@@ -116,10 +126,10 @@ struct Composer: View {
             let enabled = canSend && c.state == .idle
             Button { Task { await send("prompt") } } label: {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 52, height: 52)
-                    .background(enabled ? Palette.accent : Self.offFill, in: Circle())
+                    .frame(width: 40, height: 40)
+                    .background(enabled ? Palette.accent : offFill, in: Circle())
             }
             .accessibilityLabel("发送")
             .buttonStyle(.plain)
@@ -128,23 +138,6 @@ struct Composer: View {
     }
 
     private var canSend: Bool { live && hasContent && !sending && !uploading }
-
-    private static let offFill = Color(uiColor: UIColor { trait in
-        trait.userInterfaceStyle == .dark ? UIColor(rgb: 0xFFFFFF, alpha: 0.18) : UIColor(rgb: 0x787880, alpha: 0.32)
-    })
-
-    /// The command `send` puts on the wire: `prompt` with `if_busy: "steer"` in either case, since ccrpc picks prompt
-    /// or steer by the state as it runs and runs a slash command itself; the text before the images.
-    static func command(type _: String, text: String, paths: [String]) -> [String: JSONValue] {
-        var cmd: [String: JSONValue] = ["type": "prompt", "if_busy": "steer"]
-        if paths.isEmpty {
-            cmd["text"] = .string(text)
-        } else {
-            let parts: [JSONValue] = text.isEmpty ? [] : [["text": .string(text)]]
-            cmd["parts"] = .array(parts + paths.map { ["image": .string($0)] })
-        }
-        return cmd
-    }
 
     private func send(_ type: String) async {
         guard canSend else { return }
@@ -160,7 +153,7 @@ struct Composer: View {
                 return model.connect.setError(sessionId, refused)
             }
         }
-        let cmd = Self.command(type: type, text: body, paths: paths)
+        let cmd = Composer<EmptyView>.command(type: type, text: body, paths: paths)
         let (keptText, keptImages) = (text, images)
         sending = true
         text = ""
@@ -236,6 +229,22 @@ struct Composer: View {
                 model.connect.setError(sessionId, "图片保存失败：\(ConnectStore.text(error))")
             }
         }
+    }
+}
+
+// Not on the generic type itself: `Composer.command` names it without a footer.
+extension Composer where Footer == EmptyView {
+    /// The command `send` puts on the wire: `prompt` with `if_busy: "steer"` in either case, since ccrpc picks prompt
+    /// or steer by the state as it runs and runs a slash command itself; the text before the images.
+    static func command(type _: String, text: String, paths: [String]) -> [String: JSONValue] {
+        var cmd: [String: JSONValue] = ["type": "prompt", "if_busy": "steer"]
+        if paths.isEmpty {
+            cmd["text"] = .string(text)
+        } else {
+            let parts: [JSONValue] = text.isEmpty ? [] : [["text": .string(text)]]
+            cmd["parts"] = .array(parts + paths.map { ["image": .string($0)] })
+        }
+        return cmd
     }
 }
 

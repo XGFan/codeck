@@ -1,12 +1,11 @@
 import SwiftUI
 
 /// What floats at the bottom of the Session page: 「Connect」 when the Session runs in clay, and once connected
-/// the requests it waits on or the input box and its controls; 「Resume」 for an ended Session not in clay.
+/// the requests it waits on or the input card; 「Resume」 for an ended Session not in clay.
 struct ConnectBarSlot: View {
     let sessionId: String
     /// For Resume (the directory the Session started in); nil while loading.
     let detail: SessionDetail?
-    let atBottom: Bool
     let panelMaxHeight: CGFloat
     @Environment(HostModel.self) private var model
 
@@ -26,7 +25,7 @@ struct ConnectBarSlot: View {
         let resume = resumeOffer(c)
         // A Resume shows its connection only for what it asks before starting (the folder trust dialog).
         if let c, c.isLive, !store.isResuming(sessionId) || !store.requests(of: c).isEmpty {
-            ConnectedBar(c: c, sessionId: sessionId, atBottom: atBottom, panelMaxHeight: panelMaxHeight)
+            ConnectedBar(c: c, sessionId: sessionId, panelMaxHeight: panelMaxHeight)
                 .id(c.conn)
         } else if store.connecting.contains(sessionId) {
             inProgress("Connect 中…")

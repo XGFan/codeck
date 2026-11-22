@@ -44,8 +44,14 @@ enum ConnectWords {
 
     static func modeLabel(_ mode: String?) -> String {
         guard let mode else { return "权限模式" }
+        // Bypass permissions (claude started with it allowed) is shown but never offered: ccrpc's `set_mode` passes
+        // it by.
+        if mode == "bypass" { return "跳过审批" }
         return modes.first { $0.id == mode }?.label ?? mode
     }
+
+    /// The modes that let tools run unasked: shown in the warning color.
+    static func isRiskyMode(_ mode: String?) -> Bool { mode == "auto" || mode == "bypass" }
 
     static func effortLabel(_ effort: String) -> String {
         efforts.first { $0.level == effort }?.label ?? effort.prefix(1).uppercased() + effort.dropFirst()
@@ -69,6 +75,12 @@ enum ConnectWords {
     }
 
     static let taskKindOrder = ["shell", "agent", "monitor", "workflow"]
+
+    /// The kinds among `tasks`, in `taskKindOrder`; a kind a newer ccrpc reports goes last.
+    static func taskKinds(of tasks: [ConnTask]) -> [String] {
+        let present = Set(tasks.map(\.kind))
+        return taskKindOrder.filter(present.contains) + present.subtracting(taskKindOrder).sorted()
+    }
 
     static func taskStatus(_ status: String) -> String {
         switch status {

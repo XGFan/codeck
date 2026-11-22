@@ -75,23 +75,6 @@ struct GlassCircleButtonStyle: ButtonStyle {
     }
 }
 
-/// The label of a control on the Session page's row of pills: 44 high; dimmed when it cannot be used now.
-struct GlassPillLabel<Content: View>: View {
-    var enabled = true
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .font(.footnote)
-            .lineLimit(1)
-            .foregroundStyle(enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .glassCapsule()
-            .opacity(enabled ? 1 : 0.7)
-    }
-}
-
 /// A full-width capsule answer or action.
 struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary, tinted, neutral }

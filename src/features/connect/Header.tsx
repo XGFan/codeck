@@ -28,6 +28,10 @@ const MODES: { id: string; label: string }[] = [
   { id: "plan", label: "计划模式" },
   { id: "auto", label: "自动模式" },
 ];
+/** Shown, never offered: claude started with bypass permissions allowed, and ccrpc's `set_mode` passes it by. */
+const BYPASS_LABEL = "跳过审批";
+/** The modes that let tools run unasked: in the warning color. */
+const RISKY = new Set(["auto", "bypass"]);
 
 /** The one word for a Session's state (header, list dots): the connection's while connected, else the Live one. */
 export const STATE_WORD: Record<string, string> = {
@@ -356,10 +360,10 @@ export function ConnectFooter({ c, children }: { c: ConnState; children?: React.
             type="button"
             data-testid="connect-mode"
             disabled={!live || !(c.state === "idle" || c.state === "busy")}
-            className={cn(footBtn, c.mode === "auto" && "text-live-waiting")}
+            className={cn(footBtn, RISKY.has(c.mode ?? "") && "text-live-waiting")}
           >
             <ShieldCheck size={14} strokeWidth={1.7} aria-hidden />
-            {mode?.label ?? c.mode ?? "权限模式"}
+            {mode?.label ?? (c.mode === "bypass" ? BYPASS_LABEL : c.mode) ?? "权限模式"}
             <ChevronDown size={11} className="opacity-60" aria-hidden />
           </button>
         </DropdownMenuTrigger>

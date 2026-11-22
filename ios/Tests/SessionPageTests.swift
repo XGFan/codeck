@@ -17,22 +17,6 @@ final class SessionPageTests: XCTestCase {
         XCTAssertEqual(action(.idle), .send)
     }
 
-    @MainActor
-    func testControlRowHidesOnlyWhenNothingNeedsIt() {
-        func shows(
-            _ state: ConnState.Phase? = .idle, atBottom: Bool = false, focused: Bool = false,
-            error: Bool = false, queue: Bool = false
-        ) -> Bool {
-            ConnectedBar.showsControls(state: state, atBottom: atBottom, focused: focused, hasError: error, hasQueue: queue)
-        }
-        XCTAssertFalse(shows())
-        XCTAssertTrue(shows(atBottom: true))
-        XCTAssertTrue(shows(focused: true))
-        XCTAssertTrue(shows(error: true))
-        XCTAssertTrue(shows(queue: true))
-        XCTAssertFalse(shows(.waiting, atBottom: true))
-    }
-
     func testHeaderStatusSaysTheStateAndHowLongItWorks() {
         var c = ConnState(conn: "c")
         c.state = .busy

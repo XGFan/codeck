@@ -20,7 +20,7 @@ struct TasksSheet: View {
                 if tasks.isEmpty {
                     Text("没有后台任务").foregroundStyle(.secondary)
                 }
-                ForEach(kinds(of: running), id: \.self) { kind in
+                ForEach(ConnectWords.taskKinds(of: running), id: \.self) { kind in
                     Section(ConnectWords.taskKind(kind).label) {
                         ForEach(running.filter { $0.kind == kind }) { row($0, idle: c?.state == .idle) }
                     }
@@ -46,11 +46,6 @@ struct TasksSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-    }
-
-    private func kinds(of tasks: [ConnTask]) -> [String] {
-        let present = Set(tasks.map(\.kind))
-        return ConnectWords.taskKindOrder.filter(present.contains) + present.subtracting(ConnectWords.taskKindOrder).sorted()
     }
 
     private func row(_ t: ConnTask, idle: Bool) -> some View {

@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// A live Connect at the bottom of its Session page: the requests it waits on in a panel, otherwise the input box
-/// with its controls and, above them, queued messages and the last error; a notice shows briefly on top.
+/// A live Connect at the bottom of its Session page: the requests it waits on in a panel, otherwise the input card
+/// (its controls in its bottom row) and, above it, queued messages and the last error; a notice shows briefly on top.
 struct ConnectedBar: View {
     let c: ConnState
     let sessionId: String
-    /// The Transcript is at its end (the control row is put away when it is not).
-    let atBottom: Bool
     let panelMaxHeight: CGFloat
     @Environment(HostModel.self) private var model
     @State private var toast: String?
@@ -16,12 +14,6 @@ struct ConnectedBar: View {
     @State private var images: [ComposerImage] = []
     @State private var showingTasks = false
     @FocusState private var focused: Bool
-
-    /// The control row: put away while the Transcript is read further up, unless something needs it; a waiting
-    /// Session has none of its controls to offer.
-    static func showsControls(state: ConnState.Phase?, atBottom: Bool, focused: Bool, hasError: Bool, hasQueue: Bool) -> Bool {
-        state != .waiting && (atBottom || focused || hasError || hasQueue)
-    }
 
     var body: some View {
         let store = model.connect
@@ -44,18 +36,12 @@ struct ConnectedBar: View {
                         ErrorLine(text: error) { store.setError(sessionId, nil) }
                     }
                     if !c.queue.isEmpty { QueueChips(queue: c.queue, c: c, sessionId: sessionId) }
-                    if Self.showsControls(
-                        state: c.state, atBottom: atBottom, focused: focused,
-                        hasError: error != nil, hasQueue: !c.queue.isEmpty
-                    ) {
+                    Composer(c: c, sessionId: sessionId, text: $text, images: $images, focused: $focused) {
                         ConnectControls(c: c, sessionId: sessionId, showingTasks: $showingTasks)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
-                    Composer(c: c, sessionId: sessionId, text: $text, images: $images, focused: $focused)
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
-                .animation(.snappy, value: atBottom)
             } else {
                 RequestPanel(
                     requests: requests,

@@ -11,7 +11,6 @@ struct SessionDetailView: View {
     @State private var copied = 0
     @State private var showingCopied = false
     @State private var showingInfo = false
-    @State private var atBottom = true
     /// In screen coordinates, as the full-screen Transcript sees them.
     @State private var screen = CGRect.zero
     @State private var visibleBottom: CGFloat = 0
@@ -91,7 +90,6 @@ struct SessionDetailView: View {
                     onCopy: copy,
                     bottomInset: bottomInset,
                     topInset: headerBottom + 8,
-                    onAtBottom: { atBottom = $0 },
                     connect: pageConnect,
                     onRewind: rewind,
                     onFork: { forkAt = $0 },
@@ -152,7 +150,6 @@ struct SessionDetailView: View {
             ConnectBarSlot(
                 sessionId: sessionId,
                 detail: detail,
-                atBottom: atBottom,
                 panelMaxHeight: RequestPanel.heightLimit(screen: screen.height, belowHeader: visibleBottom - headerBottom - 8)
             )
             .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }, action: { slotTop = $0 })
