@@ -226,7 +226,7 @@ final class RewindTests: XCTestCase {
         let off = PageConnect.of(nil, rewinding: nil, rewound: nil, fork: .disabled("目录 /w 已不存在"), forking: false)
         XCTAssertEqual(off, PageConnect())
         let busy = PageConnect.of(c, rewinding: nil, rewound: nil, fork: .enabled, forking: true)
-        XCTAssertEqual(busy, PageConnect(connected: true, idle: false, canFork: true, forking: true))
+        XCTAssertEqual(busy, PageConnect(connected: true, idle: false, canFork: true, forking: true, busy: true))
         c.state = .idle
         let idle = PageConnect.of(
             c, rewinding: "u2", rewound: Rewound(sessionId: "s1", uuid: "u1", withCode: true), fork: .hidden, forking: false
@@ -237,8 +237,16 @@ final class RewindTests: XCTestCase {
         encoder.outputFormatting = .sortedKeys
         XCTAssertEqual(
             String(decoding: try! encoder.encode(busy), as: UTF8.self),
-            #"{"canFork":true,"codeCalls":[],"connected":true,"forking":true,"idle":false}"#
+            #"{"busy":true,"canFork":true,"codeCalls":[],"connected":true,"forking":true,"idle":false}"#
         )
+        // Working: what it is doing, for the progress line at the end of the conversation (the verb when no text).
+        c.state = .busy
+        c.progress = ConnState.Progress(text: "运行 pnpm test", verb: "Running", elapsedS: 3, tokens: nil)
+        XCTAssertEqual(PageConnect.of(c, rewinding: nil, rewound: nil, fork: .hidden, forking: false).progress, "运行 pnpm test")
+        c.progress = ConnState.Progress(text: nil, verb: "Thinking", elapsedS: nil, tokens: nil)
+        XCTAssertEqual(PageConnect.of(c, rewinding: nil, rewound: nil, fork: .hidden, forking: false).progress, "Thinking")
+        c.progress = nil
+        c.state = .idle
         // Code Mode's running calls go with it, as the Host folded them.
         c.codeCalls = [["toolUseId": "toolu_c1", "name": "Read", "code": "read('w.txt')", "end": nil]]
         let running = PageConnect.of(c, rewinding: nil, rewound: nil, fork: .hidden, forking: false)

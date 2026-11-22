@@ -33,14 +33,12 @@ final class SessionPageTests: XCTestCase {
         XCTAssertFalse(shows(.waiting, atBottom: true))
     }
 
-    func testHeaderStatusSaysWhatTheConnectIsDoing() {
+    func testHeaderStatusSaysTheStateAndHowLongItWorks() {
         var c = ConnState(conn: "c")
         c.state = .busy
+        // What it is doing is at the end of the conversation (PageConnect.progress), not here.
         c.progress = ConnState.Progress(text: "运行 pnpm test", verb: "Running", elapsedS: 92, tokens: nil)
-        XCTAssertEqual(HeaderStatus.connected(c), HeaderStatus(text: "工作中 · 运行 pnpm test", dot: Palette.ok, elapsed: "1 分 32 秒"))
-
-        c.progress = ConnState.Progress(text: nil, verb: "Thinking", elapsedS: nil, tokens: nil)
-        XCTAssertEqual(HeaderStatus.connected(c).text, "工作中 · Thinking")
+        XCTAssertEqual(HeaderStatus.connected(c), HeaderStatus(text: "工作中", dot: Palette.ok, elapsed: "1 分 32 秒"))
 
         // Only a working Connect says what it does; what is left from the last turn is not news.
         c.state = .waiting

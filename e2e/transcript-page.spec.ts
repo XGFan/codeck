@@ -126,6 +126,33 @@ test("在 App 里，Code Mode 代码运行期间的调用按 App 给的 codeCall
   await expect(group).toContainText("运行 1 条命令、执行 1 段代码");
 });
 
+test("在 App 里，Connect 工作时对话记录末尾显示进度，和桌面一样", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.assign(window, { webkit: { messageHandlers: { codeck: { postMessage: () => {} } } } });
+  });
+  await page.goto(`/transcript.html?sessionId=${RICH_ID}`);
+  await expect(page.getByTestId("prompt-meta").first()).toBeVisible();
+  const progress = page.getByTestId("transcript").getByTestId("progress");
+  await expect(progress).toHaveCount(0);
+  const setConnect = (c: Record<string, unknown>) =>
+    page.evaluate(
+      (c) => window.codeckPage!.setConnect(c),
+      c as Parameters<NonNullable<Window["codeckPage"]>["setConnect"]>[0],
+    );
+  await setConnect({ connected: true, busy: true, progress: "运行 pnpm test" });
+  await expect(progress).toHaveText("运行 pnpm test");
+  // At the end of the conversation, below its last row.
+  const below = await progress.evaluate((p) => {
+    const rows = [...document.querySelectorAll("[data-row]")];
+    return p.getBoundingClientRect().top >= rows.at(-1)!.getBoundingClientRect().bottom - 1;
+  });
+  expect(below).toBe(true);
+  await setConnect({ connected: true, busy: true });
+  await expect(progress).toHaveText("工作中…");
+  await setConnect({ connected: true, idle: true });
+  await expect(progress).toHaveCount(0);
+});
+
 // In the app (a WKWebView with the `codeck` message handler): the ended Redis Session, two Main Line prompts.
 const REDIS_ID = "91d5be38-0004-4000-8000-000000000004";
 

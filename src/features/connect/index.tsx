@@ -9,6 +9,7 @@ import { useUi } from "@/state/ui";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
+import { useNativeConnect } from "./native";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { arrived, PENDING_MAX_MS } from "./pending";
 import { ownCard, Requests } from "./Requests";
@@ -324,13 +325,16 @@ function SessionExited({ c }: { c: ConnState }) {
 export function ConnectTail({ promptIds }: { promptIds?: ReadonlySet<string> }) {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
-  if (!c || (c.procExit && !c.sessionExited)) return null;
+  // On the phone the app holds the Connect and says whether it works.
+  const native = useNativeConnect((s) => s.c);
+  if (!c) return native?.busy ? <Progress text={native.progress} /> : null;
+  if (c.procExit && !c.sessionExited) return null;
   return (
     <>
       {c.state !== "busy" && c.lastTurn && <LastTurn ev={c.lastTurn} />}
       {/* Not under a new Session's empty transcript (its first prompt shows with the transcript). */}
       {c.pending && promptIds && <PendingPrompt c={c} promptIds={promptIds} />}
-      {c.state === "busy" && <Progress c={c} />}
+      {c.state === "busy" && <Progress text={c.progress?.text} />}
     </>
   );
 }
@@ -380,7 +384,7 @@ function PendingPrompt({ c, promptIds }: { c: ConnState; promptIds: ReadonlySet<
   );
 }
 
-function Progress({ c }: { c: ConnState }) {
+function Progress({ text }: { text: string | null | undefined }) {
   return (
     // Grey with a passing highlight (as in Codex): Claude's clay reads as an error here.
     <div className="flex items-center gap-2 pt-[18px] text-[13px] text-secondary" data-testid="progress">
@@ -388,7 +392,7 @@ function Progress({ c }: { c: ConnState }) {
         className="size-3 shrink-0 animate-spin rounded-full border-2 border-secondary/25 border-t-secondary"
         aria-hidden
       />
-      <span className="shimmer-text min-w-0 truncate">{c.progress?.text ?? "工作中…"}</span>
+      <span className="shimmer-text min-w-0 truncate">{text || "工作中…"}</span>
     </div>
   );
 }

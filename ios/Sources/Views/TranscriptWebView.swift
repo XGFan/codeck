@@ -20,6 +20,10 @@ struct PageConnect: Encodable, Equatable {
     var forking = false
     /// Code Mode: the calls the running code made that the transcript does not have yet (the Host folds them).
     var codeCalls: [JSONValue] = []
+    /// Working: the page shows the progress line at the end of the conversation, as on the desktop.
+    var busy = false
+    /// What it is doing (Claude Code's spinner line), while busy.
+    var progress: String?
 
     /// `c`: the Session's Connect while it takes commands.
     static func of(_ c: ConnState?, rewinding: String?, rewound: CoDeck.Rewound?, fork: StartOffer, forking: Bool) -> PageConnect {
@@ -30,7 +34,9 @@ struct PageConnect: Encodable, Equatable {
             rewound: rewound.map { Rewound(uuid: $0.uuid, withCode: $0.withCode) },
             canFork: fork == .enabled,
             forking: forking,
-            codeCalls: c?.codeCalls ?? []
+            codeCalls: c?.codeCalls ?? [],
+            busy: c?.state == .busy,
+            progress: c?.state == .busy ? c?.progress.flatMap { $0.text ?? $0.verb } : nil
         )
     }
 }

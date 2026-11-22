@@ -8,19 +8,16 @@ struct HeaderStatus: Equatable {
     /// How long it has been at it: stays readable when `text` is cut.
     var elapsed: String?
 
-    /// A live Connect: its state and, while it works, what it is doing and for how long.
+    /// A live Connect: its state and, while it works, for how long. What it is doing is at the end of the
+    /// conversation, as on the desktop.
     static func connected(_ c: ConnState) -> HeaderStatus {
-        var parts = [ConnectWords.state(c.state)]
-        if c.state == .busy {
-            if let doing = c.progress?.text ?? c.progress?.verb { parts.append(doing) }
-        }
         let dot: Color = switch c.state {
         case .busy: Palette.ok
         case .waiting: Palette.warn
         default: Palette.idle
         }
         let elapsed = c.state == .busy ? c.progress?.elapsedS.map(ConnectWords.elapsed) : nil
-        return HeaderStatus(text: parts.joined(separator: " · "), dot: dot, elapsed: elapsed)
+        return HeaderStatus(text: ConnectWords.state(c.state), dot: dot, elapsed: elapsed)
     }
 }
 

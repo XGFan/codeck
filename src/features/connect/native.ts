@@ -20,6 +20,10 @@ export interface NativeConnect {
   forking: boolean;
   /** Code Mode: the calls the running code made that the transcript does not have yet (the Host folds them). */
   codeCalls: CodeCall[];
+  /** Working: the progress line at the transcript's end, as on the desktop. */
+  busy: boolean;
+  /** What it is doing (Claude Code's spinner line), while busy. */
+  progress: string | null;
 }
 
 declare global {
@@ -39,6 +43,8 @@ const NONE: NativeConnect = {
   canFork: false,
   forking: false,
   codeCalls: [],
+  busy: false,
+  progress: null,
 };
 
 /** `c` is null outside the app. */

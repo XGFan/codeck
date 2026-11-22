@@ -9,7 +9,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 ## 平台与分发
 
 - Tauri：Rust 后端负责解析、索引和监听，Web 前端负责全部 UI（ADR-0001）。
-- iPhone：原生 App 经局域网连到打开了「局域网访问」的 CoDeck（ADR-0012），或运行 `codeck-host` daemon 的 Host（Mac 或 Linux），无鉴权，只在可信网络使用（ADR-0011，见 README「iPhone 与 Host」）。对话记录是 Host 的网页，按手指操作（`pointer: coarse`）调整：桌面悬停才出现的复制按钮、工具行的展开箭头常显，代码块与命令顶上留出一行放复制按钮；一轮中间的说明段没有复制按钮（会盖住第一行）；带预览的提问选项点一下换成它的预览；右边缘的滚动条不接手指，在那里滑动照常滚动。
+- iPhone：原生 App 经局域网连到打开了「局域网访问」的 CoDeck（ADR-0012），或运行 `codeck-host` daemon 的 Host（Mac 或 Linux），无鉴权，只在可信网络使用（ADR-0011，见 README「iPhone 与 Host」）。对话记录是 Host 的网页，按手指操作（`pointer: coarse`）调整：桌面悬停才出现的复制按钮、工具行的展开箭头常显，代码块与命令顶上留出一行放复制按钮；一轮中间的说明段没有复制按钮（会盖住第一行）；带预览的提问选项点一下换成它的预览；右边缘的滚动条不接手指，在那里滑动照常滚动。Connect 工作时，正在做什么显示在对话记录末尾（同桌面的进度行），顶部胶囊只写状态与用时。
 - 自用：本地构建，ad-hoc 签名，不做公证，不做自动更新；不开沙盒；macOS 14+，只出 Apple Silicon 版本。
 - 仓库按可以开源的标准组织：有 README 和构建说明，不写死个人路径。
 
