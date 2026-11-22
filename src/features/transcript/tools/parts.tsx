@@ -408,7 +408,8 @@ function fitsAbove(el: HTMLElement, height: number): boolean {
 
 /**
  * An image where a prompt has it (`[Image #n]`, as Claude Code writes it), as a block in the line: hovered, a
- * preview above it (below when there is no room above); clicked, the image large.
+ * preview above it (below when there is no room above); clicked, the image large. A finger has no hover (its tap
+ * would flash the preview and end before the image loads): a tap opens the image large straight away.
  */
 export function ImageMarker({
   image,
@@ -431,11 +432,12 @@ export function ImageMarker({
         data-testid="prompt-image"
         aria-label={`放大${label}`}
         onPointerEnter={(e) => {
+          if (e.pointerType !== "mouse") return;
           setBelow(!fitsAbove(e.currentTarget, MARKER_PREVIEW_H));
           setHover(true);
         }}
         onPointerLeave={() => setHover(false)}
-        onClick={() => src && setOpen(true)}
+        onClick={() => image && setOpen(true)}
         // Drawn as the input box draws its image blocks: in the line's own font and height, so its words sit on the
         // line with the words around it.
         className="mx-[4px] rounded-[5px] bg-code px-[3px] text-text shadow-[0_0_0_1px_var(--color-border)] hover:text-accent hover:shadow-[0_0_0_1px_var(--color-accent-border)]"
@@ -472,8 +474,12 @@ export function ImageMarker({
         <DialogContent className="flex max-h-[90vh] w-auto max-w-[90vw] items-center justify-center p-2">
           <DialogTitle className="sr-only">图片预览</DialogTitle>
           <DialogDescription className="sr-only">{label}</DialogDescription>
-          {src && (
+          {src ? (
             <img data-testid="image-large" src={src} alt="" className="max-h-[85vh] max-w-[88vw] object-contain" />
+          ) : q.isError ? (
+            <span className="px-3 py-2 text-[12px] text-secondary">图片不可用</span>
+          ) : (
+            <Loader2 size={16} className="m-4 animate-spin text-secondary" aria-hidden />
           )}
         </DialogContent>
       </Dialog>

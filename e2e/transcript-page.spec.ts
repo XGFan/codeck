@@ -28,6 +28,21 @@ test("手机宽度下，你的消息里放不下的长路径换行，气泡不�
   expect(r.right).toBeLessThanOrEqual(r.width);
 });
 
+const LONGHORN_ID = "48b1d0f6-0009-4000-8000-000000000009";
+
+test.describe("手指点按", () => {
+  test.use({ hasTouch: true, viewport: { width: 393, height: 852 } });
+
+  test("点你消息里的图片块直接放大，不闪一下悬停预览", async ({ page }) => {
+    await page.goto(`/transcript.html?sessionId=${LONGHORN_ID}`);
+    const chip = page.getByTestId("user-bubble").filter({ hasText: "PVC" }).getByTestId("prompt-image");
+    await chip.scrollIntoViewIfNeeded();
+    await chip.tap();
+    await expect(page.getByTestId("image-large")).toBeVisible();
+    await expect(page.getByTestId("prompt-image-preview")).toHaveCount(0);
+  });
+});
+
 const CODE_MODE_ID = "c0de5e55-0011-4000-8000-000000000011";
 
 test("在 App 里，Code Mode 代码运行期间的调用按 App 给的 codeCalls 并进对话记录", async ({ page }) => {
