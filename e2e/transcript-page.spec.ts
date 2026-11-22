@@ -14,6 +14,20 @@ test("iPhone 用的对话页只渲染对话，不带 Connect 与侧栏", async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test("手机宽度下，你的消息里放不下的长路径换行，气泡不超出页面", async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.goto(`/transcript.html?sessionId=${RICH_ID}`);
+  const bubble = page.getByTestId("user-bubble").filter({ hasText: "接下来把限流参数" });
+  await bubble.scrollIntoViewIfNeeded();
+  await expect(bubble).toContainText("rate_limiting.md");
+  const r = await bubble.evaluate((el) => {
+    const b = el.getBoundingClientRect();
+    return { left: b.left, right: b.right, width: window.innerWidth };
+  });
+  expect(r.left).toBeGreaterThanOrEqual(0);
+  expect(r.right).toBeLessThanOrEqual(r.width);
+});
+
 const CODE_MODE_ID = "c0de5e55-0011-4000-8000-000000000011";
 
 test("在 App 里，Code Mode 代码运行期间的调用按 App 给的 codeCalls 并进对话记录", async ({ page }) => {

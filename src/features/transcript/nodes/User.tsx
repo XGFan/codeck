@@ -49,7 +49,7 @@ export function UserPromptView({ node, body, branch }: { node: Node; body: UserB
         data-arrived={fresh || undefined}
         onAnimationEnd={fresh ? () => arrived(node.id) : undefined}
         className={cn(
-          "max-w-[560px] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap",
+          "max-w-[min(560px,100%)] rounded-2xl bg-selection/60 px-3.5 py-2 text-[14px] leading-[1.55] break-words whitespace-pre-wrap",
           fresh && "prompt-arrive",
         )}
       >

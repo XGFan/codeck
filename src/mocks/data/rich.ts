@@ -594,7 +594,7 @@ export const richMain: Node[] = [
   userNode(
     "n16",
     ts(),
-    "接下来把限流参数接到 config.toml，键名用 `[rate_limit] per_minute`，例如：\n\n```toml\n# 每个 API key 每分钟允许的请求数；超出后返回 429 并带 Retry-After，令牌按秒均匀补充，进程重启后计数清零，多实例部署时各实例分别计数\n[rate_limit]\nper_minute = 120\n```\n\n没配置时沿用 120。",
+    "接下来把限流参数接到 config.toml，键名用 `[rate_limit] per_minute`，例如：\n\n```toml\n# 每个 API key 每分钟允许的请求数；超出后返回 429 并带 Retry-After，令牌按秒均匀补充，进程重启后计数清零，多实例部署时各实例分别计数\n# 运维说明：/srv/lumen_api/deploy/production/docs/operations/rate_limiting.md\n[rate_limit]\nper_minute = 120\n```\n\n没配置时沿用 120。",
   ),
   // Claude Code retried the request (system/api_error) and gave up: the error message ends those retries.
   otherNode("n-retry1", ts(), {

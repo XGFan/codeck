@@ -64,6 +64,7 @@ struct SessionListView: View {
                     sections(all, now: now)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 88)

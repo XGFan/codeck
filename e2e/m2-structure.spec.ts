@@ -220,7 +220,7 @@ test("代码块里的长行自动换行，不出现横向滚动", async ({ page 
       lines: el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight),
     }));
     expect(m.overflow).toBe(0);
-    // 3 source lines; the long comment takes at least two.
+    // 3 or 4 source lines; the long comment takes at least two.
     expect(m.lines).toBeGreaterThan(4);
   }
 });
