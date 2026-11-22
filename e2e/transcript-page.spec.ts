@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
+import { reveal } from "./helpers";
+import { unfoldAll } from "./unfold";
 
 const RICH_ID = "7f3a9c10-0001-4000-8000-000000000001";
 
@@ -40,6 +42,58 @@ test.describe("手指点按", () => {
     await chip.tap();
     await expect(page.getByTestId("image-large")).toBeVisible();
     await expect(page.getByTestId("prompt-image-preview")).toHaveCount(0);
+  });
+
+  const opacity = (l: Locator) => l.evaluate((e) => getComputedStyle(e).opacity);
+
+  test("复制按钮与工具行的展开箭头不用悬停就显示", async ({ page }) => {
+    await page.goto(`/transcript.html?sessionId=${RICH_ID}`);
+    const t = page.getByTestId("transcript");
+    const meta = page.getByTestId("prompt-meta").last();
+    await expect(meta).toBeVisible();
+    expect(await opacity(meta.getByTestId("copy-button"))).toBe("1");
+    const bash = t.locator('[data-tool="Bash"]').filter({ hasText: "cargo test --workspace" });
+    await unfoldAll(page);
+    await reveal(t, bash, "top");
+    const row = bash.getByRole("button").first();
+    expect(await opacity(row.locator("svg").last())).toBe("1");
+    await row.tap();
+    expect(await opacity(bash.getByRole("button", { name: "复制命令" }))).toBe("1");
+    // Always shown, it sits above a code block's text instead of over its first line.
+    const block = t.locator("pre:not([data-testid])").filter({ hasText: "令牌按秒均匀补充" });
+    await reveal(t, block);
+    const room = await block.evaluate((pre) => {
+      const button = pre.parentElement!.querySelector("[data-testid=copy-button]")!.getBoundingClientRect();
+      return pre.getBoundingClientRect().top + parseFloat(getComputedStyle(pre).paddingTop) - button.bottom;
+    });
+    expect(room).toBeGreaterThanOrEqual(0);
+  });
+
+  test("提问卡片里点一下带预览的选项，换成它的预览", async ({ page }) => {
+    await page.goto(`/transcript.html?sessionId=${RICH_ID}`);
+    const t = page.getByTestId("transcript");
+    const ask = page.getByTestId("ask").filter({ hasText: "限流超限时应返回什么？" });
+    await unfoldAll(page);
+    await reveal(t, ask);
+    const layer = ask.getByTestId("ask-question").nth(2);
+    const preview = layer.getByTestId("option-preview");
+    await expect(preview).toHaveAttribute("data-option", "0");
+    await layer.getByText("最外层").tap();
+    await expect(preview).toHaveAttribute("data-option", "1");
+  });
+
+  test("手指碰到对话记录的右边缘不会翻一屏", async ({ page }) => {
+    await page.goto(`/transcript.html?sessionId=${RICH_ID}`);
+    const t = page.getByTestId("transcript");
+    await expect(t.locator("[data-row]").first()).toBeVisible();
+    await t.evaluate((e) => (e.scrollTop = e.scrollHeight / 2));
+    await page.waitForTimeout(300);
+    const before = await t.evaluate((e) => e.scrollTop);
+    // Off the scrollbar's thumb (halfway down, as the list is): where a click would page up.
+    const box = (await t.boundingBox())!;
+    await page.touchscreen.tap(box.x + box.width - 3, box.y + 80);
+    await page.waitForTimeout(300);
+    expect(await t.evaluate((e) => e.scrollTop)).toBe(before);
   });
 });
 

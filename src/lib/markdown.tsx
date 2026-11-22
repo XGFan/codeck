@@ -30,8 +30,9 @@ const components: Components = {
     const raw = first && "children" in first ? first.children.map((c) => ("value" in c ? c.value : "")).join("") : "";
     return (
       <div className="group/copy relative my-2">
+        {/* With a finger the copy button always shows: room above the code for it, so it covers none. */}
         <pre
-          className="rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] break-words whitespace-pre-wrap"
+          className="rounded-md bg-code px-3 py-2 font-mono text-[12px] leading-[1.55] break-words whitespace-pre-wrap pointer-coarse:pt-7"
           {...rest}
         />
         <CopyButton text={raw.replace(/\n$/, "")} className="absolute top-1.5 right-1.5 bg-code/90" />

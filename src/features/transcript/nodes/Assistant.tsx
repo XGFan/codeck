@@ -67,7 +67,10 @@ function segmentBody(row: AssistantRowData): ReactNode {
       return row.text.trim() ? (
         <>
           <Anchor nodeId={row.node.id} className="group/copy relative w-full">
-            {!row.answer && <CopyButton text={row.text} className="absolute -top-2 right-0 z-10 bg-ground/90" />}
+            {/* Over the text's first line: without hover (a finger) it would always cover it, so not there. */}
+            {!row.answer && (
+              <CopyButton text={row.text} className="absolute -top-2 right-0 z-10 bg-ground/90 pointer-coarse:hidden" />
+            )}
             {/* The size of the input box's text. */}
             <Markdown text={row.text} className="w-full text-[14px] leading-[1.7]" />
           </Anchor>

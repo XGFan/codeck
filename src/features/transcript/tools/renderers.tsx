@@ -108,7 +108,7 @@ export function BashView({ nodeId, call, startMs, ctx }: RenderProps) {
           className="absolute top-1 right-1.5 z-10 bg-terminal text-[#a1a1a6]"
         />
         {command && (
-          <pre className="m-0 overflow-auto bg-terminal px-3 pt-2.5 font-mono text-[12px] leading-[1.55] whitespace-pre-wrap break-words text-[#e4e4e6]">
+          <pre className="m-0 overflow-auto bg-terminal px-3 pt-2.5 font-mono text-[12px] leading-[1.55] whitespace-pre-wrap break-words text-[#e4e4e6] pointer-coarse:pt-7">
             <span className="text-[#a1a1a6] select-none">$ </span>
             {command}
           </pre>

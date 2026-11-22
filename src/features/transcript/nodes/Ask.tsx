@@ -163,7 +163,8 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
   // Multi-select answers join the picked labels with ", "; whatever is not a label was typed in "Other".
   const picked = !answer ? [] : q.multiSelect && !labels.has(answer) ? answer.split(/,\s*/).filter(Boolean) : [answer];
   const custom = picked.filter((p) => !labels.has(p)).join(", ");
-  // The preview shown: of the option under the pointer, else of the (first) picked one, else of the first.
+  // The preview shown: of the option under the pointer (a finger's: the one tapped), else of the (first) picked one,
+  // else of the first.
   const previews = hasPreview(options);
   const [hover, setHover] = useState<number | null>(null);
   const shown =
@@ -192,8 +193,9 @@ function QuestionView({ q, answer, note }: { q: Question; answer: string | undef
               <div
                 key={`${i}|${o.label}`}
                 data-chosen={on || undefined}
-                onPointerEnter={previews ? () => setHover(i) : undefined}
-                onPointerLeave={previews ? () => setHover(null) : undefined}
+                onPointerEnter={previews ? (e) => e.pointerType === "mouse" && setHover(i) : undefined}
+                onPointerLeave={previews ? (e) => e.pointerType === "mouse" && setHover(null) : undefined}
+                onClick={previews ? () => setHover(i) : undefined}
                 className={cn(
                   "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[12px]",
                   on ? "border-accent/50 bg-selection" : "border-border",

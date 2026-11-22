@@ -130,7 +130,8 @@ export function Shell({
           <ChevronRight
             size={12}
             strokeWidth={1.8}
-            className="shrink-0 opacity-0 group-hover/tool:opacity-100"
+            // Shown on hover; a finger has none, so always.
+            className="shrink-0 opacity-0 group-hover/tool:opacity-100 pointer-coarse:opacity-100"
             aria-hidden
           />
         )}

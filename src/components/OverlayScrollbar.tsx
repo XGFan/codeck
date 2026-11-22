@@ -145,7 +145,8 @@ export function OverlayScrollbar({
         scrollRef.current?.scrollBy({ top: e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY });
       }}
       // Clips the thumb: past the strip's end it would overflow the page, whose (10px) scrollbar then shifts the layout.
-      className="group/sb absolute inset-y-0 right-0 z-10 w-2.5 overflow-hidden select-none"
+      // A finger lets touches through to the list: it scrolls by swiping, and a tap here would page.
+      className="group/sb absolute inset-y-0 right-0 z-10 w-2.5 overflow-hidden select-none pointer-coarse:pointer-events-none"
     >
       <div
         ref={thumb}
