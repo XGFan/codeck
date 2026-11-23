@@ -107,7 +107,7 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 
 ### 终端窗口（过渡用，ADR-0015）
 
-- 认不出的界面卡片上的「在终端窗口中处理」与「···」菜单的「在终端窗口中打开」打开 `term-<Holder ID>` 窗口（`terminal.html`，前端 `features/terminal`，入口 `src/terminal-main.tsx`），xterm.js 经 `crates/codeck-term`（tauri 插件，命令 `plugin:codeck-term|…`，权限在 `capabilities/terminal.json` 与主窗口的 `codeck-term:main-window`）直连 Holder 的 unix socket；带 `size_events` 附着，从不发 `Resize`。不进 `Api` 与 bindings，mock 模式下是 `window.open` 的弹窗回放固定屏幕。主窗口按 Connect 状态给它推状态、在 Pane 没了（不在 `ccrpc ls` 里、也没有连接）时关掉它（`features/terminal/windows.ts`）。
+- 认不出的界面卡片上的「在终端窗口中处理」与「···」菜单的「显示 Terminal」打开 `term-<Holder ID>` 窗口（`terminal.html`，前端 `features/terminal`，入口 `src/terminal-main.tsx`），xterm.js 经 `crates/codeck-term`（tauri 插件，命令 `plugin:codeck-term|…`，权限在 `capabilities/terminal.json` 与主窗口的 `codeck-term:main-window`）直连 Holder 的 unix socket；带 `size_events` 附着，从不发 `Resize`。不进 `Api` 与 bindings，mock 模式下是 `window.open` 的弹窗回放固定屏幕。主窗口按 Connect 状态给它推状态、在 Pane 没了（不在 `ccrpc ls` 里、也没有连接）时关掉它（`features/terminal/windows.ts`）。
 - 整块可删：crate、`src-tauri` 里的 `.plugin(codeck_term::init())`、两处 capability、`terminal.html` 与 vite 的 input、`features/terminal`、`App.tsx` 的 `useTerminalWindows()`、ScreenCard 的按钮与 `ConnectMenuItems` 的一项。
 
 ### codeck-cli

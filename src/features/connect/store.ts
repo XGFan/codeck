@@ -550,7 +550,7 @@ export const useConnect = create<ConnectStore>((set, get) => {
         // Shown at once; the watch reports it too.
         set((s) => ({ ls: s.ls.map((e) => (e.holder_id === holderId ? { ...e, hidden } : e)) }));
       } catch (e) {
-        setErr(sessionId, `${hidden ? "隐藏" : "显示"} Pane 失败：${errorText(e)}`);
+        setErr(sessionId, `在 ToH ${hidden ? "隐藏" : "打开"}失败：${errorText(e)}`);
       }
     },
 

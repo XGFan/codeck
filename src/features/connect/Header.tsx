@@ -145,9 +145,9 @@ export function ConnectButton({
  * The header 「···」 menu's items for a Session running in a clay Pane (`ccrpc ls`), then a separator when `separated`:
  * 「Connect」 when not connected (disabled until its ccrpc plugin has reported; not offered while its Holder is
  * connected for another Session, after `/clear` there), 「Disconnect」 while connected (closes ccrpc's stdin; the
- * Session keeps running), 「隐藏 Pane」/「显示 Pane」, which hides the Pane on the ToH Mac Client (its hidden
+ * Session keeps running), 「在 ToH 隐藏」/「在 ToH 打开」, which hides the Pane on the ToH Mac Client (its hidden
  * window) or shows it again — iOS and web list it either way; not offered when ccrpc is too old to say — and
- * 「在终端窗口中打开」 (desktop only, ADR-0015).
+ * 「显示 Terminal」 (desktop only, ADR-0015).
  */
 export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: string; separated?: boolean }) {
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
@@ -207,7 +207,7 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
           ) : (
             <EyeOff size={13} strokeWidth={1.5} aria-hidden />
           )}
-          {pane.hidden ? "显示 Pane" : "隐藏 Pane"}
+          {pane.hidden ? "在 ToH 打开" : "在 ToH 隐藏"}
         </DropdownMenuItem>
       )}
       {terminal && (
@@ -221,7 +221,7 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
           }
         >
           <Terminal size={13} strokeWidth={1.5} aria-hidden />
-          在终端窗口中打开
+          显示 Terminal
         </DropdownMenuItem>
       )}
       {separated && <DropdownMenuSeparator />}

@@ -130,20 +130,20 @@ test("「···」菜单：ccrpc ls 里的 Live Session 可 Connect，插件未�
   await inMenu(page, "connect-button", (b) => expect(b).toHaveCount(0));
 });
 
-test("「···」菜单：clay 里的 Session 不论是否 Connect 都可隐藏 / 显示 Pane，不在 clay 里的没有", async ({ page }) => {
+test("「···」菜单：clay 里的 Session 不论是否 Connect 都可在 ToH 隐藏 / 打开，不在 clay 里的没有", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH);
-  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("隐藏 Pane"));
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("在 ToH 隐藏"));
   await pick(page, "pane-visibility");
-  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("显示 Pane"));
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("在 ToH 打开"));
   const [hide] = (await probe(page)).paneHides;
   expect(hide.hidden).toBe(true);
 
   await pick(page, "connect-button");
   await expect(page.getByTestId("connect-panel")).toBeVisible();
-  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("显示 Pane"));
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("在 ToH 打开"));
   await pick(page, "pane-visibility");
-  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("隐藏 Pane"));
+  await inMenu(page, "pane-visibility", (b) => expect(b).toContainText("在 ToH 隐藏"));
   expect((await probe(page)).paneHides).toEqual([hide, { holderId: hide.holderId, hidden: false }]);
 
   await open(page, NOT_LISTED);
@@ -1504,7 +1504,7 @@ test("认不出的界面：「在终端窗口中处理」打开这个 Pane 的�
   await expect(popup.getByTestId("terminal-back")).toHaveCount(0);
   expect(popup.isClosed()).toBe(false);
 
-  // 「···」 › 「在终端窗口中打开」, also without a connection: the window already open.
+  // 「···」 › 「显示 Terminal」, also without a connection: the window already open.
   await pick(page, "pane-terminal");
   await page.waitForTimeout(300);
   expect(page.context().pages()).toHaveLength(2);
@@ -1517,10 +1517,10 @@ test("认不出的界面：「在终端窗口中处理」打开这个 Pane 的�
   await closed;
 });
 
-test("「···」›「在终端窗口中打开」：没有 Connect 也能打开 clay 里 Session 的终端窗口", async ({ page }) => {
+test("「···」›「显示 Terminal」：没有 Connect 也能打开 clay 里 Session 的终端窗口", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH);
-  await inMenu(page, "pane-terminal", (b) => expect(b).toHaveText("在终端窗口中打开"));
+  await inMenu(page, "pane-terminal", (b) => expect(b).toHaveText("显示 Terminal"));
   const [popup] = await Promise.all([page.waitForEvent("popup"), pick(page, "pane-terminal")]);
   await expect(popup.getByTestId("terminal-screen")).toContainText("Total cost");
   await expect(popup.getByTestId("terminal-back")).toHaveCount(0);
