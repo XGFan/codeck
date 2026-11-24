@@ -14,7 +14,7 @@ import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useAllSessions, useSession, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
-import { useAttention } from "@/features/attention";
+import { isKeeping, useAttention, useAttentionStore } from "@/features/attention";
 import { haaAvailable, HaaBar, HaaRoot, useHaa } from "@/features/haa";
 import type { LiveStatus } from "@/ipc/bindings";
 import { Composer } from "./Composer";
@@ -66,13 +66,15 @@ function useLive(): LiveRow[] {
 function useWaiting(): string[] {
   const live = useLive();
   const conns = useConnect((s) => s.conns);
+  // The Host's cache refresh shows a `/btw` panel for a moment: that is no one waiting.
+  const keeping = useAttentionStore((s) => s.keeping);
   return useMemo(
     () =>
       waitingSessions(
-        live.filter((l) => l.status === "waiting").map((l) => l.id),
+        live.filter((l) => l.status === "waiting" && !isKeeping(keeping, l.id)).map((l) => l.id),
         conns,
       ),
-    [live, conns],
+    [live, conns, keeping],
   );
 }
 

@@ -69,6 +69,16 @@ pub struct HaaWorkersEvent {
     pub workers: String,
 }
 
+/// The Host starts (`active`) or ends refreshing a Session's prompt cache (a `/btw` of its own); `error` is why the
+/// refresh failed. Meanwhile the Session's Live state says waiting.
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepAliveEvent {
+    pub session_id: String,
+    pub active: bool,
+    pub error: Option<String>,
+}
+
 /// `haa ls --all --json --watch` (instance `id`) ended by itself; `message` is why.
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
 pub struct HaaWatchEndedEvent {

@@ -207,6 +207,34 @@ function LanAccessField() {
   );
 }
 
+/** 「缓存保活」: minutes an idle Live Session's prompt cache goes unused before the Host refreshes it (0 = off). */
+function KeepAliveField() {
+  const qc = useQueryClient();
+  const { data: minutes } = useQuery({ queryKey: ["keepAliveMinutes"], queryFn: () => api.keepAliveMinutes() });
+  const save = useMutation({
+    mutationFn: (m: number) => api.setKeepAliveMinutes(m),
+    onSuccess: (m) => qc.setQueryData(["keepAliveMinutes"], m),
+  });
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Segmented
+        label="缓存保活"
+        value={String(minutes ?? "")}
+        options={[
+          { value: "0", label: "关闭" },
+          ...[30, 40, 50].map((m) => ({ value: String(m), label: `${m} 分钟` })),
+        ]}
+        onChange={(v) => save.mutate(Number(v))}
+        testId="keep-alive"
+      />
+      <div className="text-[12px] text-secondary">
+        ToH 里的 Session 空闲这么久、缓存还没过期（1 小时）时，自动发一条 /btw 续上缓存；/btw 不进对话记录。
+      </div>
+      {save.error && <div className="text-[12px] text-error">{errorText(save.error)}</div>}
+    </div>
+  );
+}
+
 /** 「关闭」 or how long a Session stays so, unseen, before its notification. */
 const DELAYS: { value: string; label: string }[] = [
   { value: "off", label: "关闭" },
@@ -276,6 +304,9 @@ function GeneralTab() {
               label="已完成通知"
               hint="Session 一轮结束这么久、期间没在 CoDeck 里看过它时，发系统通知。"
             />
+          </Row>
+          <Row label="缓存保活" testId="set-keep-alive">
+            <KeepAliveField />
           </Row>
         </>
       )}

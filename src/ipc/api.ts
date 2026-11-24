@@ -123,6 +123,12 @@ export interface Api {
   /** Stores a pasted image; returns its path. */
   ccrpcSaveImage(base64: string, ext: string): Promise<string>;
   pickDir(): Promise<string | null>;
+  /** 「缓存保活」: minutes an idle Live Session's prompt cache goes unused before the Host refreshes it (0 = off). */
+  keepAliveMinutes(): Promise<number>;
+  /** Saves 「缓存保活」; returns what was saved. */
+  setKeepAliveMinutes(minutes: number): Promise<number>;
+  /** The Host starts (`active`) or ends refreshing a Session's prompt cache; `error` is why it failed. */
+  onKeepAlive(cb: (e: { sessionId: string; active: boolean; error: string | null }) => void): Promise<Unlisten>;
   /** The Dock badge; 0 clears it. */
   setBadge(count: number): Promise<void>;
   /** A system notification; a click on it brings the window back and reports `url` (a `codeck://` link). */

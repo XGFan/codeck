@@ -46,6 +46,10 @@ macro_rules! for_each_method {
             remote fn get_sidebar_projects() -> Option<Vec<$crate::types::SidebarProject>>;
             /// Saves the Projects in the sidebar (paths trimmed, empty and repeated ones dropped); returns what was saved.
             local fn set_sidebar_projects(projects: Vec<$crate::types::SidebarProject>) -> Vec<$crate::types::SidebarProject>;
+            /// 「缓存保活」: minutes an idle Live Session's prompt cache goes unused before the Host refreshes it (0 = off).
+            local fn keep_alive_minutes() -> u32;
+            /// Saves 「缓存保活」 (minutes, 0 = off); returns what was saved.
+            local fn set_keep_alive_minutes(minutes: u32) -> u32;
             local fn ccrpc_info() -> $crate::types::CcrpcInfo;
             /// Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
             /// removes it. Applies to the connections made from now on.

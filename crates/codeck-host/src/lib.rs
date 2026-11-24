@@ -7,6 +7,7 @@ pub mod commands;
 pub mod connect;
 pub mod events;
 mod haa;
+mod keepalive;
 pub mod lan;
 mod methods;
 pub mod prices;
@@ -99,6 +100,7 @@ pub struct Host {
     lan: lan::LanService,
     events: EventSink,
     config: HostConfig,
+    keep_alive: keepalive::KeepAliveState,
 }
 
 impl Host {
@@ -133,7 +135,7 @@ impl Host {
             }
             hub
         });
-        Ok(Arc::new_cyclic(|me| Host {
+        let host = Arc::new_cyclic(|me| Host {
             me: me.clone(),
             state,
             ccrpc,
@@ -142,7 +144,10 @@ impl Host {
             lan: lan::LanService::default(),
             events,
             config,
-        }))
+            keep_alive: Default::default(),
+        });
+        keepalive::spawn(Arc::downgrade(&host));
+        Ok(host)
     }
 
     /// Closes every ccrpc (the process is quitting); the Sessions themselves keep running.

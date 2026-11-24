@@ -14,8 +14,8 @@ use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 
 use crate::events::{
     CcrpcClosingEvent, CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent,
-    CcrpcRemoteConnEvent, HaaWatchEndedEvent, HaaWorkersEvent, IndexStatusEvent, LiveChangedEvent,
-    PricesChangedEvent, SessionsChangedEvent,
+    CcrpcRemoteConnEvent, HaaWatchEndedEvent, HaaWorkersEvent, IndexStatusEvent, KeepAliveEvent,
+    LiveChangedEvent, PricesChangedEvent, SessionsChangedEvent,
 };
 
 /// The single source of commands and events, shared by the app and the bindings export.
@@ -34,7 +34,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             CcrpcRemoteConnEvent,
             CcrpcClosingEvent,
             HaaWorkersEvent,
-            HaaWatchEndedEvent
+            HaaWatchEndedEvent,
+            KeepAliveEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
 }
@@ -177,6 +178,16 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
             HostEvent::HaaWatchEnded { id, message } => {
                 HaaWatchEndedEvent { id, message }.emit(&handle)
             }
+            HostEvent::KeepAlive {
+                session_id,
+                active,
+                error,
+            } => KeepAliveEvent {
+                session_id,
+                active,
+                error,
+            }
+            .emit(&handle),
             // For the LAN's clients: the window folds ccrpc's lines itself.
             HostEvent::ConnectState(_) | HostEvent::ConnectRemoved { .. } => Ok(()),
         };
@@ -289,6 +300,18 @@ fn host_events_match_the_typed_events() {
         HaaWatchEndedEvent {
             id: 1,
             message: "m".into(),
+        },
+    );
+    same(
+        HostEvent::KeepAlive {
+            session_id: "s".into(),
+            active: false,
+            error: Some("e".into()),
+        },
+        KeepAliveEvent {
+            session_id: "s".into(),
+            active: false,
+            error: Some("e".into()),
         },
     );
 }

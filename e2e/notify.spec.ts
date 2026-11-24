@@ -3,7 +3,13 @@ import { RICH_TITLE } from "./helpers";
 
 const WAITING_TITLE = "优化首页首屏加载（LCP 3.2s → 1.8s）";
 
-type Probe = { notifications: { title: string; body: string; url: string }[]; clickNotification(url: string): void };
+type Probe = {
+  notifications: { title: string; body: string; url: string }[];
+  clickNotification(url: string): void;
+  keepAlive: number;
+  badge: number;
+  keepAliveEvent(sessionId: string, active: boolean): void;
+};
 const notifications = (page: Page) =>
   page.evaluate(() => (window.__cvCcrpc as unknown as Probe).notifications.map((n) => ({ ...n })));
 
@@ -92,4 +98,38 @@ test("设置里关闭的通知不发", async ({ page }) => {
     waiting: null,
     done: null,
   });
+});
+
+test("缓存保活期间 /btw 面板的等待不算等待作答，「已完成」也不清掉", async ({ page }) => {
+  await page.goto("/");
+  const id = await endTurn(page);
+  const row = liveRow(page, RICH_TITLE);
+  await expect(row.getByTestId("done-tag")).toBeVisible();
+  const badge = () => page.evaluate(() => (window.__cvCcrpc as unknown as Probe).badge);
+  const before = await badge();
+  // The Host's `/btw` panel: the process file says waiting for a moment.
+  await page.evaluate((sid) => (window.__cvCcrpc as unknown as Probe).keepAliveEvent(sid, true), id);
+  await page.evaluate(
+    (sid) =>
+      window.__cvMock!.setLive(sid, { status: "waiting", rawStatus: "waiting", waitingFor: "dialog open", pid: 48211 }),
+    id,
+  );
+  await page.waitForTimeout(500);
+  await expect(row.getByTestId("waiting-tag")).toHaveCount(0);
+  expect(await badge()).toBe(before);
+  await page.evaluate(
+    (sid) => window.__cvMock!.setLive(sid, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 48211 }),
+    id,
+  );
+  await page.evaluate((sid) => (window.__cvCcrpc as unknown as Probe).keepAliveEvent(sid, false), id);
+  await expect(row.getByTestId("done-tag")).toBeVisible();
+});
+
+test("设置里的缓存保活：默认 40 分钟，可关闭", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Meta+,");
+  await expect(page.getByTestId("keep-alive-40")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("keep-alive-0").click();
+  await expect(page.getByTestId("keep-alive-0")).toHaveAttribute("aria-checked", "true");
+  expect(await page.evaluate(() => (window.__cvCcrpc as unknown as Probe).keepAlive)).toBe(0);
 });

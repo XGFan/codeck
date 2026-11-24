@@ -132,6 +132,7 @@ const lsEndedCbs = new Set<(message: string) => void>();
 const remoteConnCbs = new Set<(conn: string, holderId: string | null) => void>();
 const closingCbs = new Set<(conn: string) => void>();
 const notificationCbs = new Set<(url: string) => void>();
+const keepAliveCbs = new Set<(e: { sessionId: string; active: boolean; error: string | null }) => void>();
 const conns = new Map<string, Conn>();
 /** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
 const closedPanes = new Set<string>();
@@ -152,6 +153,10 @@ export interface CcrpcProbe {
   notifications: { title: string; body: string; url: string }[];
   /** The user clicks a notification with this link. */
   clickNotification: (url: string) => void;
+  /** 「缓存保活」 as last saved (minutes, 0 = off). */
+  keepAlive: number;
+  /** The Host starts (`active`) or ends refreshing this Session's prompt cache. */
+  keepAliveEvent: (sessionId: string, active: boolean, error?: string) => void;
   images: number;
   /** `ccrpcSetAnalyzer` calls. */
   analyzerSaves: number;
@@ -203,6 +208,10 @@ const probe: CcrpcProbe = {
   notifications: [],
   clickNotification: (url) => {
     for (const cb of notificationCbs) cb(url);
+  },
+  keepAlive: 40,
+  keepAliveEvent: (sessionId, active, error) => {
+    for (const cb of keepAliveCbs) cb({ sessionId, active, error: error ?? null });
   },
   images: 0,
   analyzerSaves: 0,
@@ -501,6 +510,9 @@ type CcrpcApi = Pick<
   | "pickDir"
   | "setBadge"
   | "notify"
+  | "keepAliveMinutes"
+  | "setKeepAliveMinutes"
+  | "onKeepAlive"
   | "onNotificationClick"
   | "onCcrpcLine"
   | "onCcrpcExit"
@@ -707,6 +719,9 @@ export function createMockCcrpc(): CcrpcApi {
       probe.notifications.push(n);
     },
     onNotificationClick: (cb) => subscribe(notificationCbs, cb),
+    keepAliveMinutes: async () => probe.keepAlive,
+    setKeepAliveMinutes: async (m) => (probe.keepAlive = m),
+    onKeepAlive: (cb) => subscribe(keepAliveCbs, cb),
     onCcrpcLine: (cb) => subscribe(lineCbs, cb),
     onCcrpcExit: (cb) => subscribe(exitCbs, cb),
     onCcrpcLs: (cb) => subscribe(lsCbs, cb),

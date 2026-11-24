@@ -83,6 +83,7 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
                     | HostEvent::CcrpcClosing { .. }
                     | HostEvent::HaaWorkers { .. }
                     | HostEvent::HaaWatchEnded { .. }
+                    | HostEvent::KeepAlive { .. }
             )
         {
             return;

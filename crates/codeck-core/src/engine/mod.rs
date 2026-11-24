@@ -275,6 +275,15 @@ impl Engine {
     /// Returns the new Live Session snapshot when it changed since the last poll.
     /// Safe to call from several threads: the snapshot is taken under the lock, so an older one
     /// never replaces a newer one.
+    /// The Live Sessions now, leaving alone what `poll_live` compares against (for the Host's keep-alive).
+    pub fn live_now(&self) -> CoreResult<Vec<LiveEntry>> {
+        Ok(self
+            .live_map()?
+            .into_iter()
+            .map(|(session_id, state)| LiveEntry { session_id, state })
+            .collect())
+    }
+
     pub fn poll_live(&self) -> CoreResult<Option<LiveChanged>> {
         let mut last = self.live.lock();
         let snapshot: Vec<LiveEntry> = self

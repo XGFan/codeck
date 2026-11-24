@@ -20,6 +20,13 @@ import type {
 /** Something waiting for an answer, as a card. */
 export type Request = RequestEvent;
 
+/**
+ * The Host's own `/btw` that keeps the prompt cache (`crates/codeck-host/src/keepalive.rs`, same marker): no card,
+ * nothing to answer.
+ */
+export const isKeepAlive = (r: { type: string; question?: unknown }) =>
+  r.type === "btw" && typeof r.question === "string" && r.question.trim().startsWith("ping, just say pong");
+
 /** The conversation went back to before a prompt: shown in the transcript until the next prompt. */
 export interface Rewound {
   uuid: string;
@@ -250,7 +257,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
         model: m.model,
         effort: m.effort,
         contextTokens: m.context_tokens,
-        requests: m.requests,
+        requests: m.requests.filter((r) => !isKeepAlive(r)),
         queue: m.queue,
         tasks: m.tasks,
         codeCalls: m.code_calls.map((c) => ({
@@ -305,7 +312,7 @@ export function apply(s: ConnState, m: InMsg): ConnState {
     case "dialog":
     case "unrecognized":
     case "btw":
-      return upsertRequest(s, m);
+      return isKeepAlive(m) ? s : upsertRequest(s, m);
     case "request_end":
       return { ...s, requests: s.requests.filter((r) => r.request_id !== m.request_id) };
     case "session_info":

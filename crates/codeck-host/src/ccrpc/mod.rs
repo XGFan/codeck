@@ -77,6 +77,11 @@ impl CcrpcState {
         }
     }
 
+    /// ccrpc, set up now if it was not (may run the login shell once).
+    pub(crate) fn app(&self) -> relay::R<&App> {
+        self.0.get()
+    }
+
     /// Writes a command line to a connection's ccrpc (for the Connect hub).
     pub(crate) fn writer(&self) -> Writer {
         let cell = self.0.clone();

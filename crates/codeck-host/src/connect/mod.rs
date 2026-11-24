@@ -46,6 +46,8 @@ pub struct ConnectHub {
     /// that was just ended cannot start one afterwards.
     keep: Mutex<Keep>,
     stopped: AtomicBool,
+    /// Who wants a connection's event lines as they come (`observe`), by connection id.
+    observers: Mutex<Vec<(String, std::sync::mpsc::Sender<Value>)>>,
 }
 
 #[derive(Default)]
@@ -104,6 +106,7 @@ impl ConnectHub {
             ls: Mutex::new(Err(None)),
             keep: Mutex::default(),
             stopped: AtomicBool::new(false),
+            observers: Mutex::default(),
         })
     }
 
@@ -188,6 +191,9 @@ impl ConnectHub {
             self.changed(&mut inner, conn);
         }
         drop(inner);
+        self.observers
+            .lock()
+            .retain(|(c, tx)| c != conn || tx.send(v.clone()).is_ok());
         // A failed Fork, or a `new` that never got a Session: ccrpc closes the Pane and exits, and the window that
         // did not start it has nothing to show.
         if (v["type"] == "fork" && !v["error"].is_null()) || v["type"] == "start_failed" {
@@ -290,8 +296,15 @@ impl ConnectHub {
         v
     }
 
+    /// Every event line of `conn` from now on (not the responses), until the receiver is dropped.
+    pub(crate) fn observe(&self, conn: &str) -> std::sync::mpsc::Receiver<Value> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.observers.lock().push((conn.to_string(), tx));
+        rx
+    }
+
     /// The newest connection to `holder_id` whose Session is still running and which no one is disconnecting.
-    fn live_conn_for(&self, holder_id: &str) -> Option<String> {
+    pub(crate) fn live_conn_for(&self, holder_id: &str) -> Option<String> {
         // `c<n>`, numbered as started.
         let seq = |conn: &str| conn[1..].parse::<u64>().unwrap_or(0);
         self.inner

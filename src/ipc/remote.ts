@@ -157,6 +157,9 @@ export function createRemoteApi(base: string): RemoteApi {
     ccrpcSaveImage: (base64, ext) => rpc("ccrpc_save_image", { base64, ext }),
     pickDir: () => desktopOnly("选择目录"),
     setBadge: async () => {},
+    keepAliveMinutes: () => desktopOnly("缓存保活"),
+    setKeepAliveMinutes: () => desktopOnly("缓存保活"),
+    onKeepAlive: async () => () => {},
     notify: async () => {},
     onNotificationClick: async () => () => {},
     onCcrpcLine: (cb) =>

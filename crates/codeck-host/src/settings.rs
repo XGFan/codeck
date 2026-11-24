@@ -30,6 +30,20 @@ pub struct Settings {
     /// 「设置 › 通用 › 局域网访问」: the app serves its `remote` methods on the LAN (ADR-0012).
     #[serde(default)]
     pub lan_access: bool,
+    /// 「设置 › 通用 › 缓存保活」: how many minutes an idle Live Session's prompt cache goes unused before the Host
+    /// refreshes it (`keepalive.rs`); `None` = [`DEFAULT_KEEP_ALIVE_MINUTES`], `Some(0)` = off.
+    #[serde(default)]
+    pub keep_alive_minutes: Option<u32>,
+}
+
+pub const DEFAULT_KEEP_ALIVE_MINUTES: u32 = 40;
+
+impl Settings {
+    /// 「缓存保活」 in minutes; 0 = off.
+    pub fn keep_alive_minutes(&self) -> u32 {
+        self.keep_alive_minutes
+            .unwrap_or(DEFAULT_KEEP_ALIVE_MINUTES)
+    }
 }
 
 /// A Project added to the sidebar: a directory (usually an indexed Project's path). `nest` gathers the Sessions of
@@ -177,6 +191,7 @@ mod tests {
                 nest: true,
             }]),
             lan_access: true,
+            keep_alive_minutes: Some(0),
         };
         save_to(&path, &some).unwrap();
         assert_eq!(load_from(&path), some);

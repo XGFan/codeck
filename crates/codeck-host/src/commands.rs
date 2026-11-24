@@ -169,6 +169,27 @@ impl Host {
             .map_err(internal)
     }
 
+    /// 「缓存保活」 in minutes (0 = off).
+    pub async fn keep_alive_minutes(&self) -> CmdResult<u32> {
+        tokio::task::spawn_blocking(|| crate::settings::load().keep_alive_minutes())
+            .await
+            .map_err(internal)
+    }
+
+    /// Saves 「缓存保活」 (minutes, 0 = off); returns what was saved.
+    pub async fn set_keep_alive_minutes(&self, minutes: u32) -> CmdResult<u32> {
+        tokio::task::spawn_blocking(move || {
+            crate::settings::update(|s| s.keep_alive_minutes = Some(minutes))
+                .map(|s| s.keep_alive_minutes())
+                .map_err(|e| AppError {
+                    code: ErrorCode::Internal,
+                    message: format!("保存设置失败：{e}"),
+                })
+        })
+        .await
+        .map_err(internal)?
+    }
+
     /// Saves the Projects in the sidebar (paths trimmed, empty and repeated ones dropped); returns what was saved.
     pub async fn set_sidebar_projects(
         &self,

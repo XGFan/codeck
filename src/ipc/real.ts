@@ -67,6 +67,9 @@ export function createRealApi(): Api {
       return typeof r === "string" ? r : null;
     },
     setBadge: (count) => getCurrentWindow().setBadgeCount(count > 0 ? count : undefined),
+    keepAliveMinutes: commands.keepAliveMinutes,
+    setKeepAliveMinutes: commands.setKeepAliveMinutes,
+    onKeepAlive: (cb) => events.keepAliveEvent.listen(({ payload }) => cb(payload)),
     notify: async ({ title, body, url }) => sendNotification({ title, body, extra: { url } }),
     onNotificationClick: async (cb) => {
       // The shell brings the window back (`on_action` in lib.rs); the link says which Session to open.

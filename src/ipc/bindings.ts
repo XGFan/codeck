@@ -39,6 +39,10 @@ export const commands = {
 	getSidebarProjects: () => __TAURI_INVOKE<SidebarProject[] | null>("get_sidebar_projects"),
 	/**  Saves the Projects in the sidebar (paths trimmed, empty and repeated ones dropped); returns what was saved. */
 	setSidebarProjects: (projects: SidebarProject[]) => __TAURI_INVOKE<SidebarProject[]>("set_sidebar_projects", { projects }),
+	/**  「缓存保活」: minutes an idle Live Session's prompt cache goes unused before the Host refreshes it (0 = off). */
+	keepAliveMinutes: () => __TAURI_INVOKE<number>("keep_alive_minutes"),
+	/**  Saves 「缓存保活」 (minutes, 0 = off); returns what was saved. */
+	setKeepAliveMinutes: (minutes: number) => __TAURI_INVOKE<number>("set_keep_alive_minutes", { minutes }),
 	ccrpcInfo: () => __TAURI_INVOKE<CcrpcInfo>("ccrpc_info"),
 	/**
 	 *  Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
@@ -104,6 +108,7 @@ export const events = {
 	haaWatchEndedEvent: makeEvent<HaaWatchEndedEvent>("haa-watch-ended-event"),
 	haaWorkersEvent: makeEvent<HaaWorkersEvent>("haa-workers-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
+	keepAliveEvent: makeEvent<KeepAliveEvent>("keep-alive-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
 	sessionsChangedEvent: makeEvent<SessionsChangedEvent>("sessions-changed-event"),
@@ -456,6 +461,16 @@ export type JumpTarget = {
 	inSubagent: boolean,
 	inAbandonedBranch: boolean,
 	needsHidden: boolean,
+};
+
+/**
+ *  The Host starts (`active`) or ends refreshing a Session's prompt cache (a `/btw` of its own); `error` is why the
+ *  refresh failed. Meanwhile the Session's Live state says waiting.
+ */
+export type KeepAliveEvent = {
+	sessionId: string,
+	active: boolean,
+	error: string | null,
 };
 
 /**  「局域网访问」 as the settings page shows it. */

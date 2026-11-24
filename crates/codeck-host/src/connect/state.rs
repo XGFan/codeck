@@ -178,6 +178,7 @@ impl ConnState {
                 self.effort = text(&m["effort"]);
                 self.context_tokens = m["context_tokens"].as_u64();
                 self.requests = array(&m["requests"]);
+                self.requests.retain(|r| !crate::keepalive::is_marker(r));
                 self.queue = array(&m["queue"]);
                 self.code_calls = array(&m["code_calls"])
                     .iter()
@@ -227,6 +228,8 @@ impl ConnState {
                     c["end"] = end;
                 }
             }
+            // The Host's own `/btw` that keeps the prompt cache (`keepalive.rs`): nothing for anyone to answer.
+            "btw" if crate::keepalive::is_marker(m) => return false,
             "permission_request" | "question" | "choice" | "rewind" | "dialog" | "unrecognized"
             | "btw" => self.upsert_request(m.clone()),
             "request_end" => self.requests.retain(|r| r["request_id"] != m["request_id"]),
@@ -432,6 +435,21 @@ mod tests {
             ]
         );
         assert_eq!(s.requests[2]["lines"], json!(["b"]));
+    }
+
+    #[test]
+    fn the_hosts_own_keep_alive_btw_is_no_request() {
+        let q = crate::keepalive::QUESTION;
+        let s = fold(&[
+            json!({ "type": "btw", "request_id": "btw", "question": q, "answering": true, "text": null }),
+            json!({ "type": "btw", "request_id": "btw", "question": q, "answering": false, "text": "ok" }),
+        ]);
+        assert!(s.requests.is_empty());
+        let s = fold(&[
+            json!({ "type": "ready", "protocol": PROTOCOL, "state": "waiting",
+            "requests": [{ "type": "btw", "request_id": "btw", "question": q, "answering": true, "text": null }] }),
+        ]);
+        assert!(s.requests.is_empty());
     }
 
     #[test]

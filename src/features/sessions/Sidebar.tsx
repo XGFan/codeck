@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LiveDot, type LiveDotState } from "@/components/LiveDot";
-import { useDone } from "@/features/attention";
+import { isKeeping, useAttentionStore, useDone } from "@/features/attention";
 import { connFor, isLive, NewSessionError, useConnect } from "@/features/connect";
 import { api } from "@/ipc";
 import type { ProjectSummary, SidebarProject } from "@/ipc/bindings";
@@ -901,6 +901,9 @@ export function Row({
 }) {
   const chip = s.pending ? (s.cwd?.split("/").filter(Boolean).pop() ?? null) : plainTag ? null : tag;
   const done = useDone(s.id) && s.live != null;
+  // The Host's cache refresh shows a `/btw` panel for a moment: no one is waiting.
+  const keeping = useAttentionStore((st) => isKeeping(st.keeping, s.id));
+  const live = keeping && s.live === "waiting" ? "idle" : s.live;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -925,13 +928,13 @@ export function Row({
               title="已完成"
               className="size-2 shrink-0 rounded-full bg-accent"
             />
-          ) : s.live ? (
-            <LiveDot state={s.live} title={LIVE_TITLE[s.live]} testId="live-dot" />
+          ) : live ? (
+            <LiveDot state={live} title={LIVE_TITLE[live]} testId="live-dot" />
           ) : (
             dotSlot && <span className="w-2 shrink-0" aria-hidden />
           )}
           <span className="min-w-0 flex-1 truncate">{s.title}</span>
-          {s.live === "waiting" && (
+          {live === "waiting" && (
             <span
               data-testid="waiting-tag"
               className="shrink-0 rounded border border-tag-border bg-tag px-1 text-[11px] leading-[15px] font-semibold text-tag-text"

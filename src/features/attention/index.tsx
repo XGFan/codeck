@@ -4,9 +4,9 @@ import { isLive, useConnect, waitingSessions } from "@/features/connect/store";
 import { useAllSessions, useProjects } from "@/queries";
 import { useUi } from "@/state/ui";
 import { due, markNotified, message, step, type Status } from "./rules";
-import { useAttentionStore } from "./store";
+import { isKeeping, useAttentionStore } from "./store";
 
-export { useAttentionStore } from "./store";
+export { isKeeping, useAttentionStore } from "./store";
 
 /** The notifications exist only where the app runs on the Mac (not the LAN page). */
 export const notifyAvailable = import.meta.env.VITE_IPC !== "remote";
@@ -50,7 +50,11 @@ export function useAttention(live: { id: string; status: Status }[]) {
     const { statuses, sessions, projects } = latest.current;
     const store = useAttentionStore.getState();
     const at = Date.now();
-    let tracks = step(store.tracks, statuses, at, viewing());
+    // While the Host refreshes a Session's cache its `/btw` panel makes it waiting: it keeps what it was.
+    const now = { ...statuses };
+    for (const id of Object.keys(now))
+      if (isKeeping(store.keeping, id, at) && store.tracks[id]) now[id] = store.tracks[id].status;
+    let tracks = step(store.tracks, now, at, viewing());
     const fire = notifyAvailable ? due(tracks, at, store.delays) : [];
     if (fire.length > 0) {
       tracks = markNotified(
@@ -83,12 +87,22 @@ export function useAttention(live: { id: string; status: Status }[]) {
     const unUi = useUi.subscribe((s, p) => {
       if (s.sessionId !== p.sessionId) update();
     });
+    let unKeep: (() => void) | null = null;
+    let gone = false;
+    void api
+      .onKeepAlive((e) => {
+        useAttentionStore.getState().setKeeping(e.sessionId, e.active);
+        update();
+      })
+      .then((f) => (gone ? f() : (unKeep = f)));
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
       document.removeEventListener("visibilitychange", update);
       unUi();
+      gone = true;
+      unKeep?.();
     };
   }, [update]);
 }

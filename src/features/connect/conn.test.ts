@@ -153,6 +153,16 @@ describe("conn reducer", () => {
     expect(apply(s, { type: "session_exit" }).requests).toEqual([]);
   });
 
+  it("shows no card for the Host's own /btw that keeps the prompt cache", () => {
+    const q = "ping, just say pong.";
+    let s = fold([{ type: "btw", request_id: "btw", question: q, answering: true, text: null }]);
+    s = fold([{ type: "btw", request_id: "btw", question: q, answering: false, text: "ok" }], s);
+    expect(s.requests).toEqual([]);
+    expect(
+      fold([{ type: "btw", request_id: "btw", question: "这段为什么慢", answering: true, text: null }]).requests,
+    ).toHaveLength(1);
+  });
+
   it("keeps the last turn's end and shows progress only while busy", () => {
     let s = fold([{ type: "progress", text: "Thinking…", verb: "Thinking", elapsed_s: 1, tokens: null }]);
     expect(s.progress).toBeNull();

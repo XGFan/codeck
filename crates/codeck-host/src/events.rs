@@ -47,6 +47,13 @@ pub enum HostEvent {
     HaaWorkers { id: u32, workers: String },
     /// `haa ls --all --json --watch` (instance `id`) ended by itself; `message` is why.
     HaaWatchEnded { id: u32, message: String },
+    /// The Host starts (`active`) or ends refreshing a Session's prompt cache (`keepalive.rs`); `error` is why the
+    /// refresh failed. Meanwhile the Session shows a `/btw` panel, so its Live state says waiting.
+    KeepAlive {
+        session_id: String,
+        active: bool,
+        error: Option<String>,
+    },
 }
 
 pub type EventSink = Arc<dyn Fn(HostEvent) + Send + Sync>;
@@ -71,6 +78,7 @@ impl HostEvent {
             HostEvent::CcrpcClosing { .. } => "ccrpc-closing-event",
             HostEvent::HaaWorkers { .. } => "haa-workers-event",
             HostEvent::HaaWatchEnded { .. } => "haa-watch-ended-event",
+            HostEvent::KeepAlive { .. } => "keep-alive-event",
         }
     }
 
@@ -98,6 +106,11 @@ impl HostEvent {
             }
             HostEvent::HaaWorkers { id, workers } => Ok(json!({ "id": id, "workers": workers })),
             HostEvent::HaaWatchEnded { id, message } => Ok(json!({ "id": id, "message": message })),
+            HostEvent::KeepAlive {
+                session_id,
+                active,
+                error,
+            } => Ok(json!({ "sessionId": session_id, "active": active, "error": error })),
         };
         v.unwrap_or(Value::Null)
     }

@@ -399,6 +399,16 @@ impl App {
         Ok(())
     }
 
+    /// `ccrpc ls --json` once: the clay Sessions now, as ccrpc lists them.
+    pub fn ls_once(&self) -> R<Vec<serde_json::Value>> {
+        let out = self.run(&["ls", "--json"])?;
+        if !out.status.success() {
+            return Err(self.stderr_error("ls", &out.stderr));
+        }
+        serde_json::from_slice(&out.stdout)
+            .map_err(|e| failed(format!("ccrpc ls 的输出读不了：{e}")))
+    }
+
     /// Prunes logs and images at most once a day, for a Host that runs for months.
     fn prune_if_due(&self) {
         let today = chrono::Local::now().date_naive();
