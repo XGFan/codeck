@@ -14,7 +14,9 @@ import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useAllSessions, useSession, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
+import { useAttention } from "@/features/attention";
 import { haaAvailable, HaaBar, HaaRoot, useHaa } from "@/features/haa";
+import type { LiveStatus } from "@/ipc/bindings";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
@@ -35,19 +37,27 @@ export { installNativeConnect } from "./native";
 export { CcrpcSettings } from "./Settings";
 export { connFor, isLive, lsEntryFor, useConnect } from "./store";
 
+/** A Live Session's status from its process file (`unknown` counts as idle). */
+export interface LiveRow {
+  id: string;
+  status: "busy" | "waiting" | "idle";
+}
+
+const liveStatus = (s: LiveStatus): LiveRow["status"] => (s === "busy" || s === "waiting" ? s : "idle");
+
 /**
  * The CoDeck's Live Sessions: from its `LiveChanged` events (each a full snapshot), and until the first one
  * arrives, from the Session list it already loaded (unfiltered at startup) — no query of its own.
  */
-function useLive(): { id: string; waiting: boolean }[] {
+function useLive(): LiveRow[] {
   const live = useConnect((s) => s.live);
   // Not the list on screen: its project / time filter would hide Live Sessions elsewhere.
   const { data: list } = useAllSessions(live == null);
   return useMemo(
     () =>
       live
-        ? live.map((e) => ({ id: e.sessionId, waiting: e.state.status === "waiting" }))
-        : (list ?? []).filter((s) => s.live).map((s) => ({ id: s.id, waiting: s.live!.status === "waiting" })),
+        ? live.map((e) => ({ id: e.sessionId, status: liveStatus(e.state.status) }))
+        : (list ?? []).filter((s) => s.live).map((s) => ({ id: s.id, status: liveStatus(s.live!.status) })),
     [live, list],
   );
 }
@@ -59,7 +69,7 @@ function useWaiting(): string[] {
   return useMemo(
     () =>
       waitingSessions(
-        live.filter((l) => l.waiting).map((l) => l.id),
+        live.filter((l) => l.status === "waiting").map((l) => l.id),
         conns,
       ),
     [live, conns],
@@ -82,6 +92,7 @@ export function ConnectRoot() {
   useEffect(() => {
     void api.setBadge(n).catch(() => {});
   }, [n]);
+  useAttention(live);
   const sessionId = useUi((s) => s.sessionId);
   const openConnected = useConnect((s) => {
     const c = connFor(s, sessionId);
@@ -168,11 +179,6 @@ export function useQuestionRequest(toolUseId: string): { r: QuestionEvent; c: Co
     (x): x is QuestionEvent => x.type === "question" && x.tool_use_id === toolUseId && !ownCard(x),
   );
   return c && r && !c.procExit && !c.sessionExited ? { r, c } : null;
-}
-
-/** A connected Session's turn ended and it has not been looked at since. */
-export function useUnread(sessionId: string): boolean {
-  return useConnect((s) => !!connFor(s, sessionId)?.unread);
 }
 
 /** The open Session is connected or in `ccrpc ls` but not in the index yet (a new one, before its first prompt). */

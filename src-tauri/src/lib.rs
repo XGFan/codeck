@@ -9,6 +9,7 @@ use codeck_host::lan::{DEFAULT_PORT, LanConfig, server};
 use codeck_host::{EventSink, Host, HostConfig, HostEvent};
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_notification::NotificationExt;
 use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 
 use crate::events::{
@@ -48,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(codeck_term::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
@@ -55,6 +57,13 @@ pub fn run() {
             // `codeck://` links: the window parses and opens them; a hidden window comes back first.
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |_| reveal(&handle));
+            // A click on a notification: the same, the window opens the Session it names (its `codeck://` link).
+            let handle = app.handle().clone();
+            app.notification().on_action(move |a| {
+                if a.action_id() == "tap" {
+                    reveal(&handle);
+                }
+            })?;
             let (lan_events, lan_sink) = server::event_channel();
             let window_sink = sink(app.handle().clone());
             let events: EventSink = Arc::new(move |e: HostEvent| {

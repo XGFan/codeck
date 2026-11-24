@@ -131,6 +131,7 @@ const lsCbs = new Set<LsCb>();
 const lsEndedCbs = new Set<(message: string) => void>();
 const remoteConnCbs = new Set<(conn: string, holderId: string | null) => void>();
 const closingCbs = new Set<(conn: string) => void>();
+const notificationCbs = new Set<(url: string) => void>();
 const conns = new Map<string, Conn>();
 /** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
 const closedPanes = new Set<string>();
@@ -147,6 +148,10 @@ export interface CcrpcProbe {
   watching: boolean;
   guiLog: string[];
   badge: number;
+  /** System notifications sent (`notify`), in order. */
+  notifications: { title: string; body: string; url: string }[];
+  /** The user clicks a notification with this link. */
+  clickNotification: (url: string) => void;
   images: number;
   /** `ccrpcSetAnalyzer` calls. */
   analyzerSaves: number;
@@ -195,6 +200,10 @@ const probe: CcrpcProbe = {
   watching: false,
   guiLog: [],
   badge: 0,
+  notifications: [],
+  clickNotification: (url) => {
+    for (const cb of notificationCbs) cb(url);
+  },
   images: 0,
   analyzerSaves: 0,
   recordsOpened: 0,
@@ -491,6 +500,8 @@ type CcrpcApi = Pick<
   | "ccrpcSaveImage"
   | "pickDir"
   | "setBadge"
+  | "notify"
+  | "onNotificationClick"
   | "onCcrpcLine"
   | "onCcrpcExit"
   | "onCcrpcLs"
@@ -692,6 +703,10 @@ export function createMockCcrpc(): CcrpcApi {
     setBadge: async (n) => {
       probe.badge = n;
     },
+    notify: async (n) => {
+      probe.notifications.push(n);
+    },
+    onNotificationClick: (cb) => subscribe(notificationCbs, cb),
     onCcrpcLine: (cb) => subscribe(lineCbs, cb),
     onCcrpcExit: (cb) => subscribe(exitCbs, cb),
     onCcrpcLs: (cb) => subscribe(lsCbs, cb),

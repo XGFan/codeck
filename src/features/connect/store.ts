@@ -224,8 +224,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
         if (before.resumeOf && !before.sessionId) failResume(conn, before.resumeOf, msg.message);
         break;
       case "turn_end": {
-        if (useUi.getState().sessionId !== after.sessionId || document.hidden)
-          update(conn, (c) => ({ ...c, unread: true }));
         // Taken back before any reply: as in the terminal, the prompt goes back into the input box (an empty one).
         const back = msg.aborted ? msg.restored_text : null;
         // And out of the conversation: ccrpc says which prompt that was (the node id is its transcript uuid).
@@ -409,12 +407,6 @@ export const useConnect = create<ConnectStore>((set, get) => {
       return { errors };
     });
 
-  /** The Session on screen has been seen. */
-  const markSeen = () => {
-    const c = connFor(get(), useUi.getState().sessionId);
-    if (c?.unread) update(c.conn, (x) => ({ ...x, unread: false }));
-  };
-
   /** Another Session is on screen: picking a prompt ends with the one left (the rewound marker stays with it). */
   const endPicking = () => {
     const open = connFor(get(), useUi.getState().sessionId)?.conn;
@@ -499,14 +491,10 @@ export const useConnect = create<ConnectStore>((set, get) => {
       keep(api.onCcrpcLs((ls) => lsWatch.list(ls)));
       keep(api.onCcrpcLsEnded((message) => lsWatch.ended(message)));
       snapshot = readSnapshot(subscribed, () => gone);
-      const onVisible = () => {
-        lsWatch.sync();
-        if (document.visibilityState === "visible") markSeen();
-      };
+      const onVisible = () => lsWatch.sync();
       document.addEventListener("visibilitychange", onVisible);
       const unUi = useUi.subscribe((s, p) => {
         if (s.sessionId === p.sessionId) return;
-        markSeen();
         endPicking();
       });
       return () => {

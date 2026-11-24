@@ -125,6 +125,10 @@ export interface Api {
   pickDir(): Promise<string | null>;
   /** The Dock badge; 0 clears it. */
   setBadge(count: number): Promise<void>;
+  /** A system notification; a click on it brings the window back and reports `url` (a `codeck://` link). */
+  notify(n: { title: string; body: string; url: string }): Promise<void>;
+  /** A notification sent by `notify` was clicked: its `url`. */
+  onNotificationClick(cb: (url: string) => void): Promise<Unlisten>;
   /** ccrpc's lines, parsed (lines that are not JSON are dropped). */
   onCcrpcLine(cb: (conn: string, msg: InMsg) => void): Promise<Unlisten>;
   /** ccrpc exited; `code` is null when killed by a signal. */

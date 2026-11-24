@@ -12,7 +12,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LiveDot, type LiveDotState } from "@/components/LiveDot";
-import { connFor, isLive, NewSessionError, useConnect, useUnread } from "@/features/connect";
+import { useDone } from "@/features/attention";
+import { connFor, isLive, NewSessionError, useConnect } from "@/features/connect";
 import { api } from "@/ipc";
 import type { ProjectSummary, SidebarProject } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
@@ -760,13 +761,6 @@ function Chevron({ open }: { open: boolean }) {
   return <Icon size={12} strokeWidth={2} className="shrink-0 text-secondary" aria-hidden />;
 }
 
-function UnreadDot({ id }: { id: string }) {
-  const unread = useUnread(id);
-  return unread ? (
-    <span data-testid="unread" title="有新回复" className="size-1.5 shrink-0 rounded-full bg-accent" />
-  ) : null;
-}
-
 function GroupHeader({
   g,
   open,
@@ -877,7 +871,7 @@ function GroupHeader({
 }
 
 /**
- * One Session on one line: Live dot, title, 「等待作答」, unread, a tag (its Project in 「Live」 / 「Recent」 /
+ * One Session on one line: Live dot (blue while 「已完成」), title, 「等待作答」 or 「已完成」, a tag (its Project in 「Live」 / 「Recent」 /
  * a filtered list, a pending Session's directory), the time of its latest user input.
  */
 export function Row({
@@ -906,6 +900,7 @@ export function Row({
   onOpen: (id: string) => void;
 }) {
   const chip = s.pending ? (s.cwd?.split("/").filter(Boolean).pop() ?? null) : plainTag ? null : tag;
+  const done = useDone(s.id) && s.live != null;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -923,7 +918,14 @@ export function Row({
             selected ? "bg-selection hover:bg-selection" : MENU_OPEN,
           )}
         >
-          {s.live ? (
+          {done ? (
+            <span
+              data-testid="live-dot"
+              data-state="done"
+              title="已完成"
+              className="size-2 shrink-0 rounded-full bg-accent"
+            />
+          ) : s.live ? (
             <LiveDot state={s.live} title={LIVE_TITLE[s.live]} testId="live-dot" />
           ) : (
             dotSlot && <span className="w-2 shrink-0" aria-hidden />
@@ -937,7 +939,14 @@ export function Row({
               等待作答
             </span>
           )}
-          <UnreadDot id={s.id} />
+          {done && (
+            <span
+              data-testid="done-tag"
+              className="shrink-0 rounded border border-accent-border bg-selection px-1 text-[11px] leading-[15px] font-semibold text-accent dark:text-text"
+            >
+              已完成
+            </span>
+          )}
           {chip && (
             <span className="max-w-[110px] shrink-0 truncate rounded bg-text/8 px-[5px] text-[11px] text-secondary">
               {chip}

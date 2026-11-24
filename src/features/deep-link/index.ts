@@ -3,20 +3,24 @@ import { api } from "@/ipc";
 import { parseDeepLink } from "@/lib/deepLink";
 import { useUi } from "@/state/ui";
 
-/** Opens the Session a `codeck://` link names (the window is brought back by the shell); others are ignored. */
+/**
+ * Opens the Session a `codeck://` link names, opened in the system or carried by a clicked notification (the window
+ * is brought back by the shell); others are ignored.
+ */
 export function useDeepLinks() {
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | null = null;
-    void api
-      .onOpenUrl((urls) => {
-        const link = urls.map(parseDeepLink).findLast((l) => l != null);
-        if (link) openSession(link.sessionId);
-      })
-      .then((fn) => (disposed ? fn() : (unlisten = fn)));
+    const unlisten: (() => void)[] = [];
+    const open = (urls: string[]) => {
+      const link = urls.map(parseDeepLink).findLast((l) => l != null);
+      if (link) openSession(link.sessionId);
+    };
+    const keep = (p: Promise<() => void>) => void p.then((fn) => (disposed ? fn() : unlisten.push(fn)));
+    keep(api.onOpenUrl(open));
+    keep(api.onNotificationClick((url) => open([url])));
     return () => {
       disposed = true;
-      unlisten?.();
+      unlisten.forEach((fn) => fn());
     };
   }, []);
 }

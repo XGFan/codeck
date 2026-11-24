@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DiagnosticsContent } from "@/features/diagnostics";
+import { notifyAvailable, useAttentionStore } from "@/features/attention";
+import type { DueKind } from "@/features/attention/rules";
 import { CcrpcSettings } from "@/features/connect";
 import { formatCount } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
@@ -205,6 +207,30 @@ function LanAccessField() {
   );
 }
 
+/** 「关闭」 or how long a Session stays so, unseen, before its notification. */
+const DELAYS: { value: string; label: string }[] = [
+  { value: "off", label: "关闭" },
+  { value: "0", label: "立即" },
+  ...[1, 3, 5, 10].map((m) => ({ value: String(m * 60_000), label: `${m} 分钟` })),
+];
+
+function NotifyField({ kind, label, hint }: { kind: DueKind; label: string; hint: string }) {
+  const ms = useAttentionStore((s) => s.delays[kind]);
+  const setDelay = useAttentionStore((s) => s.setDelay);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Segmented
+        label={label}
+        value={ms == null ? "off" : String(ms)}
+        options={DELAYS}
+        onChange={(v) => setDelay(kind, v === "off" ? null : Number(v))}
+        testId={`notify-${kind}`}
+      />
+      <div className="text-[12px] text-secondary">{hint}</div>
+    </div>
+  );
+}
+
 function GeneralTab() {
   const { data: info } = useAppInfo();
   const theme = useThemePref();
@@ -235,6 +261,24 @@ function GeneralTab() {
           </div>
         </div>
       </Row>
+      {notifyAvailable && (
+        <>
+          <Row label="等待作答通知" testId="set-notify-waiting">
+            <NotifyField
+              kind="waiting"
+              label="等待作答通知"
+              hint="Session 等待作答这么久、期间没在 CoDeck 里看过它时，发系统通知。"
+            />
+          </Row>
+          <Row label="已完成通知" testId="set-notify-done">
+            <NotifyField
+              kind="done"
+              label="已完成通知"
+              hint="Session 一轮结束这么久、期间没在 CoDeck 里看过它时，发系统通知。"
+            />
+          </Row>
+        </>
+      )}
       <Row label="局域网访问" testId="set-lan-access">
         <LanAccessField />
       </Row>

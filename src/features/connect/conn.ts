@@ -83,8 +83,6 @@ export interface ConnState {
   /** `fatal`'s message: why ccrpc could not go on; ccrpc then exits with 1. */
   fatal: string | null;
   sessionExited: boolean;
-  /** A turn ended while this Session was not on screen. */
-  unread: boolean;
   /** Short notices (analysis results, takeovers…), newest last. */
   notices: { id: number; text: string }[];
   /** The Session a Resume started this connection for: it stands for that Session until ccrpc names one. */
@@ -143,7 +141,6 @@ export function initial(
     startFailed: null,
     fatal: null,
     sessionExited: false,
-    unread: false,
     notices: [],
     resumeOf,
     forkOf,
