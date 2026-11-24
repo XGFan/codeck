@@ -1,5 +1,5 @@
-//! Relaying `paaa ls --all --json --watch` to the desktop front end (one child process at a time,
-//! started lazily on the first `paaa_watch(true, id)` call without initializing ccrpc).
+//! Relaying `haa ls --all --json --watch` to the desktop front end (one child process at a time,
+//! started lazily on the first `haa_watch(true, id)` call without initializing ccrpc).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -29,15 +29,15 @@ struct Watch {
     child: Arc<Mutex<Child>>,
 }
 
-/// Manages at most one `paaa ls --all --json --watch` child process, started lazily on demand.
-pub(crate) struct PaaaState {
+/// Manages at most one `haa ls --all --json --watch` child process, started lazily on demand.
+pub(crate) struct HaaState {
     env: OnceLock<HashMap<String, String>>,
     slot: Mutex<Option<Watch>>,
     generation: Arc<AtomicU64>,
     kill_after: Duration,
 }
 
-impl PaaaState {
+impl HaaState {
     pub(crate) fn new() -> Self {
         Self {
             env: OnceLock::new(),
@@ -69,7 +69,7 @@ impl PaaaState {
         let Some(env) = env else {
             return Ok(());
         };
-        let bin = crate::ccrpc::env::tool_path(env, "paaa");
+        let bin = crate::ccrpc::env::tool_path(env, "haa");
         let mut cmd = Command::new(&bin);
         cmd.env_clear()
             .envs(env)
@@ -78,7 +78,7 @@ impl PaaaState {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = crate::ccrpc::relay::spawn(&mut cmd).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => app_err(ErrorCode::NotFound, "没有找到 paaa"),
+            std::io::ErrorKind::NotFound => app_err(ErrorCode::NotFound, "没有找到 haa"),
             _ => app_err(ErrorCode::Io, format!("运行不了 {}：{e}", bin.display())),
         })?;
         let stdout = child
@@ -104,7 +104,7 @@ impl PaaaState {
                 if !current() {
                     break;
                 }
-                sink(HostEvent::PaaaWorkers { id, workers: line });
+                sink(HostEvent::HaaWorkers { id, workers: line });
             }
             let err = errs.join().unwrap_or_default();
             let code = waiter.lock().wait().ok().and_then(|s| s.code());
@@ -112,15 +112,15 @@ impl PaaaState {
                 return;
             }
             tracing::warn!(
-                "paaa ls --watch exited (id={id}, code={code:?}): {}",
+                "haa ls --watch exited (id={id}, code={code:?}): {}",
                 err.trim().replace('\n', " | ")
             );
             let first = err.lines().map(str::trim).find(|l| !l.is_empty());
             let message = first.map_or_else(
-                || "paaa ls 意外退出".to_string(),
-                |l| l.trim_start_matches("paaa: ").to_string(),
+                || "haa ls 意外退出".to_string(),
+                |l| l.trim_start_matches("haa: ").to_string(),
             );
-            sink(HostEvent::PaaaWatchEnded { id, message });
+            sink(HostEvent::HaaWatchEnded { id, message });
         });
         *slot = Some(Watch { stdin, child });
         Ok(())
@@ -148,11 +148,11 @@ fn stop_watch(mut w: Watch, kill_after: Duration) {
 }
 
 impl Host {
-    /// Starts (`on = true`) a `paaa ls --all --json --watch` tagged with `id` (replacing any
+    /// Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any
     /// existing watch), or stops the existing watch (`on = false`; `id` is unused).
-    pub async fn paaa_watch(&self, on: bool, id: u32) -> CmdResult<()> {
+    pub async fn haa_watch(&self, on: bool, id: u32) -> CmdResult<()> {
         let host = self.me.upgrade().ok_or_else(|| internal("host 已释放"))?;
-        tokio::task::spawn_blocking(move || host.paaa.watch(on, id, host.events.clone()))
+        tokio::task::spawn_blocking(move || host.haa.watch(on, id, host.events.clone()))
             .await
             .map_err(internal)?
     }
@@ -173,11 +173,11 @@ mod tests {
         p
     }
 
-    fn state_for_script(dir: &Path, body: &str, kill_after: Duration) -> PaaaState {
-        let script = write_script(dir, "paaa", body);
-        PaaaState::with_env(
+    fn state_for_script(dir: &Path, body: &str, kill_after: Duration) -> HaaState {
+        let script = write_script(dir, "haa", body);
+        HaaState::with_env(
             HashMap::from([
-                ("CODECK_PAAA".into(), script.display().to_string()),
+                ("CODECK_HAA".into(), script.display().to_string()),
                 ("PATH".into(), "/usr/bin:/bin".into()),
             ]),
             kill_after,
@@ -191,19 +191,19 @@ mod tests {
 
     fn expect_workers(rx: &mpsc::Receiver<HostEvent>, want_id: u32, want: &str) {
         match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-            HostEvent::PaaaWorkers { id, workers } => {
+            HostEvent::HaaWorkers { id, workers } => {
                 assert_eq!((id, workers.as_str()), (want_id, want));
             }
-            other => panic!("expected PaaaWorkers, got {other:?}"),
+            other => panic!("expected HaaWorkers, got {other:?}"),
         }
     }
 
     fn expect_ended(rx: &mpsc::Receiver<HostEvent>, want_id: u32, want: &str) {
         match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-            HostEvent::PaaaWatchEnded { id, message } => {
+            HostEvent::HaaWatchEnded { id, message } => {
                 assert_eq!((id, message.as_str()), (want_id, want));
             }
-            other => panic!("expected PaaaWatchEnded, got {other:?}"),
+            other => panic!("expected HaaWatchEnded, got {other:?}"),
         }
     }
 
@@ -244,7 +244,7 @@ mod tests {
 echo $$ > {}
 echo '[]'
 echo '[{{"id":"u1","name":"w1"}}]'
-read _ || {{ echo 'paaa: stopped' >&2; exit 1; }}"#,
+read _ || {{ echo 'haa: stopped' >&2; exit 1; }}"#,
                 pidfile.display()
             ),
             DEFAULT_KILL_AFTER,
@@ -268,7 +268,7 @@ read _ || {{ echo 'paaa: stopped' >&2; exit 1; }}"#,
         let d = tempfile::tempdir().unwrap();
         let state = state_for_script(
             d.path(),
-            "echo '[]'\nprintf '\\n  paaa: 旧版不支持 --watch\\nsecond\\n' >&2\nexit 1",
+            "echo '[]'\nprintf '\\n  haa: 旧版不支持 --watch\\nsecond\\n' >&2\nexit 1",
             Duration::from_millis(200),
         );
         let (sink, rx) = event_sink();
@@ -280,7 +280,7 @@ read _ || {{ echo 'paaa: stopped' >&2; exit 1; }}"#,
         let state2 = state_for_script(d2.path(), "exit 1", Duration::from_millis(200));
         let (sink2, rx2) = event_sink();
         state2.watch(true, 10, sink2).unwrap();
-        expect_ended(&rx2, 10, "paaa ls 意外退出");
+        expect_ended(&rx2, 10, "haa ls 意外退出");
     }
 
     #[test]
@@ -288,7 +288,7 @@ read _ || {{ echo 'paaa: stopped' >&2; exit 1; }}"#,
         let d = tempfile::tempdir().unwrap();
         let state = state_for_script(
             d.path(),
-            "echo '[]'\nread _ || { echo 'paaa: old exited' >&2; exit 1; }",
+            "echo '[]'\nread _ || { echo 'haa: old exited' >&2; exit 1; }",
             Duration::from_millis(200),
         );
         let (sink, rx) = event_sink();
@@ -328,15 +328,15 @@ read _ || {{ echo 'paaa: stopped' >&2; exit 1; }}"#,
     }
 
     #[test]
-    fn a_missing_paaa_is_not_found() {
+    fn a_missing_haa_is_not_found() {
         let d = tempfile::tempdir().unwrap();
         let dir = d.path().display().to_string();
         let env = HashMap::from([("HOME".into(), dir.clone()), ("PATH".into(), dir)]);
         let (sink, _rx) = event_sink();
-        let err = PaaaState::with_env(env, DEFAULT_KILL_AFTER)
+        let err = HaaState::with_env(env, DEFAULT_KILL_AFTER)
             .watch(true, 1, sink)
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
-        assert_eq!(err.message, "没有找到 paaa");
+        assert_eq!(err.message, "没有找到 haa");
     }
 }

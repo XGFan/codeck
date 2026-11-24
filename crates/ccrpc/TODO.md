@@ -26,7 +26,7 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 
 ## 使用方（协议之上的子项目，各自单独设计）
 
-- 主控 Claude Code 调度 Claude Code Worker（类 paaa）：派 Task、取 Result、Ask / Approval 转给主控、插话、中止；事件以 monitor 推给主控；人可随时在 ToH 上接手
+- 主控 Claude Code 调度 Claude Code Worker（类 haa）：派 Task、取 Result、Ask / Approval 转给主控、插话、中止；事件以 monitor 推给主控；人可随时在 ToH 上接手
 - ToH Client 的结构化操作：Session 状态（忙 / 闲 / 等审批）、审批卡片、发提示词、长任务完成推送（对应 ToH TODO 的「长任务完成通知推送」）
 - 远程调用：经 ToH daemon 暴露，复用它的令牌、配对与 tailnet
 

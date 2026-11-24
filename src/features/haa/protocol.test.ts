@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parsePaaaWorkers } from "./protocol";
+import { parseHaaWorkers } from "./protocol";
 
-describe("parsePaaaWorkers", () => {
+describe("parseHaaWorkers", () => {
   it("parses a valid array of workers with full and minimal fields", () => {
     const raw = JSON.stringify([
       {
@@ -23,7 +23,7 @@ describe("parsePaaaWorkers", () => {
         state: "idle",
       },
     ]);
-    expect(parsePaaaWorkers(raw)).toEqual([
+    expect(parseHaaWorkers(raw)).toEqual([
       {
         id: "w-1",
         owner: "s-1",
@@ -48,20 +48,20 @@ describe("parsePaaaWorkers", () => {
   });
 
   it("accepts all six valid worker states and empty arrays", () => {
-    expect(parsePaaaWorkers("[]")).toEqual([]);
+    expect(parseHaaWorkers("[]")).toEqual([]);
     const states = ["running", "asking", "idle", "dormant", "taken", "dead"] as const;
     const raw = JSON.stringify(states.map((state, i) => ({ owner: "s", name: `w${i}`, state, tokens: i })));
-    const parsed = parsePaaaWorkers(raw);
+    const parsed = parseHaaWorkers(raw);
     expect(parsed?.map((w) => w.state)).toEqual(states);
   });
 
   it("returns null on invalid JSON or non-array values", () => {
-    expect(parsePaaaWorkers("")).toBeNull();
-    expect(parsePaaaWorkers("{not json")).toBeNull();
-    expect(parsePaaaWorkers("{}")).toBeNull();
-    expect(parsePaaaWorkers("null")).toBeNull();
-    expect(parsePaaaWorkers("123")).toBeNull();
-    expect(parsePaaaWorkers('"hello"')).toBeNull();
+    expect(parseHaaWorkers("")).toBeNull();
+    expect(parseHaaWorkers("{not json")).toBeNull();
+    expect(parseHaaWorkers("{}")).toBeNull();
+    expect(parseHaaWorkers("null")).toBeNull();
+    expect(parseHaaWorkers("123")).toBeNull();
+    expect(parseHaaWorkers('"hello"')).toBeNull();
   });
 
   it("skips malformed entries individually inside a valid array", () => {
@@ -75,7 +75,7 @@ describe("parsePaaaWorkers", () => {
       { owner: "s1", name: "bad-state", state: "error" },
       { owner: "s1", name: "good", state: "asking", tokens: 10 },
     ]);
-    expect(parsePaaaWorkers(raw)).toEqual([{ id: "s1:good", owner: "s1", name: "good", state: "asking", tokens: 10 }]);
+    expect(parseHaaWorkers(raw)).toEqual([{ id: "s1:good", owner: "s1", name: "good", state: "asking", tokens: 10 }]);
   });
 
   it("filters negative/invalid numbers and empty optional strings", () => {
@@ -94,6 +94,6 @@ describe("parsePaaaWorkers", () => {
         pending: "",
       },
     ]);
-    expect(parsePaaaWorkers(raw)).toEqual([{ id: "s1:w1", owner: "s1", name: "w1", state: "dead", tokens: 0 }]);
+    expect(parseHaaWorkers(raw)).toEqual([{ id: "s1:w1", owner: "s1", name: "w1", state: "dead", tokens: 0 }]);
   });
 });

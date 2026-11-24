@@ -1,30 +1,30 @@
-import type { PaaaWorker } from "@/features/paaa/protocol";
+import type { HaaWorker } from "@/features/haa/protocol";
 import type { Api, Unlisten } from "./api";
 
-export interface PaaaProbe {
-  /** A `paaa ls --all --json --watch` is running. */
+export interface HaaProbe {
+  /** A `haa ls --all --json --watch` is running. */
   watching: boolean;
-  /** `paaaWatch(true, id)` calls. */
+  /** `haaWatch(true, id)` calls. */
   watchStarts: number;
   /** True once both event subscriptions are active and the startup sweep has run. */
   ready: boolean;
   /** Pushes a worker snapshot tagged with the currently active watch id. */
-  emit: (workers: PaaaWorker[]) => void;
+  emit: (workers: HaaWorker[]) => void;
   /** Pushes a watch-ended event tagged with the currently active watch id. */
   end: (message: string) => void;
 }
 
 declare global {
   interface Window {
-    /** E2E spy on the mock paaa watch. */
-    __cvPaaa?: PaaaProbe;
+    /** E2E spy on the mock haa watch. */
+    __cvHaa?: HaaProbe;
   }
 }
 
-type PaaaApi = Pick<Api, "paaaWatch" | "onPaaaWorkers" | "onPaaaWatchEnded">;
+type HaaApi = Pick<Api, "haaWatch" | "onHaaWorkers" | "onHaaWatchEnded">;
 
-export function createMockPaaa(): PaaaApi {
-  const workerCbs = new Set<(id: number, workers: PaaaWorker[]) => void>();
+export function createMockHaa(): HaaApi {
+  const workerCbs = new Set<(id: number, workers: HaaWorker[]) => void>();
   const endedCbs = new Set<(id: number, message: string) => void>();
   let currentId: number | null = null;
   let swept = false;
@@ -33,7 +33,7 @@ export function createMockPaaa(): PaaaApi {
     probe.ready = workerCbs.size > 0 && endedCbs.size > 0 && swept;
   };
 
-  const probe: PaaaProbe = {
+  const probe: HaaProbe = {
     watching: false,
     watchStarts: 0,
     ready: false,
@@ -50,7 +50,7 @@ export function createMockPaaa(): PaaaApi {
     },
   };
 
-  if (typeof window !== "undefined") window.__cvPaaa = probe;
+  if (typeof window !== "undefined") window.__cvHaa = probe;
 
   const subscribe = <T>(set: Set<T>, cb: T): Promise<Unlisten> => {
     set.add(cb);
@@ -62,7 +62,7 @@ export function createMockPaaa(): PaaaApi {
   };
 
   return {
-    paaaWatch: async (on, id) => {
+    haaWatch: async (on, id) => {
       if (on) {
         probe.watching = true;
         probe.watchStarts++;
@@ -74,7 +74,7 @@ export function createMockPaaa(): PaaaApi {
       }
       updateReady();
     },
-    onPaaaWorkers: (cb) => subscribe(workerCbs, cb),
-    onPaaaWatchEnded: (cb) => subscribe(endedCbs, cb),
+    onHaaWorkers: (cb) => subscribe(workerCbs, cb),
+    onHaaWatchEnded: (cb) => subscribe(endedCbs, cb),
   };
 }

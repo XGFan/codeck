@@ -180,7 +180,7 @@ export function RewindPickNotice({ c }: { c: ConnState }) {
       // Taken already: a handler before this one closed what it was for.
       if (e.key !== "Escape" || e.defaultPrevented || isComposingKey(e)) return;
       const el = e.target as HTMLElement | null;
-      if (el?.closest?.("[data-paaa-bar]")) return;
+      if (el?.closest?.("[data-haa-bar]")) return;
       const ui = useUi.getState();
       if (popupOpen() || selectOverlayOpen(ui) || ui.findOpen || ui.panelStack.length > 0) return;
       e.preventDefault();

@@ -8,7 +8,7 @@ Session、Live Session、Subagent Run、Main Line 沿用 [CoDeck 的定义](http
 
 **受控 Session（Controlled Session）**:
 有 ccrpc 进程连着的 Session。它一定在本机某个 clay Pane 的 Holder 里运行、加载了 ccrpc 插件；ccrpc 退出后它仍在运行，只是不再受控。
-_Avoid_: managed session、worker（worker 是 paaa 的词）
+_Avoid_: managed session、worker（worker 是 haa 的词）
 
 **共显（Co-display）**:
 受控 Session 同时显示在调用方的界面与 ToH Client 的 Pane 里，两边都能输入；PTY 尺寸归人的 Client。受控 Session 总是共显。

@@ -12,7 +12,7 @@ describe("describeNotice", () => {
       kind: "后台命令",
       detail: "退出码 101",
     });
-    expect(describeNotice('Monitor "paaa Worker 事件" script failed (exit 143)', null)).toMatchObject({
+    expect(describeNotice('Monitor "haa Worker 事件" script failed (exit 143)', null)).toMatchObject({
       kind: "Monitor",
       detail: "退出码 143",
     });

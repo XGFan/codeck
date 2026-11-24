@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PaaaWorker } from "./protocol";
-import { createPaaaWatch } from "./store";
+import type { HaaWorker } from "./protocol";
+import { createHaaWatch } from "./store";
 
 type Deferred<T = void> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void };
 
@@ -15,16 +15,16 @@ const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 };
 
-const worker = (name: string): PaaaWorker => ({ id: `s1:${name}`, owner: "s1", name, state: "running", tokens: 100 });
+const worker = (name: string): HaaWorker => ({ id: `s1:${name}`, owner: "s1", name, state: "running", tokens: 100 });
 
 function setup(opts?: { delaySubscribe?: boolean }) {
   let autoResolve = true;
   const calls: { on: boolean; id: number; d: Deferred }[] = [];
-  const workerSubs: { cb: (id: number, list: PaaaWorker[]) => void; unlisten: ReturnType<typeof vi.fn<() => void>> }[] =
+  const workerSubs: { cb: (id: number, list: HaaWorker[]) => void; unlisten: ReturnType<typeof vi.fn<() => void>> }[] =
     [];
   const endedSubs: { cb: (id: number, msg: string) => void; unlisten: ReturnType<typeof vi.fn<() => void>> }[] = [];
   const pendingSubs: Deferred<() => void>[] = [];
-  const workersLog: PaaaWorker[][] = [];
+  const workersLog: HaaWorker[][] = [];
   const unavailableLog: string[] = [];
 
   const sub = <T>(list: { cb: T; unlisten: ReturnType<typeof vi.fn<() => void>> }[], cb: T) => {
@@ -36,7 +36,7 @@ function setup(opts?: { delaySubscribe?: boolean }) {
     return d.promise;
   };
 
-  const ctrl = createPaaaWatch({
+  const ctrl = createHaaWatch({
     watch: (on, id) => {
       const d = deferred();
       calls.push({ on, id, d });
@@ -58,14 +58,14 @@ function setup(opts?: { delaySubscribe?: boolean }) {
     workersLog,
     unavailableLog,
     setAutoResolve: (v: boolean) => (autoResolve = v),
-    emitWorkers: (id: number, list: PaaaWorker[]) =>
+    emitWorkers: (id: number, list: HaaWorker[]) =>
       workerSubs.forEach((s) => s.unlisten.mock.calls.length === 0 && s.cb(id, list)),
     emitEnded: (id: number, msg: string) =>
       endedSubs.forEach((s) => s.unlisten.mock.calls.length === 0 && s.cb(id, msg)),
   };
 }
 
-describe("createPaaaWatch", () => {
+describe("createHaaWatch", () => {
   it("waits for both subscriptions, sweeps once (ignoring sweep failure), then starts", async () => {
     const t = setup({ delaySubscribe: true });
     t.setAutoResolve(false);
@@ -144,7 +144,7 @@ describe("createPaaaWatch", () => {
       t.ctrl.setWanted(true);
       await flush();
       if (kind === "reject") {
-        t.calls[1]!.d.reject({ message: "没有找到 paaa" });
+        t.calls[1]!.d.reject({ message: "没有找到 haa" });
       } else {
         const id = t.calls[1]!.id;
         t.emitWorkers(id, [worker("w1")]);
@@ -155,7 +155,7 @@ describe("createPaaaWatch", () => {
       t.ctrl.setWanted(false);
       t.ctrl.setWanted(true);
       await flush();
-      expect(t.unavailableLog).toEqual([kind === "reject" ? "没有找到 paaa" : "旧版不支持"]);
+      expect(t.unavailableLog).toEqual([kind === "reject" ? "没有找到 haa" : "旧版不支持"]);
       expect(t.workersLog.at(-1)).toEqual([]);
       expect(t.calls.map((c) => c.on)).toEqual([false, true]);
       stop();

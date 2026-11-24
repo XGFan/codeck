@@ -6,9 +6,9 @@ pub mod ccrpc;
 pub mod commands;
 pub mod connect;
 pub mod events;
+mod haa;
 pub mod lan;
 mod methods;
-mod paaa;
 pub mod prices;
 pub mod settings;
 pub mod state;
@@ -93,7 +93,7 @@ pub struct Host {
     me: Weak<Host>,
     state: Arc<AppState>,
     ccrpc: ccrpc::CcrpcState,
-    paaa: paaa::PaaaState,
+    haa: haa::HaaState,
     /// With `track_connect`.
     connect: Option<Arc<connect::ConnectHub>>,
     lan: lan::LanService,
@@ -137,7 +137,7 @@ impl Host {
             me: me.clone(),
             state,
             ccrpc,
-            paaa: paaa::PaaaState::new(),
+            haa: haa::HaaState::new(),
             connect,
             lan: lan::LanService::default(),
             events,
@@ -147,7 +147,7 @@ impl Host {
 
     /// Closes every ccrpc (the process is quitting); the Sessions themselves keep running.
     pub fn shutdown(&self) {
-        self.paaa.stop();
+        self.haa.stop();
         if let Some(hub) = &self.connect {
             hub.stop();
         }

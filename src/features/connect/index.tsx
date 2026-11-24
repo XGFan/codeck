@@ -14,7 +14,7 @@ import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useAllSessions, useSession, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
-import { paaaAvailable, PaaaBar, PaaaRoot, usePaaa } from "@/features/paaa";
+import { haaAvailable, HaaBar, HaaRoot, useHaa } from "@/features/haa";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
@@ -88,7 +88,7 @@ export function ConnectRoot() {
     return c != null && isLive(c);
   });
   const openLive = sessionId != null && (openConnected || live.some((l) => l.id === sessionId));
-  return paaaAvailable ? <PaaaRoot wanted={openLive} /> : null;
+  return haaAvailable ? <HaaRoot wanted={openLive} /> : null;
 }
 
 /**
@@ -231,20 +231,20 @@ function FloatingFoot({
   );
 }
 
-/** Under the transcript while the open Session is connected (or Live with paaa Workers): banners, status bar, cards, queue, input box. */
+/** Under the transcript while the open Session is connected (or Live with haa Workers): banners, status bar, cards, queue, input box. */
 export function ConnectPanel() {
   const sessionId = useUi((s) => s.sessionId);
   const c = useConnect((s) => connFor(s, sessionId));
   const liveList = useLive();
   const isSessionLive = sessionId != null && liveList.some((l) => l.id === sessionId);
-  const hasOwnWorkers = usePaaa(
-    (s) => paaaAvailable && sessionId != null && s.workers.some((w) => w.owner === sessionId),
+  const hasOwnWorkers = useHaa(
+    (s) => haaAvailable && sessionId != null && s.workers.some((w) => w.owner === sessionId),
   );
   if (!c) {
-    if (paaaAvailable && sessionId != null && isSessionLive && hasOwnWorkers) {
+    if (haaAvailable && sessionId != null && isSessionLive && hasOwnWorkers) {
       return (
         <FloatingFoot>
-          <PaaaBar sessionId={sessionId} />
+          <HaaBar sessionId={sessionId} />
         </FloatingFoot>
       );
     }
@@ -270,7 +270,7 @@ function Panel({ c, isSessionLive, sessionId }: { c: ConnState; isSessionLive: b
     if (e.key !== "Escape" || isComposingKey(e.nativeEvent)) return;
     if (popupOpen()) return;
     const el = e.target as HTMLElement;
-    if (el.closest?.("[data-paaa-bar]")) return;
+    if (el.closest?.("[data-haa-bar]")) return;
     if (el.tagName === "INPUT") {
       e.preventDefault();
       e.stopPropagation();
@@ -322,7 +322,7 @@ function Panel({ c, isSessionLive, sessionId }: { c: ConnState; isSessionLive: b
         />
       ))}
       {storeError && <ErrorNotice text={storeError} onClose={() => setError(errorKey(c), null)} />}
-      {paaaAvailable && (isSessionLive || isLive(c)) && <PaaaBar sessionId={c.sessionId ?? sessionId} />}
+      {haaAvailable && (isSessionLive || isLive(c)) && <HaaBar sessionId={c.sessionId ?? sessionId} />}
       {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
       {isLive(c) && (
         <>

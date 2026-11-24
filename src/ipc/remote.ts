@@ -183,9 +183,9 @@ export function createRemoteApi(base: string): RemoteApi {
     onCcrpcClosing: () => Promise.resolve(() => {}),
     lanStatus: () => desktopOnly("局域网访问"),
     lanSetEnabled: () => desktopOnly("局域网访问"),
-    paaaWatch: () => desktopOnly("paaa Worker 状态"),
-    onPaaaWorkers: () => Promise.resolve(() => {}),
-    onPaaaWatchEnded: () => Promise.resolve(() => {}),
+    haaWatch: () => desktopOnly("haa Worker 状态"),
+    onHaaWorkers: () => Promise.resolve(() => {}),
+    onHaaWatchEnded: () => Promise.resolve(() => {}),
     onResync(cb) {
       resyncs.add(cb);
       open();

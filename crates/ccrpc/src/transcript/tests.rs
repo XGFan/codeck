@@ -980,7 +980,7 @@ fn a_monitor_is_known_by_its_notifications() {
     assert_eq!(
         monitor_notice(&note(
             "b1",
-            "<summary>Monitor event: \"paaa Worker 事件\"</summary>\n<event>w1 DONE done</event>"
+            "<summary>Monitor event: \"haa Worker 事件\"</summary>\n<event>w1 DONE done</event>"
         )),
         Some("b1".into())
     );

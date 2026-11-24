@@ -1,21 +1,21 @@
 import { create } from "zustand";
 import { api, type Unlisten } from "@/ipc";
 import { errorText } from "@/lib/errors";
-import type { PaaaWorker } from "./protocol";
+import type { HaaWorker } from "./protocol";
 
-export interface PaaaWatchDeps {
+export interface HaaWatchDeps {
   watch: (on: boolean, id: number) => Promise<void>;
-  subscribeWorkers: (cb: (id: number, workers: PaaaWorker[]) => void) => Promise<Unlisten>;
+  subscribeWorkers: (cb: (id: number, workers: HaaWorker[]) => void) => Promise<Unlisten>;
   subscribeEnded: (cb: (id: number, message: string) => void) => Promise<Unlisten>;
-  onWorkers: (workers: PaaaWorker[]) => void;
+  onWorkers: (workers: HaaWorker[]) => void;
   onUnavailable: (reason: string) => void;
 }
 
 /**
- * Coordinates the desktop `paaa ls --all --json --watch` process: waits for both subscriptions,
+ * Coordinates the desktop `haa ls --all --json --watch` process: waits for both subscriptions,
  * sweeps any watch left across reloads, serializes `watch` calls with an increasing id, and stops retrying on failure.
  */
-export function createPaaaWatch(o: PaaaWatchDeps) {
+export function createHaaWatch(o: HaaWatchDeps) {
   let seq = 0;
   let mount = 0;
   let ready = false;
@@ -60,7 +60,7 @@ export function createPaaaWatch(o: PaaaWatchDeps) {
         try {
           await o.watch(true, id);
         } catch (err) {
-          fail(errorText(err) || "启动 paaa 失败");
+          fail(errorText(err) || "启动 haa 失败");
           return;
         }
         if (unavailable) return;
@@ -105,7 +105,7 @@ export function createPaaaWatch(o: PaaaWatchDeps) {
           o.subscribeEnded((id, msg) => {
             if (!alive() || id !== current) return;
             hostRunning = false;
-            fail(msg || "paaa ls 意外退出");
+            fail(msg || "haa ls 意外退出");
           }),
         ),
       ]).then(
@@ -115,7 +115,7 @@ export function createPaaaWatch(o: PaaaWatchDeps) {
           schedule();
         },
         (err) => {
-          if (stop()) fail(errorText(err) || "订阅 paaa 事件失败");
+          if (stop()) fail(errorText(err) || "订阅 haa 事件失败");
         },
       );
       return () => {
@@ -130,21 +130,21 @@ export function createPaaaWatch(o: PaaaWatchDeps) {
   };
 }
 
-export interface PaaaStore {
-  /** Latest worker snapshot across all Sessions from `paaa ls --all --json --watch`. */
-  workers: PaaaWorker[];
+export interface HaaStore {
+  /** Latest worker snapshot across all Sessions from `haa ls --all --json --watch`. */
+  workers: HaaWorker[];
   start: () => () => void;
   setWanted: (wanted: boolean) => void;
 }
 
-export const usePaaa = create<PaaaStore>((set) => {
-  const watch = createPaaaWatch({
-    watch: (on, id) => api.paaaWatch(on, id),
-    subscribeWorkers: (cb) => api.onPaaaWorkers(cb),
-    subscribeEnded: (cb) => api.onPaaaWatchEnded(cb),
+export const useHaa = create<HaaStore>((set) => {
+  const watch = createHaaWatch({
+    watch: (on, id) => api.haaWatch(on, id),
+    subscribeWorkers: (cb) => api.onHaaWorkers(cb),
+    subscribeEnded: (cb) => api.onHaaWatchEnded(cb),
     onWorkers: (workers) => set((s) => (workers.length === 0 && s.workers.length === 0 ? s : { workers })),
     onUnavailable: (reason) => {
-      console.warn(`paaa Worker 状态不可用：${reason}`);
+      console.warn(`haa Worker 状态不可用：${reason}`);
       set({ workers: [] });
     },
   });

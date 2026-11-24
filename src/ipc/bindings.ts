@@ -87,10 +87,10 @@ export const commands = {
 	/**  Turns LAN access on or off at once and saves that; returns the state after. */
 	lanSetEnabled: (on: boolean) => __TAURI_INVOKE<LanStatus>("lan_set_enabled", { on }),
 	/**
-	 *  Starts (`on = true`) a `paaa ls --all --json --watch` tagged with `id` (replacing any existing watch),
+	 *  Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any existing watch),
 	 *  or stops the existing watch (`on = false`; `id` is unused). Desktop only.
 	 */
-	paaaWatch: (on: boolean, id: number) => __TAURI_INVOKE<null>("paaa_watch", { on, id }),
+	haaWatch: (on: boolean, id: number) => __TAURI_INVOKE<null>("haa_watch", { on, id }),
 };
 
 /** Events */
@@ -101,10 +101,10 @@ export const events = {
 	ccrpcLsEndedEvent: makeEvent<CcrpcLsEndedEvent>("ccrpc-ls-ended-event"),
 	ccrpcLsEvent: makeEvent<CcrpcLsEvent>("ccrpc-ls-event"),
 	ccrpcRemoteConnEvent: makeEvent<CcrpcRemoteConnEvent>("ccrpc-remote-conn-event"),
+	haaWatchEndedEvent: makeEvent<HaaWatchEndedEvent>("haa-watch-ended-event"),
+	haaWorkersEvent: makeEvent<HaaWorkersEvent>("haa-workers-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
-	paaaWatchEndedEvent: makeEvent<PaaaWatchEndedEvent>("paaa-watch-ended-event"),
-	paaaWorkersEvent: makeEvent<PaaaWorkersEvent>("paaa-workers-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
 	sessionsChangedEvent: makeEvent<SessionsChangedEvent>("sessions-changed-event"),
 };
@@ -380,6 +380,18 @@ export type ForkOrigin = {
 	forkPointId: string | null,
 };
 
+/**  `haa ls --all --json --watch` (instance `id`) ended by itself; `message` is why. */
+export type HaaWatchEndedEvent = {
+	id: number,
+	message: string,
+};
+
+/**  `haa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed. */
+export type HaaWorkersEvent = {
+	id: number,
+	workers: string,
+};
+
 export type ImageData = {
 	mediaType: string,
 	dataBase64: string,
@@ -519,18 +531,6 @@ relayed: RelayedMessage[] } | { kind: "assistant"; messageId: string | null; mod
 text: string } | 
 /**  A tool result not absorbed into its call (the call is not on the shown path). */
 { kind: "toolResult"; text: string } | { kind: "attachment"; attachmentType: string; text: string } | { kind: "unknown"; entryType: string; rawJson: string };
-
-/**  `paaa ls --all --json --watch` (instance `id`) ended by itself; `message` is why. */
-export type PaaaWatchEndedEvent = {
-	id: number,
-	message: string,
-};
-
-/**  `paaa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed. */
-export type PaaaWorkersEvent = {
-	id: number,
-	workers: string,
-};
 
 /**  Where a [`PromptOrigin::Peer`] message came from. */
 export type PeerSource = 

@@ -5,7 +5,7 @@
 | 角色 | 负责 |
 |---|---|
 | Main（Claude Code） | 实测 Claude Code 行为、屏幕识别、状态机、协议定稿、拆 Task、审查与验收、提交 |
-| pi Worker（经 paaa） | 规格明确的模块（如 `rpc.rs`）、样板、补测试、按 spec 写文档 |
+| pi Worker（经 haa） | 规格明确的模块（如 `rpc.rs`）、样板、补测试、按 spec 写文档 |
 | 独立审查（code-reviewer 子代理） | 每个里程碑提交后的代码审查；写的人不自己批准 |
 | 用户 | 方向与取舍、提供端到端测试用的模型 key |
 

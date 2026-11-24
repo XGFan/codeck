@@ -33,7 +33,7 @@ export function useNumberKeys(enabled: boolean, actions: (() => void)[]) {
     if (!enabled) return;
     const on = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (!el?.closest?.("[data-connect-panel]") || el.closest("[data-paaa-bar]")) return;
+      if (!el?.closest?.("[data-connect-panel]") || el.closest("[data-haa-bar]")) return;
       if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable)
         return;
       if (isComposingKey(e) || e.metaKey || e.ctrlKey || e.altKey) return;

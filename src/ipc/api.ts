@@ -33,7 +33,7 @@ import type {
   TranscriptRequest,
 } from "./bindings";
 import type { InMsg, LsEntry } from "@/features/connect/protocol";
-import type { PaaaWorker } from "@/features/paaa/protocol";
+import type { HaaWorker } from "@/features/haa/protocol";
 
 export type Unlisten = () => void;
 
@@ -146,12 +146,12 @@ export interface Api {
   lanSetEnabled(on: boolean): Promise<LanStatus>;
 
   /**
-   * Starts (`on = true`) a `paaa ls --all --json --watch` tagged with `id` (replacing any existing watch),
+   * Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any existing watch),
    * or stops the existing watch (`on = false`; `id` is unused). Desktop only.
    */
-  paaaWatch(on: boolean, id: number): Promise<void>;
-  /** `paaa ls --all --json --watch` (started with `id`) printed the Worker list (again). */
-  onPaaaWorkers(cb: (id: number, workers: PaaaWorker[]) => void): Promise<Unlisten>;
-  /** `paaa ls --all --json --watch` (started with `id`) ended by itself. */
-  onPaaaWatchEnded(cb: (id: number, message: string) => void): Promise<Unlisten>;
+  haaWatch(on: boolean, id: number): Promise<void>;
+  /** `haa ls --all --json --watch` (started with `id`) printed the Worker list (again). */
+  onHaaWorkers(cb: (id: number, workers: HaaWorker[]) => void): Promise<Unlisten>;
+  /** `haa ls --all --json --watch` (started with `id`) ended by itself. */
+  onHaaWatchEnded(cb: (id: number, message: string) => void): Promise<Unlisten>;
 }

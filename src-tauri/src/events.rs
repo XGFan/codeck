@@ -62,16 +62,16 @@ pub struct CcrpcClosingEvent {
     pub conn: String,
 }
 
-/// `paaa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed.
+/// `haa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed.
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
-pub struct PaaaWorkersEvent {
+pub struct HaaWorkersEvent {
     pub id: u32,
     pub workers: String,
 }
 
-/// `paaa ls --all --json --watch` (instance `id`) ended by itself; `message` is why.
+/// `haa ls --all --json --watch` (instance `id`) ended by itself; `message` is why.
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
-pub struct PaaaWatchEndedEvent {
+pub struct HaaWatchEndedEvent {
     pub id: u32,
     pub message: String,
 }

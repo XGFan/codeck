@@ -1,7 +1,7 @@
-/** Worker states reported by `paaa ls --all --json --watch` (`PaaA/src/protocol.ts`). */
-export type PaaaWorkerState = "running" | "asking" | "idle" | "dormant" | "taken" | "dead";
+/** Worker states reported by `haa ls --all --json --watch` (`haa/src/protocol.ts`). */
+export type HaaWorkerState = "running" | "asking" | "idle" | "dormant" | "taken" | "dead";
 
-const VALID_STATES: ReadonlySet<string> = new Set<PaaaWorkerState>([
+const VALID_STATES: ReadonlySet<string> = new Set<HaaWorkerState>([
   "running",
   "asking",
   "idle",
@@ -10,16 +10,16 @@ const VALID_STATES: ReadonlySet<string> = new Set<PaaaWorkerState>([
   "dead",
 ]);
 
-function isPaaaWorkerState(v: unknown): v is PaaaWorkerState {
+function isHaaWorkerState(v: unknown): v is HaaWorkerState {
   return typeof v === "string" && VALID_STATES.has(v);
 }
 
-/** Subset of paaa's `WorkerInfo` that CoDeck renders in the desktop status bar. */
-export interface PaaaWorker {
+/** Subset of haa's `WorkerInfo` that CoDeck renders in the desktop status bar. */
+export interface HaaWorker {
   id: string;
   owner: string;
   name: string;
-  state: PaaaWorkerState;
+  state: HaaWorkerState;
   tokens: number;
   ctx?: number;
   task?: string;
@@ -33,11 +33,11 @@ const optStr = (v: unknown): string | undefined => (typeof v === "string" && v.l
 const optNum = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
 /**
- * Tolerantly parses one JSONL line from `paaa ls --all --json --watch`.
+ * Tolerantly parses one JSONL line from `haa ls --all --json --watch`.
  * Returns `null` if the line is not valid JSON or not a JSON array (caller drops bad lines instead of clearing state).
  * Malformed entries inside an array are skipped individually.
  */
-export function parsePaaaWorkers(raw: string): PaaaWorker[] | null {
+export function parseHaaWorkers(raw: string): HaaWorker[] | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -46,14 +46,14 @@ export function parsePaaaWorkers(raw: string): PaaaWorker[] | null {
   }
   if (!Array.isArray(parsed)) return null;
 
-  const out: PaaaWorker[] = [];
+  const out: HaaWorker[] = [];
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
-    if (typeof r.owner !== "string" || typeof r.name !== "string" || !isPaaaWorkerState(r.state)) continue;
+    if (typeof r.owner !== "string" || typeof r.name !== "string" || !isHaaWorkerState(r.state)) continue;
     const id = typeof r.id === "string" && r.id.length > 0 ? r.id : `${r.owner}:${r.name}`;
     const tokens = typeof r.tokens === "number" && Number.isFinite(r.tokens) && r.tokens >= 0 ? r.tokens : 0;
-    const w: PaaaWorker = { id, owner: r.owner, name: r.name, state: r.state, tokens };
+    const w: HaaWorker = { id, owner: r.owner, name: r.name, state: r.state, tokens };
     const ctx = optNum(r.ctx);
     if (ctx !== undefined) w.ctx = ctx;
     const task = optStr(r.task);

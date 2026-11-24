@@ -81,8 +81,8 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
                     | HostEvent::CcrpcExit { .. }
                     | HostEvent::CcrpcRemoteConn { .. }
                     | HostEvent::CcrpcClosing { .. }
-                    | HostEvent::PaaaWorkers { .. }
-                    | HostEvent::PaaaWatchEnded { .. }
+                    | HostEvent::HaaWorkers { .. }
+                    | HostEvent::HaaWatchEnded { .. }
             )
         {
             return;
@@ -501,11 +501,11 @@ mod tests {
             holder_id: Some("H1".into()),
         });
         sink(HostEvent::CcrpcClosing { conn: "c1".into() });
-        sink(HostEvent::PaaaWorkers {
+        sink(HostEvent::HaaWorkers {
             id: 1,
             workers: "[]".into(),
         });
-        sink(HostEvent::PaaaWatchEnded {
+        sink(HostEvent::HaaWatchEnded {
             id: 1,
             message: "ended".into(),
         });
