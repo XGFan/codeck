@@ -95,6 +95,11 @@ export const commands = {
 	 *  or stops the existing watch (`on = false`; `id` is unused). Desktop only.
 	 */
 	haaWatch: (on: boolean, id: number) => __TAURI_INVOKE<null>("haa_watch", { on, id }),
+	/**
+	 *  Takes this app's delivered notifications with exactly this title and body out of Notification Center (the
+	 *  notification plugin cannot on macOS). Not in the Host's table: it is the window's, like the Dock badge.
+	 */
+	removeNotifications: (title: string, body: string) => __TAURI_INVOKE<null>("remove_notifications", { title, body }),
 };
 
 /** Events */

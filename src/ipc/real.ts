@@ -71,6 +71,7 @@ export function createRealApi(): Api {
     setKeepAliveMinutes: commands.setKeepAliveMinutes,
     onKeepAlive: (cb) => events.keepAliveEvent.listen(({ payload }) => cb(payload)),
     notify: async ({ title, body, url }) => sendNotification({ title, body, extra: { url } }),
+    removeNotification: async (title, body) => void (await commands.removeNotifications(title, body)),
     onNotificationClick: async (cb) => {
       // The shell brings the window back (`on_action` in lib.rs); the link says which Session to open.
       const listener = await onAction((e) => {

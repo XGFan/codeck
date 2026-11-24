@@ -3,7 +3,7 @@ import { api } from "@/ipc";
 import { isLive, useConnect, waitingSessions } from "@/features/connect/store";
 import { useAllSessions, useProjects } from "@/queries";
 import { useUi } from "@/state/ui";
-import { due, markNotified, message, step, type Status } from "./rules";
+import { due, markNotified, message, step, sweep, type Status } from "./rules";
 import { isKeeping, useAttentionStore } from "./store";
 
 export { isKeeping, useAttentionStore } from "./store";
@@ -73,8 +73,16 @@ export function useAttention(live: { id: string; status: Status }[]) {
       });
       const m = message(items, at);
       void api.notify({ title: m.title, body: m.body, url: `codeck://session/${m.sessionId}` }).catch(() => {});
+      store.setSent([...store.sent, { title: m.title, body: m.body, ids: items.map((i) => i.id), at }]);
     }
     if (tracks !== store.tracks) store.setTracks(tracks);
+    // Looked at, answered or ended: its notification leaves Notification Center too.
+    const sent = useAttentionStore.getState().sent;
+    if (sent.length > 0) {
+      const { remove, keep } = sweep(sent, tracks);
+      if (keep.length !== sent.length) store.setSent(keep);
+      for (const n of remove) void api.removeNotification(n.title, n.body).catch(() => {});
+    }
   }).current;
 
   useEffect(update, [statuses, update]);

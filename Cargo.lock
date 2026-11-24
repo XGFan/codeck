@@ -635,6 +635,8 @@ dependencies = [
  "codeck-core",
  "codeck-host",
  "codeck-term",
+ "objc2",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "specta",

@@ -99,3 +99,33 @@ export function message(items: Subject[], at: number): { title: string; body: st
   const body = [waiting > 0 && `${waiting} 个等待作答`, done > 0 && `${done} 个已完成`].filter(Boolean).join("，");
   return { title: `${items.length} 个 Session 需要处理`, body, sessionId: first.id };
 }
+
+/** A notification that went out: what it says (Notification Center finds it by that) and for which Sessions. */
+export interface Sent {
+  title: string;
+  body: string;
+  ids: string[];
+  at: number;
+}
+
+/** Each of its Sessions was looked at, changed status or left Live since it went out: nothing left to tell. */
+const settled = (s: Sent, tracks: Tracks) =>
+  s.ids.every((id) => {
+    const t = tracks[id];
+    return !t || t.since > s.at || t.seen;
+  });
+
+/**
+ * The notifications to take out of Notification Center (by title and body) and the ones still standing. One whose
+ * words an unsettled one shares stays: Notification Center would take out both.
+ */
+export function sweep(sent: Sent[], tracks: Tracks): { remove: { title: string; body: string }[]; keep: Sent[] } {
+  const keep = sent.filter((s) => !settled(s, tracks));
+  const same = (a: { title: string; body: string }, b: { title: string; body: string }) =>
+    a.title === b.title && a.body === b.body;
+  const remove: { title: string; body: string }[] = [];
+  for (const s of sent)
+    if (!keep.includes(s) && !keep.some((k) => same(k, s)) && !remove.some((r) => same(r, s)))
+      remove.push({ title: s.title, body: s.body });
+  return { remove, keep };
+}

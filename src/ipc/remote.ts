@@ -161,6 +161,7 @@ export function createRemoteApi(base: string): RemoteApi {
     setKeepAliveMinutes: () => desktopOnly("缓存保活"),
     onKeepAlive: async () => () => {},
     notify: async () => {},
+    removeNotification: async () => {},
     onNotificationClick: async () => () => {},
     onCcrpcLine: (cb) =>
       listen<{ conn: string; line: string }>("ccrpc-line-event", ({ conn, line }) => {

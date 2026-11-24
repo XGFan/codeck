@@ -9,6 +9,7 @@ type Probe = {
   keepAlive: number;
   badge: number;
   keepAliveEvent(sessionId: string, active: boolean): void;
+  removedNotifications: { title: string; body: string }[];
 };
 const notifications = (page: Page) =>
   page.evaluate(() => (window.__cvCcrpc as unknown as Probe).notifications.map((n) => ({ ...n })));
@@ -69,6 +70,11 @@ test("等待作答到设定时长才发通知，点通知打开该 Session", asy
 
   await page.evaluate((url) => (window.__cvCcrpc as unknown as Probe).clickNotification(url), n.url);
   await expect(page.getByTestId("header").getByRole("heading", { name: WAITING_TITLE })).toBeVisible();
+  // Looked at: it leaves Notification Center too.
+  await page.clock.fastForward("00:02");
+  await expect
+    .poll(() => page.evaluate(() => (window.__cvCcrpc as unknown as Probe).removedNotifications))
+    .toEqual([{ title: n.title, body: n.body }]);
 });
 
 test("已完成到点发通知", async ({ page }) => {

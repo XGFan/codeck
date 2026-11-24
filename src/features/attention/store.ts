@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Delays, DueKind, Tracks } from "./rules";
+import type { Delays, DueKind, Sent, Tracks } from "./rules";
 
 const KEY = "codeck.notify";
 /** 3 minutes for both, unless set in 「设置 › 通用」. */
@@ -23,6 +23,9 @@ interface AttentionState {
   keeping: Record<string, number>;
   setKeeping(sessionId: string, active: boolean): void;
   setTracks(tracks: Tracks): void;
+  /** Notifications sent this run that may still be in Notification Center. */
+  sent: Sent[];
+  setSent(sent: Sent[]): void;
   /** `null` turns that notification off. */
   setDelay(kind: DueKind, ms: number | null): void;
 }
@@ -45,6 +48,8 @@ export const useAttentionStore = create<AttentionState>((set, get) => ({
     set({ keeping });
   },
   setTracks: (tracks) => set({ tracks }),
+  sent: [],
+  setSent: (sent) => set({ sent }),
   setDelay(kind, ms) {
     const delays = { ...get().delays, [kind]: ms };
     try {

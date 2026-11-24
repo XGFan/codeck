@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { due, markNotified, message, step, type Tracks } from "./rules";
+import { due, markNotified, message, step, sweep, type Sent, type Tracks } from "./rules";
 
 const MIN = 60_000;
 const DELAYS = { waiting: 3 * MIN, done: 3 * MIN };
@@ -78,5 +78,27 @@ describe("message", () => {
       MIN,
     );
     expect(m).toEqual({ title: "3 个 Session 需要处理", body: "2 个等待作答，1 个已完成", sessionId: "w" });
+  });
+});
+
+describe("sweep", () => {
+  const waiting: Tracks = step({}, { w: "waiting", x: "waiting" }, 0, null);
+  const sent = (ids: string[], body = "b"): Sent => ({ title: "t", body, ids, at: 10 });
+
+  it("takes a notification out once its Session was looked at, changed status or left Live", () => {
+    expect(sweep([sent(["w"])], waiting).remove).toEqual([]);
+    expect(sweep([sent(["w"])], step(waiting, { w: "waiting", x: "waiting" }, 20, "w")).remove).toEqual([
+      { title: "t", body: "b" },
+    ]);
+    expect(sweep([sent(["w"])], step(waiting, { w: "busy", x: "waiting" }, 20, null)).keep).toEqual([]);
+    expect(sweep([sent(["w"])], step(waiting, { x: "waiting" }, 20, null)).remove).toHaveLength(1);
+  });
+
+  it("keeps one for several Sessions until each is settled, and one whose words another still needs", () => {
+    const seenW = step(waiting, { w: "waiting", x: "waiting" }, 20, "w");
+    expect(sweep([sent(["w", "x"])], seenW).remove).toEqual([]);
+    const both = sweep([sent(["w"], "same"), { ...sent(["x"], "same"), at: 30 }], seenW);
+    expect(both.remove).toEqual([]);
+    expect(both.keep).toHaveLength(1);
   });
 });

@@ -151,6 +151,8 @@ export interface CcrpcProbe {
   badge: number;
   /** System notifications sent (`notify`), in order. */
   notifications: { title: string; body: string; url: string }[];
+  /** Notifications taken out of Notification Center (`removeNotification`), in order. */
+  removedNotifications: { title: string; body: string }[];
   /** The user clicks a notification with this link. */
   clickNotification: (url: string) => void;
   /** 「缓存保活」 as last saved (minutes, 0 = off). */
@@ -206,6 +208,7 @@ const probe: CcrpcProbe = {
   guiLog: [],
   badge: 0,
   notifications: [],
+  removedNotifications: [],
   clickNotification: (url) => {
     for (const cb of notificationCbs) cb(url);
   },
@@ -510,6 +513,7 @@ type CcrpcApi = Pick<
   | "pickDir"
   | "setBadge"
   | "notify"
+  | "removeNotification"
   | "keepAliveMinutes"
   | "setKeepAliveMinutes"
   | "onKeepAlive"
@@ -717,6 +721,9 @@ export function createMockCcrpc(): CcrpcApi {
     },
     notify: async (n) => {
       probe.notifications.push(n);
+    },
+    removeNotification: async (title, body) => {
+      probe.removedNotifications.push({ title, body });
     },
     onNotificationClick: (cb) => subscribe(notificationCbs, cb),
     keepAliveMinutes: async () => probe.keepAlive,

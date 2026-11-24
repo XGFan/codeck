@@ -133,6 +133,8 @@ export interface Api {
   setBadge(count: number): Promise<void>;
   /** A system notification; a click on it brings the window back and reports `url` (a `codeck://` link). */
   notify(n: { title: string; body: string; url: string }): Promise<void>;
+  /** Takes this app's notifications with exactly this title and body out of Notification Center. */
+  removeNotification(title: string, body: string): Promise<void>;
   /** A notification sent by `notify` was clicked: its `url`. */
   onNotificationClick(cb: (url: string) => void): Promise<Unlisten>;
   /** ccrpc's lines, parsed (lines that are not JSON are dropped). */

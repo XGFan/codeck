@@ -40,6 +40,7 @@ describe("remote api", () => {
       "haaWatch",
       "keepAliveMinutes",
       "setKeepAliveMinutes",
+      "removeNotifications",
     ]);
     for (const c of commands) {
       if (local.has(c.name)) continue;
