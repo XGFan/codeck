@@ -126,16 +126,23 @@ pub fn with_analyzer(
 }
 
 pub fn ccrpc_path(env: &HashMap<String, String>) -> PathBuf {
-    if let Some(p) = env.get("CODECK_CCRPC").filter(|p| !p.is_empty()) {
+    tool_path(env, "ccrpc")
+}
+
+/// Where the command-line tool `name` is: `CODECK_<NAME>` when set, else `~/.local/bin/<name>`, else
+/// the first on PATH (`~/.local/bin/<name>` when it is nowhere: running it then says so).
+pub fn tool_path(env: &HashMap<String, String>, name: &str) -> PathBuf {
+    let var = format!("CODECK_{}", name.to_uppercase());
+    if let Some(p) = env.get(&var).filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
     let home = env.get("HOME").cloned().unwrap_or_default();
-    let local = PathBuf::from(&home).join(".local/bin/ccrpc");
+    let local = PathBuf::from(&home).join(".local/bin").join(name);
     if local.is_file() {
         return local;
     }
     for d in env.get("PATH").map(String::as_str).unwrap_or("").split(':') {
-        let p = PathBuf::from(d).join("ccrpc");
+        let p = PathBuf::from(d).join(name);
         if p.is_file() {
             return p;
         }

@@ -43,6 +43,10 @@ pub enum HostEvent {
     },
     /// This connection is being closed on purpose (by a remote client, or replaced): its exit is no failure.
     CcrpcClosing { conn: String },
+    /// `paaa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed.
+    PaaaWorkers { id: u32, workers: String },
+    /// `paaa ls --all --json --watch` (instance `id`) ended by itself; `message` is why.
+    PaaaWatchEnded { id: u32, message: String },
 }
 
 pub type EventSink = Arc<dyn Fn(HostEvent) + Send + Sync>;
@@ -65,6 +69,8 @@ impl HostEvent {
             HostEvent::ConnectRemoved { .. } => "connect-removed-event",
             HostEvent::CcrpcRemoteConn { .. } => "ccrpc-remote-conn-event",
             HostEvent::CcrpcClosing { .. } => "ccrpc-closing-event",
+            HostEvent::PaaaWorkers { .. } => "paaa-workers-event",
+            HostEvent::PaaaWatchEnded { .. } => "paaa-watch-ended-event",
         }
     }
 
@@ -89,6 +95,10 @@ impl HostEvent {
             }
             HostEvent::CcrpcRemoteConn { conn, holder_id } => {
                 Ok(json!({ "conn": conn, "holderId": holder_id }))
+            }
+            HostEvent::PaaaWorkers { id, workers } => Ok(json!({ "id": id, "workers": workers })),
+            HostEvent::PaaaWatchEnded { id, message } => {
+                Ok(json!({ "id": id, "message": message }))
             }
         };
         v.unwrap_or(Value::Null)

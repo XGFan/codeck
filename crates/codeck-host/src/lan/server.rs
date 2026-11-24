@@ -81,6 +81,8 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
                     | HostEvent::CcrpcExit { .. }
                     | HostEvent::CcrpcRemoteConn { .. }
                     | HostEvent::CcrpcClosing { .. }
+                    | HostEvent::PaaaWorkers { .. }
+                    | HostEvent::PaaaWatchEnded { .. }
             )
         {
             return;
@@ -499,6 +501,14 @@ mod tests {
             holder_id: Some("H1".into()),
         });
         sink(HostEvent::CcrpcClosing { conn: "c1".into() });
+        sink(HostEvent::PaaaWorkers {
+            id: 1,
+            workers: "[]".into(),
+        });
+        sink(HostEvent::PaaaWatchEnded {
+            id: 1,
+            message: "ended".into(),
+        });
         sink(HostEvent::CcrpcLs { ls: "[]".into() });
         let got: Vec<Value> = std::iter::from_fn(|| rx.try_recv().ok())
             .map(|t| serde_json::from_str(t.as_str()).unwrap())

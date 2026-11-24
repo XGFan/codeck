@@ -33,6 +33,7 @@ import type {
   TranscriptRequest,
 } from "./bindings";
 import type { InMsg, LsEntry } from "@/features/connect/protocol";
+import type { PaaaWorker } from "@/features/paaa/protocol";
 
 export type Unlisten = () => void;
 
@@ -143,4 +144,14 @@ export interface Api {
   lanStatus(): Promise<LanStatus>;
   /** Turns 「局域网访问」 on or off at once and saves it. */
   lanSetEnabled(on: boolean): Promise<LanStatus>;
+
+  /**
+   * Starts (`on = true`) a `paaa ls --all --json --watch` tagged with `id` (replacing any existing watch),
+   * or stops the existing watch (`on = false`; `id` is unused). Desktop only.
+   */
+  paaaWatch(on: boolean, id: number): Promise<void>;
+  /** `paaa ls --all --json --watch` (started with `id`) printed the Worker list (again). */
+  onPaaaWorkers(cb: (id: number, workers: PaaaWorker[]) => void): Promise<Unlisten>;
+  /** `paaa ls --all --json --watch` (started with `id`) ended by itself. */
+  onPaaaWatchEnded(cb: (id: number, message: string) => void): Promise<Unlisten>;
 }

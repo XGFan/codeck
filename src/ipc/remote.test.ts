@@ -37,6 +37,7 @@ describe("remote api", () => {
       "lanStatus",
       "lanSetEnabled",
       "connectSnapshot",
+      "paaaWatch",
     ]);
     for (const c of commands) {
       if (local.has(c.name)) continue;

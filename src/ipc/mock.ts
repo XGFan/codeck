@@ -34,6 +34,7 @@ import type {
 } from "./bindings";
 import type { Api, Unlisten } from "./api";
 import { appError, createMockCcrpc } from "./mock-ccrpc";
+import { createMockPaaa } from "./mock-paaa";
 import { DAY, NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
 import {
   appInfo,
@@ -799,5 +800,6 @@ export function createMockApi(): Api {
       }
     },
     ...createMockCcrpc(),
+    ...createMockPaaa(),
   };
 }

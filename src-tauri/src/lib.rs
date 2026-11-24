@@ -13,8 +13,8 @@ use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 
 use crate::events::{
     CcrpcClosingEvent, CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent,
-    CcrpcRemoteConnEvent, IndexStatusEvent, LiveChangedEvent, PricesChangedEvent,
-    SessionsChangedEvent,
+    CcrpcRemoteConnEvent, IndexStatusEvent, LiveChangedEvent, PaaaWatchEndedEvent,
+    PaaaWorkersEvent, PricesChangedEvent, SessionsChangedEvent,
 };
 
 /// The single source of commands and events, shared by the app and the bindings export.
@@ -31,7 +31,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             CcrpcLsEvent,
             CcrpcLsEndedEvent,
             CcrpcRemoteConnEvent,
-            CcrpcClosingEvent
+            CcrpcClosingEvent,
+            PaaaWorkersEvent,
+            PaaaWatchEndedEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
 }
@@ -162,6 +164,12 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
                 CcrpcRemoteConnEvent { conn, holder_id }.emit(&handle)
             }
             HostEvent::CcrpcClosing { conn } => CcrpcClosingEvent { conn }.emit(&handle),
+            HostEvent::PaaaWorkers { id, workers } => {
+                PaaaWorkersEvent { id, workers }.emit(&handle)
+            }
+            HostEvent::PaaaWatchEnded { id, message } => {
+                PaaaWatchEndedEvent { id, message }.emit(&handle)
+            }
             // For the LAN's clients: the window folds ccrpc's lines itself.
             HostEvent::ConnectState(_) | HostEvent::ConnectRemoved { .. } => Ok(()),
         };
@@ -255,5 +263,25 @@ fn host_events_match_the_typed_events() {
     same(
         HostEvent::CcrpcClosing { conn: "c1".into() },
         CcrpcClosingEvent { conn: "c1".into() },
+    );
+    same(
+        HostEvent::PaaaWorkers {
+            id: 1,
+            workers: "[]".into(),
+        },
+        PaaaWorkersEvent {
+            id: 1,
+            workers: "[]".into(),
+        },
+    );
+    same(
+        HostEvent::PaaaWatchEnded {
+            id: 1,
+            message: "m".into(),
+        },
+        PaaaWatchEndedEvent {
+            id: 1,
+            message: "m".into(),
+        },
     );
 }

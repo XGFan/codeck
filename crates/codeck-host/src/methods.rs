@@ -85,6 +85,9 @@ macro_rules! for_each_method {
             local fn lan_status() -> $crate::types::LanStatus;
             /// Turns LAN access on or off at once and saves that; returns the state after.
             local fn lan_set_enabled(on: bool) -> $crate::types::LanStatus;
+            /// Starts (`on = true`) a `paaa ls --all --json --watch` tagged with `id` (replacing any existing watch),
+            /// or stops the existing watch (`on = false`; `id` is unused). Desktop only.
+            local fn paaa_watch(on: bool, id: u32) -> ();
         }
     };
 }

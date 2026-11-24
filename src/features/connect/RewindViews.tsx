@@ -179,6 +179,8 @@ export function RewindPickNotice({ c }: { c: ConnState }) {
     const on = (e: KeyboardEvent) => {
       // Taken already: a handler before this one closed what it was for.
       if (e.key !== "Escape" || e.defaultPrevented || isComposingKey(e)) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.("[data-paaa-bar]")) return;
       const ui = useUi.getState();
       if (popupOpen() || selectOverlayOpen(ui) || ui.findOpen || ui.panelStack.length > 0) return;
       e.preventDefault();

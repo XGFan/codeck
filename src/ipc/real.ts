@@ -3,6 +3,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { InMsg, LsEntry } from "@/features/connect/protocol";
+import { parsePaaaWorkers } from "@/features/paaa/protocol";
 import type { Api } from "./api";
 import { commands, events } from "./bindings";
 
@@ -92,5 +93,12 @@ export function createRealApi(): Api {
     onCcrpcClosing: (cb) => events.ccrpcClosingEvent.listen(({ payload }) => cb(payload.conn)),
     lanStatus: commands.lanStatus,
     lanSetEnabled: commands.lanSetEnabled,
+    paaaWatch: async (on, id) => void (await commands.paaaWatch(on, id)),
+    onPaaaWorkers: (cb) =>
+      events.paaaWorkersEvent.listen(({ payload }) => {
+        const workers = parsePaaaWorkers(payload.workers);
+        if (workers) cb(payload.id, workers);
+      }),
+    onPaaaWatchEnded: (cb) => events.paaaWatchEndedEvent.listen(({ payload }) => cb(payload.id, payload.message)),
   };
 }

@@ -1,11 +1,20 @@
 import { Info, Unplug, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEventHandler,
+  type ReactNode,
+} from "react";
 import { api } from "@/ipc";
 import { isNotFound } from "@/lib/errors";
 import { formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { useAllSessions, useSession, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
+import { paaaAvailable, PaaaBar, PaaaRoot, usePaaa } from "@/features/paaa";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
 import type { QuestionEvent, TurnEndEvent } from "./protocol";
@@ -65,14 +74,21 @@ export function ConnectRoot() {
   const start = useConnect((s) => s.start);
   const setWanted = useConnect((s) => s.setWanted);
   useEffect(() => start(), [start]);
-  const anyLive = useLive().length > 0;
+  const live = useLive();
+  const anyLive = live.length > 0;
   const anyConn = useConnect((s) => Object.keys(s.conns).length > 0);
   useEffect(() => setWanted(anyLive || anyConn), [anyLive, anyConn, setWanted]);
   const n = useWaiting().length;
   useEffect(() => {
     void api.setBadge(n).catch(() => {});
   }, [n]);
-  return null;
+  const sessionId = useUi((s) => s.sessionId);
+  const openConnected = useConnect((s) => {
+    const c = connFor(s, sessionId);
+    return c != null && isLive(c);
+  });
+  const openLive = sessionId != null && (openConnected || live.some((l) => l.id === sessionId));
+  return paaaAvailable ? <PaaaRoot wanted={openLive} /> : null;
 }
 
 /**
@@ -172,23 +188,23 @@ export function useUnindexed(error: unknown): boolean {
   return fresh || (known && isNotFound(error));
 }
 
-/** Under the transcript while the open Session is connected: banners, cards, progress, queue, input box. */
-export function ConnectPanel() {
-  const sessionId = useUi((s) => s.sessionId);
-  const c = useConnect((s) => connFor(s, sessionId));
-  if (!c) return null;
-  // A new Session's panel stays as its id comes (typing goes on); a later Session of the connection gets its own.
-  return <Panel key={c.newIn != null ? c.conn : draftKey(c)} c={c} />;
-}
-
-function Panel({ c }: { c: ConnState }) {
-  const command = useConnect((s) => s.command);
-  const answerRewind = useConnect((s) => s.answerRewind);
-  const reconnect = useConnect((s) => s.reconnect);
-  const dismiss = useConnect((s) => s.dismissNotice);
-  const setError = useConnect((s) => s.setError);
-  const live = isLive(c) && c.ready;
-  const storeError = useConnect((s) => s.errors[errorKey(c)]);
+/**
+ * Floats over the foot of the transcript (Codex style): the transcript scrolls under it and keeps room for it
+ * at its end (`--connect-h`, set on the shared parent).
+ */
+function FloatingFoot({
+  testId,
+  connectPanel,
+  conn,
+  onKeyDown,
+  children,
+}: {
+  testId?: string;
+  connectPanel?: boolean;
+  conn?: string;
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+  children: ReactNode;
+}) {
   const floatRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = floatRef.current;
@@ -201,12 +217,60 @@ function Panel({ c }: { c: ConnState }) {
       host.style.removeProperty("--connect-h");
     };
   }, []);
+  return (
+    <div
+      ref={floatRef}
+      data-testid={testId}
+      data-connect-panel={connectPanel ? "" : undefined}
+      data-conn={conn}
+      onKeyDown={onKeyDown}
+      className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
+    >
+      <div className="pointer-events-auto mx-auto flex w-full max-w-(--conv-w) flex-col gap-2">{children}</div>
+    </div>
+  );
+}
+
+/** Under the transcript while the open Session is connected (or Live with paaa Workers): banners, status bar, cards, queue, input box. */
+export function ConnectPanel() {
+  const sessionId = useUi((s) => s.sessionId);
+  const c = useConnect((s) => connFor(s, sessionId));
+  const liveList = useLive();
+  const isSessionLive = sessionId != null && liveList.some((l) => l.id === sessionId);
+  const hasOwnWorkers = usePaaa(
+    (s) => paaaAvailable && sessionId != null && s.workers.some((w) => w.owner === sessionId),
+  );
+  if (!c) {
+    if (paaaAvailable && sessionId != null && isSessionLive && hasOwnWorkers) {
+      return (
+        <FloatingFoot>
+          <PaaaBar sessionId={sessionId} />
+        </FloatingFoot>
+      );
+    }
+    return null;
+  }
+  // A new Session's panel stays as its id comes (typing goes on); a later Session of the connection gets its own.
+  return (
+    <Panel key={c.newIn != null ? c.conn : draftKey(c)} c={c} isSessionLive={isSessionLive} sessionId={sessionId} />
+  );
+}
+
+function Panel({ c, isSessionLive, sessionId }: { c: ConnState; isSessionLive: boolean; sessionId: string | null }) {
+  const command = useConnect((s) => s.command);
+  const answerRewind = useConnect((s) => s.answerRewind);
+  const reconnect = useConnect((s) => s.reconnect);
+  const dismiss = useConnect((s) => s.dismissNotice);
+  const setError = useConnect((s) => s.setError);
+  const live = isLive(c) && c.ready;
+  const storeError = useConnect((s) => s.errors[errorKey(c)]);
 
   // Esc: leaves a card's text field; aborts while busy / waiting; otherwise keeps CoDeck's meaning.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "Escape" || isComposingKey(e.nativeEvent)) return;
     if (popupOpen()) return;
     const el = e.target as HTMLElement;
+    if (el.closest?.("[data-paaa-bar]")) return;
     if (el.tagName === "INPUT") {
       e.preventDefault();
       e.stopPropagation();
@@ -231,52 +295,42 @@ function Panel({ c }: { c: ConnState }) {
   };
 
   return (
-    // Floats over the foot of the transcript (Codex style): the transcript scrolls under it and keeps room for it
-    // at its end (`--connect-h`, set on the shared parent).
-    <div
-      ref={floatRef}
-      data-testid="connect-panel"
-      data-connect-panel
-      data-conn={c.conn}
-      onKeyDown={onKeyDown}
-      className="pointer-events-none absolute right-3 bottom-0 left-0 flex flex-col bg-gradient-to-b from-transparent via-ground/95 via-30% to-ground px-6 pt-8 pb-3"
-    >
-      <div className="pointer-events-auto mx-auto flex w-full max-w-(--conv-w) flex-col gap-2">
-        {/* After `session_exit` or `start_failed` ccrpc exits by itself: not a failure, the card or error says it. */}
-        {c.procExit && !c.sessionExited && !c.startFailed && (
-          <NoticeCard
-            tone="error"
-            testId="proc-exit"
-            icon={<Unplug size={18} strokeWidth={1.7} />}
-            title={`ccrpc 已退出（${c.procExit.code == null ? "被信号终止" : `退出码 ${c.procExit.code}`}）`}
-            desc={c.fatal ?? (c.procExit.stderr ? lastLine(c.procExit.stderr) : undefined)}
-            action={
-              c.holderId
-                ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" }
-                : undefined
-            }
-          />
-        )}
-        {c.sessionExited && <SessionExited c={c} />}
-        {c.notices.map((n) => (
-          <NoticeCard
-            key={n.id}
-            testId="notice"
-            icon={<Info size={18} strokeWidth={1.7} />}
-            title={n.text}
-            onClose={() => dismiss(c.conn, n.id)}
-          />
-        ))}
-        {storeError && <ErrorNotice text={storeError} onClose={() => setError(errorKey(c), null)} />}
-        {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
-        {isLive(c) && (
-          <>
-            <Requests c={c} />
-            <Composer c={c} />
-          </>
-        )}
-      </div>
-    </div>
+    <FloatingFoot testId="connect-panel" connectPanel conn={c.conn} onKeyDown={onKeyDown}>
+      {/* After `session_exit` or `start_failed` ccrpc exits by itself: not a failure, the card or error says it. */}
+      {c.procExit && !c.sessionExited && !c.startFailed && (
+        <NoticeCard
+          tone="error"
+          testId="proc-exit"
+          icon={<Unplug size={18} strokeWidth={1.7} />}
+          title={`ccrpc 已退出（${c.procExit.code == null ? "被信号终止" : `退出码 ${c.procExit.code}`}）`}
+          desc={c.fatal ?? (c.procExit.stderr ? lastLine(c.procExit.stderr) : undefined)}
+          action={
+            c.holderId
+              ? { label: "重连", primary: true, onClick: () => void reconnect(c.conn), testId: "reconnect" }
+              : undefined
+          }
+        />
+      )}
+      {c.sessionExited && <SessionExited c={c} />}
+      {c.notices.map((n) => (
+        <NoticeCard
+          key={n.id}
+          testId="notice"
+          icon={<Info size={18} strokeWidth={1.7} />}
+          title={n.text}
+          onClose={() => dismiss(c.conn, n.id)}
+        />
+      ))}
+      {storeError && <ErrorNotice text={storeError} onClose={() => setError(errorKey(c), null)} />}
+      {paaaAvailable && (isSessionLive || isLive(c)) && <PaaaBar sessionId={c.sessionId ?? sessionId} />}
+      {/* Ended (ccrpc exited, or the Session did): only the line above says so; nothing to type into. */}
+      {isLive(c) && (
+        <>
+          <Requests c={c} />
+          <Composer c={c} />
+        </>
+      )}
+    </FloatingFoot>
   );
 }
 

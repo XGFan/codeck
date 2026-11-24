@@ -28,7 +28,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | Enter / ⌘Enter | Connect 后：空闲发送；忙时插话（当前工具调用结束后送达）/ 中断本轮立即发送（同终端里的 ctrl+enter）；等待作答时把焦点移到请求卡片 |
 | ↑（光标在输入框第一行） | Connect 后：忙时把排队的消息取回输入框编辑（同终端里的 ↑），放在已有内容前面；从 CoDeck 插话时带的图片一并取回 |
 | Esc（焦点在输入区） | Connect 后：忙或等待作答时中止本轮（回退的确认卡片上是取消回退，正在准备回退时不起作用）；卡片里的输入框中只离开输入框 |
-| 1 / 2 / 3 | Connect 后：选第一张请求卡片的选项（焦点在输入区内、不在输入框时） |
+| 1 / 2 / 3 | Connect 后：选第一张请求卡片的选项（焦点在输入区内、不在输入框和 paaa Worker 状态条上时） |
 
 术语见 [CONTEXT.md](CONTEXT.md)，完整规格见 [docs/spec.md](docs/spec.md)，关键取舍见 [docs/adr/](docs/adr/)。
 
@@ -62,6 +62,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 - Rust 1.91+（`rustup`）、Xcode Command Line Tools
 - Node 22+ 与 pnpm
 - Connect（可选）：ToH（clay 后端）与 ccrpc；ccrpc 依次取 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`，插件用 `ccrpc plugin install` 安装（见 [crates/ccrpc](crates/ccrpc)）
+- paaa（可选）：装了 paaa 时，Live 或已连接的 Session 在输入区上方显示它名下的 paaa Worker；paaa 依次取 `CODECK_PAAA`、`~/.local/bin/paaa`、PATH 里的 `paaa`，需要支持 `paaa ls --all --json --watch` 的版本
 
 ## 开发
 
