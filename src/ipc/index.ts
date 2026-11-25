@@ -1,5 +1,5 @@
 import type { Api } from "./api";
-import { createMockApi } from "./mock";
+import { createMockApi } from "@/mocks";
 import { createRealApi } from "./real";
 import { createRemoteApi } from "./remote";
 

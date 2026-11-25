@@ -1,6 +1,6 @@
-import type { PlanLimit, PlanUsage } from "./bindings";
-import type { Api } from "./api";
-import { appError } from "./mock-ccrpc";
+import type { PlanLimit, PlanUsage } from "@/ipc/bindings";
+import type { Api } from "@/ipc/api";
+import { appError } from "./ccrpc";
 import { DAY, NOW } from "@/mocks/data/builders";
 
 export interface PlanPreset {

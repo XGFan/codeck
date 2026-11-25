@@ -17,8 +17,8 @@
 // has to be there before the app starts (`snapshot`, `lan`) comes from an init script's `window.__cvCcrpcPreset`.
 
 import type { InMsg, LsEntry, ModelInfo, QueueItem, RequestEvent, Task } from "@/features/connect/protocol";
-import type { Api, Unlisten } from "./api";
-import type { AnalyzerInfo, AppError, LanStatus, LaunchRule, Notice } from "./bindings";
+import type { Api, Unlisten } from "@/ipc/api";
+import type { AnalyzerInfo, AppError, LanStatus, LaunchRule, Notice } from "@/ipc/bindings";
 
 /** A rejected IPC call as the backend rejects it (`AppError`, not an `Error`). */
 export const appError = (code: AppError["code"], message: string): AppError => ({ code, message });

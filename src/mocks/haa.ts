@@ -1,5 +1,5 @@
 import type { HaaWorker } from "@/features/haa/protocol";
-import type { Api, Unlisten } from "./api";
+import type { Api, Unlisten } from "@/ipc/api";
 
 export interface HaaProbe {
   /** A `haa ls --all --json --watch` is running. */

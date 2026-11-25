@@ -29,11 +29,11 @@ import type {
   Transcript,
   TranscriptRequest,
   TranscriptScope,
-} from "./bindings";
-import type { Api, Unlisten } from "./api";
-import { appError, createMockCcrpc } from "./mock-ccrpc";
-import { createMockHaa } from "./mock-haa";
-import { createMockPlan } from "./mock-plan";
+} from "@/ipc/bindings";
+import type { Api, Unlisten } from "@/ipc/api";
+import { appError, createMockCcrpc } from "./ccrpc";
+import { createMockHaa } from "./haa";
+import { createMockPlan } from "./plan";
 import { NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
 import {
   appInfo,

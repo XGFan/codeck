@@ -1,12 +1,12 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import type { Api } from "./api";
-import type { SessionQuery } from "./bindings";
+import type { Api } from "@/ipc/api";
+import type { SessionQuery } from "@/ipc/bindings";
 
 let api: Api;
 
 beforeAll(async () => {
   vi.stubGlobal("window", {});
-  api = (await import("./mock")).createMockApi();
+  api = (await import("./index")).createMockApi();
 });
 
 const base: SessionQuery = { projectIds: [], sort: "lastActive", descending: true, timeRange: null, drill: null };

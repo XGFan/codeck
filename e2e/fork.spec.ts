@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openSession } from "./helpers";
 
-// Fork against the mock ccrpc (src/ipc/mock-ccrpc.ts): `ccrpcFork` replays fork.jsonl (before a prompt), fork-session
+// Fork against the mock ccrpc (src/mocks/ccrpc.ts): `ccrpcFork` replays fork.jsonl (before a prompt), fork-session
 // (the whole Session), fork-warning (restoring code: the rewind's ⚠ confirm card first) or fork-failed; each names
 // the JWT Session of the mock data as the Fork. The Origin Session is the ended Redis one, not in clay.
 

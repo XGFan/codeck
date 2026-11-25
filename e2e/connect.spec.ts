@@ -15,7 +15,7 @@ function recordedTurns(name: string): string[] {
 }
 const toolsTurns = recordedTurns("tools");
 
-// Connect against the mock ccrpc (src/ipc/mock-ccrpc.ts): each src/mocks/data/connect/*.jsonl is a
+// Connect against the mock ccrpc (src/mocks/ccrpc.ts): each src/mocks/data/connect/*.jsonl is a
 // recorded wire.jsonl replayed as one `ccrpc ls` entry, standing for a Session of the mock data:
 // ui-cases → the rich Live Session, tools → the Flux Session, session-changed → the auth Session
 // (its `/clear` moves to the JWT one), no-plugin → the LCP Live Session (plugin not reported),
