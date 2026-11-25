@@ -6,14 +6,19 @@ CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude
 
 ## 仓库布局（monorepo）
 
-| 目录 | 内容 | 说明 |
+| 目录 | 内容 | 细节 |
 |---|---|---|
-| `crates/transcript` | 解析库：读 Claude Code 的数据（transcript、进程文件、价格），组装成显示模型；无 SQLite、无 tauri | 本文件「架构」 |
-| `crates/codeck-core`、`crates/codeck-host`、`src-tauri`、`src` | CoDeck 本体（桌面与 daemon） | 本文件 |
-| `ios` | iPhone App（SwiftUI，xcodegen） | 本文件「ios」 |
-| `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
-| `crates/codeck-cli` | 命令行 `codeck`：给 AI 查询 Session 与新建 Session（ADR-0013） | 本文件「架构」 |
-| `crates/codeck-term` | 终端窗口的 tauri 插件：认不出的界面直接在 Pane 的终端里处理（过渡用，ADR-0015） | 本文件「架构」 |
+| `crates/transcript` | 解析库：读 Claude Code 的数据（transcript、进程文件、价格），组装成显示模型；无 SQLite、无 tauri | [crates/transcript/CLAUDE.md](crates/transcript/CLAUDE.md) |
+| `crates/codeck-core` | 索引、搜索、统计、诊断（SQLite + FTS5）；纯 Rust | [crates/codeck-core/CLAUDE.md](crates/codeck-core/CLAUDE.md) |
+| `crates/codeck-host` | Host 的运行时（worker、监听、设置、ccrpc、Connect 状态、局域网服务）与 headless daemon `codeck-host` | [crates/codeck-host/CLAUDE.md](crates/codeck-host/CLAUDE.md) |
+| `src-tauri` | 桌面应用的 Tauri 外壳 | [src-tauri/CLAUDE.md](src-tauri/CLAUDE.md) |
+| `src` | React 前端；mock 后端在 `src/mocks`，E2E 在根目录的 `e2e/` | [src/CLAUDE.md](src/CLAUDE.md) |
+| `ios` | iPhone App（SwiftUI，xcodegen） | [ios/CLAUDE.md](ios/CLAUDE.md) |
+| `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
+| `crates/codeck-cli` | 命令行 `codeck`：给 AI 查询 Session 与新建 Session（ADR-0013） | [crates/codeck-cli/CLAUDE.md](crates/codeck-cli/CLAUDE.md) |
+| `crates/codeck-term` | 终端窗口的 tauri 插件：认不出的界面直接在 Pane 的终端里处理（过渡用，ADR-0015） | 本文件「终端窗口」 |
+
+各目录的 CLAUDE.md 只在读到那个目录下的文件时才加载，本文件只放全局的东西：命令、数据流、跨模块的规则与约束。改哪一块，先看哪一份。
 
 一个 Cargo workspace（`cargo test --workspace` 覆盖全部 crate）；前端只有根目录的 viewer。原 cc-gui 已并入 viewer 的 Connect 功能（ADR-0007）。Connect E2E 的 wire fixture 在 `src/mocks/data/connect/`，`tools.jsonl` 用 `scripts/record-connect-fixtures.sh` 从 ccrpc 的 mock 端到端测试重录。
 
@@ -70,44 +75,12 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 
 数据单向流动：`crates/transcript`（解析）→ `crates/codeck-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `crates/codeck-host`（运行时：worker、监听、设置、ccrpc、Connect 状态；无 tauri 依赖）→ 外壳：`src-tauri`（桌面，进程内调用）或 daemon（`crates/codeck-host/src/bin/codeck-host.rs`，HTTP + WebSocket）→ `src`（React）/ `ios`（SwiftUI）。ccrpc 也依赖 `crates/transcript`，不依赖 codeck-core。
 
-### transcript 与 codeck-core
+### 跨模块的规则
 
-- `crates/transcript` 放解析层：`raw`、`parse`、`known`、`assemble/*`、`model/*`（组装用的类型）、`live`（进程文件）、`layout`（Session 目录里 agent 与 sidecar 文件的位置，codeck-core 的扫描与 ccrpc 共用）、`pricing`。codeck-core 直接写 `transcript::…`。解析层的集成测试（parse / merge / branch / assemble / code_mode，共用的辅助函数在 `tests/support/`）在 `crates/transcript/tests/`，fixture 用 codeck-core 的，经 `#[path]` 引用 `crates/codeck-core/tests/common/fixtures.rs`（该文件不能依赖 codeck-core）。解析层的错误是 `TranscriptError`，codeck-core 按变体映射到 `CoreError`。
-
-- `engine/` 的 `Engine` 是 codeck-host 调用的**唯一入口**，全部是阻塞调用（门面 API 在 `engine/mod.rs`）。它负责：索引同步（`engine/sync/`：stat 遍历（FS 批次的路径都落在某些 Session 里时只 stat 这些 Session，启动、Rescan 与其他情况全扫）→ 与 `files` 表比对（`plan.rs`）→ rayon 并行轻解析（`compute.rs`）→ 按批事务写入（`write.rs`）→ 重算受影响的 Session；追加只读 `[parsed_offset, EOF)`，文件变小/被替换则整 Session 重解析）；以及显示用的小 LRU（`engine/session_cache.rs`，按 source/sidecar 的 path+size+mtime 哈希校验）。
 - 管线：`scan`（遍历数据根、按 realpath/inode 去重）→ `raw`（宽容的 serde 结构，字段全可选）→ `parse`（按行解析，坏行跳过并计数）→ `assemble/*`（把事件日志组装成节点：parentUuid 树、Branch/Main Line、compact 接续、Fork、Subagent/Workflow 关联、工具摘要、⌘F 查找、搜索跳转）→ `index/*`（SQLite + FTS5 trigram）→ `search` / `stats` / `diag`。`known.rs` 列出已知的条目类型/内容块/工具名，未知的进诊断而不是丢弃。
 - IPC 类型分两处，都由 specta 导出：`crates/transcript/src/model/*` 放组装用的类型（Transcript、节点、Branch、⌘F / 跳转、Live 状态等），`crates/codeck-core/src/model/*` 放应用层类型（Project、Session 列表与详情、搜索、统计、诊断、应用状态、事件、`AppError`），并重新导出前者，所以 codeck-host 与 src-tauri 一律写 `codeck_core::model::…`。改这两处或 `crates/codeck-host/src/methods.rs` 命令表的签名后必须 `pnpm bindings`；`src/ipc/bindings.ts` 是生成文件，勿手改。
-- 索引是可丢弃的镜像（ADR-0003）：不写迁移，schema 变化就把 `index/schema.rs` 的 `SCHEMA_VERSION` +1，启动时自动删库重建。
-- 工具输出不进 FTS，也不提供搜索（ADR-0004）；⌘F 会话内查找仍覆盖工具输出（`assemble/find.rs`）。
-- Code Mode（Claude Code 的 `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`，规则见 spec「Code Mode」，各部分在哪、哪些可删见下面「Code Mode」一节）：解析与对原始格式的判断只在 `assemble/code_mode.rs`（事件解析、按路径把虚拟消息归给代码）；模型里代码仍是一个 `REPL` 的 `ToolCall`（`code` 带 `callCount` 与返回值），它调用的工具是同一条消息里紧随其后的平级 `ToolCall`（`viaCode` 指回代码），前端、⌘F、CLI 都按这个平的序列走，不要再嵌套。
-- Teammate 与其他 Agent、插件转发来的消息（`<teammate-message>`、`<cross-session-message>`、`<agent-message>`）只在后端拆：`prompt::relayed_messages` 给出 `UserPrompt.relayed`（发送方、颜色、summary、正文、一行预览、Teammate 的 JSON 消息说的事），前端 `features/transcript/teammate.ts` 只管排版，不读标签。两处例外：mock 数据按记录的原文写，`src/mocks/data/relayed.ts` 替后端拆（改格式时对照 Rust 的测试）；Connect 的排队提示拿到的是 ccrpc 给的原文，`connect/composer/queue.ts` 只读开头标签的发送方与 summary。
-- Cost：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine/sync/write.rs` 的 `rebill_changed`）。价格表在 `Engine` 里，联网下载在 codeck-host（`prices.rs`，ADR-0005）。
-- 统计（`stats.rs`）：「请求」是计费且带 token 的 assistant 消息（`billed_tokens_sql`，含 Subagent）。`daily`（按天按模型）总给；`hourly` 只在范围上下界都有且不超过 8 天时给；`hourly_models`（每小时按模型）与 `sessions`（各 Session 的 Cost 与时段，相邻请求相隔不超过 10 分钟连成一段）只在不超过 26 小时（单日）时给。下钻（`Drill::Day` / `Model`，`index/reader.rs`）与统计同一口径；被接替的 Session 留下的计费行，下钻与 `sessions` 都沿 `continued_in_id` 归到可见的续接后继。
-
-### codeck-host（含 daemon）与 src-tauri
-
-- `crates/codeck-host`：`Host::start(HostConfig, 事件 sink)` 启动一切；路径（缓存、settings.json、ccrpc 日志、图片）由 `HostConfig` 注入，`HostConfig::desktop()` 即桌面的原路径。事件是 `HostEvent`（名字与载荷同 tauri 事件，src-tauri 有测试对照）。
 - **命令表只定义一次**：`methods.rs` 的 `for_each_method!` 列出每个命令（`remote` 或 `local`、参数、返回类型、文档注释），codeck-host 由它生成 `dispatch`，src-tauri 的 `commands.rs` 由它生成 tauri 命令（名字、参数、顺序决定 bindings）。新增命令：在 `Host` 上写同名 async 方法（`commands.rs` / `ccrpc/mod.rs`，阻塞工作经 `tokio::task::spawn_blocking`，错误转 `AppError`，`message` 是面向用户的中文文案），再加进表里；`local` 只给桌面（设置、数据根、Finder 等），daemon 只暴露 `remote`。
-- `src-tauri`：只剩外壳——生成命令、把 `HostEvent` 转成 tauri 事件、插件与窗口；退出时 `host.shutdown()`；「局域网访问」打开时关窗只隐藏（ADR-0012）。`codeck://` 链接（ADR-0014，deep-link 插件）：外壳只负责把窗口带到前面，解析与打开在前端（`lib/deepLink.ts`、`features/deep-link`，经 `Api.onOpenUrl`）；链接只导航，不加有副作用的链接。
-- daemon 是 `codeck-host` 包自己的可执行文件（`src/bin/codeck-host.rs`，`cargo build -p codeck-host`），只是命令行外壳；HTTP 服务在库的 `lan/`，daemon 一直提供，桌面在「局域网访问」打开时提供（`lan/mod.rs` 的 `LanService`，开发时 `CODECK_LAN_PORT` 可换端口）。axum；`/health`（`apiVersion`）、`POST /v1/rpc {method, args}`（args 的键同 tauri invoke 的 camelCase）、`/v1/events`（WebSocket，先发 `hello`，不保留历史，客户端每次连上都整体重新同步）、`/web/*`（`--web-dir`，即 `dist-web`）。默认只监听局域网网卡（按名字白名单：`en*`、`eth*`、`wl*`）的私网 IPv4，每 5 秒按当前地址增减监听（`--listen` 指定时不跟随）；校验来源子网与 Host 头（只认监听的 IP，防 DNS 重绑定），`/v1/rpc` 只收 `application/json`，拒绝 `Origin: null` 与不认识的 Origin，`/web/` 带 CSP（`net.rs`、`server.rs`）；没有鉴权（ADR-0011）。状态目录与桌面分开，开发时也别指向桌面的目录。
-- Connect 状态（`HostConfig.track_connect`，daemon 与桌面都开）：`connect/state.rs` 把 ccrpc 的行归约成 `ConnState`（`src/features/connect/state/conn.ts` 规则的 Rust 版，改一边要对照另一边；Code Mode 的 `code_call` / `code_call_end` 两边都折叠成 `codeCalls`，Host 只留最近 50 个、序列化超过 4KB 的返回值不留，iPhone 经 `setConnect` 把它交给对话记录页），`connect/mod.rs` 的 `ConnectHub` 推 `connect-state-event` / `connect-removed-event`；折叠只跟 ccrpc 的事件走（协议 6）：请求事件按 `request_id` 增改、`request_end` 删除、Session 结束或更换时清空，排队项与后台任务照 `queue` / `tasks` 事件原样存，Host 不轮询、也不折叠命令的响应；远程方法 `connect_states` / `ccrpc_ls` / `connect_shared` / `connect_command` 不在命令表里（不是 tauri 命令）。格式由 `tests/conn_state_golden.rs` 与 `ios/Tests/Fixtures/conn-state.json` 钉住。`ccrpc ls --watch` 的常驻由 `keep_ls_watch` 决定：daemon 启动即开，桌面在「局域网访问」打开期间才开，这期间前端的启停不动它、只补发缓存的列表。桌面窗口的 Connect 状态仍由前端自己折叠（ADR-0012）：只有远程发起或关闭的连接才发 `CcrpcRemoteConn` / `CcrpcClosing` 让前端认领或放手，前端重新载入时用 `connect_snapshot` 取回已有的连接。
-- `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次（排队中的合并成一个）/ TextBacklog / Rebuild / SetRoot / SwapRoot（切换数据根：在两个任务之间换 Engine，命令等它回复）/ Rescan / RefreshPrices / ApplyPrices）。Live 轮询不排进 worker：计时线程每 3 秒直接读进程文件，免得排在索引后面、又打断全文积压。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
-- `keepalive.rs`：缓存保活。`cv-keepalive` 线程每 30 秒用 `Engine::live_now`（不动 `poll_live` 比较用的快照）看 Live Session，空闲满设定时长、缓存还没过 1 小时的（`due`，纯函数）先 `ccrpc ls --json` 确认在 clay 里、有插件、空闲，再发 `/btw ping, just say pong.`：有连接的经 `ConnectHub::command`（等答案用 `observe` 看行），没有的临时 `ccrpc attach`。这条 `/btw` 按问题开头的 `ping, just say pong` 认出（Rust 的 `keepalive::MARKER` 与 `state/conn.ts` 的 `isKeepAlive` 要一致）：Host 的 `ConnState` 与前端 `state/conn.ts` 都不当作请求；前后发 `KeepAlive` 事件（不转发给 LAN），前端 `features/attention` 在这期间不把它的等待作答当真。
-- `prices.rs`：下载 LiteLLM 价格表；worker 的 `RefreshPrices` 在独立线程里下载，结果以 `ApplyPrices` 交回 worker 写库，价格有变化时发 `PricesChanged` 事件。
-- `watcher.rs`（notify：macOS 上是 FSEvents，Linux 上是 inotify；debounce 后发 `Fs` 任务）、`state.rs`（持有可整体替换的 Engine，切换数据根时 swap）、`settings.rs`（数据根覆盖等，路径由 Host 启动时设定）、`events.rs`（`HostEvent`：IndexStatus / SessionsChanged / LiveChanged / PricesChanged，ccrpc 的 CcrpcLine / CcrpcExit / CcrpcLs / CcrpcLsEnded，以及 ConnectState / ConnectRemoved / CcrpcRemoteConn / CcrpcClosing）。
-- `ccrpc/`：Connect（ADR-0007）。每个连接一个 `ccrpc attach|new` 子进程，stdout 逐行原样转发为 `CcrpcLine` 事件（协议的类型在前端 `src/ipc/protocol/ccrpc.ts`，解析与状态在 `features/connect`），三层日志在 `~/Library/Logs/dev.joy.codeck/ccrpc/`（daemon 在它的状态目录下）。桌面的 ccrpc 状态在第一个 ccrpc 命令时才初始化（要跑一次登录 shell 取环境），不要挪到桌面启动流程里（「局域网访问」打开时例外，要常驻 `ccrpc ls`）；daemon 启动即初始化。可 Connect 的 Session 列表由常驻的 `ccrpc ls --json --watch` 推来（`relay.rs` 的 `watch_sessions`，一次只有一个）。对话内容不走 ccrpc，仍由索引与 Live 跟随提供。
-- `plan_usage.rs`：订阅额度（ADR-0016，`local fn get_plan_usage(refresh)`）。起一个无界面的 claude（`-p` + stream-json，不加载 MCP 与 hooks，不发提示词），在控制通道上发 `get_usage`，读到应答就关；首次调用时才取登录环境（同 haa），15 秒超时，独立进程组，同时只跑一个，成功的结果（含「没有订阅额度」的 `None`）缓存 60 秒，失败不缓存，`Host::shutdown` 时杀掉在跑的。`get_usage` 是实验性接口，解析宽容（只取认识的字段）。这个进程的工作目录是 `<缓存目录>/plan-usage`，`Engine::read_process_files`（所有 Live 判断共用）丢掉 cwd 等于它的进程文件，免得它闪现成 Live Session；别人用 `claude -p` 跑的 Session 不受影响。
-- `haa.rs`：桌面端 haa Worker 状态推送（`local fn haa_watch(on, id)`，事件 `HaaWorkers` / `HaaWatchEnded` 不转发给远程 LAN），写法同 `ccrpc/relay.rs` 的 `watch_sessions`：一次只有一个 `haa ls --all --json --watch` 子进程，stdout 逐行原样转发，关它的 stdin 就结束（2 秒后还没退出才 kill），自己退出时发 `HaaWatchEnded`（原因取 stderr 第一行）。首次 `haa_watch(true, id)` 时才取登录环境并找可执行文件（`ccrpc/env.rs` 的 `tool_path`，与 ccrpc 同一套顺序：`CODECK_HAA` → `~/.local/bin/haa` → `PATH`），不放进桌面启动流程。
-
-### src（前端）
-
-- `src/ipc/`：ccrpc 与 haa 的 JSONL 协议类型在 `protocol/`（`ipc` 不引用 `features`，ESLint 拦）；`Api` 接口（`api.ts`）有三套实现——`real.ts` 包装生成的 bindings，`src/mocks/`（`index.ts`，另有 `ccrpc.ts` / `haa.ts` / `plan.ts`）用 `src/mocks/data/*` 的内存数据，`remote.ts` 经 daemon 的 HTTP + WebSocket（`remote.test.ts` 核对它与 bindings 的方法名、参数名一致）。`VITE_IPC=mock`（`.env.mock`，即 `pnpm dev:mock`）切到 mock，`VITE_IPC=remote`（`.env.host`，`vite --mode host`）切到 remote；`transcript.html`（`TranscriptPage.tsx`）是 iPhone 的只读 Transcript 页，只渲染对话记录，Connect 与输入都在原生端。**E2E 全部跑在 mock 上**（tauri-driver 不支持 macOS），所以新增/修改 IPC 能力时要同步 `src/mocks/` 的实现和 mock 数据。
-- `src/queries/`：TanStack Query hooks 与 `queryKeys`；`events.ts` 订阅后端事件并做节流失效（实时追随、统计刷新）。
-- `src/state/ui.ts`：zustand 的 UI 状态；按 Session 的状态（branchChoices、panelStack、⌘F、展开状态等）在切换 Session 时重置；展开状态的键统一由 `features/transcript/keys.ts` 生成；栏的收起状态（`collapsed`）是全局的，存 localStorage。
-- 配色：`lib/theme.ts` 按设置（自动 / 浅色 / 暗色，存 localStorage）在 `<html>` 上写 `data-theme`，`index.css` 的暗色变量、Tailwind 的 `dark:`（`@custom-variant`）、图表与 Shiki 都按它，不直接用 `prefers-color-scheme`；`public/theme-init.js` 在首次绘制前套用；窗口本身经 Tauri 的 `setTheme` 跟着切换。
-- 尺寸：`index.css` 把根字号设为 13px，Tailwind 按 rem 的尺寸类会跟着缩小（`h-8` 是 26px、`h-7` 是 22.75px）；要和像素对齐的地方（侧栏的行高、和计算挂钩的高度、图片块）写成 `h-[28px]` 这样的像素值。
-- 滚动条：`index.css` 自定义 `::-webkit-scrollbar`，`lib/scrollbars.ts` 在滚动时给元素写内联 `--scroll-thumb` 让滑块显示。WebKit 只在内联 style 变化时重绘自定义滚动条，改 class/属性不生效。
-- `src/features/*`：各功能模块；对话渲染在 `features/transcript/`（TanStack Virtual 虚拟列表，`nodes/` 节点渲染，`tools/` 工具渲染器，列表的贴底跟随、滚动请求等在 `listHooks.ts`）。Connect 的 `state/` 放连接状态与存储，`composer/` 放输入框，`requests/` 放请求卡片，`rewind/` 放回退与 Fork。Connect 的状态在 `features/connect/state/store.ts`，ccrpc 连接的命令与事件分发在 `state/client.ts`（可注入 api 与计时器，单测见 `state/store.test.ts`），`ccrpc ls --watch` 的启停在 `state/lsWatch.ts`，草稿持久化在 `state/drafts.ts`，Code Mode 下代码运行期间的调用（ccrpc 的 `code_call`）并进对话记录在 `state/codeCalls.ts`（纯函数，经 `useShownTranscript`）；输入框里的图片块是文本框里带不可见起止符的一小段文字（`state/imageTokens.ts`，纯函数：编号、拆成 `parts`、清理残缺块），由文本框下面的副本画成整块、悬停与拖动在 `composer/ImageChips.tsx`。haa Worker 状态条在 `features/haa/`（仅桌面端，`VITE_IPC !== "remote"` 门控）：`src/ipc/protocol/haa.ts` 宽容解析 JSONL、`store.ts` 在当前 Session 是 Live 或已 Connect 时让 Host 启动 watch，以递增的 `id` 归属事件并串行协调启停（失败或退出后本轮不重试，停用即清空快照）；状态条只显示 `owner` 等于当前 Session ID 的 haa Worker、`HaaBar.tsx` 渲染只读的列对齐表（排序、时长、Task 列文字、收起摘要等是 `view.ts` 里的纯函数），`ConnectRoot` / `ConnectPanel` 挂接它并在 Live 未 Connect 时复用 `FloatingFoot` 维持 `--connect-h`；mock 与 E2E 探针（`window.__cvHaa`）在 `src/mocks/haa.ts`。订阅额度在 `features/quota/`（仅桌面端）：`model.ts` 是纯函数（四种状态：读取中 / 有 / 没有订阅额度 / 失败；一项额度的显示；侧栏按钮的色调；周期锚），`usePlanUsage` 是统计页的额度条、侧栏左下角的统计按钮与它的浮层共用的一个查询（前台每 5 分钟、回到前台过期则重取，刷新走 `getPlanUsage(true)`），`useCycleRule` 给出「本周期」的规则——有额度时以每周重置时刻（取整到分钟）为锚、每 168 小时一段（锚存 localStorage 的 `codeck.planCycleAnchor`，读取中或失败时沿用存的），确知账号没有订阅额度时才清掉锚、用设置里的每周重置（`lib/cycle.ts` 的 `CycleRule`）；mock 与 E2E 探针（`window.__cvPlan`）在 `src/mocks/plan.ts`。统计页在 `features/stats/`：时间范围在 `range.ts`（天 / 周期 / 月份 / 最近 N 天 / 全部；除「全部」外查询总带上下界），用量、使用频率、用量走势与单日的 Session 时间线的聚合都是纯函数（`usage.ts` / `frequency.ts` / `trend.ts` / `daySessions.ts`），小时格、月块与 Session 时间线是 DOM（格子的提示是 `FreqTip.tsx`），柱状图与走势用 ECharts；切换范围等新数据时用上一份数据连同它自己的范围继续画（`index.tsx` 的快照）。「已完成」与系统通知在 `features/attention/`：`rules.ts` 是纯函数（每个 Live Session 的状态、起始时间、看过没有、通知发过没有；到点判断与通知文案），`useAttention` 挂在 `ConnectRoot`，按 1 秒计时与焦点 / 切换 Session 事件推进，已连接的取 ccrpc 的状态，其余取 Live 状态；通知由外壳自己的 `src-tauri/src/notify.rs` 经 `UNUserNotificationCenter` 发（objc2；不用通知插件，它走已废弃的 `NSUserNotificationCenter`），命令 `notify` / `remove_notifications` 不在 Host 的命令表里；只有 app bundle 能发，`pnpm tauri dev` 下是空操作；点通知时外壳把窗口带到前面并发 `notification-click-event`，前端经 `Api.onNotificationClick` 走 `codeck://` 链接同一条路；每条通知有 `id`（单个 Session 的是 `session-<id>`，同 `id` 的新通知替换旧的），发过的记在 store 的 `sent`（`record`），`sweep` 判定处理完的按 `id` 删掉，延迟存 localStorage 的 `codeck.notify`。侧栏（Live / Project / Recent）在 `features/sessions/`：分组、展开、定位与高度分配是 `groups.ts` 里的纯函数，组件在 `Sidebar.tsx`，已添加的 Project 存在 settings.json 的 `sidebarProjects`。Shiki 在 Worker 中运行（它用到的 shiki 模块列在 `vite.config.ts` 的 `optimizeDeps.include`，否则 Vite 运行中预构建会整页刷新）。`@/` 指向 `src/`。E2E 的公共 helper 在 `e2e/helpers.ts`（进页面后马上按快捷键的用 `openApp`，它等首次渲染把快捷键挂上），Connect 的（`connectTo`、`probe`、`lastSent` 等）在 `e2e/connect-helpers.ts`。
+- **E2E 全部跑在 mock 上**（tauri-driver 不支持 macOS）：新增/修改 IPC 能力时要同步 `src/mocks/` 的实现和 mock 数据。
 
 ### 终端窗口（过渡用，ADR-0015）
 
@@ -119,18 +92,6 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 - **读历史的一半留着**（旧 Session 里一直有这些记录）。只有 `assemble/code_mode.rs` 知道原始格式：别处不读 `is_virtual`、不比较 `REPL` / `Poll` 工具名，只调它的函数（模块注释列了每个入口给谁用），格式变了改这一个文件。下游只认模型的 `code` / `viaCode`：前端的规则在 `features/transcript/codeMode.ts`（代码本身不算一次调用、只提问的代码并进提问卡片、出错与「执行 N 段代码」的计数；`grouping.ts` / `fold.ts` 不直接读这两个字段），渲染器是 `tools/code.tsx`，另有 `nodes/Ask.tsx` 的代码折叠、⌘F（`find.rs`）与 CLI（`show.rs`）各一处。认不出的不丢：找不到归属的虚拟消息（如代码工具不叫 `REPL`）按普通工具调用显示；`Poll` 只在结果全部认得出时隐藏（`CodeRuns::quiet_polls`，认得的事件种类是 `QUIET_KINDS` 加 `repl-eval`），否则带原始结果显示成普通工具调用；不认识的事件种类经 `unrecognized_events` 进诊断的「认不出的消息」。
 - **实时的一半整块可删**（代码运行期间的调用提前显示出来；Claude Code 没有 Code Mode 了就用不上）：ccrpc 的 `session/code_calls.rs` 与协议里的 `code_call` / `code_call_end` / `ready.code_calls`、请求上的 `from_code`（`requests/Requests.tsx` 的 `ownCard`）；Host `connect/state.rs` 的 `code_calls`；前端 `state/conn.ts` 的 `codeCalls`、`src/ipc/protocol/ccrpc.ts` 的对应类型、`state/codeCalls.ts` 与 `rewind/RewindViews.tsx` 里对 `withCodeCalls` 的调用、`state/native.ts` 的 `codeCalls`；iOS 的 `ConnState.swift` 与 `TranscriptWebView.swift`；两份 golden（`conn_state_golden.rs`、`ios/Tests/Fixtures/conn-state.json`）。
 - 测试各自成文件，改格式时跑这几条：`cargo test --workspace code_mode`（`crates/transcript/tests/code_mode.rs`，别的 crate 里的用例名都以 `code_mode_` 开头）与 `cargo test -p codeck-host -p ccrpc code_call`（实时的一半）、`pnpm vitest run src/features/transcript/codeMode.test.ts src/features/connect/state/codeCalls.test.ts`、`pnpm test:e2e e2e/code-mode.spec.ts`。fixture 是 `tests/fixtures/code_mode/`，mock 是 `src/mocks/data/codeMode.ts` 与 `connect/code-mode.jsonl`。
-
-### codeck-cli
-
-- `sessions` / `search` / `show` 经 `Engine::open_read_only`（`Index::open_read_only`）读索引，不起 `Host`：只读打开，不建目录、不建库、不写 `user_version`，版本或数据根不一致时报错而不重建（不然版本不同的 CLI 一运行就把桌面的索引删掉）；没有 `-wal` 时用 `immutable`，免得 SQLite 建 `-wal` / `-shm`。`Engine` 里只有只读模式才会把索引没有的 Session 退回 `scan_sessions` 找文件。
-- `turns.rs` 是轮次编号的唯一来源（`show --turn` 与 `search` 共用，在带隐藏节点的 Transcript 上算）；`search` 经 `resolve_jump` 把命中换成显示节点再查编号，落在 Subagent Run 或已回退 Branch 上的写 `turn: null`。
-- `wait` 只读进程文件，不碰索引。`new` 走 `ccrpc new`，启动规则与环境同桌面（`codeck_host::ccrpc::{env, launch}`）；以 `!` 开头的提示词要拒绝（ccrpc 会当 shell 命令执行，绕过审批）；`ready` 的 `session_id` 常为 null，要等 `started` 才发提示词。输出类型在这个 crate 里单独定义，不直接用 IPC 类型。
-
-### ios（iPhone App）
-
-- SwiftUI，iOS 17+，`ios/project.yml` 用 xcodegen 生成 `CoDeck.xcodeproj`（生成物也提交；改了 project.yml 或增删文件后重新 `xcodegen generate`）。尽量原生：列表、导航、Session 页的悬浮顶栏与底部浮层、输入框、请求面板（审批/提问/选择）、后台任务都是 SwiftUI；只读的 Transcript 是 WKWebView 加载 Host 的 `/web/transcript.html`。
-- `Sources/Host/`：地址（只收私网 IPv4，DEBUG 版另收 127.0.0.1）、`HostClient`（`/health` 校验 `apiVersion`、RPC）、`EventStream`（WebSocket；每个 `hello` 都整体重新同步；退到后台断开、回到前台重连）、`HostModel`；`Sources/Connect/` 是 Connect（状态来自 Host 的 `ConnState`，命令都经 `connect_command`）。文案与桌面一致（状态词、权限模式等），术语按 CONTEXT.md。
-- 模拟器测试：`xcodebuild … test`；手动联调时 daemon 用 `--listen 127.0.0.1` 与独立的 `--state-dir`。
 
 ## 约束
 
