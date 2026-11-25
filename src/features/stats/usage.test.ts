@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DailyModelTokens } from "@/ipc/bindings";
-import { buildUsageSeries, chooseUsageBucket, elapsedDays, inputTotals, modelCostBreakdown, mondayOf } from "./usage";
+import { buildUsageSeries, chooseUsageBucket, elapsedDays, inputTotals, modelMetricBreakdown, mondayOf } from "./usage";
 
 const DAY_MS = 86_400_000;
 
@@ -103,17 +103,31 @@ describe("buildUsageSeries", () => {
   });
 });
 
-describe("modelCostBreakdown & inputTotals", () => {
-  it("按 Cost 倒序排列，合并同族的全部完整模型名", () => {
+describe("modelMetricBreakdown & inputTotals", () => {
+  it("按所选指标（cost / input / output）汇总占比并倒序排列，合并同族的全部完整模型名", () => {
     const daily = [
-      row("2026-11-23", "claude-opus-4-7", { cost: 30, input: 1, cacheRead: 10, cacheCreation: 100 }),
-      row("2026-11-24", "claude-opus-4-8", { cost: 10, input: 2, cacheRead: 20, cacheCreation: 200 }),
-      row("2026-11-24", "claude-fable-5-1", { cost: 60, input: 3, cacheRead: 30, cacheCreation: 300 }),
+      row("2026-11-23", "claude-opus-4-7", { cost: 30, input: 100, cacheRead: 500, cacheCreation: 100, output: 50 }),
+      row("2026-11-24", "claude-opus-4-8", { cost: 10, input: 200, cacheRead: 100, cacheCreation: 0, output: 150 }),
+      row("2026-11-24", "claude-fable-5-1", { cost: 60, input: 50, cacheRead: 150, cacheCreation: 50, output: 800 }),
     ];
-    expect(inputTotals(daily)).toEqual({ input: 6, read: 60, write: 600 });
-    expect(modelCostBreakdown(daily)).toEqual([
-      { family: "fable", cost: 60, shareExact: 60, sharePct: 60, models: ["claude-fable-5-1"] },
-      { family: "opus", cost: 40, shareExact: 40, sharePct: 40, models: ["claude-opus-4-7", "claude-opus-4-8"] },
+    expect(inputTotals(daily)).toEqual({ input: 350, read: 750, write: 150 });
+
+    // Cost: fable (60) > opus (40).
+    expect(modelMetricBreakdown(daily, "cost")).toEqual([
+      { family: "fable", value: 60, shareExact: 60, sharePct: 60, models: ["claude-fable-5-1"] },
+      { family: "opus", value: 40, shareExact: 40, sharePct: 40, models: ["claude-opus-4-7", "claude-opus-4-8"] },
+    ]);
+
+    // Input (uncached + cacheRead + cacheCreation): opus (1000, 80%) > fable (250, 20%).
+    expect(modelMetricBreakdown(daily, "input")).toEqual([
+      { family: "opus", value: 1000, shareExact: 80, sharePct: 80, models: ["claude-opus-4-7", "claude-opus-4-8"] },
+      { family: "fable", value: 250, shareExact: 20, sharePct: 20, models: ["claude-fable-5-1"] },
+    ]);
+
+    // Output: fable (800, 80%) > opus (200, 20%).
+    expect(modelMetricBreakdown(daily, "output")).toEqual([
+      { family: "fable", value: 800, shareExact: 80, sharePct: 80, models: ["claude-fable-5-1"] },
+      { family: "opus", value: 200, shareExact: 20, sharePct: 20, models: ["claude-opus-4-7", "claude-opus-4-8"] },
     ]);
   });
 });

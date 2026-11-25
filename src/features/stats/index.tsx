@@ -44,7 +44,7 @@ export function StatsDialog() {
         overlayTestId="stats-overlay"
         aria-describedby={undefined}
         onOpenAutoFocus={(e) => e.preventDefault()}
-        className="top-1/2 h-[min(900px,calc(100vh-64px))] w-[min(1280px,calc(100vw-64px))] -translate-y-1/2 outline-none"
+        className="top-1/2 h-[min(720px,calc(100vh-64px))] w-[min(1180px,calc(100vw-64px))] -translate-y-1/2 outline-none"
       >
         <StatsPanel />
       </PanelDialogContent>
@@ -163,6 +163,7 @@ function StatsPanel() {
                 startMs={shown.resolved.startMs}
                 endMs={shown.resolved.endMs}
                 now={now}
+                theme={theme}
                 onDrill={drill}
               />
               {shownTrend && shown.resolved.startMs != null && shown.resolved.endMs != null && (

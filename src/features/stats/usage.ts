@@ -213,9 +213,9 @@ export function buildUsageSeries(
   return { bucket, families, items: kept };
 }
 
-export interface ModelCostRow {
+export interface ModelBreakdownRow {
   family: ModelFamily;
-  cost: number;
+  value: number;
   /** Exact share in `[0, 100]` for bar widths. */
   shareExact: number;
   /** Rounded integer share for text display (`57%`). */
@@ -224,35 +224,36 @@ export interface ModelCostRow {
   models: string[];
 }
 
-/** Cost breakdown by model family, sorted by Cost descending, with all full model names for drill-down. */
-export function modelCostBreakdown(daily: DailyModelTokens[]): ModelCostRow[] {
-  const byFam = new Map<ModelFamily, { cost: number; models: Set<string>; hasActivity: boolean }>();
+/** Metric breakdown by model family, sorted by metric value descending, with all full model names for drill-down. */
+export function modelMetricBreakdown(daily: DailyModelTokens[], metric: UsageMetric): ModelBreakdownRow[] {
+  const byFam = new Map<ModelFamily, { value: number; models: Set<string>; hasActivity: boolean }>();
   for (const d of daily) {
     const f = family(d.model);
     let entry = byFam.get(f);
     if (!entry) {
-      entry = { cost: 0, models: new Set(), hasActivity: false };
+      entry = { value: 0, models: new Set(), hasActivity: false };
       byFam.set(f, entry);
     }
-    entry.cost += d.cost;
-    if (d.cost > 0 || d.requests > 0) {
+    const v = metricValue(d, metric);
+    entry.value += v;
+    if (v > 0 || d.requests > 0) {
       entry.models.add(d.model);
       entry.hasActivity = true;
     }
   }
-  const totalCost = [...byFam.values()].reduce((s, e) => s + e.cost, 0);
+  const total = [...byFam.values()].reduce((s, e) => s + e.value, 0);
   return FAMILIES.flatMap((f) => {
     const e = byFam.get(f);
     if (!e || !e.hasActivity || e.models.size === 0) return [];
-    const shareExact = totalCost > 0 ? (e.cost / totalCost) * 100 : 0;
+    const shareExact = total > 0 ? (e.value / total) * 100 : 0;
     return [
       {
         family: f,
-        cost: e.cost,
+        value: e.value,
         shareExact,
         sharePct: Math.round(shareExact),
         models: [...e.models].sort(),
       },
     ];
-  }).sort((a, b) => b.cost - a.cost || FAMILIES.indexOf(a.family) - FAMILIES.indexOf(b.family));
+  }).sort((a, b) => b.value - a.value || FAMILIES.indexOf(a.family) - FAMILIES.indexOf(b.family));
 }

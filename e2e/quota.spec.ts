@@ -23,13 +23,17 @@ test("侧栏圆环与浮层：显示各项额度与重置时刻，点「打开�
   const popTitle = titleGroup.getByRole("heading", { name: "额度" });
   const popBadge = titleGroup.getByTestId("quota-plan");
   await expect(popBadge).toHaveText("Max");
-  const [titleBox, badgeBox, refreshBox] = await Promise.all([
+  const [titleBox, badgeBox, updatedBox, refreshBox] = await Promise.all([
     popTitle.boundingBox(),
     popBadge.boundingBox(),
+    pop.getByTestId("quota-updated").boundingBox(),
     pop.getByTestId("quota-refresh").boundingBox(),
   ]);
   expect(badgeBox!.x).toBeGreaterThanOrEqual(titleBox!.x + titleBox!.width);
   expect(badgeBox!.x - (titleBox!.x + titleBox!.width)).toBeLessThan(16);
+  expect(updatedBox!.x).toBeGreaterThan(badgeBox!.x + badgeBox!.width);
+  expect(updatedBox!.x + updatedBox!.width).toBeLessThanOrEqual(refreshBox!.x);
+  expect(Math.abs(updatedBox!.y + updatedBox!.height / 2 - (refreshBox!.y + refreshBox!.height / 2))).toBeLessThan(4);
   expect(refreshBox!.x - (badgeBox!.x + badgeBox!.width)).toBeGreaterThan(50);
 
   const popMeters = pop.getByTestId("quota-meter");
@@ -43,6 +47,7 @@ test("侧栏圆环与浮层：显示各项额度与重置时刻，点「打开�
   await expect(popMeters.nth(2)).toContainText("本周 · Fable");
   await expect(popMeters.nth(2)).toContainText("45%");
   await expect(pop.getByTestId("quota-updated")).toHaveText("14:11 更新");
+  await expect(pop.getByTestId("quota-error")).toHaveCount(0);
 
   // 打开统计后，统计页顶部额度条与侧栏共用同一个 query，不重复拉取。
   await pop.getByTestId("quota-open-stats").click();
@@ -113,12 +118,13 @@ test("刷新后统计页与侧栏圆环同时更新，≥80% / ≥100% 变色并
   await expect(ring).toHaveAttribute("data-tone", "full");
   expect(await planCalls(page)).toEqual({ calls: 2, refreshCalls: 1 });
 
-  // 后续刷新失败：仍保持 ok（沿用上次数据），浮层与统计页都写「读取失败，显示的是 HH:MM 的数据」。
+  // 后续刷新失败：仍保持 ok（沿用上次数据），浮层标题行保留「HH:MM 更新」并另起红字行，统计页写明失败文案。
   await page.evaluate(() => window.__cvPlan!.setError("读取订阅额度超时"));
   await ring.click();
   const pop = page.getByTestId("quota-popover");
   await pop.getByTestId("quota-refresh").click();
-  await expect(pop.getByTestId("quota-updated")).toHaveText("读取失败，显示的是 14:12 的数据");
+  await expect(pop.getByTestId("quota-updated")).toHaveText("14:12 更新");
+  await expect(pop.getByTestId("quota-error")).toHaveText("读取失败，显示的是 14:12 的数据");
   await expect(pop.getByTestId("quota-meter").nth(0)).toContainText("86%");
   await pop.getByTestId("quota-open-stats").click();
   await expect(strip.getByTestId("quota-updated")).toHaveText("读取失败，显示的是 14:12 的数据");

@@ -45,15 +45,29 @@ test("统计页新布局：左用量、右使用频率与用量走势，已移�
   await expect(outputBtn).toContainText("日均");
   await expect(usage.getByTestId("usage-chart").locator("canvas").first()).toBeVisible();
 
+  const modelTitle = usage.getByTestId("model-cost-title");
+  const firstModelRow = usage.getByTestId("model-cost-row").first();
+  await expect(modelTitle).toHaveText("Cost 按模型");
+  await expect(firstModelRow).toContainText("$");
+
   await inputBtn.click();
   await expect(inputBtn).toHaveAttribute("aria-pressed", "true");
   await expect(costBtn).toHaveAttribute("aria-pressed", "false");
+  await expect(modelTitle).toHaveText("输入按模型");
+  await expect(firstModelRow).not.toContainText("$");
+  await expect(firstModelRow).toContainText(/\d+(?:\.\d+)?[KMB]?\s·\s\d+%/);
+
   await outputBtn.click();
   await expect(outputBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(modelTitle).toHaveText("输出按模型");
+  await expect(firstModelRow).not.toContainText("$");
+  await expect(firstModelRow).toContainText(/\d+(?:\.\d+)?[KMB]?\s·\s\d+%/);
+
   await costBtn.click();
   await expect(costBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(modelTitle).toHaveText("Cost 按模型");
+  await expect(firstModelRow).toContainText("$");
 
-  await expect(usage.getByTestId("model-cost-row").first()).toBeVisible();
   await expect(usage.getByTestId("cache-hit")).toHaveText(/缓存命中率 \d+\.\d%/);
   await expect(
     usage.getByTestId("input-breakdown").getByRole("img", { name: /输入构成：缓存读取 \d+%/ }),
@@ -70,25 +84,48 @@ test("各时间范围的使用频率形态与用量走势显示规则", async ({
   await page.goto("/");
   await openStats(page);
 
+  const stats = page.getByTestId("stats");
   const freq = page.getByTestId("stats-frequency");
   const trend = page.getByTestId("stats-trend");
+  const tip = page.getByTestId("freq-tip");
 
-  // Current cycle (non-midnight start): 8 chronological day rows, no start marker, future boxes noted in legend.
+  // Current cycle (non-midnight start): 8 chronological day rows, future cells not drawn, legend omits empty-box note.
   await expect(freq).toHaveAttribute("data-mode", "hourly");
-  await expect(freq.getByTestId("freq-hour-row")).toHaveCount(8);
+  const hourRows = freq.getByTestId("freq-hour-row");
+  await expect(hourRows).toHaveCount(8);
   await expect(freq.locator('[data-start="true"]')).toHaveCount(0);
-  await expect(freq).toContainText("空框是还没到的时间");
+  await expect(freq.locator('[data-future="true"]')).toHaveCount(0);
+  await expect(freq).toContainText("一格一小时，颜色是请求数");
+  await expect(freq).not.toContainText("空框");
+  await expect(hourRows.nth(5)).toContainText("周四");
+  await expect(hourRows.nth(5).getByTestId("freq-hour")).toHaveCount(0);
+  await expect(hourRows.nth(7)).toContainText("周六");
+  await expect(hourRows.nth(7).getByTestId("freq-hour")).toHaveCount(0);
   await expect(freq.getByTestId("freq-subtitle")).toContainText("个小时有请求");
+
+  // Hovering a drawn hourly cell shows freq-tip immediately without native title; leaving or hovering out cells hides it.
+  const firstHour = freq.getByTestId("freq-hour").first();
+  await expect(firstHour).not.toHaveAttribute("title");
+  await firstHour.hover();
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText(/^周[一二三四五六日] \d+ 时/);
+  await expect(tip).toContainText(/\d[\d,]* 次请求/);
+  const [statsBox, hourTipBox] = await Promise.all([stats.boundingBox(), tip.boundingBox()]);
+  expect(hourTipBox!.x).toBeGreaterThanOrEqual(statsBox!.x);
+  expect(hourTipBox!.x + hourTipBox!.width).toBeLessThanOrEqual(statsBox!.x + statsBox!.width);
+  await freq.getByTestId("freq-hour-out").first().hover();
+  await expect(tip).toHaveCount(0);
+
   await expect(trend).toBeVisible();
   await expect(trend.getByTestId("trend-chart").locator("canvas").first()).toBeVisible();
   await expect(trend.getByTestId("trend-subtitle")).toContainText("到现在");
   await expect(trend.getByTestId("trend-prev-legend")).toHaveText("上一周期");
 
-  // Previous cycle: 8 chronological day rows (completed, no future boxes) + completed trend ("共").
+  // Previous cycle: 8 chronological day rows + completed trend ("共").
   await pickRange(page, "上一周期");
   await expect(freq).toHaveAttribute("data-mode", "hourly");
   await expect(freq.getByTestId("freq-hour-row")).toHaveCount(8);
-  await expect(freq).not.toContainText("空框是还没到的时间");
+  await expect(freq).toContainText("一格一小时，颜色是请求数");
   await expect(trend).toBeVisible();
   await expect(trend.getByTestId("trend-subtitle")).toContainText("共");
 
@@ -99,20 +136,41 @@ test("各时间范围的使用频率形态与用量走势显示规则", async ({
   await expect(trend).toBeVisible();
   await expect(trend.getByTestId("trend-prev-legend")).toHaveText("前 7 天");
 
-  // Last month & last 30 days: single calendar, no trend; first cell & 1st of month show M/D.
+  // Last month: 1 full-width month block with weekday header, no text inside cells, custom hover tooltip.
   await pickRange(page, "上月");
-  await expect(freq).toHaveAttribute("data-mode", "calendar");
-  await expect(freq.getByTestId("freq-calendar")).toBeVisible();
-  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-10-01"] b')).toHaveText("10/1");
-  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-10-02"] b')).toHaveText("2");
+  await expect(freq).toHaveAttribute("data-mode", "months");
+  await expect(freq.getByTestId("freq-months")).toHaveAttribute("data-columns", "1");
+  await expect(freq.getByTestId("freq-month-block")).toHaveCount(1);
+  await expect(freq.getByTestId("freq-weekdays")).toHaveText("周一周二周三周四周五周六周日");
+  await expect(freq).toContainText("一格一天，颜色是请求数");
+  const oct14 = freq.locator('[data-testid="freq-day"][data-day="2026-10-14"]');
+  await expect(oct14).toHaveText("");
+  await expect(oct14).not.toHaveAttribute("title");
+  await oct14.hover();
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText("10月14日 周三");
+  await expect(tip).toContainText(/\d[\d,]* 次请求/);
+  // Hovering a rightmost Sunday cell keeps the tooltip inside the dialog bounds.
+  const oct18 = freq.locator('[data-testid="freq-day"][data-day="2026-10-18"]');
+  await oct18.hover();
+  await expect(tip).toContainText("10月18日 周日");
+  const edgeTipBox = (await tip.boundingBox())!;
+  expect(edgeTipBox.x + edgeTipBox.width).toBeLessThanOrEqual(statsBox!.x + statsBox!.width);
+  await page.getByRole("heading", { name: "统计" }).hover();
+  await expect(tip).toHaveCount(0);
   await expect(freq.getByTestId("freq-subtitle")).toContainText("天有请求");
   await expect(trend).toHaveCount(0);
 
+  // Last 30 days: 2 month blocks side by side, no weekday header, future days omitted, today outlined.
   await pickRange(page, "最近 30 天");
-  await expect(freq).toHaveAttribute("data-mode", "calendar");
-  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-10-26"] b')).toHaveText("10/26");
-  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-11-01"] b')).toHaveText("11/1");
-  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-11-02"] b')).toHaveText("2");
+  await expect(freq).toHaveAttribute("data-mode", "months");
+  await expect(freq.getByTestId("freq-months")).toHaveAttribute("data-columns", "2");
+  await expect(freq.getByTestId("freq-month-block")).toHaveCount(2);
+  await expect(freq.getByTestId("freq-weekdays")).toHaveCount(0);
+  await expect(freq.locator('[data-future="true"]')).toHaveCount(0);
+  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-11-25"]')).toHaveAttribute("data-today", "true");
+  await expect(freq.locator('[data-testid="freq-day"][data-day="2026-11-26"]')).toHaveCount(0);
+  await expect(freq).toContainText("每块一个月，列是周一到周日，一格一天");
   await expect(trend).toHaveCount(0);
 
   // Last 90 days: 2-column mini month blocks, no trend.
@@ -162,10 +220,10 @@ test("切换范围等待新数据时，标题栏切到新范围，下方保持�
   await page.locator('[data-testid="model-cost-row"][data-family="opus"]').click();
   await expect(stats).toBeVisible();
 
-  // Release the response: panels switch to 上月's calendar and trend disappears.
+  // Release the response: panels switch to 上月's month block and trend disappears.
   await page.evaluate(() => window.__cvMock!.releaseStats());
   await expect(stats).not.toHaveAttribute("data-placeholder", "true");
-  await expect(freq).toHaveAttribute("data-mode", "calendar");
+  await expect(freq).toHaveAttribute("data-mode", "months");
   await expect(trend).toHaveCount(0);
 });
 
@@ -290,8 +348,10 @@ test("统计是盖在窗口上的大弹窗：点弹窗外、Esc 或关闭按钮�
   await openStats(page);
   await expect(stats).toBeVisible();
   const box = (await stats.boundingBox())!;
-  expect(box.width).toBeGreaterThan(1200);
-  expect(box.height).toBeGreaterThan(800);
+  expect(box.width).toBeGreaterThan(1150);
+  expect(box.width).toBeLessThanOrEqual(1180);
+  expect(box.height).toBeGreaterThan(700);
+  expect(box.height).toBeLessThanOrEqual(720);
   await page.mouse.click(10, 450);
   await expect(stats).toHaveCount(0);
 
@@ -373,7 +433,7 @@ test("周期与月份可用 ‹ › 前后翻，最多翻到当前；最近 N �
   await expect(span).toHaveText("2026 年 9 月");
   await page.getByLabel("上一个月", { exact: true }).click();
   await expect(trigger).toHaveText("2026 年 8 月");
-  await expect(page.getByTestId("stats-frequency")).toHaveAttribute("data-mode", "calendar");
+  await expect(page.getByTestId("stats-frequency")).toHaveAttribute("data-mode", "months");
 
   await pickRange(page, "最近 7 天");
   await expect(span).toHaveText("");

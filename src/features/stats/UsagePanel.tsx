@@ -4,7 +4,13 @@ import { cn } from "@/lib/cn";
 import { formatCost, formatCount, formatTokens } from "@/lib/format";
 import { Chart } from "./Chart";
 import { FAMILY_LABEL, usageBarOption, type Theme } from "./charts";
-import { buildUsageSeries, elapsedDays, inputTotals, modelCostBreakdown, type UsageMetric } from "./usage";
+import { buildUsageSeries, elapsedDays, inputTotals, modelMetricBreakdown, type UsageMetric } from "./usage";
+
+const MODEL_TITLE: Record<UsageMetric, string> = {
+  cost: "Cost 按模型",
+  input: "输入按模型",
+  output: "输出按模型",
+};
 
 const INPUT_PARTS = [
   {
@@ -55,7 +61,9 @@ export function UsagePanel({
 
   const series = useMemo(() => buildUsageSeries(daily, metric, timeRange, nowMs), [daily, metric, timeRange, nowMs]);
   const barOption = useMemo(() => usageBarOption(series, metric, theme), [series, metric, theme]);
-  const modelRows = useMemo(() => modelCostBreakdown(daily), [daily]);
+  const modelRows = useMemo(() => modelMetricBreakdown(daily, metric), [daily, metric]);
+  const modelTitle = MODEL_TITLE[metric];
+  const formatMetric = metric === "cost" ? formatCost : formatTokens;
 
   const pct = (v: number) => (totalInput > 0 ? (v / totalInput) * 100 : 0);
   const figures: {
@@ -150,10 +158,12 @@ export function UsagePanel({
 
       {modelRows.length > 0 && (
         <div data-testid="model-cost" className="flex flex-col gap-[7px]">
-          <span className="text-[12px] text-secondary">Cost 按模型</span>
+          <span data-testid="model-cost-title" className="text-[12px] text-secondary">
+            {modelTitle}
+          </span>
           <div
             role="img"
-            aria-label={`Cost 按模型：${modelRows.map((r) => `${FAMILY_LABEL[r.family]} ${r.sharePct}%`).join("，")}`}
+            aria-label={`${modelTitle}：${modelRows.map((r) => `${FAMILY_LABEL[r.family]} ${r.sharePct}%`).join("，")}`}
             className="flex h-[6px] overflow-hidden rounded-[3px] bg-border"
           >
             {modelRows.map((r) => (
@@ -174,7 +184,7 @@ export function UsagePanel({
                 <span className="size-[9px] shrink-0 rounded-[2px]" style={{ background: theme.series[r.family] }} />
                 <span className="min-w-0 flex-1 truncate">{FAMILY_LABEL[r.family]}</span>
                 <span className="shrink-0 text-secondary tabular-nums">
-                  {formatCost(r.cost)} · {r.sharePct}%
+                  {formatMetric(r.value)} · {r.sharePct}%
                 </span>
               </button>
             ))}

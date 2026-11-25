@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DailyModelTokens, HourUsage } from "@/ipc/bindings";
-import {
-  buildCalendarGrid,
-  buildHourlyGrid,
-  buildMonthBlocks,
-  CALENDAR_MAX_MS,
-  chooseFrequencyMode,
-  colorLevel,
-  quartileThresholds,
-} from "./frequency";
+import { buildHourlyGrid, buildMonthBlocks, chooseFrequencyMode, colorLevel, quartileThresholds } from "./frequency";
 
 const DAY_MS = 86_400_000;
 
@@ -46,15 +38,10 @@ describe("quartileThresholds & colorLevel", () => {
 });
 
 describe("chooseFrequencyMode", () => {
-  it("hourly 非空用小时格；有界按实际时长 ≤ 31 天 + 2 小时用月历（跨 32 个本机日期但时长 30 天仍是月历）；全部按日期跨度", () => {
-    expect(chooseFrequencyMode(168, 7 * DAY_MS, 8)).toBe("hourly");
-    // 30-day duration spanning 32 local calendar days (e.g. DST shift) still renders as a single calendar.
-    expect(chooseFrequencyMode(0, 30 * DAY_MS, 32)).toBe("calendar");
-    expect(chooseFrequencyMode(0, CALENDAR_MAX_MS, 32)).toBe("calendar");
-    expect(chooseFrequencyMode(0, CALENDAR_MAX_MS + 1, 32)).toBe("months");
-    // Unbounded (全部): uses calendar day span.
-    expect(chooseFrequencyMode(0, null, 31)).toBe("calendar");
-    expect(chooseFrequencyMode(0, null, 32)).toBe("months");
+  it("hourly 非空用小时格，其余统一用月块", () => {
+    expect(chooseFrequencyMode(168)).toBe("hourly");
+    expect(chooseFrequencyMode(1)).toBe("hourly");
+    expect(chooseFrequencyMode(0)).toBe("months");
   });
 });
 
@@ -75,7 +62,7 @@ function makeHourlyBuckets(fromMs: number, toMs: number, counts: Record<string, 
 }
 
 describe("buildHourlyGrid", () => {
-  it("起点 14:00 的 7 天得到 8 行，首尾同星期，首行前 14 格与末行后 10 格不画，现在之后为空框", () => {
+  it("起点 14:00 的 7 天得到 8 行，首尾同星期，范围外与还没到的时间都不画（保留整行星期标签）", () => {
     // 2026-11-23 is Monday.
     const startMs = new Date("2026-11-23T14:00:00").getTime();
     const endMs = startMs + 7 * DAY_MS; // 2026-11-30 Mon 14:00
@@ -93,25 +80,25 @@ describe("buildHourlyGrid", () => {
     for (const row of grid.rows) expect(row.cells).toHaveLength(24);
 
     // First row (Mon 11/23): 0..13 out, 14..23 data.
-    expect(grid.rows[0]!.cells.slice(0, 14).every((c) => c.kind === "out")).toBe(true);
+    expect(grid.rows[0]!.cells.slice(0, 14).every((c) => c.kind === "out" && c.tipTitle === "")).toBe(true);
     expect(grid.rows[0]!.cells.slice(14).every((c) => c.kind === "data")).toBe(true);
-    expect(grid.rows[0]!.cells[14]).toMatchObject({ kind: "data", requests: 10, title: "周一 14 时 · 10 次请求" });
+    expect(grid.rows[0]!.cells[14]).toMatchObject({ kind: "data", requests: 10, tipTitle: "周一 14 时" });
 
-    // Wed 11/25: 14h is data, 15h..23h are future empty boxes.
-    expect(grid.rows[2]!.cells[14]).toMatchObject({ kind: "data", requests: 8 });
-    expect(grid.rows[2]!.cells.slice(15).every((c) => c.kind === "future" && c.title === "")).toBe(true);
+    // Wed 11/25: 14h is data, 15h..23h (future) are out placeholders without tooltip.
+    expect(grid.rows[2]!.cells[14]).toMatchObject({ kind: "data", requests: 8, tipTitle: "周三 14 时" });
+    expect(grid.rows[2]!.cells.slice(15).every((c) => c.kind === "out" && c.tipTitle === "")).toBe(true);
 
-    // Last row (Mon 11/30): 0..13 future, 14..23 out.
-    expect(grid.rows[7]!.cells.slice(0, 14).every((c) => c.kind === "future")).toBe(true);
-    expect(grid.rows[7]!.cells.slice(14).every((c) => c.kind === "out")).toBe(true);
+    // Thu..Mon (rows 3..7): entirely future, all 24 slots are out while weekday labels remain.
+    for (let r = 3; r <= 7; r++) {
+      expect(grid.rows[r]!.cells.every((c) => c.kind === "out" && c.tipTitle === "")).toBe(true);
+    }
 
-    expect(grid.hasFuture).toBe(true);
     expect(grid.activeHours).toBe(4);
     expect(grid.busiest).toEqual({ day: "2026-11-25", weekday: "周三", hour: 12, requests: 120 });
     expect(grid.subtitle).toBe("4 个小时有请求 · 最忙 周三 12 时");
   });
 
-  it("起点 0:00 的 7 天得到 7 行且无缺格，已结束周期不含空框", () => {
+  it("起点 0:00 的 7 天得到 7 行且无缺格", () => {
     const startMs = new Date("2026-11-16T00:00:00").getTime(); // Monday 00:00
     const endMs = startMs + 7 * DAY_MS; // 2026-11-23 Mon 00:00
     const nowMs = new Date("2026-11-25T14:30:00").getTime();
@@ -121,12 +108,11 @@ describe("buildHourlyGrid", () => {
     expect(grid.rows).toHaveLength(7);
     expect(grid.rows.map((r) => r.weekday)).toEqual(["周一", "周二", "周三", "周四", "周五", "周六", "周日"]);
     expect(grid.rows.every((r) => r.cells.every((c) => c.kind === "data"))).toBe(true);
-    expect(grid.hasFuture).toBe(false);
     expect(grid.activeHours).toBe(1);
     expect(grid.subtitle).toBe("1 个小时有请求 · 最忙 周六 2 时");
   });
 
-  it("最近 7 天（起止不是整点）：得到 8 行，首尾两行各缺一部分且无空框", () => {
+  it("最近 7 天（起止不是整点）：得到 8 行，首尾两行各缺一部分", () => {
     // 2026-11-18 Wed 14:10 to 2026-11-25 Wed 14:10, buckets span 11/18 14:00 .. 11/25 14:00.
     const endMs = new Date("2026-11-25T14:10:00").getTime();
     const startMs = endMs - 7 * DAY_MS;
@@ -146,47 +132,71 @@ describe("buildHourlyGrid", () => {
     // Last row: 0..14 data (15 cells), 15..23 out (9 cells).
     expect(grid.rows[7]!.cells.slice(0, 15).every((c) => c.kind === "data")).toBe(true);
     expect(grid.rows[7]!.cells.slice(15).every((c) => c.kind === "out")).toBe(true);
-    expect(grid.hasFuture).toBe(false);
     expect(grid.activeHours).toBe(2);
     expect(grid.busiest).toEqual({ day: "2026-11-25", weekday: "周三", hour: 14, requests: 15 });
   });
 });
 
-describe("buildCalendarGrid & buildMonthBlocks", () => {
-  it("月历：范围外透明、未来画空框、今天描边、标题写有请求天数与最忙日", () => {
+describe("buildMonthBlocks", () => {
+  it("单月（1 块）占满一栏，今天描边、未来不画、标题写有请求天数与最忙日", () => {
     const fromMs = new Date("2026-10-01T00:00:00").getTime();
     const toMs = new Date("2026-11-01T00:00:00").getTime() - 1;
     const nowMs = new Date("2026-10-20T12:00:00").getTime();
     const daily = [dayRow("2026-10-01", 200), dayRow("2026-10-14", 1840), dayRow("2026-10-20", 400)];
-    const cal = buildCalendarGrid(daily, { fromMs, toMs }, nowMs)!;
-    // Oct 1 2026 is Thursday -> 3 leading blanks (Mon..Wed).
-    expect(cal.cells[0]!.inRange).toBe(false);
-    expect(cal.cells[2]!.inRange).toBe(false);
-    expect(cal.cells[3]!).toMatchObject({ day: "2026-10-01", label: "10/1", inRange: true, requests: 200 });
-    expect(cal.cells[4]!).toMatchObject({ day: "2026-10-02", label: "2" });
-    const today = cal.cells.find((c) => c.day === "2026-10-20")!;
-    expect(today.isToday).toBe(true);
-    expect(today.future).toBe(false);
-    const future = cal.cells.find((c) => c.day === "2026-10-25")!;
-    expect(future.future).toBe(true);
-    expect(cal.summary.subtitle).toBe("3 天有请求 · 最忙 10月14日 周三，1,840 次");
+    const view = buildMonthBlocks(daily, { fromMs, toMs }, nowMs)!;
 
-    // 跨月月历（最近 30 天）：第一格与每月 1 号写 M/D，其余写日。
-    const cross = buildCalendarGrid(
-      [dayRow("2026-10-26", 10), dayRow("2026-11-01", 20)],
-      {
-        fromMs: new Date("2026-10-26T14:00:00").getTime(),
-        toMs: new Date("2026-11-25T14:00:00").getTime(),
-      },
-      new Date("2026-11-25T14:00:00").getTime(),
-    )!;
-    expect(cross.cells.find((c) => c.day === "2026-10-26")!.label).toBe("10/26");
-    expect(cross.cells.find((c) => c.day === "2026-10-27")!.label).toBe("27");
-    expect(cross.cells.find((c) => c.day === "2026-11-01")!.label).toBe("11/1");
-    expect(cross.cells.find((c) => c.day === "2026-11-02")!.label).toBe("2");
+    expect(view.columns).toBe(1);
+    expect(view.groupedByYear).toBe(false);
+    expect(view.years).toHaveLength(1);
+    const block = view.years[0]!.blocks[0]!;
+    expect(block.label).toBe("10月");
+    // Oct 1 2026 is Thursday -> 3 leading blanks (Mon..Wed).
+    expect(block.leadBlanks).toBe(3);
+    expect(block.days).toHaveLength(31);
+    expect(block.days[13]).toMatchObject({
+      day: "2026-10-14",
+      inRange: true,
+      future: false,
+      requests: 1840,
+      tipTitle: "10月14日 周三",
+    });
+    expect(block.days[19]).toMatchObject({
+      day: "2026-10-20",
+      isToday: true,
+      future: false,
+      tipTitle: "10月20日 周二",
+    });
+    expect(block.days[24]).toMatchObject({
+      day: "2026-10-25",
+      future: true,
+      level: 0,
+      tipTitle: "",
+    });
+    expect(view.summary.subtitle).toBe("3 天有请求 · 最忙 10月14日 周三，1,840 次");
   });
 
-  it("月块：≤4 块两列不按年分组，>4 块四列按年分组", () => {
+  it("跨两月（如最近 30 天）排成 2 块，范围外与未来不画", () => {
+    const nowMs = new Date("2026-11-25T14:00:00").getTime();
+    const view = buildMonthBlocks(
+      [dayRow("2026-10-26", 10), dayRow("2026-11-01", 20), dayRow("2026-11-25", 30)],
+      { fromMs: new Date("2026-10-26T14:00:00").getTime(), toMs: nowMs },
+      nowMs,
+    )!;
+    expect(view.columns).toBe(2);
+    expect(view.groupedByYear).toBe(false);
+    const blocks = view.years.flatMap((y) => y.blocks);
+    expect(blocks.map((b) => b.label)).toEqual(["10月", "11月"]);
+    expect(blocks[0]!.days.find((d) => d.day === "2026-10-25")).toMatchObject({ inRange: false, tipTitle: "" });
+    expect(blocks[0]!.days.find((d) => d.day === "2026-10-26")).toMatchObject({
+      inRange: true,
+      requests: 10,
+      tipTitle: "10月26日 周一",
+    });
+    expect(blocks[1]!.days.find((d) => d.day === "2026-11-25")).toMatchObject({ isToday: true, future: false });
+    expect(blocks[1]!.days.find((d) => d.day === "2026-11-26")).toMatchObject({ future: true, tipTitle: "" });
+  });
+
+  it("2–4 块两列不按年分组，>4 块四列按年分组且最多最近 36 个月", () => {
     const nowMs = new Date("2026-11-25T12:00:00").getTime();
     const ninety = buildMonthBlocks(
       [dayRow("2026-09-10", 500), dayRow("2026-11-25", 100)],

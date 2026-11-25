@@ -34,18 +34,22 @@ function QuotaPopoverBody({
 
   return (
     <>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
         <div data-testid="quota-header-title" className="flex min-w-0 items-center gap-2">
-          <h2 className="m-0 text-[13px] font-semibold">额度</h2>
+          <h2 className="m-0 shrink-0 text-[13px] font-semibold">额度</h2>
           {badge && (
             <span
               data-testid="quota-plan"
-              className="inline-flex h-[18px] items-center rounded border border-border bg-ground px-1.5 text-[11px] text-secondary"
+              className="inline-flex h-[18px] shrink-0 items-center rounded border border-border bg-ground px-1.5 text-[11px] text-secondary"
             >
               {badge}
             </span>
           )}
         </div>
+        <span className="flex-1" />
+        <span data-testid="quota-updated" className="shrink-0 text-[11px] text-secondary tabular-nums">
+          {formatUpdatedAt(usage.fetchedMs, null)}
+        </span>
         <button
           type="button"
           data-testid="quota-refresh"
@@ -61,13 +65,11 @@ function QuotaPopoverBody({
       {usage.limits.map((limit, idx) => (
         <QuotaMeter key={`${limit.kind}:${limit.model ?? ""}:${idx}`} view={buildMeterView(limit, nowMs, "popover")} />
       ))}
-      <span
-        data-testid="quota-updated"
-        title={error ?? undefined}
-        className={cn("truncate text-[11px]", error ? "text-error" : "text-secondary")}
-      >
-        {formatUpdatedAt(usage.fetchedMs, error)}
-      </span>
+      {error && (
+        <span data-testid="quota-error" title={error} className="truncate text-[11px] text-error">
+          {formatUpdatedAt(usage.fetchedMs, error)}
+        </span>
+      )}
       <button
         type="button"
         data-testid="quota-open-stats"
