@@ -20,8 +20,14 @@ export interface HaaWorker {
   owner: string;
   name: string;
   state: HaaWorkerState;
+  agent?: string;
+  model?: string;
+  cwd?: string;
+  tasks?: number;
+  cost?: number;
   tokens: number;
   ctx?: number;
+  lastActive?: number;
   task?: string;
   title?: string;
   activity?: string;
@@ -31,6 +37,8 @@ export interface HaaWorker {
 
 const optStr = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
 const optNum = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const optNonNegNum = (v: unknown): number | undefined =>
+  typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 
 /**
  * Tolerantly parses one JSONL line from `haa ls --all --json --watch`.
@@ -54,8 +62,20 @@ export function parseHaaWorkers(raw: string): HaaWorker[] | null {
     const id = typeof r.id === "string" && r.id.length > 0 ? r.id : `${r.owner}:${r.name}`;
     const tokens = typeof r.tokens === "number" && Number.isFinite(r.tokens) && r.tokens >= 0 ? r.tokens : 0;
     const w: HaaWorker = { id, owner: r.owner, name: r.name, state: r.state, tokens };
+    const agent = optStr(r.agent);
+    if (agent !== undefined) w.agent = agent;
+    const model = optStr(r.model);
+    if (model !== undefined) w.model = model;
+    const cwd = optStr(r.cwd);
+    if (cwd !== undefined) w.cwd = cwd;
+    const tasks = optNonNegNum(r.tasks);
+    if (tasks !== undefined) w.tasks = tasks;
+    const cost = optNonNegNum(r.cost);
+    if (cost !== undefined) w.cost = cost;
     const ctx = optNum(r.ctx);
     if (ctx !== undefined) w.ctx = ctx;
+    const lastActive = optNonNegNum(r.lastActive);
+    if (lastActive !== undefined) w.lastActive = lastActive;
     const task = optStr(r.task);
     if (task !== undefined) w.task = task;
     const title = optStr(r.title);

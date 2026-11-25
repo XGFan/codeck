@@ -41,6 +41,23 @@ const connectHeightVar = (page: Page) =>
     return "";
   });
 
+async function assertAlignedNoOverflow(page: Page) {
+  const bar = page.getByTestId("haa-workers");
+  const stats = await bar.evaluate((el) => {
+    const rows = Array.from(el.querySelectorAll<HTMLElement>('[data-testid="haa-worker"]'));
+    return {
+      barOverflow: el.scrollWidth > el.clientWidth,
+      rowOverflows: rows.map((r) => r.scrollWidth > r.clientWidth),
+      rowHeights: rows.map((r) => Math.round(r.getBoundingClientRect().height)),
+    };
+  });
+  expect(stats.barOverflow).toBe(false);
+  expect(stats.rowOverflows.every((v) => !v)).toBe(true);
+  if (stats.rowHeights.length > 1) {
+    expect(new Set(stats.rowHeights).size).toBe(1);
+  }
+}
+
 test("历史（非 Live）Session 不启动 watch", async ({ page }) => {
   await page.goto("/");
   await open(page, REDIS_TITLE);
@@ -49,7 +66,7 @@ test("历史（非 Live）Session 不启动 watch", async ({ page }) => {
   await expect(page.getByTestId("haa-workers")).toHaveCount(0);
 });
 
-test("Live 未 Connect：启动 watch、过滤 owner、等回答自动展开、切到非 Live Session 停掉并清空", async ({ page }) => {
+test("Live 未 Connect：启动 watch、过滤 owner、表格折叠与展开、切到非 Live Session 停掉并清空", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH_TITLE);
   await expect.poll(() => haaProbe(page)).toMatchObject({ watching: true, watchStarts: 1 });
@@ -60,18 +77,20 @@ test("Live 未 Connect：启动 watch、过滤 owner、等回答自动展开、�
   await nextFrames(page);
   await expect(page.getByTestId("haa-workers")).toHaveCount(0);
 
-  // 推入本 Session 与其他 Session 的 haa Worker：只显示 owner 匹配的，并撑开 `--connect-h`。
+  // 1 个本 Session 的 Worker：只显示 owner 匹配的，撑开 `--connect-h`，无 haa-toggle，haa-count 为 1/1。
+  const now = Date.now();
   await emitWorkers(page, [
     {
       id: "w-own-1",
       owner: RICH_ID,
       name: "alpha",
       state: "running",
+      model: "agy/gemini-4-neon-high",
       tokens: 18400,
       ctx: 37.4,
       title: "修复限流边界",
       activity: "cargo test",
-      startedAt: Date.now() - 15_000,
+      startedAt: now - 15_000,
     },
     { id: "w-other", owner: REDIS_ID, name: "stranger", state: "running", tokens: 999 },
   ]);
@@ -79,42 +98,122 @@ test("Live 未 Connect：启动 watch、过滤 owner、等回答自动展开、�
   const bar = page.getByTestId("haa-workers");
   await expect(bar).toBeVisible();
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(page.getByTestId("haa-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("haa-count")).toContainText("1/1");
   await expect(bar).toContainText("alpha");
   await expect(bar).toContainText("运行中");
-  await expect(bar).toContainText("18.4K token");
+  await expect(bar).toContainText("18.4K");
   await expect(bar).toContainText("37%");
   await expect(bar).toContainText("修复限流边界");
-  await expect(bar).toContainText("cargo test");
+  await expect(bar).not.toContainText("cargo test");
   await expect(bar).not.toContainText("stranger");
+  const taskCell = page.getByTestId("haa-worker").first().locator('[title*="正在做：cargo test"]');
+  await expect(taskCell).toHaveCount(1);
   await expect.poll(() => connectHeightVar(page)).not.toBe("");
+  await assertAlignedNoOverflow(page);
 
-  // 多个 haa Worker 默认折叠；等回答时自动展开并展示可换行、可键盘聚焦的问题。
+  // 2 个 Worker：两行都显示，没有 haa-toggle。
   await emitWorkers(page, [
-    { id: "w-1", owner: RICH_ID, name: "alpha", state: "running", tokens: 1200, title: "任务一" },
-    { id: "w-2", owner: RICH_ID, name: "beta", state: "idle", tokens: 0, title: "任务二" },
+    {
+      id: "w-1",
+      owner: RICH_ID,
+      name: "alpha",
+      state: "running",
+      tokens: 1200,
+      title: "任务一",
+      startedAt: now - 5_000,
+    },
+    {
+      id: "w-2",
+      owner: RICH_ID,
+      name: "beta",
+      state: "idle",
+      tokens: 400,
+      tasks: 2,
+      lastActive: now - 180_000,
+    },
+  ]);
+  await expect(page.getByTestId("haa-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("haa-count")).toContainText("1/2");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(2);
+  await assertAlignedNoOverflow(page);
+
+  // 3 个以上：有 haa-toggle，默认只显示在干活的行；出现 asking 时不自动展开。
+  await emitWorkers(page, [
+    {
+      id: "w-1",
+      owner: RICH_ID,
+      name: "alpha",
+      state: "running",
+      model: "codex/gpt-6.2-sol:high",
+      tokens: 1200,
+      ctx: 22,
+      title: "任务一",
+      startedAt: now - 10_000,
+    },
+    { id: "w-2", owner: RICH_ID, name: "beta", state: "idle", tokens: 0, tasks: 1, lastActive: now - 120_000 },
+    { id: "w-3", owner: RICH_ID, name: "gamma", state: "dormant", tokens: 0, tasks: 4, lastActive: now - 7_200_000 },
   ]);
   const toggle = page.getByTestId("haa-toggle");
-  await expect(toggle).toContainText("1 运行中");
-  await expect(toggle).toContainText("1 空闲");
-  await expect(page.getByTestId("haa-worker")).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(1);
 
+  // 出现 asking 时仍保持收起，只显示在干活的 2 行，不会自动展开显示全部 3 行。
   await emitWorkers(page, [
     {
       id: "w-1",
       owner: RICH_ID,
       name: "alpha",
       state: "asking",
+      model: "agy/gemini-4-neon-high",
       tokens: 2000,
+      ctx: 51,
       title: "任务一",
       pending: "第一行问题\n第二行细节",
+      startedAt: now - 20_000,
     },
-    { id: "w-2", owner: RICH_ID, name: "beta", state: "running", tokens: 500, title: "任务二" },
+    {
+      id: "w-2",
+      owner: RICH_ID,
+      name: "beta",
+      state: "running",
+      model: "agent-gateway/deepseek-v4.1-flash",
+      tokens: 500,
+      ctx: 12,
+      title: "一段很长很长的任务标题用于确认单行截断不会造成横向溢出",
+      startedAt: now - 5_000,
+    },
+    { id: "w-3", owner: RICH_ID, name: "gamma", state: "idle", tokens: 0, tasks: 3, lastActive: now - 600_000 },
   ]);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByTestId("haa-worker")).toHaveCount(2);
-  const pending = page.getByTestId("haa-pending");
-  await expect(pending).toHaveText("第一行问题\n第二行细节");
-  await expect(pending).toHaveCSS("white-space", "pre-wrap");
-  await expect(pending).toHaveAttribute("tabindex", "0");
+
+  const askingRow = page.locator('[data-testid="haa-worker"][data-state="asking"]');
+  await expect(askingRow).toContainText("等待中");
+  await expect(askingRow).toContainText("问 Main：第一行问题 第二行细节");
+
+  // 点 haa-toggle 展开显示全部 3 行，行高一致且无横向溢出。
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(3);
+  await assertAlignedNoOverflow(page);
+
+  // 点回收起，并切到 3 个全部空闲 / 休眠：只有一行，haa-summary 为「2 个空闲 · 1 个休眠」，haa-worker 为 0 个；点开后为 3 个。
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await emitWorkers(page, [
+    { id: "w-1", owner: RICH_ID, name: "alpha", state: "idle", tokens: 100, tasks: 2, lastActive: now - 120_000 },
+    { id: "w-2", owner: RICH_ID, name: "beta", state: "idle", tokens: 200, tasks: 1, lastActive: now - 300_000 },
+    { id: "w-3", owner: RICH_ID, name: "gamma", state: "dormant", tokens: 300, tasks: 5, lastActive: now - 7_200_000 },
+  ]);
+  await expect(page.getByTestId("haa-summary")).toHaveText("2 个空闲 · 1 个休眠");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(0);
+  await assertAlignedNoOverflow(page);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(3);
+  await assertAlignedNoOverflow(page);
 
   // 切到非 Live Session：停掉 watch 并清空状态条与 `--connect-h`。
   await open(page, REDIS_TITLE);
@@ -134,7 +233,8 @@ test("已 Connect：状态条在请求与输入框之上，焦点在状态条上
 
   await emitWorkers(page, [
     { id: "w-1", owner: RICH_ID, name: "alpha", state: "running", tokens: 500, title: "任务一" },
-    { id: "w-2", owner: RICH_ID, name: "beta", state: "idle", tokens: 0, title: "任务二" },
+    { id: "w-2", owner: RICH_ID, name: "beta", state: "idle", tokens: 0, tasks: 1 },
+    { id: "w-3", owner: RICH_ID, name: "gamma", state: "dormant", tokens: 0, tasks: 2 },
   ]);
   await page.evaluate(() => {
     window.__cvCcrpc!.emit({ type: "state", state: "waiting", waiting: "permission" });

@@ -1,175 +1,237 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
-import { formatDuration, formatTokens } from "@/lib/format";
+import { formatTokens } from "@/lib/format";
 import type { HaaWorker, HaaWorkerState } from "./protocol";
 import { useHaa } from "./store";
+import {
+  formatCollapsedSummary,
+  formatTaskCell,
+  formatTaskTooltip,
+  formatWorkerDuration,
+  isActiveState,
+  isActiveWorker,
+  shortModelName,
+  sortWorkers,
+  STATE_LABEL,
+} from "./view";
 
-const STATE_META: Record<HaaWorkerState, { label: string; dot: string; text: string }> = {
-  running: { label: "运行中", dot: "bg-live", text: "text-live" },
-  asking: { label: "等你回答", dot: "bg-live-waiting", text: "text-live-waiting" },
-  idle: { label: "空闲", dot: "bg-secondary/50", text: "text-secondary" },
-  dormant: { label: "休眠", dot: "bg-secondary/40", text: "text-secondary" },
-  taken: { label: "接管中", dot: "bg-secondary/60", text: "text-secondary" },
-  dead: { label: "已退出", dot: "bg-error", text: "text-error" },
+const GRID_CLASS =
+  "grid min-w-0 items-center gap-x-[12px] grid-cols-[108px_52px_72px_minmax(0,1fr)_128px_52px_52px] @max-[760px]:grid-cols-[108px_52px_72px_minmax(0,1fr)_52px_52px]";
+
+const DOT_CLASS: Record<HaaWorkerState, string> = {
+  running: "bg-live",
+  asking: "border-[1.5px] border-live bg-transparent",
+  taken: "bg-secondary/60",
+  idle: "bg-secondary/50",
+  dormant: "border-[1.5px] border-secondary/60 bg-transparent",
+  dead: "bg-error",
 };
 
-const STATE_ORDER: HaaWorkerState[] = ["asking", "running", "taken", "idle", "dormant", "dead"];
+const STATE_TEXT_CLASS: Record<HaaWorkerState, string> = {
+  running: "text-live",
+  asking: "text-secondary",
+  taken: "text-secondary",
+  idle: "text-secondary",
+  dormant: "text-secondary",
+  dead: "text-error",
+};
 
-/** Current timestamp, ticking every second while `active`. */
-function useNow(active: boolean): number {
+/** Current timestamp, ticking every `intervalMs` while non-null. */
+function useNow(intervalMs: number | null): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!active) return;
+    if (intervalMs == null) return;
     setNow(Date.now());
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    const t = window.setInterval(() => setNow(Date.now()), intervalMs);
     return () => window.clearInterval(t);
-  }, [active]);
+  }, [intervalMs]);
   return now;
 }
 
-/** One haa Worker row, plus its pending question block when `state === "asking"`. */
-function WorkerRow({ w, now, prefix }: { w: HaaWorker; now: number; prefix?: boolean }) {
-  const meta = STATE_META[w.state];
-  const active = w.state === "running" || w.state === "asking";
-  const elapsed = active && w.startedAt != null ? formatDuration(Math.max(0, now - w.startedAt), "detail") : "";
-  const title = w.title ?? w.task;
+/** Small 12px ring showing context usage percentage (matches Connect Header's ring). */
+function CtxRing({ pct }: { pct: number }) {
+  const f = Math.min(1, Math.max(0, pct / 100));
+  const c = 2 * Math.PI * 9;
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" className="shrink-0" aria-hidden>
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3" />
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeDasharray={`${f * c} ${c}`}
+        transform="rotate(-90 12 12)"
+      />
+    </svg>
+  );
+}
+
+function ToggleButton({
+  activeCount,
+  total,
+  open,
+  onToggle,
+}: {
+  activeCount: number;
+  total: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid="haa-toggle"
+      aria-expanded={open}
+      title={`${total} 个 Worker，${activeCount} 个在干活`}
+      onClick={onToggle}
+      className="inline-flex max-w-full min-w-0 cursor-pointer items-center gap-[4px] overflow-hidden rounded-sm text-left whitespace-nowrap text-secondary hover:text-text focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <span className="shrink-0 font-mono text-[11px] font-medium">haa</span>
+      <span className={cn("truncate text-[11px] tabular-nums", activeCount > 0 && "text-live")}>
+        {activeCount}/{total}
+      </span>
+      {open ? (
+        <ChevronDown size={12} className="shrink-0" aria-hidden />
+      ) : (
+        <ChevronRight size={12} className="shrink-0" aria-hidden />
+      )}
+    </button>
+  );
+}
+
+function WorkerRow({ w, now }: { w: HaaWorker; now: number }) {
+  const active = isActiveState(w.state);
+  const taskCell = formatTaskCell(w);
+  const taskTooltip = formatTaskTooltip(w);
+  const modelShort = shortModelName(w.model);
 
   return (
-    <div data-testid="haa-worker" data-state={w.state} className="flex shrink-0 flex-col">
-      <div className="flex min-w-0 items-center gap-2">
-        {prefix && <span className="shrink-0 font-mono text-[11px] font-medium text-secondary">haa</span>}
-        <span className={cn("size-1.5 shrink-0 rounded-full", meta.dot)} aria-hidden />
-        <span className="shrink-0 font-medium text-text">{w.name}</span>
-        <span className={cn("shrink-0", meta.text)}>{meta.label}</span>
-        {elapsed && <span className="shrink-0 text-secondary tabular-nums">{elapsed}</span>}
-        {w.tokens > 0 && <span className="shrink-0 text-secondary tabular-nums">{formatTokens(w.tokens)} token</span>}
-        {w.ctx != null && (
-          <span className="shrink-0 text-secondary tabular-nums" title="上下文占用">
-            {Math.round(w.ctx)}%
-          </span>
-        )}
-        {title && (
-          <span className="min-w-0 truncate text-secondary" title={title}>
-            {title}
-          </span>
-        )}
-        {w.activity && (
-          <span className="min-w-0 truncate text-secondary/80" title={w.activity}>
-            · {w.activity}
-          </span>
-        )}
-      </div>
-      {w.state === "asking" && w.pending && (
-        <div
-          data-testid="haa-pending"
-          tabIndex={0}
-          aria-label={`${w.name} 待回答的问题`}
-          className="mt-1.5 max-h-24 overflow-y-auto rounded-lg border border-border border-l-2 border-l-live-waiting bg-ground px-2.5 py-1.5 text-[12px] leading-relaxed break-words whitespace-pre-wrap text-text select-text focus:outline-none focus-visible:ring-1 focus-visible:ring-live-waiting"
+    <div data-testid="haa-worker" data-state={w.state} className={cn(GRID_CLASS, "h-[24px] overflow-hidden")}>
+      <div className="flex min-w-0 items-center gap-[6px] overflow-hidden whitespace-nowrap">
+        <span className={cn("size-[6px] shrink-0 rounded-full", DOT_CLASS[w.state])} aria-hidden />
+        <span
+          className={cn("min-w-0 truncate", active ? "font-medium text-text" : "font-normal text-secondary")}
+          title={[w.name, [w.agent, w.model].filter(Boolean).join(" · ")].filter(Boolean).join("\n")}
         >
-          {w.pending}
+          {w.name}
+        </span>
+      </div>
+      <div className={cn("min-w-0 truncate", STATE_TEXT_CLASS[w.state])}>{STATE_LABEL[w.state]}</div>
+      <div className="min-w-0 truncate text-secondary tabular-nums">{formatWorkerDuration(w, now)}</div>
+      <div
+        className={cn("min-w-0 truncate", taskCell.muted ? "text-secondary" : "text-text")}
+        title={taskTooltip || undefined}
+      >
+        {taskCell.prefix && <span className="font-medium text-secondary">{taskCell.prefix}</span>}
+        {taskCell.text}
+      </div>
+      <div className="min-w-0 truncate text-right text-secondary @max-[760px]:hidden" title={w.model}>
+        {modelShort}
+      </div>
+      {w.ctx != null ? (
+        <div
+          className="flex min-w-0 items-center justify-end gap-[4px] overflow-hidden whitespace-nowrap text-secondary tabular-nums"
+          title="上下文占用"
+        >
+          <CtxRing pct={w.ctx} />
+          <span className="truncate">{Math.round(w.ctx)}%</span>
         </div>
+      ) : (
+        <div className="min-w-0 truncate text-right text-secondary">—</div>
       )}
+      <div className="min-w-0 truncate text-right text-secondary tabular-nums" title="累计 token">
+        {w.tokens > 0 ? formatTokens(w.tokens) : "—"}
+      </div>
     </div>
   );
 }
 
 /**
- * Read-only status bar for the haa Workers owned by `sessionId`.
+ * Read-only aligned status table for the haa Workers owned by `sessionId`.
  * Renders nothing when the Session has no haa Workers.
  */
 export function HaaBar({ sessionId }: { sessionId: string | null }) {
   const workers = useHaa((s) => s.workers);
   const own = sessionId ? workers.filter((w) => w.owner === sessionId) : [];
 
-  const askingKeys = own.filter((w) => w.state === "asking").map((w) => `${w.id}\0${w.pending ?? ""}`);
-  const [open, setOpen] = useState(() => askingKeys.length > 0);
-  const [prev, setPrev] = useState<{ sessionId: string | null; keys: string[] }>({
-    sessionId,
-    keys: askingKeys,
-  });
-
-  const keysChanged =
-    prev.sessionId !== sessionId ||
-    prev.keys.length !== askingKeys.length ||
-    prev.keys.some((k, i) => k !== askingKeys[i]);
-
-  if (keysChanged) {
-    if (prev.sessionId !== sessionId) {
-      setOpen(askingKeys.length > 0);
-    } else if (askingKeys.some((k) => !prev.keys.includes(k))) {
-      setOpen(true);
-    }
-    setPrev({ sessionId, keys: askingKeys });
+  const [open, setOpen] = useState(false);
+  const [prevSessionId, setPrevSessionId] = useState(sessionId);
+  if (prevSessionId !== sessionId) {
+    setPrevSessionId(sessionId);
+    setOpen(false);
   }
 
-  const hasTicking =
-    (own.length === 1 || open) &&
-    own.some((w) => (w.state === "running" || w.state === "asking") && w.startedAt != null);
-  const now = useNow(hasTicking);
+  const total = own.length;
+  const collapsible = total > 2;
+  const activeCount = own.filter(isActiveWorker).length;
+  const collapsedSummaryOnly = collapsible && !open && activeCount === 0;
 
-  if (own.length === 0) return null;
+  const visibleRaw = collapsedSummaryOnly ? [] : collapsible && !open ? own.filter(isActiveWorker) : own;
+  const hasFastTick = visibleRaw.some((w) => (w.state === "running" || w.state === "asking") && w.startedAt != null);
+  const hasSlowTick =
+    !hasFastTick && visibleRaw.some((w) => w.state !== "running" && w.state !== "asking" && w.lastActive != null);
+  const tickInterval = hasFastTick ? 1000 : hasSlowTick ? 30_000 : null;
+  const now = useNow(tickInterval);
 
-  if (own.length === 1) {
-    return (
-      <div
-        data-testid="haa-workers"
-        data-haa-bar=""
-        className="flex w-full flex-col rounded-2xl border border-border bg-ground px-3.5 py-2 text-[12px] shadow-[0_2px_10px_rgba(0,0,0,0.04)]"
-      >
-        <WorkerRow w={own[0]!} now={now} prefix />
-      </div>
-    );
-  }
+  if (total === 0) return null;
 
-  const counts = STATE_ORDER.map((state) => ({
-    state,
-    n: own.filter((w) => w.state === state).length,
-  })).filter((c) => c.n > 0);
+  const visible = collapsedSummaryOnly ? [] : sortWorkers(visibleRaw, now);
 
   return (
     <div
       data-testid="haa-workers"
       data-haa-bar=""
-      className="flex w-full flex-col rounded-2xl border border-border bg-ground px-3.5 py-2 text-[12px] shadow-[0_2px_10px_rgba(0,0,0,0.04)]"
+      className="@container flex w-full min-w-0 flex-col overflow-x-hidden rounded-2xl border border-border bg-ground px-3.5 py-2 text-[12px] shadow-[0_2px_10px_rgba(0,0,0,0.04)]"
     >
-      <button
-        type="button"
-        data-testid="haa-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 text-left text-secondary hover:text-text"
-      >
-        <span className="shrink-0 font-mono text-[11px] font-medium text-secondary">haa</span>
-        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
-          {counts.map(({ state, n }, i) => {
-            const meta = STATE_META[state];
-            return (
-              <span key={state} className="inline-flex items-center gap-1.5">
-                {i > 0 && (
-                  <span className="text-secondary/60" aria-hidden>
-                    ·
-                  </span>
-                )}
-                <span className={cn("size-1.5 rounded-full", meta.dot)} aria-hidden />
-                <span className={meta.text}>
-                  {n} {meta.label}
-                </span>
-              </span>
-            );
-          })}
-        </span>
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-secondary">
-          {open ? "收起" : "展开"}
-          {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-        </span>
-      </button>
-      {open && (
-        <div className="mt-1.5 flex max-h-[45vh] flex-col gap-1.5 overflow-y-auto border-t border-border pt-1.5">
-          {own.map((w) => (
-            <WorkerRow key={w.id} w={w} now={now} />
-          ))}
+      {collapsedSummaryOnly ? (
+        <div className="flex h-[24px] min-w-0 items-center gap-[12px] overflow-hidden">
+          <div className="flex min-w-0 shrink-0 items-center">
+            <ToggleButton activeCount={activeCount} total={total} open={open} onToggle={() => setOpen((v) => !v)} />
+          </div>
+          <span data-testid="haa-summary" className="min-w-0 truncate text-[11px] text-secondary">
+            {formatCollapsedSummary(own)}
+          </span>
         </div>
+      ) : (
+        <>
+          <div className={cn(GRID_CLASS, "h-[26px] border-b border-border text-[11px] text-secondary")}>
+            <div className="flex min-w-0 items-center overflow-hidden">
+              {collapsible ? (
+                <ToggleButton activeCount={activeCount} total={total} open={open} onToggle={() => setOpen((v) => !v)} />
+              ) : (
+                <div
+                  data-testid="haa-count"
+                  className="flex min-w-0 items-center gap-[6px] overflow-hidden whitespace-nowrap"
+                >
+                  <span className="shrink-0 font-mono text-[11px] font-medium text-secondary">haa</span>
+                  <span
+                    className={cn(
+                      "truncate text-[11px] tabular-nums",
+                      activeCount > 0 ? "text-live" : "text-secondary",
+                    )}
+                  >
+                    {activeCount}/{total}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 truncate">状态</div>
+            <div className="min-w-0 truncate">时长</div>
+            <div className="min-w-0 truncate">Task</div>
+            <div className="min-w-0 truncate text-right @max-[760px]:hidden">模型</div>
+            <div className="min-w-0 truncate text-right">上下文</div>
+            <div className="min-w-0 truncate text-right">token</div>
+          </div>
+          <div className="max-h-[45vh] overflow-x-hidden overflow-y-auto">
+            {visible.map((w) => (
+              <WorkerRow key={w.id} w={w} now={now} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

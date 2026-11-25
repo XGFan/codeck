@@ -96,4 +96,57 @@ describe("parseHaaWorkers", () => {
     ]);
     expect(parseHaaWorkers(raw)).toEqual([{ id: "s1:w1", owner: "s1", name: "w1", state: "dead", tokens: 0 }]);
   });
+
+  it("parses extended optional fields and drops fields with invalid types without dropping the worker", () => {
+    const raw = JSON.stringify([
+      {
+        id: "w-ext",
+        owner: "s1",
+        name: "alpha",
+        state: "idle",
+        agent: "codex",
+        model: "codex/gpt-6.2-sol:high",
+        cwd: "/repo/worktree",
+        tasks: 3,
+        cost: 0.42,
+        lastActive: 1700000123000,
+        tokens: 8000,
+      },
+      {
+        id: "w-bad-ext",
+        owner: "s1",
+        name: "beta",
+        state: "dormant",
+        agent: 123,
+        model: "",
+        cwd: false,
+        tasks: "3",
+        cost: -0.5,
+        lastActive: -10,
+        tokens: 100,
+      },
+    ]);
+    expect(parseHaaWorkers(raw)).toEqual([
+      {
+        id: "w-ext",
+        owner: "s1",
+        name: "alpha",
+        state: "idle",
+        agent: "codex",
+        model: "codex/gpt-6.2-sol:high",
+        cwd: "/repo/worktree",
+        tasks: 3,
+        cost: 0.42,
+        lastActive: 1700000123000,
+        tokens: 8000,
+      },
+      {
+        id: "w-bad-ext",
+        owner: "s1",
+        name: "beta",
+        state: "dormant",
+        tokens: 100,
+      },
+    ]);
+  });
 });
