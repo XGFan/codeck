@@ -2,6 +2,8 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
+import { useUi } from "@/state/ui";
+import { HAA_KEY } from "@/features/transcript/keys";
 import type { HaaWorker, HaaWorkerState } from "./protocol";
 import { useHaa } from "./store";
 import {
@@ -158,12 +160,11 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
   const workers = useHaa((s) => s.workers);
   const own = sessionId ? workers.filter((w) => w.owner === sessionId) : [];
 
-  const [open, setOpen] = useState(false);
-  const [prevSessionId, setPrevSessionId] = useState(sessionId);
-  if (prevSessionId !== sessionId) {
-    setPrevSessionId(sessionId);
-    setOpen(false);
-  }
+  // Kept with the open Session's view (collapsed again when another is opened), not here: the bar is mounted anew
+  // when the Session is Connected or Disconnected, which moves it into or out of the Connect panel.
+  const open = useUi((s) => s.expanded[HAA_KEY] ?? false);
+  const toggleExpanded = useUi((s) => s.toggleExpanded);
+  const toggle = () => toggleExpanded(HAA_KEY);
 
   const total = own.length;
   const collapsible = total > 2;
@@ -190,7 +191,7 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
       {collapsedSummaryOnly ? (
         <div className="flex h-[24px] min-w-0 items-center gap-[12px] overflow-hidden">
           <div className="flex min-w-0 shrink-0 items-center">
-            <ToggleButton activeCount={activeCount} total={total} open={open} onToggle={() => setOpen((v) => !v)} />
+            <ToggleButton activeCount={activeCount} total={total} open={open} onToggle={toggle} />
           </div>
           <span data-testid="haa-summary" className="min-w-0 truncate text-[11px] text-secondary">
             {formatCollapsedSummary(own)}
@@ -201,7 +202,7 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
           <div className={cn(GRID_CLASS, "h-[26px] border-b border-border text-[11px] text-secondary")}>
             <div className="flex min-w-0 items-center overflow-hidden">
               {collapsible ? (
-                <ToggleButton activeCount={activeCount} total={total} open={open} onToggle={() => setOpen((v) => !v)} />
+                <ToggleButton activeCount={activeCount} total={total} open={open} onToggle={toggle} />
               ) : (
                 <div
                   data-testid="haa-count"

@@ -1,4 +1,4 @@
-// Expansion keys in `useUi.expanded`: what is open in a transcript. Every key is built here.
+// Expansion keys in `useUi.expanded`: what is open in a transcript, and under it. Every key is built here.
 
 /** A tool call's details. */
 export const toolKey = (nodeId: string, toolUseId: string) => `tool:${nodeId}|${toolUseId}`;
@@ -13,3 +13,5 @@ export const INHERITED_KEY = "inherited";
 /** A turn's folded process, by its prompt node (`fold.ts`). */
 export const foldKey = (promptNodeId: string) => `fold:${promptNodeId}`;
 export const isFoldKey = (key: string) => key.startsWith("fold:");
+/** The haa status bar under the transcript, listing every Worker. */
+export const HAA_KEY = "haa";

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { HaaWorker } from "../src/features/haa/protocol";
-import { disableAutoConnect } from "./connect-helpers";
+import { disableAutoConnect, pick } from "./connect-helpers";
 import { RICH_TITLE } from "./helpers";
 
 const REDIS_TITLE = "排查 Redis 连接池泄漏";
@@ -225,6 +225,40 @@ test("Live 未 Connect：启动 watch、过滤 owner、表格折叠与展开、�
   await expect.poll(() => haaProbe(page)).toMatchObject({ watching: false, watchStarts: 1 });
   await expect(page.getByTestId("haa-workers")).toHaveCount(0);
   await expect.poll(() => connectHeightVar(page)).toBe("");
+});
+
+test("展开后 Connect、Disconnect 都保持展开，切换 Session 回到收起", async ({ page }) => {
+  const workers: HaaWorker[] = [
+    { id: "w-1", owner: RICH_ID, name: "alpha", state: "running", tokens: 500, title: "任务一" },
+    { id: "w-2", owner: RICH_ID, name: "beta", state: "idle", tokens: 0, tasks: 1 },
+    { id: "w-3", owner: RICH_ID, name: "gamma", state: "dormant", tokens: 0, tasks: 2 },
+  ];
+  await page.goto("/");
+  await open(page, RICH_TITLE);
+  await expect.poll(() => haaProbe(page)).toMatchObject({ watching: true, watchStarts: 1 });
+  await emitWorkers(page, workers);
+  const toggle = page.getByTestId("haa-toggle");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(3);
+
+  // Connect 把状态条挪进 Connect 面板，Disconnect 再挪出来：都不收起。
+  await pick(page, "connect-button");
+  await expect(page.getByTestId("connect-panel").getByTestId("haa-workers")).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(3);
+  await pick(page, "connect-disconnect");
+  await expect(page.getByTestId("connect-panel")).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(3);
+
+  // 切到别的 Session 再回来：回到收起，只列在干活的。
+  await open(page, REDIS_TITLE);
+  await open(page, RICH_TITLE);
+  await expect.poll(() => haaProbe(page)).toMatchObject({ watching: true, watchStarts: 2 });
+  await emitWorkers(page, workers);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("haa-worker")).toHaveCount(1);
 });
 
 test("已 Connect：状态条在请求与输入框之上，焦点在状态条上不触发 Connect 快捷键", async ({ page }) => {
