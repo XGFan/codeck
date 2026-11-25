@@ -3,6 +3,51 @@
 
 use super::*;
 
+/// A main-line AskUserQuestion call as the plugin recorded it ([`hook::read_asks`]).
+pub(super) struct RecordedAsk {
+    pub(super) call: transcript::PendingTool,
+    /// Its dialog has been seen on the screen: only then is it taken for the question.
+    pub(super) shown: bool,
+}
+
+/// The record whose dialog is on the screen (`lines`), when exactly one is: two calls asking the
+/// same cannot be told apart.
+pub(super) fn shown_record(recs: &[RecordedAsk], lines: &[String]) -> Option<usize> {
+    let mut on = recs.iter().enumerate().filter(|(_, r)| {
+        let questions = r.call.input["questions"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        recognize::ask_shows(lines, questions)
+    });
+    match (on.next(), on.next()) {
+        (Some((i, _)), None) => Some(i),
+        _ => None,
+    }
+}
+
+/// The call a plugin record stands for: asked in the Session followed (`session_id`), and not
+/// over here (`resolved`).
+pub(super) fn recorded_call(
+    r: hook::AskRecord,
+    session_id: Option<&str>,
+    resolved: &HashSet<String>,
+) -> Option<transcript::PendingTool> {
+    if session_id.is_none() || r.session_id.as_deref() != session_id {
+        return None;
+    }
+    if resolved.contains(&r.tool_use_id) {
+        return None;
+    }
+    Some(transcript::PendingTool {
+        id: r.tool_use_id,
+        name: "AskUserQuestion".into(),
+        input: r.tool_input,
+        agent_id: None,
+        seq: 0,
+    })
+}
+
 /// Text to look for in a permission dialog's body for this tool (whitespace removed, first 40
 /// chars), or `None` when the tool's input gives nothing recognizable.
 fn dialog_needle(name: &str, input: &Value) -> Option<String> {
@@ -204,6 +249,7 @@ impl Engine {
     /// The request is over: its hook (if still waiting) is released with no decision.
     pub(super) fn resolve(&mut self, id: &str) {
         self.requests.retain(|r| r.id != id);
+        self.recorded_asks.retain(|r| r.call.id != id);
         if self.resolved.len() > 4096 {
             self.resolved.clear();
         }
@@ -358,13 +404,76 @@ impl Engine {
             "from_code": super::code_calls::from_code(&r.id)})
     }
 
-    /// The main line's AskUserQuestion still waiting for its result in the transcript.
+    /// The main line's AskUserQuestion still waiting for its result in the transcript, else the
+    /// one the plugin recorded (asked from Code Mode's code: in the transcript only later) once
+    /// its dialog has been seen on the screen.
     pub(super) fn pending_ask(&self) -> Option<&transcript::PendingTool> {
         self.tailer
-            .as_ref()?
-            .pending()
-            .into_iter()
-            .find(|p| p.name == "AskUserQuestion" && p.agent_id.is_none())
+            .as_ref()
+            .and_then(|t| {
+                t.pending()
+                    .into_iter()
+                    .find(|p| p.name == "AskUserQuestion" && p.agent_id.is_none())
+            })
+            .or(self.recorded_asks.iter().find(|r| r.shown).map(|r| &r.call))
+    }
+
+    /// Keeps [`Engine::recorded_asks`] current while the Process File's raw state `raw` is
+    /// `input needed`: the plugin's records are re-read at most every [`RECORD_REREAD`] (they
+    /// come and go with the questions), and the one whose dialog is on the screen is marked shown.
+    pub(super) fn refresh_recorded_asks(&mut self, raw: &(String, Option<String>)) {
+        if raw.0 != "waiting" || raw.1.as_deref() != Some("input needed") {
+            self.recorded_asks.clear();
+            self.recorded_read_at = None;
+            return;
+        }
+        if self
+            .recorded_read_at
+            .is_none_or(|t| t.elapsed() >= RECORD_REREAD)
+        {
+            self.recorded_read_at = Some(Instant::now());
+            let recs = self
+                .followed
+                .or(self.claude_pid)
+                .map(|pid| hook::read_asks(&self.state_dir, pid))
+                .unwrap_or_default();
+            let shown = self
+                .recorded_asks
+                .iter()
+                .find(|r| r.shown)
+                .map(|r| r.call.id.clone());
+            self.recorded_asks = recs
+                .into_iter()
+                .filter_map(|r| recorded_call(r, self.session_id.as_deref(), &self.resolved))
+                .map(|call| RecordedAsk {
+                    shown: shown.as_deref() == Some(call.id.as_str()),
+                    call,
+                })
+                .collect();
+        }
+        if self.recorded_asks.is_empty() || self.recorded_asks.iter().any(|r| r.shown) {
+            return;
+        }
+        let on_screen = self
+            .screen()
+            .ok()
+            .and_then(|s| shown_record(&self.recorded_asks, &s.lines));
+        if let Some(i) = on_screen {
+            self.recorded_asks[i].shown = true;
+        }
+    }
+
+    /// The input of the question `id` that no hook holds (see [`Self::pending_ask`]).
+    fn unheld_ask_input(&self, id: &str) -> Option<Value> {
+        self.tailer
+            .as_ref()
+            .and_then(|t| t.pending_by_id(id))
+            .or(self
+                .recorded_asks
+                .iter()
+                .map(|r| &r.call)
+                .find(|p| p.id == id))
+            .map(|p| p.input.clone())
     }
 
     pub(super) fn request_is(&self, kind: &WaitKind, request_id: &str) -> bool {
@@ -650,12 +759,8 @@ impl Engine {
             // No hook waits for it (asked before ccrpc attached, or the hook went away): keys.
             let input = match held {
                 Some(i) => self.requests[i].input.clone(),
-                None => match self
-                    .tailer
-                    .as_ref()
-                    .and_then(|t| t.pending_by_id(request_id))
-                {
-                    Some(p) => p.input.clone(),
+                None => match self.unheld_ask_input(request_id) {
+                    Some(input) => input,
                     None => {
                         return err(
                             "unknown_request",
@@ -697,12 +802,8 @@ impl Engine {
         let held = self.requests.iter().position(|r| r.id == request_id);
         let input = match held {
             Some(i) => self.requests[i].input.clone(),
-            None => match self
-                .tailer
-                .as_ref()
-                .and_then(|t| t.pending_by_id(request_id))
-            {
-                Some(p) => p.input.clone(),
+            None => match self.unheld_ask_input(request_id) {
+                Some(input) => input,
                 None => {
                     return err(
                         "unknown_request",
@@ -749,12 +850,7 @@ impl Engine {
                     );
                 }
             }
-            let title = q
-                .get("question")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            plan.push((title, answer(i), multi));
+            plan.push((q, answer(i)));
         }
         // While the hook runs the dialog takes no number keys: let it go (no decision, so the
         // dialog stays), then give the dialog a moment.
@@ -763,7 +859,7 @@ impl Engine {
             std::thread::sleep(Duration::from_millis(800));
         }
         let tabbed = questions.len() > 1;
-        for (title, a, multi) in &plan {
+        for &(q, a) in &plan {
             if !self.request_is(&WaitKind::Question, request_id) {
                 return err(
                     "unknown_request",
@@ -772,10 +868,10 @@ impl Engine {
             }
             match a {
                 Some(a) => {
-                    self.answer_one_on_screen(title, a, *multi)?;
+                    self.answer_one_on_screen(q, a)?;
                 }
                 None if tabbed => {
-                    self.ask_screen_of(title)?;
+                    self.ask_screen_of(q)?;
                     self.keys(key::RIGHT)?;
                 }
                 None => {}
@@ -793,13 +889,13 @@ impl Engine {
                 return Err(self.unrecognized("answer_question", None));
             }
             // Back one tab at a time, each seen before the next key.
-            for (title, ..) in plan[target..].iter().rev() {
+            for &(q, _) in plan[target..].iter().rev() {
                 self.keys(key::LEFT)?;
-                self.ask_screen_of(title)?;
+                self.ask_screen_of(q)?;
             }
         }
-        let q = self.ask_screen_of(&plan[target].0)?;
-        let Some(n) = q.chat else {
+        let page = self.ask_screen_of(plan[target].0)?;
+        let Some(n) = page.chat else {
             return Err(self.unrecognized("answer_question", None));
         };
         self.keys(n.to_string().as_bytes())?;
@@ -807,16 +903,15 @@ impl Engine {
         self.wait_leave_request(request_id)
     }
 
-    /// The dialog's page of the question titled `title` (waited for up to 3 s).
+    /// The dialog's page of `question` (one entry of the call's `questions`; its title, options
+    /// and choice, see [`recognize::ask_page_is`]), waited for up to 3 s.
     fn ask_screen_of(
         &mut self,
-        title: &str,
+        question: &Value,
     ) -> std::result::Result<recognize::AskQuestion, CmdErr> {
         let found = self.wait_screen(Duration::from_secs(3), |_, s| {
             match recognize::ask(&s.lines) {
-                Some(recognize::AskScreen::Question(q))
-                    if recognize::same_text(&q.title, title) =>
-                {
+                Some(recognize::AskScreen::Question(q)) if recognize::ask_page_is(&q, question) => {
                     Some(q)
                 }
                 _ => None,
@@ -856,22 +951,17 @@ impl Engine {
                     format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1),
                 );
             }
-            let title = q
-                .get("question")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            plan.push((title, a, multi));
+            plan.push((q, a));
         }
         let mut tabbed = false;
-        for (title, a, multi) in plan {
+        for (q, a) in plan {
             if !self.request_is(&WaitKind::Question, request_id) {
                 return err(
                     "unknown_request",
                     format!("作答中请求已经变了，不再是 {request_id}"),
                 );
             }
-            tabbed |= self.answer_one_on_screen(&title, a, multi)?;
+            tabbed |= self.answer_one_on_screen(q, a)?;
         }
         if tabbed {
             let review = self.wait_screen(Duration::from_secs(3), |_, s| {
@@ -889,18 +979,18 @@ impl Engine {
         self.wait_leave_request(request_id)
     }
 
-    /// One question of [`Self::answer_question_on_screen`]; returns whether the dialog is tabbed.
+    /// One question of [`Self::answer_question_on_screen`], on its own page (see
+    /// [`Self::ask_screen_of`]); returns whether the dialog is tabbed.
     pub(super) fn answer_one_on_screen(
         &mut self,
-        title: &str,
+        question: &Value,
         a: &Answer,
-        multi: bool,
     ) -> std::result::Result<bool, CmdErr> {
+        let title = question["question"].as_str().unwrap_or_default();
+        let multi = question["multiSelect"].as_bool().unwrap_or(false);
         let found = self.wait_screen(Duration::from_secs(3), |_, s| {
             match recognize::ask(&s.lines) {
-                Some(recognize::AskScreen::Question(q))
-                    if recognize::same_text(&q.title, title) =>
-                {
+                Some(recognize::AskScreen::Question(q)) if recognize::ask_page_is(&q, question) => {
                     Some(q)
                 }
                 _ => None,
@@ -989,6 +1079,60 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plugin record is the question only for the Session followed, until it is over here.
+    #[test]
+    fn a_record_counts_for_its_own_session_until_resolved() {
+        let rec = |sid: Option<&str>| hook::AskRecord {
+            tool_use_id: "repl_a".into(),
+            tool_input: json!({"questions": []}),
+            session_id: sid.map(str::to_string),
+        };
+        let none = HashSet::new();
+        let call = recorded_call(rec(Some("s1")), Some("s1"), &none).unwrap();
+        assert_eq!(
+            (call.id.as_str(), call.name.as_str(), call.agent_id),
+            ("repl_a", "AskUserQuestion", None)
+        );
+        // Asked before /clear or by another claude that had this pid; the Session not known yet.
+        assert!(recorded_call(rec(Some("s0")), Some("s1"), &none).is_none());
+        assert!(recorded_call(rec(None), Some("s1"), &none).is_none());
+        assert!(recorded_call(rec(Some("s1")), None, &none).is_none());
+        let resolved: HashSet<String> = ["repl_a".to_string()].into();
+        assert!(recorded_call(rec(Some("s1")), Some("s1"), &resolved).is_none());
+    }
+
+    /// Of the calls waiting, the one whose dialog is on the screen; none when two ask the same.
+    #[test]
+    fn the_record_on_the_screen_is_the_question() {
+        let lines: Vec<String> = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/screens/ask_single.txt"),
+        )
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+        let call = |id: &str, title: &str| RecordedAsk {
+            call: transcript::PendingTool {
+                id: id.into(),
+                name: "AskUserQuestion".into(),
+                input: json!({"questions": [{"question": title, "multiSelect": false,
+                    "options": [{"label": "Red"}, {"label": "Blue"}]}]}),
+                agent_id: None,
+                seq: 0,
+            },
+            shown: false,
+        };
+        let city = call("repl_city", "Which city?");
+        let color = call("repl_color", "Favorite color?");
+        assert_eq!(shown_record(&[city, color], &lines), Some(1));
+        let (a, b) = (
+            call("repl_a", "Favorite color?"),
+            call("repl_b", "Favorite color?"),
+        );
+        assert_eq!(shown_record(&[a, b], &lines), None);
+        assert_eq!(shown_record(&[call("repl_c", "Which city?")], &lines), None);
+    }
 
     #[test]
     fn needles_for_dialog_matching() {

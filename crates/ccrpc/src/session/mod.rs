@@ -78,6 +78,8 @@ const COMPACT_IDLE: Duration = Duration::from_secs(5);
 const POP_SETTLE: Duration = Duration::from_millis(300);
 /// `input needed` without an AskUserQuestion from the plugin becomes `dialog` after this long.
 const CLASSIFY_GRACE: Duration = Duration::from_millis(500);
+/// How often the plugin's record of a question is read while the Process File says `input needed`.
+const RECORD_REREAD: Duration = Duration::from_millis(500);
 /// After `exit` dismissed Claude Code's question about running tasks, the Process File still says
 /// `waiting` for a moment (its writes are throttled): not reported as waiting for this long.
 const EXIT_QUESTION_GRACE: Duration = Duration::from_secs(2);
@@ -289,6 +291,11 @@ pub struct Engine {
     state: State,
     /// Raw `(status, waitingFor)` last read, with when it was first seen.
     raw_since: Option<((String, Option<String>), Instant)>,
+    /// The main line's AskUserQuestion calls as the plugin recorded them, while the Process File
+    /// says `input needed` ([`Self::refresh_recorded_asks`]).
+    recorded_asks: Vec<requests::RecordedAsk>,
+    /// When the plugin's record was last read.
+    recorded_read_at: Option<Instant>,
     /// Turns: opened and ended by the plugin's hooks, with what each did.
     turns: TurnTracker,
     library: Library,
@@ -472,6 +479,8 @@ impl Engine {
             tailer: None,
             state: State::Starting,
             raw_since: None,
+            recorded_asks: Vec::new(),
+            recorded_read_at: None,
             turns: TurnTracker::new(),
             library: Library::load(layout::library_dir()),
             analyzer: Analyzer::from_env(),
@@ -790,6 +799,9 @@ impl Engine {
             copied
         };
         let prev = self.session_id.replace(sid.clone());
+        // A question recorded for the Session before is not this one's.
+        self.recorded_asks.clear();
+        self.recorded_read_at = None;
         // The first one after `ready` is `started` (`new`: the plugin checks in after the startup
         // screens).
         if prev.as_deref() != Some(sid.as_str()) && (prev.is_some() || self.ready_sent) {
@@ -1327,6 +1339,7 @@ impl Engine {
                 now
             }
         };
+        self.refresh_recorded_asks(&raw);
         let next = match status.as_str() {
             "busy" => State::Busy,
             "waiting" => {
@@ -1346,6 +1359,10 @@ impl Engine {
                         } else if self.pending_ask().is_some() {
                             // Asked while no ccrpc held the hook (attached later): answered on the screen.
                             WaitKind::Question
+                        } else if !self.recorded_asks.is_empty()
+                            && since.elapsed() < CLASSIFY_GRACE + MATCH_GRACE
+                        {
+                            return; // the plugin recorded a question: its dialog may still be drawing
                         } else {
                             WaitKind::Dialog
                         }

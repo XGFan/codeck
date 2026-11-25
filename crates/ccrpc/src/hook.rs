@@ -52,6 +52,119 @@ pub fn socket_path(state: &Path, claude_pid: u32) -> PathBuf {
     state.join("s").join(format!("{claude_pid}.sock"))
 }
 
+/// Where the plugin keeps `claude_pid`'s main-line AskUserQuestion call `tool_use_id` while it
+/// waits: one file per call (code can ask several at once), `None` for an id that is no file name.
+pub fn ask_path(state: &Path, claude_pid: u32, tool_use_id: &str) -> Option<PathBuf> {
+    let plain = tool_use_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    (plain && !tool_use_id.is_empty() && tool_use_id.len() <= 128).then(|| {
+        state
+            .join("asks")
+            .join(format!("{claude_pid}.{tool_use_id}.json"))
+    })
+}
+
+/// Largest record [`read_asks`] reads.
+const ASK_RECORD_MAX: u64 = 1 << 20;
+
+/// A main-line AskUserQuestion still waiting, as its PreToolUse hook saw it. A ccrpc that attaches
+/// while a question waits finds it in the transcript, except one asked from Code Mode's code:
+/// Claude Code writes those calls only once the code's result is delivered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AskRecord {
+    pub tool_use_id: String,
+    pub tool_input: Value,
+    /// The Session that asked it (the hook's `session_id`).
+    pub session_id: Option<String>,
+}
+
+/// The records of `claude_pid`'s questions, oldest first: regular files (not links) in a private
+/// directory, each with its call's id and questions.
+pub fn read_asks(state: &Path, claude_pid: u32) -> Vec<AskRecord> {
+    let mut found: Vec<(std::time::SystemTime, AskRecord)> = ask_files(state, claude_pid)
+        .into_iter()
+        .filter_map(|(id, path)| read_record(&path).filter(|(_, r)| r.tool_use_id == id))
+        .collect();
+    found.sort_by(|a, b| (a.0, &a.1.tool_use_id).cmp(&(b.0, &b.1.tool_use_id)));
+    found.into_iter().map(|(_, r)| r).collect()
+}
+
+/// `claude_pid`'s record files in the private `asks` directory, with the id each is named for.
+fn ask_files(state: &Path, claude_pid: u32) -> Vec<(String, PathBuf)> {
+    let dir = state.join("asks");
+    if !dir_is_private(&dir) {
+        return Vec::new();
+    }
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let prefix = format!("{claude_pid}.");
+    rd.flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let id = name.strip_prefix(&prefix)?.strip_suffix(".json")?;
+            Some((id.to_string(), e.path()))
+        })
+        .collect()
+}
+
+fn read_record(path: &Path) -> Option<(std::time::SystemTime, AskRecord)> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let md = f.metadata().ok()?;
+    if !md.is_file() || md.len() > ASK_RECORD_MAX {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    f.take(ASK_RECORD_MAX).read_to_end(&mut bytes).ok()?;
+    let v: Value = serde_json::from_slice(&bytes).ok()?;
+    v["tool_input"]["questions"].as_array()?;
+    let rec = AskRecord {
+        tool_use_id: v["tool_use_id"].as_str()?.to_string(),
+        tool_input: v["tool_input"].clone(),
+        session_id: v["session_id"].as_str().map(str::to_string),
+    };
+    Some((md.modified().ok()?, rec))
+}
+
+/// Keeps what [`read_asks`] reads: a main-line AskUserQuestion's record is written at its
+/// PreToolUse (before its dialog shows) and removed when that call ends; all of the process's are
+/// removed when a prompt is submitted (a question dismissed with Esc or `Chat about this` gets no
+/// PostToolUse; a new prompt means its dialog is gone) and when a Session starts in it.
+fn record_ask(state: &Path, claude_pid: u32, event: &str, input: &Value) {
+    let ask = input["tool_name"] == "AskUserQuestion" && input["agent_id"].is_null();
+    let path = ask_path(
+        state,
+        claude_pid,
+        input["tool_use_id"].as_str().unwrap_or_default(),
+    );
+    match event {
+        "PreToolUse" if ask => {
+            let rec = json!({"tool_use_id": input["tool_use_id"], "tool_input": input["tool_input"],
+                "session_id": input["session_id"]});
+            if let Some(p) = path {
+                let _ = write_private(&p, rec.to_string().as_bytes());
+            }
+        }
+        "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" if ask => {
+            if let Some(p) = path.filter(|p| p.parent().is_some_and(dir_is_private)) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        "UserPromptSubmit" | "SessionStart" => {
+            for (_, p) in ask_files(state, claude_pid) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Another ccrpc listens on the Session's hook socket.
 pub fn socket_in_use(state: &Path, claude_pid: u32) -> bool {
     UnixStream::connect(socket_path(state, claude_pid)).is_ok()
@@ -218,6 +331,7 @@ pub fn run_hook(args: &[String]) {
             let _ = write_private(&checkin_path(&state, claude_pid), &b);
         }
     }
+    record_ask(&state, claude_pid, &event, &input);
     if let Some(out) = forward(&socket_path(&state, claude_pid), &event, input) {
         let mut so = std::io::stdout();
         let _ = so.write_all(out.as_bytes());
@@ -308,22 +422,30 @@ pub fn peer_gone(s: &UnixStream) -> bool {
     n == 0 || (n < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN))
 }
 
-/// Drops check-ins of claude processes that are gone.
+/// Drops check-ins and question records of claude processes that are gone.
 pub fn prune_checkins(state: &Path) {
-    let Ok(rd) = std::fs::read_dir(state.join("sessions")) else {
-        return;
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        let pid = p
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| s.parse::<u32>().ok());
-        if let Some(pid) = pid
-            && p.extension().is_some_and(|x| x == "json")
-            && !::transcript::live::pid_exists(pid)
-        {
-            let _ = std::fs::remove_file(&p);
+    for dir in ["sessions", "asks"] {
+        let dir = state.join(dir);
+        if !dir_is_private(&dir) {
+            continue;
+        }
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        // `<pid>.json` check-ins, `<pid>.<tool_use_id>.json` question records.
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name();
+            let pid = name
+                .to_str()
+                .filter(|n| n.ends_with(".json"))
+                .and_then(|n| n.split('.').next())
+                .and_then(|s| s.parse::<u32>().ok());
+            if let Some(pid) = pid
+                && !::transcript::live::pid_exists(pid)
+            {
+                let _ = std::fs::remove_file(&p);
+            }
         }
     }
 }
@@ -541,6 +663,83 @@ mod tests {
         write(11, "m2");
         std::fs::write(dir.path().join("sessions/bad.json"), "{").unwrap();
         assert_eq!(checkin_pids(dir.path(), "m1"), vec![10]);
+    }
+
+    /// The main line's questions are kept from their PreToolUse until their call ends, a prompt
+    /// is submitted or a Session starts; a Subagent's are not kept.
+    #[test]
+    fn the_main_lines_questions_are_kept_while_they_wait() {
+        let st = tempfile::tempdir().unwrap();
+        let state = st.path();
+        let input = json!({"questions": [{"question": "Which color?"}]});
+        let ask = |event: &str, id: &str, agent: Option<&str>| {
+            let v = json!({"hook_event_name": event, "tool_name": "AskUserQuestion", "session_id": "s1",
+                "tool_use_id": id, "tool_input": input, "agent_id": agent});
+            record_ask(state, 7, event, &v);
+        };
+        let ids = |s: &Path| -> Vec<String> {
+            read_asks(s, 7).into_iter().map(|r| r.tool_use_id).collect()
+        };
+        ask("PreToolUse", "repl_a", Some("a1"));
+        assert!(read_asks(state, 7).is_empty());
+        ask("PreToolUse", "repl_a", None);
+        assert_eq!(
+            read_asks(state, 7),
+            vec![AskRecord {
+                tool_use_id: "repl_a".into(),
+                tool_input: input.clone(),
+                session_id: Some("s1".into()),
+            }]
+        );
+        assert!(read_asks(state, 8).is_empty());
+        // Another tool's end, or a Subagent's question ending, leaves it.
+        let bash = json!({"tool_name": "Bash", "tool_use_id": "repl_b"});
+        record_ask(state, 7, "PostToolUse", &bash);
+        ask("PostToolUse", "repl_a", Some("a1"));
+        assert_eq!(ids(state), ["repl_a"]);
+        // Two at once (code asking twice): each ends with its own call.
+        ask("PreToolUse", "repl_b", None);
+        assert_eq!(ids(state).len(), 2);
+        ask("PermissionDenied", "repl_a", None);
+        assert_eq!(ids(state), ["repl_b"]);
+        ask("PostToolUseFailure", "repl_b", None);
+        assert!(read_asks(state, 7).is_empty());
+        // Dismissed with Esc: no PostToolUse, the next prompt or Session ends them.
+        ask("PreToolUse", "toolu_c", None);
+        ask("PreToolUse", "toolu_d", None);
+        record_ask(state, 7, "UserPromptSubmit", &json!({"prompt": "go on"}));
+        assert!(read_asks(state, 7).is_empty());
+        ask("PreToolUse", "toolu_e", None);
+        record_ask(state, 7, "SessionStart", &json!({"source": "clear"}));
+        assert!(read_asks(state, 7).is_empty());
+        // An id that is no file name is not kept.
+        ask("PreToolUse", "../x", None);
+        assert!(read_asks(state, 7).is_empty());
+    }
+
+    /// Only a regular file with its own id and questions is a record; a link is not followed.
+    #[test]
+    fn a_record_is_a_plain_file_with_questions() {
+        let st = tempfile::tempdir().unwrap();
+        let state = st.path();
+        let path = ask_path(state, 7, "repl_a").unwrap();
+        write_private(&path, br#"{"tool_use_id": "repl_a", "tool_input": {}}"#).unwrap();
+        assert!(read_asks(state, 7).is_empty());
+        write_private(
+            &path,
+            br#"{"tool_use_id": "repl_b", "tool_input": {"questions": []}}"#,
+        )
+        .unwrap();
+        assert!(read_asks(state, 7).is_empty());
+        let real = state.join("elsewhere.json");
+        std::fs::write(
+            &real,
+            br#"{"tool_use_id": "repl_a", "tool_input": {"questions": []}}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&real, &path).unwrap();
+        assert!(read_asks(state, 7).is_empty());
     }
 
     /// Following a conversation into the background keeps the Pane's claude's lock without its

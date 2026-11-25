@@ -431,6 +431,42 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
     }))
 }
 
+/// Whether the AskUserQuestion page `q` asks `question` (one entry of the call's `questions`):
+/// the same title, the same single / multi choice and the same options in order. A label is
+/// matched by its first screen row (a long one wraps); the row being typed into is not an option.
+pub fn ask_page_is(q: &AskQuestion, question: &serde_json::Value) -> bool {
+    let labels: Vec<&str> = question["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|o| o["label"].as_str().unwrap_or_default())
+        .collect();
+    let shown: Vec<&MenuOption> = q
+        .options
+        .iter()
+        .filter(|o| Some(o.number) != q.other)
+        .collect();
+    let bare = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let starts = |label: &str, row: &str| {
+        let row = bare(row);
+        !row.is_empty() && bare(label).starts_with(&row)
+    };
+    same_text(&q.title, question["question"].as_str().unwrap_or_default())
+        && q.multi == question["multiSelect"].as_bool().unwrap_or(false)
+        && shown.len() == labels.len()
+        && shown.iter().zip(&labels).all(|(o, l)| starts(l, &o.label))
+}
+
+/// Whether the screen shows the AskUserQuestion call asking `questions`: one of its question
+/// pages, or (several questions) its Review tab.
+pub fn ask_shows(lines: &[String], questions: &[serde_json::Value]) -> bool {
+    match ask(lines) {
+        Some(AskScreen::Review { .. }) => questions.len() > 1,
+        Some(AskScreen::Question(q)) => questions.iter().any(|x| ask_page_is(&q, x)),
+        None => false,
+    }
+}
+
 /// The same text once wrapping is undone: a line break in CJK text adds no space, in other text it
 /// replaces one, so every whitespace is dropped before comparing.
 pub fn same_text(a: &str, b: &str) -> bool {
@@ -1360,6 +1396,60 @@ mod tests {
         };
         assert!(q.editing);
         assert_eq!(q.other, Some(3));
+    }
+
+    /// A question page counts as the call's only with its title, options and choice; a Review
+    /// tab only for a call of several questions.
+    #[test]
+    fn ask_shows_only_the_calls_own_question() {
+        use serde_json::json;
+        let color = json!({"question": "Favorite color?", "multiSelect": false,
+            "options": [{"label": "Red", "description": "warm"}, {"label": "Blue"}]});
+        let single = screen("ask_single.txt");
+        assert!(ask_shows(&single, std::slice::from_ref(&color)));
+        // Typing an answer of its own.
+        assert!(ask_shows(
+            &screen("ask_single_other.txt"),
+            std::slice::from_ref(&color)
+        ));
+        let mut other = color.clone();
+        other["options"] = json!([{"label": "Red"}, {"label": "Green"}]);
+        assert!(!ask_shows(&single, &[other]));
+        let mut fewer = color.clone();
+        fewer["options"] = json!([{"label": "Red"}]);
+        assert!(!ask_shows(&single, &[fewer]));
+        let mut title = color.clone();
+        title["question"] = json!("Favorite colour?");
+        assert!(!ask_shows(&single, &[title]));
+        let mut multi = color.clone();
+        multi["multiSelect"] = json!(true);
+        assert!(!ask_shows(&single, &[multi]));
+        // A label longer than its row: matched by the row.
+        let mut long = color.clone();
+        long["options"][1]["label"] = json!("Blue as the sky");
+        let mut cut = single.clone();
+        let row = cut.iter().position(|l| l.contains("2. Blue")).unwrap();
+        cut[row] = "  2. Blue as the".into();
+        assert!(ask_shows(&cut, &[long]));
+        // CJK title in a quote bar.
+        let scope = json!({"question": "服务部署在 notes.example.com，用它自带的账号登录，再接 SSO。首次初始化向导不需要鉴权，所以先只开放内网。访问范围怎么定？",
+            "multiSelect": false, "options": [{"label": "内外网都可访问 (Recommended)"}, {"label": "仅内网"}]});
+        assert!(ask_shows(&screen("ask_single_quoted.txt"), &[scope]));
+        // The pages and the Review tab of a call with two questions.
+        let indent = json!({"question": "Indent style?", "multiSelect": false,
+            "options": [{"label": "Tabs"}, {"label": "Spaces"}]});
+        let linters = json!({"question": "Which linters?", "multiSelect": true,
+            "options": [{"label": "eslint"}, {"label": "prettier"}, {"label": "biome"}]});
+        let both = [indent.clone(), linters];
+        assert!(ask_shows(&screen("ask_multi_q1.txt"), &both));
+        assert!(ask_shows(&screen("ask_multi_q2.txt"), &both));
+        assert!(ask_shows(&screen("ask_multi_q2_checked.txt"), &both));
+        assert!(ask_shows(&screen("ask_review.txt"), &both));
+        assert!(!ask_shows(
+            &screen("ask_review.txt"),
+            std::slice::from_ref(&indent)
+        ));
+        assert!(!ask_shows(&screen("idle_prompt.txt"), &[color]));
     }
 
     fn btw_screen(foot: &str) -> Vec<String> {

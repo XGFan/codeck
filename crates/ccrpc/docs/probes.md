@@ -261,4 +261,9 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - **代码里提问时，模型那条消息可能整条晚写**（2.1.327 / 2.1.329，Fable 5.2，bypass）：模型回复「文字 + REPL（代码里 `tools.AskUserQuestion`）+ Poll」，提问出现后，这条消息的文字、REPL 条目、`(dispatched #N)` 结果与 Poll 条目都不在 transcript 里，直到作答、Poll 的结果送达才和虚拟消息一起写出（时间戳仍是生成时刻）。正常时它们在提问出现后约 1 秒内写出。这期间 TUI 照常显示文字，transcript 里没有，ccrpc 与 CoDeck 都拿不到。复现（2.1.329，经 ccrpc 驱动，每轮让模型写一段带标记的文字再从代码提问，提问后 30 秒内查 transcript）：`--resume` 过的 Session 9 轮里 2 轮晚写（分别是 resume 后的第 1、第 2 轮），新开的 Session 10 轮都没有；条目顺序（`(dispatched #N)` 在 Poll 前或后）与是否晚写无关。真实使用中晚写的那次也在 `--resume` 过的 Session 里。
 - **队列**：每个 harness 事件（`<event nonce="…" kind="repl-eval" …>`，以及 `repl-status`）先记一条 `queue-operation` / `enqueue`，1 秒内被 Poll 取走：不带正文的 `dequeue`，或带正文的 `remove`。
 - **说明**：`REPL` 输入的 `description` 写不写随模型：Opus 5.5 约 36%（1491 段），Fable 5.2、Opus 4.8、Haiku 5.5 都是 100%。
+- **提问弹出后才 attach**（2.1.331，2026-11-25）：代码里的 AskUserQuestion 弹出时没有 ccrpc 扣着它的 hook，之后 attach 的 ccrpc 只看得到进程文件的 `input needed` 与屏幕，transcript 里没有这次调用（要等代码的结果送达），旧版因此把它报成 `dialog`；现在读插件的提问记录（spec 3 节）。实测（Haiku 5.5，`ccrpc new` 驱动，提问出现后断开再 attach）：旧版报 `dialog`；新版报 `question`（同一 `repl_…` id，`from_code: true`），按屏幕作答后 `request_end` 先于响应，本轮以答案结束，记录随 PostToolUse 删掉。同时实测到：
+  - 记录（PreToolUse 时写）比进程文件变成 `input needed` 早约 15ms（两次 14.6、14.9ms）。
+  - `Promise.all` 同时发起两次提问：两个 PreToolUse 都在作答之前到，对话框一次一个，先显示哪个不固定（四次里两次是数组里的第二个）；答完一个，另一个的 PermissionRequest 才来。断开后 attach，两份记录里取屏幕上那份报出，答完后另一道照常报出。
+  - Chat about this（`answer_question` 带 `chat`）与 Esc 关掉的提问都没有 PostToolUse / PostToolUseFailure，记录留到下一条提示词的 UserPromptSubmit。
+  - 提问等着时后台任务（`run_in_background` 的 `sleep 4`）结束：15 秒内没有 UserPromptSubmit，也没有开新的一轮，记录与提问都在。
 - 没实测：代码里需要审批的调用（实测的 Session 是 bypass 模式）；Subagent Run 里的代码。

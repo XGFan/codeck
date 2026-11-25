@@ -29,7 +29,7 @@ cargo test --test e2e mock_ -- --ignored --test-threads=1                 # 端�
 单个 crate，`src/main.rs` 只做命令行分发，逻辑在库里：
 
 - `rpc`：JSONL 编解码与命令分发。
-- `hook`：`ccrpc hook`（插件每个 hook 运行它：报到、把事件交给连着的 ccrpc、等 PermissionRequest 的回复）与 ccrpc 一侧的 hook socket。
+- `hook`：`ccrpc hook`（插件每个 hook 运行它：报到、记下主线等着作答的 AskUserQuestion、把事件交给连着的 ccrpc、等 PermissionRequest 的回复）与 ccrpc 一侧的 hook socket。
 - `history`：`get_messages` 的后台线程，增量维护 Main Line 与 Subagent Run 的内容块，分页。
 - `log`：`--log FILE` 的日志（`clog!`）。
 - `plugin`：生成与安装 ccrpc 插件（`ccrpc plugin install`）。

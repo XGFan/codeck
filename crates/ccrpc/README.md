@@ -26,7 +26,7 @@ cargo build --release
 ccrpc plugin install      # 卸载：ccrpc plugin uninstall
 ```
 
-插件只含 hooks，只在 clay Pane 里生效：SessionStart 时在 ccrpc 的状态目录（`CCRPC_STATE_DIR`，缺省 `~/.local/state/ccrpc`）报到，其余事件交给连着这个 Session 的 ccrpc，没有 ccrpc 连着时什么也不做。hooks 调用的是安装时那个 ccrpc 可执行文件，换了位置要重新 install。
+插件只含 hooks，只在 clay Pane 里生效：SessionStart 时在 ccrpc 的状态目录（`CCRPC_STATE_DIR`，缺省 `~/.local/state/ccrpc`）报到，主线的每次 AskUserQuestion 等着作答期间在那里留一份题目（Code Mode 里从代码发起的提问要等代码结束才写进 transcript，提问弹出后才 attach 的 ccrpc 从这里得知，并且只认屏幕上正显示着的那一道），其余事件交给连着这个 Session 的 ccrpc，没有 ccrpc 连着时什么也不做。hooks 调用的是安装时那个 ccrpc 可执行文件，换了位置要重新 install。
 
 在自己的项目目录里起一个受控 Session：
 
