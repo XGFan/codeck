@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { HaaWorker } from "../src/features/haa/protocol";
+import { disableAutoConnect } from "./connect-helpers";
 import { RICH_TITLE } from "./helpers";
 
 const REDIS_TITLE = "排查 Redis 连接池泄漏";
@@ -57,6 +58,10 @@ async function assertAlignedNoOverflow(page: Page) {
     expect(new Set(stats.rowHeights).size).toBe(1);
   }
 }
+
+// The Live Session of these tests can be Connected: left on, 自动 Connect connects it a moment after it opens, which
+// moves the status bar into the Connect panel (and collapses it) under a test that expects it not connected.
+test.beforeEach(({ page }) => disableAutoConnect(page));
 
 test("历史（非 Live）Session 不启动 watch", async ({ page }) => {
   await page.goto("/");
