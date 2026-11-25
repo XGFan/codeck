@@ -3,6 +3,20 @@
 //! `isVirtual` messages after it, and what the code returned or threw arrives later as a `repl-eval`
 //! event, in a `poll_events` attachment or a `Poll` result. Nothing links a virtual message to its
 //! `REPL` call, so the owner is inferred from the order along the path.
+//!
+//! Public entry points and their callers:
+//! - [`is_plumbing`]: `summarize`, `codeck-core` index writer — skip `REPL` / `Poll` in tool counts.
+//! - [`is_poll`]: `nodes` — omit `Poll` calls (and `Poll`-only assistant messages) from rendering.
+//! - [`is_made_by_code`], [`is_made_by_code_entry`]: `skeleton`, `summarize`, `codeck-core` index
+//!   writer — identify virtual code-made records so they are not treated as replies or branch heads.
+//! - [`is_code_call`]: `subagent` — attribute unrecorded `Agent` calls via `enclosingToolUseId`.
+//! - [`collect`], [`CodeRuns`]: `nodes` — map virtual calls, outcomes and media to their `REPL` call.
+//! - [`expand_tool_call`]: `nodes` — expand a `REPL` call into the call itself plus the calls its
+//!   code made (recorded and unrecorded).
+//! - [`virtual_output`]: `nodes` — extract fallback output text from `toolUseResult` for code-made
+//!   tool results with empty content.
+//! - [`attachment_picture`]: `content` — resolve on-demand images stored in `poll_events` attachments.
+//! - [`owner_of`]: `jump` — redirect jumps targeting a virtual entry to its owning `REPL` call.
 
 use std::collections::HashMap;
 
@@ -10,35 +24,65 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
-use super::nodes::{RESULT_BYTES, RESULT_LINES, cap_text, image_info, result_content};
-use super::{EntryKind, LoadedFile, SessionSkeleton};
-use crate::model::{CodeOutcome, ImageRef};
-use crate::raw::RawEntry;
+use super::nodes::{
+    RESULT_BYTES, RESULT_LINES, RenderCtx, cap_text, image_info, result_content, tool_call,
+};
+use super::subagent::UnrecordedCall;
+use super::{EntryKind, LoadedFile, SessionSkeleton, SkeletonNode};
+use crate::model::{CodeOutcome, CodeRun, ImageRef, ToolCall, ToolResult};
+use crate::raw::{RawBlock, RawEntry};
 
 /// The tool Claude's code runs in.
-pub const REPL: &str = "REPL";
+const REPL: &str = "REPL";
 /// Waits for what running code sends back.
-pub const POLL: &str = "Poll";
+const POLL: &str = "Poll";
 
 /// Code Mode's own tools, not counted as tool calls (the calls the code makes are).
 pub fn is_plumbing(tool: &str) -> bool {
     tool == REPL || tool == POLL
 }
 
+/// Whether `tool` is Code Mode's poll/wait call (omitted from rendered messages; its result
+/// delivers the owning `REPL` call's outcome).
+pub fn is_poll(tool: &str) -> bool {
+    tool == POLL
+}
+
+/// Whether this skeleton node is a synthetic record of a tool call Claude's code made (or its
+/// result), rather than a conversational reply.
+pub fn is_made_by_code(n: &SkeletonNode) -> bool {
+    n.is_virtual
+}
+
+/// Whether this raw JSONL entry is a synthetic record of a tool call Claude's code made (or its
+/// result), rather than a conversational reply.
+pub fn is_made_by_code_entry(e: &RawEntry) -> bool {
+    e.is_virtual == Some(true)
+}
+
+/// Whether `id` is a `REPL` call in the skeleton (not the virtual pair Code Mode adds for an error
+/// the code threw).
+pub fn is_code_call(s: &SessionSkeleton, id: &str) -> bool {
+    s.tool_use_at.get(id).is_some_and(|&at| {
+        let n = &s.nodes[at];
+        !n.is_virtual && n.tool_uses.iter().any(|(t, name)| t == id && name == REPL)
+    })
+}
+
 /// One `repl-eval` event: the outcome of eval `eval` (the number `(dispatched #N)` names).
 #[derive(Clone, Debug, PartialEq)]
-pub struct EvalEvent {
-    pub eval: u32,
-    pub outcome: CodeOutcome,
+struct EvalEvent {
+    eval: u32,
+    outcome: CodeOutcome,
     /// Its position among the events (of any kind) of the text it was parsed from.
-    pub index: usize,
+    index: usize,
 }
 
 /// The `repl-eval` events in `text`: a `poll_events` envelope, a `Poll` result or a `REPL` result
 /// (`<repl-output eval="N">`, when the code finished before the call returned). A delivery that
 /// lists its event nonces (`authentic event nonces for this delivery: …`) counts only events
 /// carrying one of them; any other `<event>` is quoted text.
-pub fn parse_events(text: &str) -> Vec<EvalEvent> {
+fn parse_events(text: &str) -> Vec<EvalEvent> {
     let nonces = delivery_nonces(text);
     let mut out = Vec::new();
     let mut index = 0;
@@ -286,7 +330,7 @@ pub fn attachment_picture(raw: Option<&RawValue>, ordinal: usize) -> Option<&Raw
 
 /// Whether `toolUseResult` is that of a file read as a picture (`{"type":"image", …}`): the picture
 /// itself is not there, it was shown to Claude with the code's outcome.
-pub fn is_picture_result(raw: Option<&RawValue>) -> bool {
+fn is_picture_result(raw: Option<&RawValue>) -> bool {
     #[derive(Deserialize)]
     struct Kind<'a> {
         #[serde(rename = "type", default)]
@@ -533,10 +577,133 @@ fn eval_number(e: &RawEntry, text: &str) -> Option<u32> {
         .and_then(|(_, v)| v.parse().ok())
 }
 
-/// Output text of a call Code Mode's code made: its tool_result content is usually empty and the data
-/// is in `toolUseResult` — a file read (`cat -n` style, as a Read result), a command's stdout / stderr,
-/// a `content` string or a list of file names. `None` for other shapes.
-pub fn virtual_output(raw: Option<&RawValue>) -> Option<String> {
+/// A `tool_use` block as the calls it shows as: the call itself, then (Code Mode, when it is
+/// Claude's code) the calls the code made, each naming it in `via_code`.
+pub fn expand_tool_call(
+    ctx: &RenderCtx<'_>,
+    b: &RawBlock,
+    shown: &[bool],
+    node_id: &str,
+    runs: &CodeRuns,
+) -> Vec<ToolCall> {
+    let s = ctx.skeleton;
+    let mut call = tool_call(ctx, b, shown, node_id, None);
+    let id = call.tool_use_id.clone();
+    if !is_code_call(s, &id) {
+        return vec![call];
+    }
+    // A file the code read as a picture: the picture came with the code's outcome, not in the
+    // call's own result. The calls get them in the order they were made.
+    let mut pictures = runs.media.get(&id).into_iter().flatten();
+    let made: Vec<ToolCall> = runs
+        .calls
+        .get(&id)
+        .into_iter()
+        .flatten()
+        .flat_map(|&v| s.entry(ctx.files, v).blocks())
+        .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(REPL))
+        .map(|b| {
+            let mut c = tool_call(ctx, b, shown, node_id, Some(&id));
+            if let Some(r) = &mut c.result
+                && r.images.is_empty()
+                && r.text.is_empty()
+                && s.tool_result_block(ctx.files, &c.tool_use_id, Some(shown))
+                    .is_some_and(|(_, e, _)| is_picture_result(e.tool_use_result.as_deref()))
+                && let Some(p) = pictures.next()
+            {
+                r.images.push(p.clone());
+            }
+            c
+        })
+        .chain(
+            ctx.unrecorded_calls
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(|u| unrecorded_call(ctx, u, &id)),
+        )
+        .collect();
+    // A call that failed itself (rejected, interrupted, invalid input) ran no code: its result
+    // is the error.
+    let outcome = runs.outcome.get(&id).cloned().or_else(|| {
+        call.result
+            .as_ref()
+            .filter(|r| r.is_error)
+            .map(|r| CodeOutcome {
+                is_error: true,
+                text: r.text.clone(),
+                log: String::new(),
+                truncated: r.truncated,
+                duration_ms: None,
+            })
+    });
+    call.code = Some(CodeRun {
+        call_count: made.len() as u32,
+        outcome,
+    });
+    let mut out = Vec::with_capacity(1 + made.len());
+    out.push(call);
+    out.extend(made);
+    out
+}
+
+/// An Agent call the code of `code` made that left no record ([`UnrecordedCall`]): launched, with
+/// an empty result like the virtual pair of one the code waited for.
+fn unrecorded_call(ctx: &RenderCtx<'_>, u: &UnrecordedCall, code: &str) -> ToolCall {
+    ToolCall {
+        tool_use_id: u.tool_use_id.clone(),
+        name: "Agent".to_owned(),
+        input_json: u.input_json.clone(),
+        input_truncated: false,
+        result: Some(ToolResult {
+            is_error: false,
+            timestamp_ms: None,
+            text: String::new(),
+            images: Vec::new(),
+            total_bytes: 0.0,
+            truncated: false,
+            persisted: None,
+            extra_json: None,
+        }),
+        subagent_id: Some(u.agent_id.clone()),
+        workflow_run_id: None,
+        notification_node_id: ctx.notification_by_tool.get(&u.tool_use_id).cloned(),
+        code: None,
+        via_code: Some(code.to_owned()),
+    }
+}
+
+/// If `on` is a call Claude's code made, returns the skeleton index of the `REPL` call that owns
+/// it (attributed along the path leading to `on`) and its first tool_use id.
+pub fn owner_of(
+    sk: &SessionSkeleton,
+    files: &[LoadedFile],
+    on: usize,
+) -> Option<(usize, Option<String>)> {
+    if !sk.nodes[on].is_virtual {
+        return None;
+    }
+    let order = super::tree::display_entries(sk, &super::tree::root_path(sk, on));
+    let runs = collect(sk, files, &order);
+    let &at = runs.owner.get(&on).and_then(|id| sk.tool_use_at.get(id))?;
+    let tool_use_id = sk.nodes[on].tool_uses.first().map(|(id, _)| id.clone());
+    Some((at, tool_use_id))
+}
+
+/// Fallback output text for a tool result produced by a call Claude's code made: its `tool_result`
+/// content is usually empty and the data lives in `toolUseResult`. Returns `None` for non-Code-Mode
+/// entries or unrecognized shapes.
+pub fn virtual_output(e: &RawEntry) -> Option<String> {
+    if !is_made_by_code_entry(e) {
+        return None;
+    }
+    virtual_output_from_raw(e.tool_use_result.as_deref())
+}
+
+/// Parses `toolUseResult` of a call Code Mode's code made: a file read (`cat -n` style, as a Read
+/// result), a command's stdout / stderr, a `content` string or a list of file names. `None` for
+/// other shapes.
+fn virtual_output_from_raw(raw: Option<&RawValue>) -> Option<String> {
     let v: Value = serde_json::from_str(raw?.get()).ok()?;
     if let Some(s) = v.as_str() {
         return Some(s.to_owned());
@@ -641,41 +808,46 @@ mod tests {
     fn virtual_output_shapes() {
         let raw = |s: &str| RawValue::from_string(s.to_owned()).unwrap();
         assert_eq!(
-            virtual_output(Some(&raw(
+            virtual_output_from_raw(Some(&raw(
                 r#"{"type":"text","file":{"content":"a\nb\n","startLine":5}}"#
             )))
             .as_deref(),
             Some("     5\ta\n     6\tb")
         );
         assert_eq!(
-            virtual_output(Some(&raw(
+            virtual_output_from_raw(Some(&raw(
                 r#"{"stdout":"out","stderr":"","interrupted":false}"#
             )))
             .as_deref(),
             Some("out")
         );
         assert_eq!(
-            virtual_output(Some(&raw(r#"{"stdout":"out","stderr":"err"}"#))).as_deref(),
+            virtual_output_from_raw(Some(&raw(r#"{"stdout":"out","stderr":"err"}"#))).as_deref(),
             Some("out\nerr")
         );
         assert_eq!(
-            virtual_output(Some(&raw(r#"{"filenames":["a.rs","b.rs"],"numFiles":2}"#))).as_deref(),
+            virtual_output_from_raw(Some(&raw(r#"{"filenames":["a.rs","b.rs"],"numFiles":2}"#)))
+                .as_deref(),
             Some("a.rs\nb.rs")
         );
         assert_eq!(
-            virtual_output(Some(&raw(r#"{"structuredPatch":[]}"#))),
+            virtual_output_from_raw(Some(&raw(r#"{"structuredPatch":[]}"#))),
             None
         );
         assert_eq!(
-            virtual_output(Some(&raw(
+            virtual_output_from_raw(Some(&raw(
                 r#"{"type":"create","filePath":"a","content":"file"}"#
             ))),
             None
         );
         assert_eq!(
-            virtual_output(Some(&raw(r#"{"content":"matches","mode":"content"}"#))).as_deref(),
+            virtual_output_from_raw(Some(&raw(r#"{"content":"matches","mode":"content"}"#)))
+                .as_deref(),
             Some("matches")
         );
-        assert_eq!(virtual_output(None), None);
+        assert_eq!(virtual_output_from_raw(None), None);
+        let non_virtual: RawEntry =
+            serde_json::from_str(r#"{"type":"user","toolUseResult":{"stdout":"out"}}"#).unwrap();
+        assert_eq!(virtual_output(&non_virtual), None);
     }
 }

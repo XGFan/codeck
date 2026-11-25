@@ -547,7 +547,7 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
             && meta
                 .enclosing_tool_use_id
                 .as_deref()
-                .is_some_and(|e| is_code_call(s, e));
+                .is_some_and(|e| code_mode::is_code_call(s, e));
         let main_tool = if unrecorded {
             meta.tool_use_id.clone()
         } else {
@@ -654,17 +654,6 @@ pub fn link(s: &SessionSkeleton, files: &[LoadedFile], sidecar: &SessionSidecar)
         });
     }
     links
-}
-
-/// `id` is a `REPL` call in the main file (not the virtual pair Code Mode adds for an error).
-fn is_code_call(s: &SessionSkeleton, id: &str) -> bool {
-    s.tool_use_at.get(id).is_some_and(|&at| {
-        let n = &s.nodes[at];
-        !n.is_virtual
-            && n.tool_uses
-                .iter()
-                .any(|(t, name)| t == id && name == code_mode::REPL)
-    })
 }
 
 /// Inside an agent file (Subagent scope): tool_use id → nested run, by the run's `toolUseId`,

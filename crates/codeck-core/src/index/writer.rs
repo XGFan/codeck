@@ -170,7 +170,7 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
                 }
                 let Some(ts) = ts else { continue };
                 // A call Claude's code made (Code Mode) is recorded as a message; it is not a reply.
-                if e.is_virtual == Some(true) {
+                if transcript::assemble::code_mode::is_made_by_code_entry(e) {
                     continue;
                 }
                 let Some(key) = msg.id.clone().or_else(|| e.uuid.clone()) else {

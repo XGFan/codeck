@@ -124,15 +124,11 @@ fn locate(
     let choices = choices_for(sk, on);
     // A call Claude's code made (Code Mode) is shown in its `REPL` call (attributed as the
     // transcript does, along the path that leads to it).
-    if sk.nodes[on].is_virtual {
-        let order = tree::display_entries(sk, &tree::root_path(sk, on));
-        let runs = code_mode::collect(sk, files, &order);
-        if let Some(&at) = runs.owner.get(&on).and_then(|id| sk.tool_use_at.get(id)) {
-            if tool_use_id.is_none() {
-                tool_use_id = sk.nodes[on].tool_uses.first().map(|(id, _)| id.clone());
-            }
-            on = at;
+    if let Some((at, tid)) = code_mode::owner_of(sk, files, on) {
+        if tool_use_id.is_none() {
+            tool_use_id = tid;
         }
+        on = at;
     }
     let display = sk.display_index(on);
     Ok(Located {

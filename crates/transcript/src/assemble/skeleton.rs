@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::{EntryKind, LoadedFile, SessionSkeleton, SkeletonNode, prompt, tree};
+use super::{EntryKind, LoadedFile, SessionSkeleton, SkeletonNode, code_mode, prompt, tree};
 use crate::model::{PromptOrigin, TokenTotals};
 use crate::raw::RawEntry;
 
@@ -281,7 +281,7 @@ fn node_of(
             None
         },
         is_api_error: e.is_api_error_message == Some(true),
-        is_virtual: e.is_virtual == Some(true),
+        is_virtual: code_mode::is_made_by_code_entry(e),
         tool_uses,
         tool_results,
         entry_type,
@@ -369,7 +369,7 @@ fn index_messages(s: &mut SessionSkeleton) {
         // A call Claude's code made (Code Mode) is recorded as a message of its own: not a reply.
         let head = n.is_human
             || (n.is_assistant()
-                && !n.is_virtual
+                && !code_mode::is_made_by_code(n)
                 && match &n.message_id {
                     Some(m) => s.fragments[m][0] == i,
                     None => true,

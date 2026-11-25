@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::skeleton::tokens_by_message;
-use super::{SessionAggregates, SessionSkeleton};
+use super::{SessionAggregates, SessionSkeleton, code_mode};
 use crate::model::{TitleSource, TokenTotals};
 
 /// Model name Claude Code writes on locally synthesized (error) messages.
@@ -39,9 +39,9 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
         tool_calls += n
             .tool_uses
             .iter()
-            .filter(|(_, name)| !super::code_mode::is_plumbing(name))
+            .filter(|(_, name)| !code_mode::is_plumbing(name))
             .count() as u32;
-        if !n.is_assistant() || n.is_virtual {
+        if !n.is_assistant() || code_mode::is_made_by_code(n) {
             continue;
         }
         if n.message_id.is_none() {
@@ -69,7 +69,7 @@ pub fn summarize(s: &SessionSkeleton) -> SessionAggregates {
     let replies = s
         .fragments
         .values()
-        .filter(|f| !s.nodes[f[0]].is_virtual)
+        .filter(|f| !code_mode::is_made_by_code(&s.nodes[f[0]]))
         .count() as u32;
     let message_count = humans + replies + no_id_assistants;
 

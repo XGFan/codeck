@@ -13,8 +13,8 @@ use super::code_mode::{self, CodeRuns};
 use super::subagent::UnrecordedCall;
 use super::{EntryKind, LoadedFile, SessionSkeleton, content, prompt};
 use crate::model::{
-    AgentId, AssistantBlock, CodeOutcome, CodeRun, ImageRef, Node, NodeBody, NodeId, PersistedRef,
-    PromptOrigin, TokenTotals, ToolCall, ToolResult,
+    AgentId, AssistantBlock, ImageRef, Node, NodeBody, NodeId, PersistedRef, PromptOrigin,
+    TokenTotals, ToolCall, ToolResult,
 };
 use crate::raw::{RawBlock, RawEntry, decode_str};
 
@@ -240,9 +240,9 @@ fn assistant_body(
                     }
                 }
                 "redacted_thinking" => {}
-                "tool_use" if b.name.as_deref() == Some(code_mode::POLL) => polls = true,
+                "tool_use" if b.name.as_deref().is_some_and(code_mode::is_poll) => polls = true,
                 "tool_use" => blocks.extend(
-                    tool_calls(ctx, b, shown, node_id, runs)
+                    code_mode::expand_tool_call(ctx, b, shown, node_id, runs)
                         .into_iter()
                         .map(AssistantBlock::ToolCall),
                 ),
@@ -270,85 +270,8 @@ fn assistant_body(
     })
 }
 
-/// A `tool_use` block as the calls it shows as: the call itself, then (Code Mode, when it is
-/// Claude's code) the calls the code made, each naming it in `via_code`.
-fn tool_calls(
-    ctx: &RenderCtx<'_>,
-    b: &RawBlock,
-    shown: &[bool],
-    node_id: &str,
-    runs: &CodeRuns,
-) -> Vec<ToolCall> {
-    let s = ctx.skeleton;
-    let mut call = tool_call(ctx, b, shown, node_id, None);
-    let id = call.tool_use_id.clone();
-    // Not the `REPL` pair Code Mode adds for an error the code threw (it is virtual).
-    let is_code = call.name == code_mode::REPL
-        && s.tool_use_at
-            .get(&id)
-            .is_some_and(|&at| !s.nodes[at].is_virtual);
-    if !is_code {
-        return vec![call];
-    }
-    // A file the code read as a picture: the picture came with the code's outcome, not in the
-    // call's own result. The calls get them in the order they were made.
-    let mut pictures = runs.media.get(&id).into_iter().flatten();
-    let made: Vec<ToolCall> = runs
-        .calls
-        .get(&id)
-        .into_iter()
-        .flatten()
-        .flat_map(|&v| s.entry(ctx.files, v).blocks())
-        .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(code_mode::REPL))
-        .map(|b| {
-            let mut c = tool_call(ctx, b, shown, node_id, Some(&id));
-            if let Some(r) = &mut c.result
-                && r.images.is_empty()
-                && r.text.is_empty()
-                && s.tool_result_block(ctx.files, &c.tool_use_id, Some(shown))
-                    .is_some_and(|(_, e, _)| {
-                        code_mode::is_picture_result(e.tool_use_result.as_deref())
-                    })
-                && let Some(p) = pictures.next()
-            {
-                r.images.push(p.clone());
-            }
-            c
-        })
-        .chain(
-            ctx.unrecorded_calls
-                .get(&id)
-                .into_iter()
-                .flatten()
-                .map(|u| unrecorded_call(ctx, u, &id)),
-        )
-        .collect();
-    // A call that failed itself (rejected, interrupted, invalid input) ran no code: its result
-    // is the error.
-    let outcome = runs.outcome.get(&id).cloned().or_else(|| {
-        call.result
-            .as_ref()
-            .filter(|r| r.is_error)
-            .map(|r| CodeOutcome {
-                is_error: true,
-                text: r.text.clone(),
-                log: String::new(),
-                truncated: r.truncated,
-                duration_ms: None,
-            })
-    });
-    call.code = Some(CodeRun {
-        call_count: made.len() as u32,
-        outcome,
-    });
-    let mut out = Vec::with_capacity(1 + made.len());
-    out.push(call);
-    out.extend(made);
-    out
-}
-
 /// One `tool_use` block with its result; `via_code`: the `REPL` call whose code made it.
-fn tool_call(
+pub(super) fn tool_call(
     ctx: &RenderCtx<'_>,
     b: &RawBlock,
     shown: &[bool],
@@ -376,32 +299,6 @@ fn tool_call(
         input_json,
         input_truncated,
         result,
-    }
-}
-
-/// An Agent call the code of `code` made that left no record ([`UnrecordedCall`]): launched, with
-/// an empty result like the virtual pair of one the code waited for.
-fn unrecorded_call(ctx: &RenderCtx<'_>, u: &UnrecordedCall, code: &str) -> ToolCall {
-    ToolCall {
-        tool_use_id: u.tool_use_id.clone(),
-        name: "Agent".to_owned(),
-        input_json: u.input_json.clone(),
-        input_truncated: false,
-        result: Some(ToolResult {
-            is_error: false,
-            timestamp_ms: None,
-            text: String::new(),
-            images: Vec::new(),
-            total_bytes: 0.0,
-            truncated: false,
-            persisted: None,
-            extra_json: None,
-        }),
-        subagent_id: Some(u.agent_id.clone()),
-        workflow_run_id: None,
-        notification_node_id: ctx.notification_by_tool.get(&u.tool_use_id).cloned(),
-        code: None,
-        via_code: Some(code.to_owned()),
     }
 }
 
@@ -490,8 +387,7 @@ pub fn result_full(e: &RawEntry, block: &RawBlock) -> (String, Vec<(String, f64)
     let (text, images) = result_content(block.content.as_deref());
     if text.is_empty()
         && images.is_empty()
-        && e.is_virtual == Some(true)
-        && let Some(t) = code_mode::virtual_output(e.tool_use_result.as_deref())
+        && let Some(t) = code_mode::virtual_output(e)
     {
         return (t, images);
     }
