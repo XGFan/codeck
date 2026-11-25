@@ -3,7 +3,8 @@ import { Folder, X } from "lucide-react";
 import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import { useConnect } from "@/features/connect";
 import type { Drill, ProjectSummary, SessionSummary } from "@/ipc/bindings";
-import { formatCount, formatSpan } from "@/lib/format";
+import { family, FAMILY_LABEL } from "@/features/stats/charts";
+import { formatCount } from "@/lib/format";
 import { useAllSessions, useProjects, useSessionList } from "@/queries";
 import { useUi } from "@/state/ui";
 import { buildSidebar, ROW_PX, type SideSession } from "./groups";
@@ -184,9 +185,9 @@ function drillLabel(d: Drill): string {
       const [, m, day] = d.day.split("-");
       return `${Number(m)}月${Number(day)}日`;
     }
-    case "model":
-      return `模型 ${d.model}`;
-    case "span":
-      return formatSpan(d.fromMs, d.toMs);
+    case "model": {
+      const families = [...new Set(d.models.map((m) => FAMILY_LABEL[family(m)]))];
+      return families.length > 0 ? `模型 ${families.join(" / ")}` : "模型";
+    }
   }
 }

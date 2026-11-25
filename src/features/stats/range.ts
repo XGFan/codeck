@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import type { TimeRange } from "@/ipc/bindings";
-import { cycleEnd, cycleStart, type WeeklyReset } from "@/lib/cycle";
+import { cycleBounds, roundToMinute, type CycleRule } from "@/lib/cycle";
 
 /**
  * The stats' time range: a usage cycle or a calendar month (paged with `offset`, 0 = the current one, -1 the one
@@ -48,17 +48,19 @@ export const sameRange = (a: RangeSel, b: RangeSel) => a.kind === b.kind && a.of
 export const pageable = (k: RangeKind) => k === "cycle" || k === "month";
 
 export interface ResolvedRange {
-  /** What the stats query covers (`toMs` null: up to now). */
+  /** What the stats query covers (both bounds set except for 全部). */
   timeRange: TimeRange | null;
-  /** Its length in days (active days are counted out of it); null for 全部. */
-  days: number | null;
+  /** Exact half-open range `[startMs, endMs)` in ms (for daily averages, calendars, and trend x-axis); null for 全部. */
+  startMs: number | null;
+  endMs: number | null;
   /** The dropdown's label. */
   label: string;
-  /** Beside it: the exact dates, and what is left of the current cycle or month. */
+  /** Beside it: the exact dates, what is left of the current cycle or month, and whether it follows the plan reset. */
   detail: string;
 }
 
 const DAY = 86_400_000;
+const FIVE_MIN = 5 * 60_000;
 const fmtReset = (d: Date) => format(d, "M月d日 EEE HH:mm", { locale: zhCN });
 const fmtMonth = (d: Date) => format(d, "yyyy 年 M 月");
 
@@ -68,43 +70,53 @@ export function remaining(ms: number): string {
   return h >= 24 ? `${Math.floor(h / 24)} 天 ${h % 24} 小时` : `${h} 小时 ${Math.floor((ms % 3_600_000) / 60_000)} 分`;
 }
 
-export function resolveRange(sel: RangeSel, now: Date, reset: WeeklyReset): ResolvedRange {
+export function resolveRange(sel: RangeSel, now: Date, rule: CycleRule): ResolvedRange {
   switch (sel.kind) {
     case "cycle": {
-      const start = cycleStart(now, reset);
-      start.setDate(start.getDate() + 7 * sel.offset);
-      const end = cycleEnd(start);
+      const { start, end } = cycleBounds(now, rule, sel.offset);
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+      const startDisplay = roundToMinute(startMs);
+      const endDisplay = roundToMinute(endMs);
       const current = sel.offset === 0;
+      const suffix = rule.kind === "anchor" ? " · 跟随订阅的每周重置" : "";
       return {
-        timeRange: { fromMs: start.getTime(), toMs: current ? null : end.getTime() },
-        days: 7,
-        label: current ? "本周期" : sel.offset === -1 ? "上一周期" : `${format(start, "M月d日")}起的周期`,
-        detail: `${fmtReset(start)} 至 ${fmtReset(end)}${current ? `，还剩 ${remaining(end.getTime() - now.getTime())}` : ""}`,
+        timeRange: { fromMs: startMs, toMs: endMs - 1 },
+        startMs,
+        endMs,
+        label: current ? "本周期" : sel.offset === -1 ? "上一周期" : `${format(startDisplay, "M月d日")}起的周期`,
+        detail: `${fmtReset(startDisplay)} 至 ${fmtReset(endDisplay)}${current ? `，还剩 ${remaining(endMs - now.getTime())}` : ""}${suffix}`,
       };
     }
     case "month": {
       const start = new Date(now.getFullYear(), now.getMonth() + sel.offset, 1);
       const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+      const startMs = start.getTime();
+      const endMs = end.getTime();
       const current = sel.offset === 0;
       return {
-        timeRange: { fromMs: start.getTime(), toMs: current ? null : end.getTime() },
-        days: Math.round((end.getTime() - start.getTime()) / DAY),
+        timeRange: { fromMs: startMs, toMs: endMs - 1 },
+        startMs,
+        endMs,
         label: current ? "本月" : sel.offset === -1 ? "上月" : fmtMonth(start),
-        detail: `${fmtMonth(start)}${current ? `，还剩 ${remaining(end.getTime() - now.getTime())}` : ""}`,
+        detail: `${fmtMonth(start)}${current ? `，还剩 ${remaining(endMs - now.getTime())}` : ""}`,
       };
     }
     case "last7":
     case "last30":
     case "last90": {
       const days = Number(sel.kind.slice(4));
+      const toMs = Math.floor(now.getTime() / FIVE_MIN) * FIVE_MIN;
+      const fromMs = toMs - days * DAY;
       return {
-        timeRange: { fromMs: now.getTime() - days * DAY, toMs: null },
-        days,
+        timeRange: { fromMs, toMs },
+        startMs: fromMs,
+        endMs: toMs,
         label: `最近 ${days} 天`,
         detail: "",
       };
     }
     case "all":
-      return { timeRange: null, days: null, label: "全部", detail: "" };
+      return { timeRange: null, startMs: null, endMs: null, label: "全部", detail: "" };
   }
 }

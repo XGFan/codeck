@@ -64,15 +64,3 @@ export function formatRelative(date: Date | number, now: Date | number = new Dat
   if (days < 7) return format(date, "EEEE", { locale: zhCN }).replace("星期", "周");
   return format(date, "M月d日", { locale: zhCN });
 }
-
-/** A time span `[fromMs, toMs)`: `10月22日 04:00–05:00` within a day, `10月22日` for a whole day, `10月20日–10月26日` across days. */
-export function formatSpan(fromMs: number, toMs: number): string {
-  const s = new Date(fromMs);
-  const last = new Date(toMs - 1);
-  const end = new Date(toMs);
-  const md = (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日`;
-  const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  if (md(s) !== md(last)) return `${md(s)}–${md(last)}`;
-  if (s.getHours() === 0 && s.getMinutes() === 0 && end.getHours() === 0 && end.getMinutes() === 0) return md(s);
-  return `${md(s)} ${hm(s)}–${end.getHours() === 0 && end.getMinutes() === 0 ? "24:00" : hm(end)}`;
-}

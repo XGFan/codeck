@@ -165,12 +165,10 @@ fn list_sorts_by_cost_and_stats_sum_it() {
     assert!(close(stats.overview.cost, total));
     let daily: f64 = stats.daily.iter().map(|d| d.cost).sum();
     assert!(close(daily, stats.overview.cost));
-    // The ranking's per-session cost is the session's own (all time, so the whole session).
-    assert!(stats.sessions.windows(2).all(|w| w[0].cost >= w[1].cost));
-    for r in &stats.sessions {
-        let s = list.iter().find(|s| s.id == r.session_id).unwrap();
-        assert!(close(r.cost, s.cost), "{}", r.session_id);
-    }
+    assert_eq!(
+        stats.daily.iter().map(|d| d.requests).sum::<u32>(),
+        stats.overview.requests
+    );
     assert!(d.summary.cost > 0.0);
 }
 

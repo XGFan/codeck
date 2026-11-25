@@ -92,6 +92,9 @@ macro_rules! for_each_method {
             /// Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any existing watch),
             /// or stops the existing watch (`on = false`; `id` is unused). Desktop only.
             local fn haa_watch(on: bool, id: u32) -> ();
+            /// Reads the logged-in account's subscription usage via headless `claude` (`get_usage`);
+            /// `None` when the account has no subscription rate limits (e.g. API key). Desktop only.
+            local fn get_plan_usage(refresh: bool) -> Option<$crate::types::PlanUsage>;
         }
     };
 }

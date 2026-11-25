@@ -1,5 +1,14 @@
-import type { AppInfo, Diagnostics, IndexStatus, SlashCommand, Stats } from "@/ipc/bindings";
-import { costOf, DAY, NOW, tok } from "./builders";
+import type {
+  AppInfo,
+  DailyModelTokens,
+  Diagnostics,
+  HourUsage,
+  IndexStatus,
+  SlashCommand,
+  Stats,
+  StatsRequest,
+} from "@/ipc/bindings";
+import { costOf, DAY, HOUR, NOW, tok } from "./builders";
 
 export const appInfo = {
   version: "0.1.0",
@@ -52,45 +61,119 @@ function localDay(ms: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Deterministic pseudo-random in [0, 1). */
-const rnd = (i: number) => {
-  const x = Math.sin(i * 9301 + 49297) * 233280;
+const MODELS = ["claude-fable-5-1", "claude-opus-4-7", "claude-sonnet-5-5", "claude-haiku-4-5"] as const;
+const MODEL_SHARES = [0.42, 0.36, 0.14, 0.08] as const;
+
+/** Deterministic pseudo-random in [0, 1) keyed by integer seed. */
+function hash(n: number): number {
+  const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453;
   return x - Math.floor(x);
-};
+}
 
-const models = ["claude-sonnet-5-5", "claude-opus-4-7", "claude-fable-5-1"];
-const daily = Array.from({ length: 30 }, (_, i) => 29 - i).flatMap((back) =>
-  models.map((model, m) => {
-    const k = m < 2 ? back * 2 + m : 1000 + back;
-    const scale = [1, 0.4, 0.25][m];
-    const input = Math.round(rnd(k) * 40_000 * scale) + 2_000;
-    const output = Math.round(rnd(k + 100) * 180_000 * scale) + 5_000;
-    const cacheRead = Math.round(rnd(k + 200) * 4_000_000 * scale) + 100_000;
-    const cacheCreation = Math.round(rnd(k + 300) * 300_000 * scale) + 10_000;
+/** Deterministic per-hour usage keyed purely by the absolute local hour (`hourStartMs`); empty after `cutoffMs`. */
+function hourBreakdown(hourStartMs: number, cutoffMs: number): DailyModelTokens[] {
+  if (hourStartMs > cutoffMs) return [];
+  const d = new Date(hourStartMs);
+  const dayKey = localDay(hourStartMs);
+  const daySeed = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  const h = d.getHours();
+  // Quiet days (~10%, never the last 3 days before cutoffMs so drills on recent days always find activity).
+  const ageDays = Math.floor((cutoffMs - hourStartMs) / DAY);
+  if (ageDays > 3 && hash(daySeed) < 0.1) return [];
+  // Sleeping hours mostly idle, daytime/evening active.
+  const awake = h >= 9 && h <= 23 ? 0.68 : h <= 2 ? 0.3 : 0.05;
+  const r = hash(daySeed * 31 + h * 7);
+  if (r > awake && !(ageDays === 0 && h === new Date(cutoffMs).getHours())) return [];
+
+  const totalReqs = Math.max(1, Math.round(hash(daySeed * 37 + h * 13) * 120) + 8);
+  const rows: DailyModelTokens[] = [];
+  let remainingReqs = totalReqs;
+  for (let m = 0; m < MODELS.length; m++) {
+    const model = MODELS[m]!;
+    const reqs = m === MODELS.length - 1 ? remainingReqs : Math.max(1, Math.round(totalReqs * MODEL_SHARES[m]!));
+    remainingReqs = Math.max(0, remainingReqs - reqs);
+    if (reqs <= 0) continue;
+    const k = daySeed * 100 + h * 5 + m;
+    const scale = [1.2, 1.0, 0.5, 0.25][m]!;
+    const input = Math.round((hash(k + 1) * 800 + 150) * reqs * scale);
+    const output = Math.round((hash(k + 2) * 320 + 60) * reqs * scale);
+    const cacheRead = Math.round((hash(k + 3) * 35_000 + 8_000) * reqs * scale);
+    const cacheCreation = Math.round((hash(k + 4) * 2_200 + 300) * reqs * scale);
     const cost = costOf(model, tok(input, output, cacheRead, cacheCreation)) ?? 0;
-    return { day: localDay(NOW - back * DAY), model, input, output, cacheRead, cacheCreation, cost };
-  }),
-);
+    rows.push({ day: dayKey, model, input, output, cacheRead, cacheCreation, cost, requests: reqs });
+  }
+  return rows;
+}
 
-export const stats = {
-  overview: {
-    sessions: 10,
-    messages: 1286,
-    outputTokens: daily.reduce((s, d) => s + d.output, 0),
-    activeDays: 24,
-    cost: 412.37,
-    unpricedMessages: 0,
-  },
-  daily,
-  heatDaily: Array.from({ length: 90 }, (_, i) => ({
-    day: localDay(NOW - (89 - i) * DAY),
-    messages: Math.round(rnd(i + 7) * 80),
-  })),
-  // Filled per request by `getStats`.
-  activity: { bucket: "day", bars: [] },
-  // Filled from the mock sessions by `getStats`.
-  sessions: [],
-} satisfies Stats;
+const ALL_HISTORY_DAYS = 400;
+
+/**
+ * Generates mock `Stats` from one unified per-hour deterministic seed for every range:
+ * - Each hour bucket is included in `daily` / `overview` iff `from <= startMs <= to` and `startMs <= nowMs`, so the
+ *   same full calendar day produces identical totals across 7d, 30d, 90d, and 全部;
+ * - When `fromMs <= toMs` and `toMs - fromMs <= 8 days`, also emits `hourly` from those exact same hour buckets so
+ *   `sum(hourly.requests) === sum(daily.requests) === overview.requests` and cost conserves.
+ */
+export function buildMockStats(req: StatsRequest): Stats {
+  const nowMs = Date.now();
+  const from = req.timeRange?.fromMs ?? null;
+  const to = req.timeRange?.toMs ?? null;
+  const wantHourly = from != null && to != null && from <= to && to - from <= 8 * DAY;
+
+  const dailyMap = new Map<string, DailyModelTokens>();
+  const addDaily = (r: DailyModelTokens) => {
+    const key = `${r.day}\0${r.model}`;
+    const prev = dailyMap.get(key);
+    if (prev) {
+      prev.input += r.input;
+      prev.output += r.output;
+      prev.cacheRead += r.cacheRead;
+      prev.cacheCreation += r.cacheCreation;
+      prev.cost += r.cost;
+      prev.requests += r.requests;
+    } else {
+      dailyMap.set(key, { ...r });
+    }
+  };
+
+  const rangeFrom = from ?? new Date(nowMs - ALL_HISTORY_DAYS * DAY).setHours(0, 0, 0, 0);
+  const rangeTo = to ?? nowMs;
+  const cur = new Date(rangeFrom);
+  cur.setMinutes(0, 0, 0);
+  const last = new Date(wantHourly ? rangeTo : Math.min(rangeTo, nowMs));
+  last.setMinutes(0, 0, 0);
+  const lastMs = last.getTime();
+
+  const hourly: HourUsage[] = [];
+  while (cur.getTime() <= lastMs) {
+    const startMs = cur.getTime();
+    cur.setHours(cur.getHours() + 1);
+    const endMs = cur.getTime();
+    if (endMs <= startMs) cur.setTime(startMs + HOUR);
+    const inBounds = (from == null || startMs >= from) && (to == null || startMs <= to);
+    const rows = inBounds ? hourBreakdown(startMs, nowMs) : [];
+    let reqs = 0;
+    let cost = 0;
+    for (const r of rows) {
+      addDaily(r);
+      reqs += r.requests;
+      cost += r.cost;
+    }
+    if (wantHourly) hourly.push({ startMs, endMs: cur.getTime(), requests: reqs, cost });
+  }
+
+  const daily = [...dailyMap.values()].sort((a, b) => a.day.localeCompare(b.day) || a.model.localeCompare(b.model));
+  const overview = daily.reduce(
+    (acc, d) => ({
+      outputTokens: acc.outputTokens + d.output,
+      cost: acc.cost + d.cost,
+      unpricedMessages: acc.unpricedMessages,
+      requests: acc.requests + d.requests,
+    }),
+    { outputTokens: 0, cost: 0, unpricedMessages: 0, requests: 0 },
+  );
+  return { overview, daily, hourly };
+}
 
 /** Completion while driving (`listSlashCommands`): a few built-in commands, a project command, a plugin skill. */
 export const slashCommands: SlashCommand[] = [

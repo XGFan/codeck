@@ -2,8 +2,9 @@ import { useUi } from "@/state/ui";
 import { ConnectPanel, ConnectRoot, ElsewhereBanner } from "@/features/connect";
 import { useDeepLinks } from "@/features/deep-link";
 import { FindBar } from "@/features/find";
-import { SidebarResizer, StatsToggle, Toolbar, useSessionsHidden } from "@/features/layout";
+import { SidebarResizer, Toolbar, useSessionsHidden } from "@/features/layout";
 import { Outline } from "@/features/outline";
+import { QuotaNavButton } from "@/features/quota";
 import { SearchOverlay } from "@/features/search";
 import { SessionHeader } from "@/features/header";
 import { SessionList } from "@/features/sessions";
@@ -62,7 +63,7 @@ export default function App() {
         {hideList && (
           <>
             <SettingsButton className="size-7 text-secondary" />
-            <StatsToggle />
+            <QuotaNavButton side="bottom" />
           </>
         )}
       </Toolbar>

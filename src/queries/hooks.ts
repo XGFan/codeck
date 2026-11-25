@@ -27,6 +27,7 @@ export const queryKeys = {
   search: (req: SearchRequest) => ["search", req] as const,
   find: (req: FindRequest) => ["find", req.sessionId, req] as const,
   stats: (req: StatsRequest) => ["stats", req] as const,
+  planUsage: ["planUsage"] as const,
   diagnostics: ["diagnostics"] as const,
   lanStatus: ["lanStatus"] as const,
   slashCommands: (cwd: string | null) => ["slashCommands", cwd] as const,
@@ -127,8 +128,13 @@ export const useFind = (req: FindRequest | null) =>
     placeholderData: keepPreviousData,
   });
 
-export const useStats = (req: StatsRequest) =>
-  useQuery({ queryKey: queryKeys.stats(req), queryFn: () => api.getStats(req), placeholderData: keepPreviousData });
+export const useStats = (req: StatsRequest, opts?: { enabled?: boolean; keepPrevious?: boolean }) =>
+  useQuery({
+    queryKey: queryKeys.stats(req),
+    queryFn: () => api.getStats(req),
+    placeholderData: opts?.keepPrevious === false ? undefined : keepPreviousData,
+    enabled: opts?.enabled ?? true,
+  });
 
 export const useDiagnostics = () => useQuery({ queryKey: queryKeys.diagnostics, queryFn: () => api.getDiagnostics() });
 

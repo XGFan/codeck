@@ -107,5 +107,6 @@ export function createRealApi(): Api {
         if (workers) cb(payload.id, workers);
       }),
     onHaaWatchEnded: (cb) => events.haaWatchEndedEvent.listen(({ payload }) => cb(payload.id, payload.message)),
+    getPlanUsage: commands.getPlanUsage,
   };
 }

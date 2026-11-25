@@ -82,6 +82,9 @@ pub struct Engine {
     /// A sync failed: the next one scans the whole root, whatever its batch names (the sessions
     /// of a failed per-session sync would otherwise wait until they change again).
     full_scan_next: AtomicBool,
+    /// Canonical working directory whose process files are excluded from Live Session detection
+    /// (the Host's private `plan-usage` probe directory).
+    ignore_live_cwd: Option<PathBuf>,
 }
 
 /// Sidecar path → (size, mtime, session id).
@@ -173,7 +176,14 @@ impl Engine {
             agents: Mutex::new(Lru::new(AGENT_CACHE_CAP)),
             sidecar_state: Mutex::new(None),
             full_scan_next: AtomicBool::new(false),
+            ignore_live_cwd: None,
         })
+    }
+
+    /// Excludes process files whose `cwd` equals `dir` (canonical path) from Live Session detection.
+    pub fn with_ignored_live_cwd(mut self, dir: Option<PathBuf>) -> Self {
+        self.ignore_live_cwd = dir;
+        self
     }
 
     pub fn app_info(&self) -> AppInfo {
@@ -484,8 +494,18 @@ impl Engine {
 
     // ---------------------------------------------------------------- live
 
+    /// Reads `<root>/sessions/*.json` for all Live Session checks, dropping process files from the
+    /// Host's private probe directory before `live::detect`.
+    fn read_process_files(&self) -> Vec<live::ProcessFile> {
+        let mut pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
+        if let Some(ignored) = &self.ignore_live_cwd {
+            pfs.retain(|pf| !matches_ignored_cwd(pf.cwd.as_deref(), ignored));
+        }
+        pfs
+    }
+
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {
-        let pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
+        let pfs = self.read_process_files();
         let mut live = live::detect(&pfs);
         // A superseded Session's process stays as the foreground of the one it was moved into; the
         // conversation is Live there, under the Session that carries it on.
@@ -498,7 +518,7 @@ impl Engine {
 
     /// Whether a Claude Code process is running `session_id` now (read afresh, not the last poll).
     pub fn is_live(&self, session_id: &str) -> bool {
-        let pfs = live::read_process_files(&sessions_dir(&self.cfg.data_root));
+        let pfs = self.read_process_files();
         live::detect(&pfs).contains_key(session_id)
     }
 
@@ -512,6 +532,19 @@ impl Engine {
         };
         p(&snapshot);
     }
+}
+
+fn matches_ignored_cwd(cwd: Option<&str>, ignored: &Path) -> bool {
+    let Some(cwd) = cwd else {
+        return false;
+    };
+    let p = Path::new(cwd);
+    if p == ignored {
+        return true;
+    }
+    // Avoid a filesystem syscall for normal Sessions; only canonicalize when the leaf directory
+    // name matches (e.g. `/var/.../plan-usage` vs `/private/var/.../plan-usage` on macOS).
+    p.file_name() == ignored.file_name() && p.canonicalize().ok().as_deref() == Some(ignored)
 }
 
 /// Quotes a session id for pasting into a shell; ids come from file names, so anything beyond
@@ -670,5 +703,86 @@ mod tests {
         assert_eq!((rows, ready), (0, false));
         let last = *seen.lock().last().unwrap();
         assert_eq!((last.files_done, last.bytes_done), (0, 0));
+    }
+
+    #[test]
+    fn live_filter_ignores_probe_cwd_but_keeps_other_sdk_cli_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_root = tmp.path().join("root");
+        let sessions = sessions_dir(&data_root);
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        let cache_dir = tmp.path().join("cache");
+        let probe_dir = crate::paths::plan_usage_dir(&cache_dir);
+        std::fs::create_dir_all(&probe_dir).unwrap();
+        let probe_canonical = probe_dir.canonicalize().unwrap();
+
+        let other_dir = tmp.path().join("user-sdk-project");
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let other_canonical = other_dir.canonicalize().unwrap();
+
+        let pid = std::process::id();
+        // Probe process file: sdk-cli in the Host's private probe directory.
+        std::fs::write(
+            sessions.join("1001.json"),
+            serde_json::json!({
+                "pid": pid,
+                "sessionId": "probe-session",
+                "status": "idle",
+                "kind": "interactive",
+                "entrypoint": "sdk-cli",
+                "cwd": probe_canonical.display().to_string(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // Same probe directory written through the non-canonical symlink path (e.g. `/var` on macOS).
+        std::fs::write(
+            sessions.join("1002.json"),
+            serde_json::json!({
+                "pid": pid,
+                "sessionId": "probe-session-raw-path",
+                "status": "busy",
+                "kind": "interactive",
+                "entrypoint": "sdk-cli",
+                "cwd": probe_dir.display().to_string(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // Unrelated `claude -p` / sdk-cli Session in a user project must still be Live.
+        std::fs::write(
+            sessions.join("1003.json"),
+            serde_json::json!({
+                "pid": pid,
+                "sessionId": "other-sdk-session",
+                "status": "busy",
+                "kind": "interactive",
+                "entrypoint": "sdk-cli",
+                "cwd": other_canonical.display().to_string(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let engine = Engine::open(EngineConfig {
+            data_root,
+            data_root_source: DataRootSource::Settings,
+            cache_dir,
+        })
+        .unwrap()
+        .with_ignored_live_cwd(Some(probe_canonical));
+
+        let live = engine.live_now().unwrap();
+        let ids: Vec<&str> = live.iter().map(|e| e.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["other-sdk-session"]);
+
+        let polled = engine.poll_live().unwrap().expect("live set non-empty");
+        let polled_ids: Vec<&str> = polled.live.iter().map(|e| e.session_id.as_str()).collect();
+        assert_eq!(polled_ids, vec!["other-sdk-session"]);
+
+        assert!(!engine.is_live("probe-session"));
+        assert!(!engine.is_live("probe-session-raw-path"));
+        assert!(engine.is_live("other-sdk-session"));
     }
 }

@@ -40,20 +40,10 @@ pub enum SessionSort {
     rename_all_fields = "camelCase"
 )]
 pub enum Drill {
-    /// `day` is `YYYY-MM-DD`.
-    Day {
-        day: String,
-    },
-    Model {
-        model: String,
-    },
-    /// Main-file messages in `[from_ms, to_ms)` (an activity bar).
-    Span {
-        #[specta(type = Number)]
-        from_ms: f64,
-        #[specta(type = Number)]
-        to_ms: f64,
-    },
+    /// `day` is `YYYY-MM-DD` (sessions with a billed request on that local day).
+    Day { day: String },
+    /// Sessions with a billed request of any listed model (empty matches none).
+    Model { models: Vec<String> },
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq)]

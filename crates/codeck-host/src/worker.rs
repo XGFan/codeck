@@ -89,6 +89,7 @@ pub fn spawn(
     state: Arc<AppState>,
     sink: EventSink,
     cache_dir: PathBuf,
+    ignore_live_cwd: Option<PathBuf>,
     rx: Receiver<Job>,
     backlog_cancel: Arc<AtomicBool>,
 ) {
@@ -119,6 +120,7 @@ pub fn spawn(
                 state,
                 sink,
                 cache_dir,
+                ignore_live_cwd,
                 queue: Queue::new(rx, backlog_cancel.clone()),
                 jobs,
                 backlog_cancel,
@@ -226,6 +228,7 @@ struct Worker {
     state: Arc<AppState>,
     sink: EventSink,
     cache_dir: PathBuf,
+    ignore_live_cwd: Option<PathBuf>,
     queue: Queue,
     jobs: JobSender,
     backlog_cancel: Arc<AtomicBool>,
@@ -319,6 +322,7 @@ impl Worker {
         let opened = open_engine(
             wanted.data_root.as_deref().map(std::path::Path::new),
             self.cache_dir.clone(),
+            self.ignore_live_cwd.clone(),
         )
         .and_then(|engine| {
             settings::update(|s| s.data_root = data_root).map_err(CoreError::from)?;

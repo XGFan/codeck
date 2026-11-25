@@ -90,5 +90,10 @@ async fn dispatches_json_calls_and_refuses_local_methods_remotely() {
         .await
         .unwrap_err();
     assert!(e.message.contains("set_data_root"), "{e}");
+    let e = call("get_plan_usage", json!({ "refresh": false }), true)
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&e).unwrap()["code"], "invalidQuery");
+    assert!(e.message.contains("get_plan_usage"), "{e}");
     call("get_diagnostics", json!({}), false).await.unwrap();
 }

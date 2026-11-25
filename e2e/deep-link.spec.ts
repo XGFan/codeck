@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { RICH_TITLE } from "./helpers";
+import { openStats, RICH_TITLE } from "./helpers";
 
 const openUrl = (page: Page, url: string) => page.evaluate((u) => window.__cvMock!.openUrl(u), url);
 const heading = (page: Page) => page.getByTestId("header").getByRole("heading");
@@ -7,7 +7,7 @@ const heading = (page: Page) => page.getByTestId("header").getByRole("heading");
 test("codeck://session/<id> 打开这个 Session，盖在上面的统计面板关掉", async ({ page }) => {
   await page.goto("/");
   const id = await page.getByTestId("session-row").filter({ hasText: RICH_TITLE }).getAttribute("data-session-id");
-  await page.getByTestId("nav-stats").click();
+  await openStats(page);
   await expect(page.getByTestId("stats")).toBeVisible();
 
   await openUrl(page, `codeck://session/${id}`);

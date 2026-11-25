@@ -38,6 +38,7 @@ describe("remote api", () => {
       "lanSetEnabled",
       "connectSnapshot",
       "haaWatch",
+      "getPlanUsage",
       "keepAliveMinutes",
       "setKeepAliveMinutes",
       "notify",

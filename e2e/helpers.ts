@@ -19,6 +19,20 @@ export async function openSession(page: Page, title: string, { folded = false } 
 
 export const openRich = (page: Page, opts?: { folded?: boolean }) => openSession(page, RICH_TITLE, opts);
 
+/** Opens the stats dialog via the quota popover when the ring is visible, or via `nav-stats` otherwise. */
+export async function openStats(page: Page) {
+  const btn = page.locator('[data-testid="nav-quota"], [data-testid="nav-stats"]').first();
+  await expect(btn).toBeVisible();
+  await btn.click();
+  const stats = page.getByTestId("stats");
+  const popover = page.getByTestId("quota-popover");
+  await expect(stats.or(popover)).toBeVisible();
+  if (await popover.isVisible()) {
+    await popover.getByTestId("quota-open-stats").click();
+  }
+  await expect(stats).toBeVisible();
+}
+
 /** Scrolls `scroller` by `dy` and resolves after the scroll event (and the virtualizer's re-render); false at the end. */
 export const scrollBy = (scroller: Locator, dy: number) =>
   scroller.evaluate(

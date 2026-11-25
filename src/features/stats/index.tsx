@@ -1,27 +1,38 @@
 import { X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useMemo, useState } from "react";
-import type { Drill } from "@/ipc/bindings";
+import type { Drill, Stats } from "@/ipc/bindings";
 import { Dialog, PanelDialogContent } from "@/components/ui/dialog";
-import { formatCost, formatTokens } from "@/lib/format";
+import { QuotaStrip, useCycleRule, useMinuteNow, usePlanUsage } from "@/features/quota";
 import { useStats } from "@/queries";
 import { useUi } from "@/state/ui";
-import { Bar, Card, Empty, Overview, Segmented } from "./Cards";
-import { Chart, useDark } from "./Chart";
-import {
-  FAMILY_LABEL,
-  IO_SERIES,
-  type Metric,
-  type ModelFamily,
-  family,
-  presentFamilies,
-  dailyOption,
-  activityOption,
-  BUCKET_LABEL,
-  themes,
-} from "./charts";
-import { DEFAULT_RANGE, resolveRange, type RangeSel } from "./range";
+import { useDark } from "./Chart";
+import { themes } from "./charts";
+import { FrequencyPanel } from "./FrequencyPanel";
+import { DEFAULT_RANGE, resolveRange, type RangeSel, type ResolvedRange } from "./range";
 import { RangePicker } from "./RangePicker";
+import { usablePrevStats } from "./trend";
+import { TrendPanel } from "./TrendPanel";
+import { UsagePanel } from "./UsagePanel";
+
+const DAY_MS = 86_400_000;
+
+interface PrevSnapshot {
+  stats: Stats;
+  startMs: number;
+  endMs: number;
+}
+
+interface StatsSnapshot {
+  stats: Stats;
+  range: RangeSel;
+  resolved: ResolvedRange;
+  prev: PrevSnapshot | null;
+}
+
+function Empty({ text = "所选范围内没有数据" }: { text?: string }) {
+  return <div className="flex min-h-16 flex-1 items-center justify-center text-[12px] text-secondary">{text}</div>;
+}
 
 /** Stats as a large dialog over the window; a click outside or Esc closes it. */
 export function StatsDialog() {
@@ -45,46 +56,77 @@ function StatsPanel() {
   const dark = useDark();
   const theme = themes[dark ? "dark" : "light"];
   const [range, setRange] = useState<RangeSel>(DEFAULT_RANGE);
-  const [metric, setMetric] = useState<Metric>("all");
 
-  const weeklyReset = useUi((s) => s.weeklyReset);
-  const resolved = useMemo(() => resolveRange(range, new Date(), weeklyReset), [range, weeklyReset]);
-  const { timeRange, days: rangeDays } = resolved;
-  const { data: stats, isPending, isError } = useStats({ timeRange });
+  const now = useMinuteNow();
+  const { rule } = useCycleRule();
+  const { state: planState } = usePlanUsage();
+  const resolved = useMemo(() => resolveRange(range, now, rule), [range, now, rule]);
+  const { timeRange, startMs, endMs } = resolved;
+
+  const { data: stats, isPending, isError, isPlaceholderData } = useStats({ timeRange });
+
+  const wantPrevQuery = range.kind === "cycle" || range.kind === "last7";
+  const prevBounds = useMemo(() => {
+    if (!wantPrevQuery || startMs == null || endMs == null) return null;
+    if (range.kind === "cycle") {
+      const prev = resolveRange({ kind: "cycle", offset: range.offset - 1 }, now, rule);
+      return prev.timeRange && prev.startMs != null && prev.endMs != null
+        ? { timeRange: prev.timeRange, startMs: prev.startMs, endMs: prev.endMs }
+        : null;
+    }
+    const prevStart = startMs - 7 * DAY_MS;
+    const prevEnd = startMs;
+    return { timeRange: { fromMs: prevStart, toMs: prevEnd - 1 }, startMs: prevStart, endMs: prevEnd };
+  }, [wantPrevQuery, range, now, rule, startMs, endMs]);
+
+  const prevQuery = useStats(
+    { timeRange: prevBounds?.timeRange ?? null },
+    { enabled: wantPrevQuery && prevBounds != null, keepPrevious: false },
+  );
+  const prevStats = usablePrevStats(prevQuery);
+  const currentPrev: PrevSnapshot | null =
+    prevStats && prevBounds ? { stats: prevStats, startMs: prevBounds.startMs, endMs: prevBounds.endMs } : null;
+
+  // Pair placeholder data with its own range + reference snapshot so the previous view stays intact until new data arrives.
+  const [settled, setSettled] = useState<StatsSnapshot | null>(null);
+  if (
+    stats &&
+    !isPlaceholderData &&
+    (settled?.stats !== stats ||
+      settled.resolved !== resolved ||
+      settled.prev?.stats !== currentPrev?.stats ||
+      settled.prev?.startMs !== currentPrev?.startMs)
+  ) {
+    setSettled({ stats, range, resolved, prev: currentPrev });
+  }
+  const shown: StatsSnapshot | null =
+    isPlaceholderData && settled ? settled : stats ? { stats, range, resolved, prev: currentPrev } : null;
 
   const drill = (d: Drill) => {
+    if (isPlaceholderData) return;
     const ui = useUi.getState();
     ui.setProjectIds([]);
     ui.setStatsDrill(d, timeRange);
     ui.selectSession(null);
     ui.setStatsOpen(false);
   };
-  const openSession = (id: string) => {
-    const ui = useUi.getState();
-    ui.setProjectIds([]);
-    ui.setStatsDrill(null);
-    ui.selectSession(id);
-    ui.setStatsOpen(false);
-  };
 
-  const dailyOpt = useMemo(() => (stats ? dailyOption(stats.daily, metric, theme) : null), [stats, metric, theme]);
-  const activityOpt = useMemo(() => (stats ? activityOption(stats.activity, theme) : null), [stats, theme]);
-
-  const empty = stats != null && stats.overview.sessions === 0 && stats.daily.length === 0;
-  const present = stats ? presentFamilies(stats.daily, metric) : [];
-  const maxCost = Math.max(0.01, ...(stats?.sessions.map((s) => s.cost) ?? []));
+  const empty = shown != null && shown.stats.daily.length === 0;
+  const shownTrend = shown != null && (shown.range.kind === "cycle" || shown.range.kind === "last7");
 
   return (
-    <div data-testid="stats" className="@container flex h-full min-w-0 flex-col bg-list">
+    <div
+      data-testid="stats"
+      data-placeholder={isPlaceholderData ? "true" : undefined}
+      className="@container flex h-full min-w-0 flex-col bg-list"
+    >
       {/* The header stays put; only the content below scrolls. */}
       <header className="flex shrink-0 flex-col border-b border-border px-6">
-        {/* The toolbar row keeps its height whatever the range: picker after the title, dates beside it. */}
         <div className="flex min-h-[52px] flex-wrap items-center gap-3">
           <DialogPrimitive.Title asChild>
             <h1 className="m-0 shrink-0 text-[16px] font-semibold">统计</h1>
           </DialogPrimitive.Title>
-          <RangePicker sel={range} onChange={setRange} />
-          {/* The cycle's reset is set in Settings › 通用. */}
+          <RangePicker sel={range} now={now} rule={rule} onChange={setRange} />
           <span data-testid="cycle-span" className="min-w-0 flex-1 truncate text-[12px] text-secondary">
             {resolved.detail}
           </span>
@@ -97,135 +139,50 @@ function StatsPanel() {
         </div>
       </header>
 
-      <div data-testid="stats-scroll" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pt-4 pb-6">
+      <div data-testid="stats-scroll" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 pt-4 pb-6">
+        <QuotaStrip now={now} />
         {isPending && <Empty text="加载中…" />}
         {isError && <Empty text="统计加载失败" />}
         {empty && <Empty />}
 
-        {stats && !empty && (
-          <>
-            <Overview stats={stats} rangeDays={rangeDays} />
-            {/* Each card is as tall as its content, not stretched to the tallest in its row. */}
-            <div className="grid grid-cols-1 items-start gap-3 @3xl:grid-cols-3">
-              <Card
-                className="@3xl:col-span-2"
-                title={metric === "all" ? "每日用量" : "每日用量 · 按模型"}
-                testId="stats-daily"
-                aside={
-                  <>
-                    {metric === "all" &&
-                      IO_SERIES.map((s) => (
-                        <span key={s.label} className="flex items-center gap-1 text-[11px]">
-                          <span className="size-[9px] rounded-[2px]" style={{ background: theme[s.color] }} />
-                          {s.label}
-                        </span>
-                      ))}
-                    {metric !== "all" &&
-                      present.map((f) => (
-                        <button
-                          key={f}
-                          type="button"
-                          data-testid="legend-item"
-                          title="查看该模型的 Session"
-                          onClick={() =>
-                            drill({ kind: "model", model: stats.daily.find((d) => family(d.model) === f)!.model })
-                          }
-                          className="flex items-center gap-1 text-[11px] hover:underline"
-                        >
-                          <span
-                            className="size-[9px] rounded-[2px]"
-                            style={{ background: theme.series[f as ModelFamily] }}
-                          />
-                          {FAMILY_LABEL[f]}
-                        </button>
-                      ))}
-                    <Segmented
-                      small
-                      label="指标"
-                      value={metric}
-                      options={[
-                        { key: "all", label: "全部" },
-                        { key: "input", label: "输入" },
-                        { key: "output", label: "输出" },
-                        { key: "cost", label: "Cost" },
-                      ]}
-                      onChange={setMetric}
-                    />
-                  </>
-                }
-              >
-                {stats.daily.length === 0 ? (
-                  <Empty />
-                ) : (
-                  <Chart
-                    testId="daily-chart"
-                    height={240}
-                    label="每日用量堆叠柱状图"
-                    option={dailyOpt!}
-                    onPick={(p) => p.name && drill({ kind: "day", day: p.name })}
-                  />
-                )}
-              </Card>
-
-              <Card
-                className="@3xl:row-span-2"
-                title="Session 排行"
-                aside={<span className="text-[11px] text-secondary">按 Cost</span>}
-              >
-                {stats.sessions.length === 0 && <Empty />}
-                {stats.sessions.map((s) => (
-                  <button
-                    key={s.sessionId}
-                    type="button"
-                    data-testid="session-rank-row"
-                    title={s.title}
-                    onClick={() => openSession(s.sessionId)}
-                    className="flex flex-col gap-[3px] rounded text-left outline-none hover:bg-code focus-visible:ring-2 focus-visible:ring-accent"
-                  >
-                    <span className="flex gap-2 text-[12px]">
-                      <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                      <span className="shrink-0 text-secondary tabular-nums">
-                        {formatCost(s.cost)} · {formatTokens(s.outputTokens)}
-                      </span>
-                    </span>
-                    <Bar pct={(s.cost / maxCost) * 100} color={theme.series.opus} />
-                  </button>
-                ))}
-              </Card>
-
-              <Card
-                className="@3xl:col-span-2"
-                title="活跃时段"
-                testId="stats-activity"
-                aside={
-                  stats.activity.bars.length > 0 && (
-                    <span
-                      data-testid="activity-bucket"
-                      title="每根柱子的时长"
-                      className="rounded border border-border px-1.5 text-[10px] text-secondary tabular-nums"
-                    >
-                      {BUCKET_LABEL[stats.activity.bucket]}
-                    </span>
-                  )
-                }
-              >
-                {stats.activity.bars.length === 0 ? (
-                  <Empty />
-                ) : (
-                  <Chart
-                    testId="activity-chart"
-                    height={160}
-                    label="各时间段的消息数柱状图"
-                    option={activityOpt!}
-                    onPick={(p) => {
-                      const bar = p.dataIndex == null ? undefined : stats.activity.bars[p.dataIndex];
-                      if (bar) drill({ kind: "span", fromMs: bar.startMs, toMs: bar.endMs });
-                    }}
-                  />
-                )}
-              </Card>
+        {shown && !empty && (
+          <div className="grid grid-cols-1 items-start gap-3 @3xl:grid-cols-2">
+            <UsagePanel
+              stats={shown.stats}
+              timeRange={shown.resolved.timeRange}
+              startMs={shown.resolved.startMs}
+              endMs={shown.resolved.endMs}
+              now={now}
+              theme={theme}
+              onDrill={drill}
+            />
+            <div className="flex min-w-0 flex-col gap-3">
+              <FrequencyPanel
+                stats={shown.stats}
+                rangeKind={shown.range.kind}
+                timeRange={shown.resolved.timeRange}
+                startMs={shown.resolved.startMs}
+                endMs={shown.resolved.endMs}
+                now={now}
+                onDrill={drill}
+              />
+              {shownTrend && shown.resolved.startMs != null && shown.resolved.endMs != null && (
+                <TrendPanel
+                  sel={shown.range}
+                  stats={shown.stats}
+                  prevStats={shown.prev?.stats}
+                  rangeStartMs={shown.resolved.startMs}
+                  rangeEndMs={shown.resolved.endMs}
+                  prevStartMs={shown.prev?.startMs ?? null}
+                  prevEndMs={shown.prev?.endMs ?? null}
+                  now={now}
+                  planState={planState}
+                  isPlaceholderData={isPlaceholderData}
+                  theme={theme}
+                />
+              )}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

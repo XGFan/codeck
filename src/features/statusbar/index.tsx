@@ -1,11 +1,11 @@
-import { StatsToggle } from "@/features/layout";
+import { QuotaNavButton } from "@/features/quota";
 import { SettingsButton } from "@/features/settings";
 import { useIndexStatus } from "@/queries";
 
 /**
- * The foot of the Session list: settings and stats in the window's corner, then an index failure if there is one (the
- * count and the progress are in Settings: here they changed as Sessions were written, while typing). While the list is
- * hidden the two buttons sit in the toolbar instead ([`Toolbar`]), so the conversation keeps no bar of its own.
+ * The foot of the Session list: settings and quota/stats in the window's corner, then an index failure if there is one
+ * (the count and the progress are in Settings: here they changed as Sessions were written, while typing). While the
+ * list is hidden the two buttons sit in the toolbar instead ([`Toolbar`]), so the conversation keeps no bar of its own.
  */
 export function StatusBar() {
   const { data: s } = useIndexStatus();
@@ -14,7 +14,7 @@ export function StatusBar() {
   const actions = (
     <span key="actions" className="flex shrink-0 items-center gap-0.5">
       <SettingsButton className="size-6 text-secondary" />
-      <StatsToggle className="size-6" />
+      <QuotaNavButton className="size-6" side="top" />
     </span>
   );
   if (!s) return <div className="flex h-9 shrink-0 items-center border-t border-border px-1.5">{actions}</div>;

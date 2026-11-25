@@ -96,6 +96,17 @@ export const commands = {
 	 */
 	haaWatch: (on: boolean, id: number) => __TAURI_INVOKE<null>("haa_watch", { on, id }),
 	/**
+	 *  Reads the logged-in account's subscription usage via headless `claude` (`get_usage`);
+	 *  `None` when the account has no subscription rate limits (e.g. API key). Desktop only.
+	 */
+	getPlanUsage: (refresh: boolean) => __TAURI_INVOKE<{
+	/**  Subscription plan name as reported by Claude Code (e.g. `"max"`, `"pro"`). */
+	plan: string | null,
+	/**  When this snapshot was fetched (unix-epoch milliseconds). */
+	fetchedMs: number,
+	limits: PlanLimit[],
+} | null>("get_plan_usage", { refresh }),
+	/**
 	 *  Shows a system notification, in place of the one with its `id` when that is still there. Not in the Host's
 	 *  table: it is the window's, like the Dock badge.
 	 */
@@ -123,25 +134,6 @@ export const events = {
 };
 
 /* Types */
-/**
- *  Message histogram over the requested range: the finest bucket with at most
- *  `codeck_core::stats::MAX_ACTIVITY_BARS` bars; empty bars included.
- */
-export type Activity = {
-	bucket: ActivityBucket,
-	bars: ActivityBar[],
-};
-
-/**  Main-file messages in `[start_ms, end_ms)`. */
-export type ActivityBar = {
-	startMs: number,
-	endMs: number,
-	messages: number,
-};
-
-/**  Width of one activity bar; aligned in local time (whole n hours, midnight, Monday, the 1st). */
-export type ActivityBucket = "hour1" | "hour3" | "hour6" | "hour12" | "day" | "week" | "month";
-
 /**
  *  ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › ccrpc」 saved, and what the next
  *  ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
@@ -301,6 +293,8 @@ export type DailyModelTokens = {
 	cacheCreation: number,
 	/**  API cost in USD (0 for a model without a price). */
 	cost: number,
+	/**  Billed assistant requests carrying tokens. */
+	requests: number,
 };
 
 export type DataRootSource = 
@@ -310,11 +304,6 @@ export type DataRootSource =
 "env" | 
 /**  `~/.claude`. */
 "default";
-
-export type DayCount = {
-	day: string,
-	messages: number,
-};
 
 export type DetailSource = "inline" | "persistedFile" | "missing";
 
@@ -345,10 +334,10 @@ export type DoctorLine = {
 
 /**  Stats drill-down filter; days are local calendar days. */
 export type Drill = 
-/**  `day` is `YYYY-MM-DD`. */
-{ kind: "day"; day: string } | { kind: "model"; model: string } | 
-/**  Main-file messages in `[from_ms, to_ms)` (an activity bar). */
-{ kind: "span"; fromMs: number; toMs: number };
+/**  `day` is `YYYY-MM-DD` (sessions with a billed request on that local day). */
+{ kind: "day"; day: string } | 
+/**  Sessions with a billed request of any listed model (empty matches none). */
+{ kind: "model"; models: string[] };
 
 export type ErrorCode = "notFound" | "invalidQuery" | "io" | "index" | "cancelled" | "internal";
 
@@ -403,6 +392,15 @@ export type HaaWatchEndedEvent = {
 export type HaaWorkersEvent = {
 	id: number,
 	workers: string,
+};
+
+/**  Billed requests and API cost in `[start_ms, end_ms)` (one local hour). */
+export type HourUsage = {
+	startMs: number,
+	endMs: number,
+	requests: number,
+	/**  API cost in USD (0 for unpriced models). */
+	cost: number,
 };
 
 export type ImageData = {
@@ -592,6 +590,35 @@ export type PersistedRef = {
 	sizeBytes: number,
 };
 
+/**  One rate-limit item of the logged-in account's subscription. */
+export type PlanLimit = {
+	kind: PlanLimitKind,
+	/**  Model display name for `weeklyScoped` (e.g. `"Fable"`), `None` otherwise. */
+	model: string | null,
+	/**  Percentage used (finite, clamped at `>= 0`). */
+	percent: number,
+	/**  Next reset timestamp in unix-epoch milliseconds, when provided and parseable. */
+	resetsMs: number | null,
+};
+
+/**  Kind of a subscription rate-limit bucket returned by Claude Code's `get_usage`. */
+export type PlanLimitKind = 
+/**  Rolling 5-hour session window. */
+"session" | 
+/**  Rolling 7-day window across all models. */
+"weeklyAll" | 
+/**  Rolling 7-day window scoped to a specific model (named by `PlanLimit::model`). */
+"weeklyScoped";
+
+/**  Snapshot of the logged-in account's subscription usage. */
+export type PlanUsage = {
+	/**  Subscription plan name as reported by Claude Code (e.g. `"max"`, `"pro"`). */
+	plan: string | null,
+	/**  When this snapshot was fetched (unix-epoch milliseconds). */
+	fetchedMs: number,
+	limits: PlanLimit[],
+};
+
 /**  A newly fetched price list changed the API cost of indexed messages. */
 export type PricesChangedEvent = null;
 
@@ -749,15 +776,6 @@ export type SessionSort = "lastActive" | "created" | "messages" |
 /**  Sorts by API cost (main + subagents). */
 "cost";
 
-export type SessionStat = {
-	sessionId: string,
-	title: string,
-	/**  Main-file messages in range. */
-	messages: number,
-	outputTokens: number,
-	cost: number,
-};
-
 export type SessionSummary = {
 	id: string,
 	projectId: string,
@@ -841,26 +859,21 @@ export type SourceFile = {
 export type Stats = {
 	overview: StatsOverview,
 	daily: DailyModelTokens[],
-	heatDaily: DayCount[],
-	activity: Activity,
-	/**  The most expensive sessions in range (at most `codeck_core::stats::TOP_SESSIONS`). */
-	sessions: SessionStat[],
+	hourly: HourUsage[],
 };
 
 export type StatsOverview = {
-	sessions: number,
-	/**  Main-file messages only (same definition as `message_count`). */
-	messages: number,
 	/**  Main + subagents. */
 	outputTokens: number,
-	activeDays: number,
 	/**  API cost in USD, main + subagents. */
 	cost: number,
 	/**  Assistant messages whose model has no price (not in `cost`). */
 	unpricedMessages: number,
+	/**  Billed assistant requests carrying tokens (main + subagents). */
+	requests: number,
 };
 
-/**  Days and week-hours are bucketed in local time (`chrono::Local`, DST-correct). */
+/**  Days and hours are bucketed in local time (`chrono::Local`, DST-correct). */
 export type StatsRequest = {
 	timeRange: TimeRange | null,
 };

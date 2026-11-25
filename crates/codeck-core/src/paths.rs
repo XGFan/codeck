@@ -95,6 +95,11 @@ pub fn prices_cache_path(cache_dir: &Path) -> PathBuf {
     cache_dir.join("pricing.json")
 }
 
+/// `<cache dir>/plan-usage`: private working directory for the Host's plan-usage probe.
+pub fn plan_usage_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("plan-usage")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

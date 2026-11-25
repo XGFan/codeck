@@ -192,6 +192,7 @@ export function createRemoteApi(base: string): RemoteApi {
     haaWatch: () => desktopOnly("haa Worker 状态"),
     onHaaWorkers: () => Promise.resolve(() => {}),
     onHaaWatchEnded: () => Promise.resolve(() => {}),
+    getPlanUsage: () => desktopOnly("订阅额度"),
     onResync(cb) {
       resyncs.add(cb);
       open();

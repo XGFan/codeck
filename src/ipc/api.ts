@@ -18,6 +18,7 @@ import type {
   LanStatus,
   LiveChanged,
   Notice,
+  PlanUsage,
   ProjectSummary,
   SearchRequest,
   SearchResponse,
@@ -170,4 +171,7 @@ export interface Api {
   onHaaWorkers(cb: (id: number, workers: HaaWorker[]) => void): Promise<Unlisten>;
   /** `haa ls --all --json --watch` (started with `id`) ended by itself. */
   onHaaWatchEnded(cb: (id: number, message: string) => void): Promise<Unlisten>;
+
+  /** Reads the logged-in account's subscription usage via headless `claude` (`get_usage`); null when unavailable. */
+  getPlanUsage(refresh: boolean): Promise<PlanUsage | null>;
 }

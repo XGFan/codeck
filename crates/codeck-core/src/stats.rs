@@ -1,38 +1,34 @@
-//! Stats panel aggregation (local-time buckets: days and activity bars).
+//! Stats panel aggregation (local-time buckets: daily per-model totals and hourly usage).
 //!
-//! Semantics (each chart dimension has a [`Drill`](crate::model::Drill) in `index::reader` that
-//! returns exactly the contributing sessions):
-//! - Scope: non-empty sessions; the time range applies to each message's own timestamp
-//!   (`messages.ts_ms`), both bounds inclusive. A superseded session (see
-//!   `writer::update_superseded`) is the same conversation as the one carrying it on: it adds only
-//!   what it still bills to tokens and cost, never a session, message, day or ranking entry.
-//! - `overview.messages`, `heat_daily`, `overview.sessions`,
-//!   `overview.active_days` and the ranked sessions' `messages`: main-file messages only
-//!   (human/command prompts + assistant messages by `message.id`, as `message_count`).
-//! - Tokens (`overview.output_tokens`, `daily`, session `output_tokens`) and cost
-//!   (`overview.cost`, `daily`, session `cost`, see `pricing`): main + subagent messages, each billed
-//!   once (`messages.billed`, see `writer::rebill`); `daily` skips messages without tokens
-//!   (prompts, `<synthetic>` errors).
-//! - `activity`: main-file messages per bar over the range (from the earliest message when it has no
-//!   lower bound, to now when it has no upper bound); see [`choose_bucket`].
+//! Semantics (each drillable dimension has a [`Drill`](crate::model::Drill) in `index::reader`
+//! that returns exactly the visible sessions carrying the contributing rows):
+//! - Scope: non-empty sessions (`is_empty = 0`); the time range applies to each message's own
+//!   timestamp (`messages.ts_ms`), both bounds inclusive. A superseded session's own billed rows
+//!   still count here, and drill-down maps them to its visible continuation successor.
+//! - A "request" is a row matching [`billed_tokens_sql`]: a billed assistant message carrying
+//!   tokens (main conversation + Subagents; cross-session duplicates count once on the billed
+//!   session; unpriced models still count as requests).
+//! - `hourly`: emitted only when the request specifies both bounds, `from_ms <= to_ms` (compared
+//!   in unix milliseconds, not local wall clock), and `to_ms - from_ms <= 8 days`. Buckets span
+//!   every local hour from `floor_hour(from)` through `floor_hour(to)`, skipping DST-gap hours
+//!   and merging repeated DST-fold hours, with empty buckets included.
 //!
 //! Days and hours are local wall-clock time via `chrono::Local` (DST-correct, honours `TZ`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashSet};
 
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
+use chrono::{Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use rusqlite::{Connection, params_from_iter};
 
 use crate::error::CoreResult;
 use crate::index::schema::MSG_ASSISTANT;
-use crate::model::{
-    Activity, ActivityBar, ActivityBucket, DailyModelTokens, DayCount, SessionStat, Stats,
-    StatsOverview, StatsRequest, TimeRange,
-};
+use crate::model::{DailyModelTokens, HourUsage, Stats, StatsOverview, StatsRequest, TimeRange};
 
-/// Label of messages without a model and Subagent Runs without an `agentType`
-/// (the matching drills use the same label).
+/// Label of messages without a model (the `Drill::Model` drill uses the same label).
 pub const UNKNOWN: &str = "unknown";
+
+/// Maximum inclusive range span (`to_ms - from_ms`) for which `hourly` buckets are returned.
+const MAX_HOURLY_SPAN_MS: f64 = (8 * 24 * 3_600_000) as f64;
 
 /// Local wall-clock time of a unix-ms timestamp.
 pub(crate) fn local_time(ts_ms: i64) -> Option<NaiveDateTime> {
@@ -49,12 +45,9 @@ pub(crate) fn range_bounds(r: Option<&TimeRange>) -> (i64, i64) {
     (from, to)
 }
 
-/// SQL predicate on a `messages` row: a main-file message (what message counts, days and activity
-/// count). Columns are unqualified, so inside a subquery over `messages` they resolve to its row.
-pub(crate) const MAIN_FILE_SQL: &str = "agent_id = ''";
-
-/// SQL predicate on a `messages` row: an assistant message that carries tokens and is billed (what
-/// tokens, cost and the per-model breakdown count). Unqualified columns, as [`MAIN_FILE_SQL`].
+/// SQL predicate on a `messages` row: an assistant message that carries tokens and is billed
+/// (the definition of a request for stats and drill-down). Columns are unqualified, so inside a
+/// subquery over `messages` they resolve to its row.
 pub(crate) fn billed_tokens_sql() -> String {
     format!(
         "role = {MSG_ASSISTANT} AND billed = 1
@@ -62,201 +55,115 @@ pub(crate) fn billed_tokens_sql() -> String {
     )
 }
 
-/// Length of the session ranking.
-pub const TOP_SESSIONS: usize = 10;
+#[derive(Default)]
+struct DailyAgg {
+    tokens: [f64; 4],
+    cost: f64,
+    requests: u32,
+}
 
 pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
     let (from, to) = range_bounds(r.time_range.as_ref());
     let ranged = r.time_range.is_some();
 
-    // Sessions in scope → index, with their titles; and the superseded ones.
-    let mut sessions: HashMap<String, usize> = HashMap::new();
-    let mut titles: Vec<(String, String)> = Vec::new();
-    let mut superseded: Vec<bool> = Vec::new();
-    {
-        let mut st =
-            conn.prepare("SELECT id, title, superseded FROM sessions WHERE is_empty = 0")?;
-        let mut rows = st.query([])?;
-        while let Some(row) = rows.next()? {
-            let id: String = row.get(0)?;
-            sessions.insert(id.clone(), titles.len());
-            titles.push((id, row.get(1)?));
-            superseded.push(row.get(2)?);
-        }
-    }
+    let non_empty: HashSet<String> = {
+        let mut st = conn.prepare("SELECT id FROM sessions WHERE is_empty = 0")?;
+        let rows = st.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
 
-    // One pass over the messages in range.
-    let mut session_active = vec![false; sessions.len()];
-    let mut sess_messages = vec![0u32; sessions.len()];
-    let mut sess_output = vec![0f64; sessions.len()];
-    let mut sess_cost = vec![0f64; sessions.len()];
-    let mut messages = 0u32;
     let mut output = 0f64;
     let mut cost = 0f64;
     let mut unpriced = 0u32;
-    let mut heat_daily: BTreeMap<NaiveDate, u32> = BTreeMap::new();
-    // Main-file messages per local hour, the unit the activity bars are summed from.
-    let mut hourly: BTreeMap<NaiveDateTime, u32> = BTreeMap::new();
-    // Per day and model: the four token counts, then the cost.
-    let mut daily: BTreeMap<(NaiveDate, String), [f64; 5]> = BTreeMap::new();
+    let mut requests = 0u32;
+    let mut daily: BTreeMap<(NaiveDate, String), DailyAgg> = BTreeMap::new();
+    let mut hourly_counts: BTreeMap<NaiveDateTime, (u32, f64)> = BTreeMap::new();
+    let want_hourly = hourly_bounds(r.time_range.as_ref()).is_some();
+
     {
         let mut sql = format!(
-            "SELECT session_id, {MAIN_FILE_SQL}, ts_ms, {billed}, model, in_tok, out_tok, cr_tok,
-                cc_tok, cost FROM messages",
+            "SELECT session_id, ts_ms, model, in_tok, out_tok, cr_tok, cc_tok, cost
+             FROM messages WHERE {billed}",
             billed = billed_tokens_sql()
         );
         // Unranged: a plain table scan beats walking `messages_ts` back into the table.
         let bounds = if ranged { vec![from, to] } else { vec![] };
         if ranged {
-            sql.push_str(" WHERE ts_ms >= ?1 AND ts_ms <= ?2");
+            sql.push_str(" AND ts_ms >= ?1 AND ts_ms <= ?2");
         }
         let mut st = conn.prepare(&sql)?;
         let mut rows = st.query(params_from_iter(bounds))?;
         while let Some(row) = rows.next()? {
-            let Some(&si) = sessions.get(row.get_ref(0)?.as_str().unwrap_or_default()) else {
-                continue;
-            };
-            let Some(t) = local_time(row.get(2)?) else {
-                continue;
-            };
-            let day = t.date();
-            if row.get::<_, bool>(1)? && !superseded[si] {
-                session_active[si] = true;
-                sess_messages[si] += 1;
-                messages += 1;
-                *heat_daily.entry(day).or_default() += 1;
-                *hourly.entry(floor(ActivityBucket::Hour1, t)).or_default() += 1;
-            }
-            if !row.get::<_, bool>(3)? {
+            if !non_empty.contains(row.get_ref(0)?.as_str().unwrap_or_default()) {
                 continue;
             }
+            let Some(t) = local_time(row.get(1)?) else {
+                continue;
+            };
             let tok: [f64; 4] = [
+                row.get::<_, i64>(3)? as f64,
+                row.get::<_, i64>(4)? as f64,
                 row.get::<_, i64>(5)? as f64,
                 row.get::<_, i64>(6)? as f64,
-                row.get::<_, i64>(7)? as f64,
-                row.get::<_, i64>(8)? as f64,
             ];
+            let msg_cost = row.get::<_, Option<f64>>(7)?;
+            requests += 1;
             output += tok[1];
-            sess_output[si] += tok[1];
-            let msg_cost = row.get::<_, Option<f64>>(9)?;
             match msg_cost {
-                Some(c) => {
-                    cost += c;
-                    sess_cost[si] += c;
-                }
+                Some(c) => cost += c,
                 None => unpriced += 1,
             }
-            let model = row.get::<_, Option<String>>(4)?;
+            let added_cost = msg_cost.unwrap_or(0.0);
+            let day = t.date();
+            let model = row.get::<_, Option<String>>(2)?;
             let e = daily
                 .entry((day, model.unwrap_or_else(|| UNKNOWN.to_owned())))
                 .or_default();
-            for (a, b) in e.iter_mut().zip(tok) {
+            for (a, b) in e.tokens.iter_mut().zip(tok) {
                 *a += b;
             }
-            e[4] += msg_cost.unwrap_or(0.0);
+            e.cost += added_cost;
+            e.requests += 1;
+
+            if want_hourly {
+                let h = hourly_counts.entry(floor_hour(t)).or_default();
+                h.0 += 1;
+                h.1 += added_cost;
+            }
         }
     }
-
-    let mut top: Vec<SessionStat> = titles
-        .into_iter()
-        .enumerate()
-        .filter(|&(i, _)| !superseded[i] && (sess_messages[i] > 0 || sess_output[i] > 0.0))
-        .map(|(i, (session_id, title))| SessionStat {
-            session_id,
-            title,
-            messages: sess_messages[i],
-            output_tokens: sess_output[i],
-            cost: sess_cost[i],
-        })
-        .collect();
-    top.sort_by(|a, b| {
-        b.cost
-            .total_cmp(&a.cost)
-            .then(b.output_tokens.total_cmp(&a.output_tokens))
-            .then(a.session_id.cmp(&b.session_id))
-    });
-    top.truncate(TOP_SESSIONS);
 
     Ok(Stats {
         overview: StatsOverview {
-            sessions: session_active.iter().filter(|&&a| a).count() as u32,
-            messages,
             output_tokens: output,
-            active_days: heat_daily.len() as u32,
             cost,
             unpriced_messages: unpriced,
+            requests,
         },
         daily: daily
             .into_iter()
-            .map(|((day, model), t)| DailyModelTokens {
+            .map(|((day, model), a)| DailyModelTokens {
                 day: day.to_string(),
                 model,
-                input: t[0],
-                output: t[1],
-                cache_read: t[2],
-                cache_creation: t[3],
-                cost: t[4],
+                input: a.tokens[0],
+                output: a.tokens[1],
+                cache_read: a.tokens[2],
+                cache_creation: a.tokens[3],
+                cost: a.cost,
+                requests: a.requests,
             })
             .collect(),
-        heat_daily: heat_daily
-            .into_iter()
-            .map(|(day, messages)| DayCount {
-                day: day.to_string(),
-                messages,
-            })
-            .collect(),
-        activity: activity(&hourly, r.time_range.as_ref()),
-        sessions: top,
+        hourly: build_hourly(&hourly_counts, r.time_range.as_ref()),
     })
 }
 
-/// Most bars in the activity histogram.
-pub const MAX_ACTIVITY_BARS: usize = 170;
-
-const BUCKETS: [ActivityBucket; 7] = [
-    ActivityBucket::Hour1,
-    ActivityBucket::Hour3,
-    ActivityBucket::Hour6,
-    ActivityBucket::Hour12,
-    ActivityBucket::Day,
-    ActivityBucket::Week,
-    ActivityBucket::Month,
-];
-
-/// Start of the bucket holding the local time `t`.
-fn floor(b: ActivityBucket, t: NaiveDateTime) -> NaiveDateTime {
-    let midnight = t.date().and_hms_opt(0, 0, 0).unwrap_or(t);
-    let hours = |n: u32| midnight + Duration::hours(i64::from(t.hour() - t.hour() % n));
-    match b {
-        ActivityBucket::Hour1 => hours(1),
-        ActivityBucket::Hour3 => hours(3),
-        ActivityBucket::Hour6 => hours(6),
-        ActivityBucket::Hour12 => hours(12),
-        ActivityBucket::Day => midnight,
-        ActivityBucket::Week => {
-            midnight - Duration::days(i64::from(t.weekday().num_days_from_monday()))
-        }
-        ActivityBucket::Month => midnight.with_day(1).unwrap_or(midnight),
-    }
-}
-
-/// Start of the bucket after the one starting at `t`.
-fn next(b: ActivityBucket, t: NaiveDateTime) -> NaiveDateTime {
-    match b {
-        ActivityBucket::Hour1 => t + Duration::hours(1),
-        ActivityBucket::Hour3 => t + Duration::hours(3),
-        ActivityBucket::Hour6 => t + Duration::hours(6),
-        ActivityBucket::Hour12 => t + Duration::hours(12),
-        ActivityBucket::Day => t + Duration::days(1),
-        ActivityBucket::Week => t + Duration::days(7),
-        ActivityBucket::Month => t
-            .checked_add_months(chrono::Months::new(1))
-            .unwrap_or(t + Duration::days(31)),
-    }
+/// Start of the local hour holding `t`.
+fn floor_hour(t: NaiveDateTime) -> NaiveDateTime {
+    t.date().and_hms_opt(t.hour(), 0, 0).unwrap_or(t)
 }
 
 /// Unix ms of a local time: the first of the two instants of a time repeated when clocks go back
-/// (so a bar holds both readings of that hour, as the per-hour counts do); a time skipped when
+/// (so a bucket holds both readings of that hour, as `hourly_counts` does); a time skipped when
 /// clocks go forward maps to the instant after the gap. Candidates are checked by converting back,
 /// since chrono also offers the old offset right at the end of a repeated hour.
 fn local_ms(t: NaiveDateTime) -> i64 {
@@ -274,63 +181,44 @@ fn local_ms(t: NaiveDateTime) -> i64 {
         .unwrap_or(0)
 }
 
-/// The finest bucket that covers `[from, to]` (local times) in at most [`MAX_ACTIVITY_BARS`] bars.
-pub fn choose_bucket(from: NaiveDateTime, to: NaiveDateTime) -> ActivityBucket {
-    BUCKETS
-        .into_iter()
-        .find(|&b| {
-            let mut t = floor(b, from);
-            let mut n = 0;
-            while t <= to && n <= MAX_ACTIVITY_BARS {
-                t = next(b, t);
-                n += 1;
-            }
-            n <= MAX_ACTIVITY_BARS
-        })
-        .unwrap_or(ActivityBucket::Month)
+/// Inclusive `(from_hour, to_hour)` when the request qualifies for hourly bucketing: both bounds
+/// set, `from_ms <= to_ms` in raw `f64` unix milliseconds, and `to_ms - from_ms <= 8 days`.
+fn hourly_bounds(range: Option<&TimeRange>) -> Option<(NaiveDateTime, NaiveDateTime)> {
+    let r = range?;
+    let (from_f, to_f) = (r.from_ms?, r.to_ms?);
+    if !from_f.is_finite() || !to_f.is_finite() {
+        return None;
+    }
+    if from_f > to_f || (to_f - from_f) > MAX_HOURLY_SPAN_MS {
+        return None;
+    }
+    let from_hour = floor_hour(local_time(from_f as i64)?);
+    let to_hour = floor_hour(local_time(to_f as i64)?);
+    Some((from_hour, to_hour))
 }
 
-/// The histogram over the request's range from per-hour counts; empty when unbounded and there is
-/// no message.
-fn activity(hourly: &BTreeMap<NaiveDateTime, u32>, range: Option<&TimeRange>) -> Activity {
-    let from = range
-        .and_then(|r| r.from_ms)
-        .and_then(|ms| local_time(ms as i64))
-        .or_else(|| hourly.keys().next().copied());
-    // Unbounded: up to now, or to the latest message if a clock ahead of ours dated it later.
-    let to = range
-        .and_then(|r| r.to_ms)
-        .and_then(|ms| local_time(ms as i64))
-        .unwrap_or_else(|| {
-            let now = Local::now().naive_local();
-            hourly.keys().next_back().map_or(now, |&last| last.max(now))
-        });
-    let Some(from) = from.filter(|f| *f <= to) else {
-        return Activity::default();
+fn build_hourly(
+    hourly_counts: &BTreeMap<NaiveDateTime, (u32, f64)>,
+    range: Option<&TimeRange>,
+) -> Vec<HourUsage> {
+    let Some((mut t, last)) = hourly_bounds(range) else {
+        return Vec::new();
     };
-    let bucket = choose_bucket(from, to);
-    // Month bars are the coarsest: past that, keep the latest MAX_ACTIVITY_BARS months (an absurd
-    // timestamp such as 1970 must not stretch the axis over decades).
-    let from = if bucket == ActivityBucket::Month {
-        to.checked_sub_months(chrono::Months::new(MAX_ACTIVITY_BARS as u32 - 1))
-            .map_or(from, |cap| from.max(cap))
-    } else {
-        from
-    };
-    let mut bars = Vec::new();
-    let mut t = floor(bucket, from);
-    while t <= to {
-        let end = next(bucket, t);
+    let mut out = Vec::new();
+    while t <= last {
+        let end = t + Duration::hours(1);
         let (start_ms, end_ms) = (local_ms(t), local_ms(end));
-        // An hour skipped by a DST change is no time at all: no bar (bars stay contiguous).
+        // An hour skipped by a DST change is no time at all: no bucket (buckets stay contiguous).
         if end_ms > start_ms {
-            bars.push(ActivityBar {
+            let (requests, cost) = hourly_counts.get(&t).copied().unwrap_or((0, 0.0));
+            out.push(HourUsage {
                 start_ms: start_ms as f64,
                 end_ms: end_ms as f64,
-                messages: hourly.range(t..end).map(|(_, n)| n).sum(),
+                requests,
+                cost,
             });
         }
         t = end;
     }
-    Activity { bucket, bars }
+    out
 }

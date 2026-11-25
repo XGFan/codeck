@@ -10,6 +10,7 @@ mod haa;
 mod keepalive;
 pub mod lan;
 mod methods;
+mod plan_usage;
 pub mod prices;
 pub mod settings;
 pub mod state;
@@ -95,6 +96,7 @@ pub struct Host {
     state: Arc<AppState>,
     ccrpc: ccrpc::CcrpcState,
     haa: haa::HaaState,
+    plan_usage: plan_usage::PlanUsageState,
     /// With `track_connect`.
     connect: Option<Arc<connect::ConnectHub>>,
     lan: lan::LanService,
@@ -112,13 +114,25 @@ impl Host {
             .data_root
             .clone()
             .or_else(|| settings::load().data_root.map(PathBuf::from));
-        let engine = open_engine(data_root.as_deref(), config.cache_dir.clone())?;
+        let probe_cwd = match plan_usage::prepare_dir(&config.cache_dir) {
+            Ok(dir) => Some(dir),
+            Err(e) => {
+                tracing::warn!("plan-usage probe dir unavailable: {e}");
+                None
+            }
+        };
+        let engine = open_engine(
+            data_root.as_deref(),
+            config.cache_dir.clone(),
+            probe_cwd.clone(),
+        )?;
         let (jobs, rx, backlog_cancel) = worker::channel();
         let state = Arc::new(AppState::new(engine, jobs.clone()));
         worker::spawn(
             state.clone(),
             events.clone(),
             config.cache_dir.clone(),
+            probe_cwd.clone(),
             rx,
             backlog_cancel,
         );
@@ -140,6 +154,7 @@ impl Host {
             state,
             ccrpc,
             haa: haa::HaaState::new(),
+            plan_usage: plan_usage::PlanUsageState::new(probe_cwd),
             connect,
             lan: lan::LanService::default(),
             events,
@@ -152,6 +167,7 @@ impl Host {
 
     /// Closes every ccrpc (the process is quitting); the Sessions themselves keep running.
     pub fn shutdown(&self) {
+        self.plan_usage.shutdown();
         self.haa.stop();
         if let Some(hub) = &self.connect {
             hub.stop();

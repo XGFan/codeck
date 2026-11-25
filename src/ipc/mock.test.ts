@@ -68,3 +68,35 @@ describe("mock 与后端一致的数据目录与重建", () => {
     await vi.waitFor(() => expect(changed).toHaveBeenCalledWith(expect.objectContaining({ projectsChanged: true })));
   });
 });
+
+describe("mock get_stats 统一逐小时种子与守恒", () => {
+  it("同一完整自然日在短范围（含 hourly）与长范围（上月 / 最近 90 天）里数值完全一致，且 hourly 与 daily 守恒", async () => {
+    const DAY = 86_400_000;
+    const anchor = Date.now();
+    // Pick a complete calendar day 5 days ago (strictly inside a 7-day, 30-day, and 90-day range).
+    const targetDate = new Date(anchor - 5 * DAY);
+    const targetDay = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
+
+    const shortRange = { fromMs: anchor - 7 * DAY, toMs: anchor - 1 };
+    const monthRange = { fromMs: anchor - 30 * DAY, toMs: anchor - 1 };
+    const ninetyRange = { fromMs: anchor - 90 * DAY, toMs: anchor - 1 };
+
+    const [sShort, sMonth, sNinety] = await Promise.all([
+      api.getStats({ timeRange: shortRange }),
+      api.getStats({ timeRange: monthRange }),
+      api.getStats({ timeRange: ninetyRange }),
+    ]);
+
+    const pick = (daily: typeof sShort.daily) => daily.filter((d) => d.day === targetDay);
+    expect(pick(sShort.daily).length).toBeGreaterThan(0);
+    expect(pick(sShort.daily)).toEqual(pick(sMonth.daily));
+    expect(pick(sShort.daily)).toEqual(pick(sNinety.daily));
+
+    // Short range hourly conservation against daily & overview.
+    expect(sShort.hourly.length).toBeGreaterThan(0);
+    expect(sMonth.hourly).toHaveLength(0);
+    expect(sShort.hourly.reduce((s, h) => s + h.requests, 0)).toBe(sShort.overview.requests);
+    expect(sShort.daily.reduce((s, d) => s + d.requests, 0)).toBe(sShort.overview.requests);
+    expect(sShort.hourly.reduce((s, h) => s + h.cost, 0)).toBeCloseTo(sShort.overview.cost, 6);
+  });
+});

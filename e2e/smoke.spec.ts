@@ -4,29 +4,29 @@ test("两栏布局与统计、设置入口可见", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("pane-sessions")).toBeVisible();
   await expect(page.getByTestId("pane-conversation")).toBeVisible();
-  await expect(page.getByTestId("nav-stats")).toBeVisible();
+  await expect(page.getByTestId("nav-quota")).toBeVisible();
   await expect(page.getByTestId("settings-button")).toBeVisible();
-  // No bar under the conversation: stats and settings are at the foot of the Session list, without the index count
+  // No bar under the conversation: quota/stats and settings are at the foot of the Session list, without the index count
   // (in Settings; here it changed while typing)…
   const sessions = page.getByTestId("pane-sessions");
   await expect(sessions.getByTestId("statusbar")).toBeVisible();
   await expect(sessions.getByTestId("statusbar")).not.toContainText("已索引");
-  await expect(sessions.getByTestId("nav-stats")).toBeVisible();
+  await expect(sessions.getByTestId("nav-quota")).toBeVisible();
   await expect(page.getByTestId("pane-conversation").getByTestId("settings-button")).toHaveCount(0);
   // In the window's bottom-left corner, settings first.
   const pane = (await sessions.boundingBox())!;
   const settingsBox = (await sessions.getByTestId("settings-button").boundingBox())!;
-  const statsBox = (await sessions.getByTestId("nav-stats").boundingBox())!;
+  const quotaBox = (await sessions.getByTestId("nav-quota").boundingBox())!;
   expect(settingsBox.x - pane.x).toBeLessThan(10);
-  expect(settingsBox.x).toBeLessThan(statsBox.x);
+  expect(settingsBox.x).toBeLessThan(quotaBox.x);
   // …and join the toolbar while the list is hidden.
   await page.keyboard.press("Control+Meta+L");
   await expect(sessions).toBeHidden();
-  await expect(page.getByTestId("toolbar").getByTestId("nav-stats")).toBeVisible();
+  await expect(page.getByTestId("toolbar").getByTestId("nav-quota")).toBeVisible();
   await expect(page.getByTestId("toolbar").getByTestId("settings-button")).toBeVisible();
   const toolbarSettings = (await page.getByTestId("toolbar").getByTestId("settings-button").boundingBox())!;
-  const toolbarStats = (await page.getByTestId("toolbar").getByTestId("nav-stats").boundingBox())!;
-  expect(toolbarSettings.x).toBeLessThan(toolbarStats.x);
+  const toolbarQuota = (await page.getByTestId("toolbar").getByTestId("nav-quota").boundingBox())!;
+  expect(toolbarSettings.x).toBeLessThan(toolbarQuota.x);
   await expect(page.getByTestId("statusbar")).toHaveCount(0);
 });
 

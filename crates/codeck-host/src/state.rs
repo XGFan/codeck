@@ -16,13 +16,18 @@ pub struct AppState {
 
 /// Opens the Engine (index in `cache_dir`) on the data root resolved from `data_root` (the settings'
 /// override) > `$CLAUDE_CONFIG_DIR` > `~/.claude`.
-pub fn open_engine(data_root: Option<&Path>, cache_dir: PathBuf) -> CoreResult<Engine> {
+pub fn open_engine(
+    data_root: Option<&Path>,
+    cache_dir: PathBuf,
+    ignore_live_cwd: Option<PathBuf>,
+) -> CoreResult<Engine> {
     let root = paths::resolve_data_root(data_root);
-    Engine::open(EngineConfig {
+    let engine = Engine::open(EngineConfig {
         data_root: root.path,
         data_root_source: root.source,
         cache_dir,
-    })
+    })?;
+    Ok(engine.with_ignored_live_cwd(ignore_live_cwd))
 }
 
 impl AppState {

@@ -58,7 +58,7 @@ export function useLeadingInset(): string | undefined {
   return fullScreen ? "pl-[148px]" : "pl-[212px]";
 }
 
-const TOOL_CLASS =
+export const TOOL_CLASS =
   "flex size-7 items-center justify-center rounded-md text-secondary outline-none hover:bg-text/8 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:hover:bg-transparent aria-pressed:bg-selection aria-pressed:text-accent";
 
 function Toggle({

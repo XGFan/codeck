@@ -7,7 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useUi } from "@/state/ui";
+import type { CycleRule } from "@/lib/cycle";
 import { pageable, RANGE_MENU, resolveRange, sameRange, type RangeSel } from "./range";
 
 const ARROW =
@@ -18,9 +18,18 @@ const ARROW =
  * month back and forth (to the current one at most; the rolling ranges do not step). The dropdown is as wide as its
  * longest label, so the arrows stay under the pointer while its text changes.
  */
-export function RangePicker({ sel, onChange }: { sel: RangeSel; onChange: (s: RangeSel) => void }) {
-  const weeklyReset = useUi((s) => s.weeklyReset);
-  const r = resolveRange(sel, new Date(), weeklyReset);
+export function RangePicker({
+  sel,
+  now,
+  rule,
+  onChange,
+}: {
+  sel: RangeSel;
+  now: Date;
+  rule: CycleRule;
+  onChange: (s: RangeSel) => void;
+}) {
+  const r = resolveRange(sel, now, rule);
   const steps = pageable(sel.kind);
   const unit = sel.kind === "month" ? "个月" : "周期";
   return (

@@ -1,6 +1,4 @@
 import type {
-  Activity,
-  ActivityBucket,
   AppInfo,
   BranchChoice,
   FindMatch,
@@ -35,14 +33,15 @@ import type {
 import type { Api, Unlisten } from "./api";
 import { appError, createMockCcrpc } from "./mock-ccrpc";
 import { createMockHaa } from "./mock-haa";
-import { DAY, NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
+import { createMockPlan } from "./mock-plan";
+import { NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
 import {
   appInfo,
+  buildMockStats,
   diagnostics,
   indexStatus as indexStatusSeed,
   slashCommands,
   completeMockPaths,
-  stats as statsSeed,
 } from "@/mocks/data/misc";
 import { parseQuery } from "@/features/search/match";
 import { projectBase } from "@/mocks/data/projects";
@@ -80,6 +79,9 @@ declare global {
       supersede(sessionId: string, by: string | null): void;
       /** The system opens a `codeck://` link. */
       openUrl(url: string): void;
+      /** Holds `getStats` responses pending until `releaseStats()` (or `holdStats(false)`) for placeholder E2E tests. */
+      holdStats(on: boolean): void;
+      releaseStats(): void;
     };
   }
 }
@@ -449,9 +451,7 @@ function listSessions(q: SessionQuery): SessionSummary[] {
         case "day":
           return localDay(s.lastActiveMs) === drill.day;
         case "model":
-          return s.primaryModel === drill.model;
-        case "span":
-          return s.lastActiveMs >= drill.fromMs && s.createdMs < drill.toMs;
+          return s.primaryModel != null && drill.models.includes(s.primaryModel);
       }
     });
   }
@@ -532,82 +532,8 @@ function sessionDetail(sessionId: string): SessionDetail {
   };
 }
 
-const HOUR = DAY / 24;
-const ACTIVITY_BUCKETS: [ActivityBucket, number][] = [
-  ["hour1", HOUR],
-  ["hour3", 3 * HOUR],
-  ["hour6", 6 * HOUR],
-  ["hour12", 12 * HOUR],
-  ["day", DAY],
-  ["week", 7 * DAY],
-  ["month", 30 * DAY],
-];
-
-/** Same bucket rule as `stats::choose_bucket` (≤ 170 bars, local alignment), with made-up counts. */
-function mockActivity(fromMs: number | null, toMs: number | null): Activity {
-  const to = toMs ?? NOW;
-  const from = fromMs ?? NOW - 400 * DAY;
-  const [bucket, len] =
-    ACTIVITY_BUCKETS.find(([, l]) => Math.floor((to - from) / l) + 2 <= 170) ?? ACTIVITY_BUCKETS[6]!;
-  const t = new Date(from);
-  t.setMinutes(0, 0, 0);
-  if (len < DAY) t.setHours(t.getHours() - (t.getHours() % (len / HOUR)));
-  else t.setHours(0);
-  if (bucket === "week") t.setDate(t.getDate() - ((t.getDay() + 6) % 7));
-  if (bucket === "month") t.setDate(1);
-  const bars: Activity["bars"] = [];
-  for (let i = 0; t.getTime() <= to; i++) {
-    const start = t.getTime();
-    if (bucket === "month") t.setMonth(t.getMonth() + 1);
-    else if (len >= DAY) t.setDate(t.getDate() + len / DAY);
-    else t.setHours(t.getHours() + len / HOUR);
-    const h = new Date(start).getHours();
-    const awake = len >= DAY || (h >= 9 && h <= 23) ? 1 : 0.05;
-    bars.push({
-      startMs: start,
-      endMs: t.getTime(),
-      messages: Math.round(awake * (Math.abs(Math.sin(i * 12.9898)) * 40) * (len / HOUR) ** 0.5),
-    });
-  }
-  return { bucket, bars };
-}
-
 function getStats(req: StatsRequest): Stats {
-  const from = req.timeRange?.fromMs ?? null;
-  const to = req.timeRange?.toMs ?? null;
-  const inRange = (day: string) => {
-    const ms = new Date(`${day}T12:00:00`).getTime();
-    return (from == null || ms >= from - DAY / 2) && (to == null || ms <= to + DAY / 2);
-  };
-  const daily = statsSeed.daily.filter((d) => inRange(d.day));
-  const ranked = sessionData
-    .map((d) => summaryOf(d.summary.id))
-    .filter((s) => s.messageCount > 0 && !supersededBy.has(s.id))
-    .sort((a, b) => b.cost - a.cost)
-    .slice(0, 10)
-    .map((s) => ({
-      sessionId: s.id,
-      title: s.title,
-      messages: s.messageCount,
-      outputTokens: s.tokens.output,
-      cost: s.cost,
-    }));
-  return {
-    ...statsSeed,
-    // Fixed totals: the seeded charts are not derived from the mock sessions.
-    overview: {
-      sessions: 10,
-      messages: 1286,
-      outputTokens: daily.reduce((s, d) => s + d.output, 0),
-      activeDays: new Set(daily.map((d) => d.day)).size,
-      cost: 412.37,
-      unpricedMessages: 0,
-    },
-    daily,
-    heatDaily: statsSeed.heatDaily.filter((d) => inRange(d.day)),
-    sessions: ranked,
-    activity: mockActivity(from, to),
-  };
+  return buildMockStats(req);
 }
 
 const later = <T>(fn: () => T): Promise<T> =>
@@ -659,6 +585,12 @@ export function createMockApi(): Api {
     projectsChanged: true,
   });
 
+  let holdingStats = false;
+  const statsWaiters: Array<() => void> = [];
+  const flushStats = () => {
+    while (statsWaiters.length > 0) statsWaiters.shift()!();
+  };
+
   const calls: NonNullable<Window["__cvCalls"]> = [];
   window.__cvCalls = calls;
   window.__cvMock = {
@@ -696,6 +628,14 @@ export function createMockApi(): Api {
     },
     openUrl(url) {
       dispatch("openUrl", [url]);
+    },
+    holdStats(on) {
+      holdingStats = on;
+      if (!on) flushStats();
+    },
+    releaseStats() {
+      holdingStats = false;
+      flushStats();
     },
   };
 
@@ -780,7 +720,18 @@ export function createMockApi(): Api {
         calls.push({ method: "syncSession", args: [sessionId] });
         return null;
       }),
-    getStats: (req) => later(() => getStats(req)),
+    getStats: (req) =>
+      holdingStats
+        ? new Promise((resolve, reject) => {
+            statsWaiters.push(() => {
+              try {
+                resolve(structuredClone(getStats(req)));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          })
+        : later(() => getStats(req)),
     getDiagnostics: () => later(() => diagnostics),
     listSlashCommands: () => later(() => slashCommands),
     completePaths: (cwd, partial, files) => later(() => completeMockPaths(cwd, partial, files)),
@@ -801,5 +752,6 @@ export function createMockApi(): Api {
     },
     ...createMockCcrpc(),
     ...createMockHaa(),
+    ...createMockPlan(),
   };
 }

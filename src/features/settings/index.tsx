@@ -9,6 +9,7 @@ import { DiagnosticsContent } from "@/features/diagnostics";
 import { notifyAvailable, useAttentionStore } from "@/features/attention";
 import type { DueKind } from "@/features/attention/rules";
 import { CcrpcSettings } from "@/features/connect";
+import { formatAnchorReset, useCycleRule } from "@/features/quota";
 import { formatCount } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import { api } from "@/ipc";
@@ -47,6 +48,7 @@ function Row({ label, children, testId }: { label: string; children: React.React
 function WeeklyResetField() {
   const reset = useUi((s) => s.weeklyReset);
   const setReset = useUi((s) => s.setWeeklyReset);
+  const { anchorMs } = useCycleRule();
   const field =
     "h-8 rounded-md border border-border bg-ground px-2 text-[14px] text-text outline-none focus-visible:ring-2 focus-visible:ring-accent";
   return (
@@ -77,6 +79,11 @@ function WeeklyResetField() {
         />
         <span>重置</span>
       </div>
+      {anchorMs != null && (
+        <div data-testid="set-cycle-plan-note" className="text-[12px] text-secondary">
+          已跟随订阅的每周重置（{formatAnchorReset(anchorMs)}）；读不到额度时用这里的设置
+        </div>
+      )}
       <div className="text-[12px] text-secondary">统计页的「本周期」从最近一次重置算起，按本机时区。</div>
     </div>
   );
@@ -347,7 +354,10 @@ function DataTab() {
       // Everything cached came from the previous root: drop the selection and reset every query
       // (active ones refetch) except the app info set here and the pushed index status.
       useUi.getState().selectSession(null);
-      void qc.resetQueries({ predicate: (q) => q.queryKey[0] !== "appInfo" && q.queryKey[0] !== "indexStatus" });
+      void qc.resetQueries({
+        predicate: (q) =>
+          q.queryKey[0] !== "appInfo" && q.queryKey[0] !== "indexStatus" && q.queryKey[0] !== "planUsage",
+      });
       qc.setQueryData(queryKeys.appInfo, next);
     },
     onError: (e) => setError(errorText(e)),

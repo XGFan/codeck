@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCost, formatDuration, formatRelative, formatSpan, formatTokens } from "./format";
+import { formatCost, formatDuration, formatRelative, formatTokens } from "./format";
 
 describe("formatCost", () => {
   it("小额、常规与大额", () => {
@@ -58,15 +58,5 @@ describe("formatRelative", () => {
     expect(formatRelative(new Date(2026, 9, 6, 8, 0, 0), now)).toBe("昨天");
     expect(formatRelative(new Date(2026, 9, 5, 8, 0, 0), now)).toBe("周一");
     expect(formatRelative(new Date(2026, 8, 30, 8, 0, 0), now)).toBe("9月30日");
-  });
-});
-
-describe("formatSpan", () => {
-  const at = (m: number, d: number, h = 0) => new Date(2026, m - 1, d, h).getTime();
-  it("一天内、整天、跨天", () => {
-    expect(formatSpan(at(10, 22, 4), at(10, 22, 5))).toBe("10月22日 04:00–05:00");
-    expect(formatSpan(at(10, 22, 18), at(10, 23))).toBe("10月22日 18:00–24:00");
-    expect(formatSpan(at(10, 22), at(10, 23))).toBe("10月22日");
-    expect(formatSpan(at(10, 19), at(10, 26))).toBe("10月19日–10月25日");
   });
 });

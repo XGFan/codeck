@@ -1,10 +1,11 @@
-//! Stats: totals, local-day bucketing and drill-down on fixture copies through the Engine.
-//! Expected values come from an independent oracle that reads the fixture JSONL directly
-//! (README counting rules: human prompts + assistant messages by `message.id`, max usage per id).
+//! Stats: totals, requests, local-day / hourly bucketing and drill-down on fixture copies
+//! through the Engine. Expected values come from an independent oracle that reads the fixture
+//! JSONL directly (README counting rules: assistant messages by `message.id`, max usage per id).
 mod common;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -23,6 +24,10 @@ const MIXED: &[&str] = &[
     "workflow",
     "persisted_and_images",
 ];
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
 
 struct Env {
     _root: TempDir,
@@ -50,8 +55,8 @@ fn all_time(env: &Env) -> Stats {
     env.engine.stats(&StatsRequest::default()).unwrap()
 }
 
-fn drill_ids(env: &Env, drill: Drill, time_range: Option<TimeRange>) -> BTreeSet<String> {
-    env.engine
+fn drill_ids(engine: &Engine, drill: Drill, time_range: Option<TimeRange>) -> BTreeSet<String> {
+    engine
         .list_sessions(&SessionQuery {
             drill: Some(drill),
             time_range,
@@ -301,8 +306,16 @@ fn tokens_counted_once_per_message_id() {
     let st = all_time(&env);
     // README: split fragments repeat the same usage; max per message.id gives 51/5151/1761742/33071.
     assert_eq!(st.overview.output_tokens, 5151.0);
-    assert_eq!(st.overview.messages, 20);
-    assert_eq!(st.overview.sessions, 1);
+    let expected_reqs = env.oracle.sessions[ids::BASIC]
+        .msgs
+        .iter()
+        .filter(|m| has_tokens(m))
+        .count() as u32;
+    assert_eq!(st.overview.requests, expected_reqs);
+    assert_eq!(
+        st.daily.iter().map(|d| d.requests).sum::<u32>(),
+        st.overview.requests
+    );
     let sum =
         |f: fn(&codeck_core::model::DailyModelTokens) -> f64| st.daily.iter().map(f).sum::<f64>();
     assert_eq!(sum(|d| d.input), 51.0);
@@ -317,67 +330,51 @@ fn totals_match_oracle() {
     let o = &env.oracle;
     let st = all_time(&env);
 
-    // Messages and heatmaps: main files only; tokens: main + subagents.
-    let main: Vec<_> = o.main_msgs().collect();
-    assert_eq!(st.overview.messages as usize, main.len());
-    assert_eq!(st.overview.sessions, 5);
+    // Tokens and requests: main + subagents.
+    let all_req = o.all_msgs().filter(|(_, m)| has_tokens(m)).count();
+    let main_req = o.main_msgs().filter(|(_, m)| has_tokens(m)).count();
+    assert!(all_req > main_req, "subagent requests are included");
+    assert_eq!(st.overview.requests as usize, all_req);
+    assert_eq!(
+        st.daily.iter().map(|d| d.requests).sum::<u32>(),
+        st.overview.requests
+    );
+    assert!(close(
+        st.daily.iter().map(|d| d.cost).sum::<f64>(),
+        st.overview.cost
+    ));
+    assert!(st.hourly.is_empty(), "unbounded query emits no hourly");
+
     let out: i64 = o.all_msgs().map(|(_, m)| m.tokens[1]).sum();
-    let main_out: i64 = main.iter().map(|(_, m)| m.tokens[1]).sum();
+    let main_out: i64 = o.main_msgs().map(|(_, m)| m.tokens[1]).sum();
     assert!(out > main_out, "subagent tokens are included");
     assert_eq!(st.overview.output_tokens, out as f64);
     assert_eq!(st.daily.iter().map(|d| d.output).sum::<f64>(), out as f64);
 
-    // Local-day heatmap from chrono::Local.
-    let mut days: BTreeMap<String, u32> = BTreeMap::new();
-    for (_, m) in &main {
-        let t = local(m.ts);
-        *days.entry(t.date().to_string()).or_default() += 1;
-    }
-    let got: BTreeMap<String, u32> = st
-        .heat_daily
-        .iter()
-        .map(|d| (d.day.clone(), d.messages))
-        .collect();
-    assert_eq!(got, days);
-    assert_eq!(st.overview.active_days as usize, days.len());
-
-    // Daily tokens by (local day, model).
-    let mut daily: BTreeMap<(String, String), [i64; 4]> = BTreeMap::new();
+    // Daily tokens and requests by (local day, model).
+    let mut daily: BTreeMap<(String, String), ([i64; 4], u32)> = BTreeMap::new();
     for (_, m) in o.all_msgs().filter(|(_, m)| has_tokens(m)) {
         let key = (local(m.ts).date().to_string(), m.model.clone().unwrap());
         let e = daily.entry(key).or_default();
-        for (a, b) in e.iter_mut().zip(m.tokens) {
+        for (a, b) in e.0.iter_mut().zip(m.tokens) {
             *a += b;
         }
+        e.1 += 1;
     }
-    let got: BTreeMap<(String, String), [i64; 4]> = st
+    let got: BTreeMap<(String, String), ([i64; 4], u32)> = st
         .daily
         .iter()
         .map(|d| {
             (
                 (d.day.clone(), d.model.clone()),
-                [d.input, d.output, d.cache_read, d.cache_creation].map(|v| v as i64),
+                (
+                    [d.input, d.output, d.cache_read, d.cache_creation].map(|v| v as i64),
+                    d.requests,
+                ),
             )
         })
         .collect();
     assert_eq!(got, daily);
-
-    // Session ranking: most expensive first, at most TOP_SESSIONS, each with its own numbers.
-    assert!(st.sessions.len() <= codeck_core::stats::TOP_SESSIONS);
-    assert!(st.sessions.windows(2).all(|w| w[0].cost >= w[1].cost));
-    let basic = st
-        .sessions
-        .iter()
-        .find(|s| s.session_id == ids::BASIC)
-        .expect("basic ranked");
-    assert_eq!(basic.messages as usize, o.sessions[ids::BASIC].msgs.len());
-    let basic_out: i64 = o.sessions[ids::BASIC]
-        .msgs
-        .iter()
-        .map(|m| m.tokens[1])
-        .sum();
-    assert_eq!(basic.output_tokens, basic_out as f64);
-    assert!(!basic.title.is_empty());
 }
 
 #[test]
@@ -395,23 +392,35 @@ fn time_range_filter() {
     let st = env
         .engine
         .stats(&StatsRequest {
-            time_range: Some(range.clone()),
+            time_range: Some(range),
         })
         .unwrap();
     let s = &env.oracle.sessions[ids::SUBAGENTS];
     let in_range = |m: &&Msg| m.ts >= from && m.ts <= to;
-    assert_eq!(st.overview.sessions, 1);
+    let reqs = s
+        .msgs
+        .iter()
+        .filter(|m| has_tokens(m))
+        .filter(in_range)
+        .count();
+    assert_eq!(st.overview.requests as usize, reqs);
     assert_eq!(
-        st.overview.messages as usize,
-        s.msgs.iter().filter(|m| m.main).filter(in_range).count()
+        st.daily.iter().map(|d| d.requests).sum::<u32>(),
+        st.overview.requests
     );
+    assert_eq!(
+        st.hourly.iter().map(|h| h.requests).sum::<u32>(),
+        st.overview.requests
+    );
+    assert!(close(
+        st.hourly.iter().map(|h| h.cost).sum::<f64>(),
+        st.overview.cost
+    ));
     let out: i64 = s.msgs.iter().filter(in_range).map(|m| m.tokens[1]).sum();
     assert_eq!(st.overview.output_tokens, out as f64);
-    assert_eq!(st.sessions.len(), 1);
-    assert_eq!(st.sessions[0].session_id, ids::SUBAGENTS);
 }
 
-/// Child half of `local_day_follows_tz`: prints the heat-map days under the inherited `TZ`.
+/// Child half of `local_day_follows_tz`: prints per-day request counts under the inherited `TZ`.
 #[test]
 #[ignore = "spawned by local_day_follows_tz with TZ set"]
 fn tz_probe() {
@@ -420,10 +429,13 @@ fn tz_probe() {
     }
     let env = scanned(MIXED);
     let st = all_time(&env);
-    let days: Vec<String> = st
-        .heat_daily
-        .iter()
-        .map(|d| format!("{}={}", d.day, d.messages))
+    let mut by_day: BTreeMap<String, u32> = BTreeMap::new();
+    for d in &st.daily {
+        *by_day.entry(d.day.clone()).or_default() += d.requests;
+    }
+    let days: Vec<String> = by_day
+        .into_iter()
+        .map(|(day, reqs)| format!("{day}={reqs}"))
         .collect();
     println!("TZ_PROBE {}", days.join(","));
 }
@@ -459,12 +471,12 @@ fn local_day_follows_tz() {
     for (tz, secs) in [("Etc/GMT-14", 14 * 3600), ("Etc/GMT+10", -10 * 3600)] {
         let off = FixedOffset::east_opt(secs).unwrap();
         let mut expected: BTreeMap<String, u32> = BTreeMap::new();
-        for (_, m) in env.oracle.main_msgs() {
+        for (_, m) in env.oracle.all_msgs().filter(|(_, m)| has_tokens(m)) {
             *expected.entry(day_in(m.ts, &off)).or_default() += 1;
         }
         assert_eq!(probe(tz), expected, "{tz}");
     }
-    // UTC+14 and UTC-10 are 24 h apart: every message moves to a different day.
+    // UTC+14 and UTC-10 are 24 h apart: every request moves to a different day.
     assert_ne!(probe("Etc/GMT-14"), probe("Etc/GMT+10"));
 }
 
@@ -483,33 +495,94 @@ fn drill_down_returns_exactly_the_contributing_sessions() {
             .collect()
     };
 
-    assert!(st.heat_daily.len() >= 5);
-    for d in &st.heat_daily {
+    let days: BTreeSet<&String> = st.daily.iter().map(|d| &d.day).collect();
+    assert!(days.len() >= 5);
+    for day in days {
         let want = set(&|s| {
             s.msgs
                 .iter()
-                .any(|m| m.main && local(m.ts).date().to_string() == d.day)
+                .any(|m| has_tokens(m) && local(m.ts).date().to_string() == *day)
         });
         assert_eq!(
-            drill_ids(&env, Drill::Day { day: d.day.clone() }, None),
+            drill_ids(&env.engine, Drill::Day { day: day.clone() }, None),
             want,
-            "day {}",
-            d.day
+            "day {day}"
         );
     }
-    let models: BTreeSet<&String> = st.daily.iter().map(|d| &d.model).collect();
+
+    let models: Vec<String> = st
+        .daily
+        .iter()
+        .map(|d| d.model.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     assert!(models.len() >= 2);
-    for model in models {
+    for model in &models {
         let want = set(&|s| {
             s.msgs
                 .iter()
                 .any(|m| has_tokens(m) && m.model.as_ref() == Some(model))
         });
         let drill = Drill::Model {
-            model: model.clone(),
+            models: vec![model.clone()],
         };
-        assert_eq!(drill_ids(&env, drill, None), want, "model {model}");
+        assert_eq!(drill_ids(&env.engine, drill, None), want, "model {model}");
     }
+    // Multi-model drill returns the union; empty model list matches nothing.
+    let pair = vec![models[0].clone(), models[1].clone()];
+    let want_pair = set(&|s| {
+        s.msgs
+            .iter()
+            .any(|m| has_tokens(m) && m.model.as_ref().is_some_and(|name| pair.contains(name)))
+    });
+    assert_eq!(
+        drill_ids(&env.engine, Drill::Model { models: pair }, None),
+        want_pair
+    );
+    assert!(
+        drill_ids(&env.engine, Drill::Model { models: Vec::new() }, None).is_empty(),
+        "empty model list matches no session"
+    );
+    // Blank items are ignored; duplicates and >64 unique models are deduplicated and capped at 64.
+    assert!(
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec![String::new(), String::new()]
+            },
+            None
+        )
+        .is_empty(),
+        "blank model items match no session"
+    );
+    let mut noisy = vec![String::new(), models[0].clone(), models[0].clone()];
+    for i in 0..80 {
+        noisy.push(format!("nonexistent-model-{i}"));
+    }
+    // `models[1]` appears past the 64th unique model so it is dropped by the cap.
+    noisy.push(models[1].clone());
+    assert_eq!(
+        drill_ids(&env.engine, Drill::Model { models: noisy }, None),
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec![models[0].clone()]
+            },
+            None
+        )
+    );
+    let dedup_pair = vec![
+        String::new(),
+        models[0].clone(),
+        models[1].clone(),
+        models[0].clone(),
+        models[1].clone(),
+    ];
+    assert_eq!(
+        drill_ids(&env.engine, Drill::Model { models: dedup_pair }, None),
+        want_pair
+    );
 }
 
 #[test]
@@ -529,24 +602,363 @@ fn drill_down_respects_the_time_range() {
             time_range: range.clone(),
         })
         .unwrap();
-    assert_eq!(st.overview.messages, 0);
+    assert!(st.overview.requests > 0);
     assert!(st.overview.output_tokens > 0.0);
-    for model in st.daily.iter().map(|d| d.model.clone()) {
+    // Subagent-only requests still drill down on both Day and Model.
+    for day in st
+        .daily
+        .iter()
+        .map(|d| d.day.clone())
+        .collect::<BTreeSet<_>>()
+    {
         assert_eq!(
-            drill_ids(&env, Drill::Model { model }, range.clone()),
+            drill_ids(&env.engine, Drill::Day { day }, range.clone()),
+            BTreeSet::from([ids::SUBAGENTS.to_owned()])
+        );
+    }
+    for model in st
+        .daily
+        .iter()
+        .map(|d| d.model.clone())
+        .collect::<BTreeSet<_>>()
+    {
+        assert_eq!(
+            drill_ids(
+                &env.engine,
+                Drill::Model {
+                    models: vec![model]
+                },
+                range.clone()
+            ),
             BTreeSet::from([ids::SUBAGENTS.to_owned()])
         );
     }
     // A day outside the range yields nothing.
     assert!(
         drill_ids(
-            &env,
+            &env.engine,
             Drill::Day {
                 day: "2026-06-02".into()
             },
             range
         )
         .is_empty()
+    );
+}
+
+/// Asserts that `Drill::Day` and `Drill::Model` return the exact set of visible sessions derived
+/// from contributing billed rows, covering:
+/// 1. Multiple requests in the same session,
+/// 2. Unpriced models carrying tokens,
+/// 3. Subagent-only requests on a day/model,
+/// 4. Cross-session duplicate `message.id` (billed only on the earliest session, not the fork),
+/// 5. Superseded sessions' leftover billed rows (single-hop and multi-hop continuation chains).
+#[test]
+fn drill_down_matches_contributing_rows_mapped_to_visible_sessions() {
+    let root = data_root(&["basic", "subagents", "fork", "continued"]);
+
+    // 1 & 2. Append multiple requests to BASIC, including an unpriced model with tokens and a
+    // zero-token assistant message (which must NOT count as a request).
+    let basic_path = root
+        .path()
+        .join("projects")
+        .join(ids::BASIC_DIR)
+        .join(format!("{}.jsonl", ids::BASIC));
+    {
+        let mut f = OpenOptions::new().append(true).open(&basic_path).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","uuid":"u-unp-1","parentUuid":null,"timestamp":"2026-08-15T12:00:00.000Z","sessionId":"{sid}","message":{{"id":"msg-unp-1","role":"assistant","model":"claude-unpriced-test","content":[{{"type":"text","text":"a"}}],"usage":{{"input_tokens":5}}}}}}"#,
+            sid = ids::BASIC
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","uuid":"u-unp-2","parentUuid":null,"timestamp":"2026-08-15T12:05:00.000Z","sessionId":"{sid}","message":{{"id":"msg-unp-2","role":"assistant","model":"claude-unpriced-test","content":[{{"type":"text","text":"b"}}],"usage":{{"input_tokens":7}}}}}}"#,
+            sid = ids::BASIC
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","uuid":"u-zero","parentUuid":null,"timestamp":"2026-08-16T12:00:00.000Z","sessionId":"{sid}","message":{{"id":"msg-zero","role":"assistant","model":"claude-zero-only","content":[{{"type":"text","text":"z"}}],"usage":{{"input_tokens":0,"output_tokens":0}}}}}}"#,
+            sid = ids::BASIC
+        )
+        .unwrap();
+    }
+
+    // 5a. Single-hop superseded leftover billed row on CONTINUED_OLD -> CONTINUED_NEW.
+    let cont_old_path = root
+        .path()
+        .join("projects")
+        .join(ids::CONTINUED_DIR)
+        .join(format!("{}.jsonl", ids::CONTINUED_OLD));
+    {
+        let mut f = OpenOptions::new()
+            .append(true)
+            .open(&cont_old_path)
+            .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","uuid":"5f3a9d27-0c81-4b6e-a2d4-8e17c3b90f52","parentUuid":null,"sessionId":"{old}","timestamp":"2026-11-06T01:30:00.000Z","message":{{"id":"msg_leftover_1hop","role":"assistant","model":"claude-leftover-1hop","content":[{{"type":"thinking","thinking":""}}],"usage":{{"input_tokens":1,"output_tokens":3}}}}}}"#,
+            old = ids::CONTINUED_OLD
+        )
+        .unwrap();
+    }
+
+    // 5b. Two-hop continuation chain A -> B -> C where A has a leftover billed row.
+    const CHAIN_A: &str = "11111111-2222-3333-4444-555555555501";
+    const CHAIN_B: &str = "11111111-2222-3333-4444-555555555502";
+    const CHAIN_C: &str = "11111111-2222-3333-4444-555555555503";
+    let chain_dir = root.path().join("projects").join(ids::CONTINUED_DIR);
+    let chain_prompt = |sid: &str| {
+        format!(
+            r#"{{"type":"user","uuid":"p-chain-root","parentUuid":null,"sessionId":"{sid}","timestamp":"2026-11-07T08:00:00.000Z","message":{{"role":"user","content":"start chain"}}}}"#
+        )
+    };
+    fs::write(
+        chain_dir.join(format!("{CHAIN_A}.jsonl")),
+        format!(
+            "{prompt}\n\
+{{\"type\":\"assistant\",\"uuid\":\"u-chain-a\",\"parentUuid\":\"p-chain-root\",\"sessionId\":\"{CHAIN_A}\",\"timestamp\":\"2026-11-07T09:00:00.000Z\",\"message\":{{\"id\":\"msg_chain_leftover\",\"role\":\"assistant\",\"model\":\"claude-leftover-2hop\",\"content\":[{{\"type\":\"text\",\"text\":\"a\"}}],\"usage\":{{\"input_tokens\":2,\"output_tokens\":4}}}}}}\n\
+{{\"type\":\"continued-in\",\"sessionId\":\"{CHAIN_A}\",\"continuedInSessionId\":\"{CHAIN_B}\"}}\n",
+            prompt = chain_prompt(CHAIN_A),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        chain_dir.join(format!("{CHAIN_B}.jsonl")),
+        format!(
+            "{prompt}\n\
+{{\"type\":\"continued-in\",\"sessionId\":\"{CHAIN_B}\",\"continuedInSessionId\":\"{CHAIN_C}\"}}\n",
+            prompt = chain_prompt(CHAIN_B),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        chain_dir.join(format!("{CHAIN_C}.jsonl")),
+        format!(
+            "{prompt}\n\
+{{\"type\":\"assistant\",\"uuid\":\"u-chain-c\",\"parentUuid\":\"p-chain-root\",\"sessionId\":\"{CHAIN_C}\",\"timestamp\":\"2026-11-08T10:00:00.000Z\",\"message\":{{\"id\":\"msg_chain_c\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-6\",\"content\":[{{\"type\":\"text\",\"text\":\"c\"}}],\"usage\":{{\"input_tokens\":2,\"output_tokens\":4}}}}}}\n",
+            prompt = chain_prompt(CHAIN_C),
+        ),
+    )
+    .unwrap();
+
+    let env = common::engine::Env::scanned(root);
+    let db = env.db();
+
+    // Verify our preconditions directly against the index:
+    // - FORK_CHILD has unbilled rows duplicated from FORK_ORIGIN.
+    let unbilled_fork_rows: i64 = db
+        .query_row(
+            "SELECT count(*) FROM messages WHERE session_id = ?1 AND role = 1 AND billed = 0",
+            [ids::FORK_CHILD],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        unbilled_fork_rows > 0,
+        "fork child has duplicate unbilled rows"
+    );
+    // - CONTINUED_OLD, CHAIN_A and CHAIN_B are superseded; CONTINUED_NEW and CHAIN_C are visible.
+    let is_superseded = |sid: &str| -> bool {
+        db.query_row(
+            "SELECT superseded FROM sessions WHERE id = ?1",
+            [sid],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert!(is_superseded(ids::CONTINUED_OLD));
+    assert!(!is_superseded(ids::CONTINUED_NEW));
+    assert!(is_superseded(CHAIN_A));
+    assert!(is_superseded(CHAIN_B));
+    assert!(!is_superseded(CHAIN_C));
+
+    // Build the ground-truth visible owner map directly from `sessions`.
+    let mut continued_in: BTreeMap<String, (bool, Option<String>)> = BTreeMap::new();
+    {
+        let mut st = db
+            .prepare("SELECT id, superseded, continued_in_id FROM sessions WHERE is_empty = 0")
+            .unwrap();
+        let rows = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        for row in rows {
+            let (id, sup, next): (String, bool, Option<String>) = row.unwrap();
+            continued_in.insert(id, (sup, next));
+        }
+    }
+    let visible_owner = |start: &str| -> Option<String> {
+        let mut cur = start.to_owned();
+        let mut seen = HashSet::from([cur.clone()]);
+        loop {
+            let &(sup, ref next) = continued_in.get(&cur)?;
+            if !sup {
+                return Some(cur);
+            }
+            let next = next.as_ref()?.clone();
+            if !seen.insert(next.clone()) {
+                return None;
+            }
+            cur = next;
+        }
+    };
+
+    // Derive the exact expected session set per day and per model from contributing billed rows.
+    let mut expected_by_day: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut expected_by_model: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    {
+        let mut st = db
+            .prepare(
+                "SELECT m.session_id, m.ts_ms, coalesce(m.model, 'unknown')
+                 FROM messages m
+                 JOIN sessions s ON s.id = m.session_id AND s.is_empty = 0
+                 WHERE m.role = 1 AND m.billed = 1
+                   AND (m.in_tok > 0 OR m.out_tok > 0 OR m.cr_tok > 0 OR m.cc_tok > 0)",
+            )
+            .unwrap();
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .unwrap();
+        for row in rows {
+            let (sid, ts, model) = row.unwrap();
+            let owner =
+                visible_owner(&sid).expect("every contributing row maps to a visible session");
+            let day = local(ts).date().to_string();
+            expected_by_day
+                .entry(day)
+                .or_default()
+                .insert(owner.clone());
+            expected_by_model.entry(model).or_default().insert(owner);
+        }
+    }
+
+    // Check EVERY day and EVERY model against the derived sets.
+    for (day, want) in &expected_by_day {
+        assert_eq!(
+            drill_ids(&env.engine, Drill::Day { day: day.clone() }, None),
+            *want,
+            "day {day}"
+        );
+    }
+    for (model, want) in &expected_by_model {
+        assert_eq!(
+            drill_ids(
+                &env.engine,
+                Drill::Model {
+                    models: vec![model.clone()]
+                },
+                None
+            ),
+            *want,
+            "model {model}"
+        );
+    }
+
+    // Spot-check each specific edge case explicitly:
+    // - Unpriced model with tokens:
+    assert_eq!(
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec!["claude-unpriced-test".into()]
+            },
+            None
+        ),
+        BTreeSet::from([ids::BASIC.to_owned()])
+    );
+    // - Zero-token assistant message is NOT a request:
+    assert!(
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec!["claude-zero-only".into()]
+            },
+            None
+        )
+        .is_empty()
+    );
+    // - Single-hop and 2-hop superseded leftover rows map to CONTINUED_NEW and CHAIN_C:
+    assert_eq!(
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec!["claude-leftover-1hop".into()]
+            },
+            None
+        ),
+        BTreeSet::from([ids::CONTINUED_NEW.to_owned()])
+    );
+    assert_eq!(
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec!["claude-leftover-2hop".into()]
+            },
+            None
+        ),
+        BTreeSet::from([CHAIN_C.to_owned()])
+    );
+    let leftover_2hop_day = local(
+        DateTime::parse_from_rfc3339("2026-11-07T09:00:00.000Z")
+            .unwrap()
+            .timestamp_millis(),
+    )
+    .date()
+    .to_string();
+    assert_eq!(
+        drill_ids(
+            &env.engine,
+            Drill::Day {
+                day: leftover_2hop_day
+            },
+            None
+        ),
+        BTreeSet::from([CHAIN_C.to_owned()])
+    );
+    // - Cross-session duplicate: narrow the range to an inherited message's exact timestamp so
+    //   FORK_CHILD only has an unbilled duplicate in range -> only FORK_ORIGIN is returned.
+    let (dup_ts, dup_model): (i64, String) = db
+        .query_row(
+            "SELECT m.ts_ms, coalesce(m.model, 'unknown')
+             FROM messages m
+             WHERE m.session_id = ?1 AND m.role = 1 AND m.billed = 0
+               AND (m.in_tok > 0 OR m.out_tok > 0 OR m.cr_tok > 0 OR m.cc_tok > 0)
+             LIMIT 1",
+            [ids::FORK_CHILD],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let dup_range = Some(TimeRange {
+        from_ms: Some(dup_ts as f64),
+        to_ms: Some(dup_ts as f64),
+    });
+    assert_eq!(
+        drill_ids(
+            &env.engine,
+            Drill::Model {
+                models: vec![dup_model]
+            },
+            dup_range.clone()
+        ),
+        BTreeSet::from([ids::FORK_ORIGIN.to_owned()])
+    );
+    assert_eq!(
+        drill_ids(
+            &env.engine,
+            Drill::Day {
+                day: local(dup_ts).date().to_string()
+            },
+            dup_range
+        ),
+        BTreeSet::from([ids::FORK_ORIGIN.to_owned()])
     );
 }
 
@@ -573,56 +985,10 @@ fn tokens_sort_orders_by_output_tokens() {
     assert_eq!(list[0].tokens.output, top as f64, "main + subagents");
 }
 
-// ---------------------------------------------------------------- activity
+// ---------------------------------------------------------------- hourly
 
 #[test]
-fn activity_bucket_is_the_finest_with_at_most_170_bars() {
-    use codeck_core::model::ActivityBucket as B;
-    use codeck_core::stats::choose_bucket;
-    let at = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
-    let to = at("2026-10-27 13:20");
-    let back = |days: i64| to - chrono::Duration::days(days);
-    assert_eq!(choose_bucket(back(7), to), B::Hour1);
-    assert_eq!(choose_bucket(back(30), to), B::Hour6);
-    assert_eq!(choose_bucket(back(90), to), B::Day);
-    assert_eq!(choose_bucket(back(400), to), B::Week);
-    assert_eq!(choose_bucket(back(3650), to), B::Month);
-}
-
-#[test]
-fn activity_counts_every_main_message_and_bars_drill_to_their_sessions() {
-    let env = scanned(MIXED);
-    let o = &env.oracle;
-    let st = all_time(&env);
-    let a = &st.activity;
-    assert!(!a.bars.is_empty());
-    // Unbounded: from the earliest message's bucket, contiguous, empty bars included.
-    assert!(a.bars.windows(2).all(|w| w[0].end_ms == w[1].start_ms));
-    assert_eq!(
-        a.bars.iter().map(|b| b.messages).sum::<u32>(),
-        st.overview.messages
-    );
-    for b in a.bars.iter().filter(|b| b.messages > 0) {
-        let want: BTreeSet<String> = o
-            .sessions
-            .iter()
-            .filter(|(_, s)| {
-                s.msgs
-                    .iter()
-                    .any(|m| m.main && (m.ts as f64) >= b.start_ms && (m.ts as f64) < b.end_ms)
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        let drill = Drill::Span {
-            from_ms: b.start_ms,
-            to_ms: b.end_ms,
-        };
-        assert_eq!(drill_ids(&env, drill, None), want, "bar at {}", b.start_ms);
-    }
-}
-
-#[test]
-fn activity_over_seven_days_is_hourly() {
+fn hourly_over_seven_days_includes_empty_hours_and_conserves_totals() {
     let env = scanned(MIXED);
     let from = DateTime::parse_from_rfc3339("2026-06-06T10:30:00Z")
         .unwrap()
@@ -636,92 +1002,187 @@ fn activity_over_seven_days_is_hourly() {
             }),
         })
         .unwrap();
-    assert_eq!(
-        st.activity.bucket,
-        codeck_core::model::ActivityBucket::Hour1
+    // 7 × 24 hours from a mid-hour start touch 169 hourly buckets.
+    assert_eq!(st.hourly.len(), 169);
+    assert!(st.hourly.windows(2).all(|w| w[0].end_ms == w[1].start_ms));
+    assert!(
+        st.hourly.iter().any(|h| h.requests == 0 && h.cost == 0.0),
+        "empty hours are emitted"
     );
-    // 7 × 24 hours from a mid-hour start touch 169 hourly bars.
-    assert_eq!(st.activity.bars.len(), 169);
+    assert!(st.overview.requests > 0);
     assert_eq!(
-        st.activity.bars.iter().map(|b| b.messages).sum::<u32>(),
-        st.overview.messages
+        st.hourly.iter().map(|h| h.requests).sum::<u32>(),
+        st.overview.requests
+    );
+    assert!(close(
+        st.hourly.iter().map(|h| h.cost).sum::<f64>(),
+        st.overview.cost
+    ));
+    assert_eq!(
+        st.daily.iter().map(|d| d.requests).sum::<u32>(),
+        st.overview.requests
     );
 }
 
 #[test]
-fn span_drill_is_limited_to_the_time_range() {
+fn hourly_range_boundaries() {
     let env = scanned(MIXED);
-    let o = &env.oracle;
-    let st = all_time(&env);
-    let bar = st
-        .activity
-        .bars
-        .iter()
-        .find(|b| b.messages > 1)
-        .expect("a bar with messages");
-    let main_in = |s: &Sess, from: f64, to: f64| {
-        s.msgs
-            .iter()
-            .any(|m| m.main && (m.ts as f64) >= from && (m.ts as f64) < to)
-    };
-    // A range covering only the second half of the bar.
-    let mid = (bar.start_ms + bar.end_ms) / 2.0;
-    let range = TimeRange {
-        from_ms: Some(mid),
-        to_ms: None,
-    };
-    let want: BTreeSet<String> = o
-        .sessions
-        .iter()
-        .filter(|(_, s)| main_in(s, mid, bar.end_ms))
-        .map(|(id, _)| id.clone())
-        .collect();
-    let drill = Drill::Span {
-        from_ms: bar.start_ms,
-        to_ms: bar.end_ms,
-    };
-    assert_eq!(drill_ids(&env, drill, Some(range)), want);
+    let from = DateTime::parse_from_rfc3339("2026-06-06T00:00:00Z")
+        .unwrap()
+        .timestamp_millis() as f64;
+    let eight_days = 8.0 * 86_400_000.0;
+
+    let query =
+        |time_range: Option<TimeRange>| env.engine.stats(&StatsRequest { time_range }).unwrap();
+
+    // Exact 8-day boundary: non-empty and conserves requests/cost.
+    let at_limit = query(Some(TimeRange {
+        from_ms: Some(from),
+        to_ms: Some(from + eight_days),
+    }));
+    assert!(!at_limit.hourly.is_empty());
+    assert_eq!(
+        at_limit.hourly.iter().map(|h| h.requests).sum::<u32>(),
+        at_limit.overview.requests
+    );
+    assert!(close(
+        at_limit.hourly.iter().map(|h| h.cost).sum::<f64>(),
+        at_limit.overview.cost
+    ));
+
+    // 1 ms past 8 days: empty.
+    assert!(
+        query(Some(TimeRange {
+            from_ms: Some(from),
+            to_ms: Some(from + eight_days + 1.0),
+        }))
+        .hourly
+        .is_empty()
+    );
+    // Fractional boundaries evaluated on raw f64 ms (not truncated to i64):
+    // 8 days + 0.5 ms exceeds the 8-day limit -> empty.
+    assert!(
+        query(Some(TimeRange {
+            from_ms: Some(from),
+            to_ms: Some(from + eight_days + 0.5),
+        }))
+        .hourly
+        .is_empty()
+    );
+    // Reversed within the same integer millisecond (T+0.8 > T+0.2) -> empty.
+    assert!(
+        query(Some(TimeRange {
+            from_ms: Some(from + 0.8),
+            to_ms: Some(from + 0.2),
+        }))
+        .hourly
+        .is_empty()
+    );
+    // Reversed bounds: empty.
+    assert!(
+        query(Some(TimeRange {
+            from_ms: Some(from + 1000.0),
+            to_ms: Some(from),
+        }))
+        .hourly
+        .is_empty()
+    );
+    // Missing lower bound, upper bound, or whole range: empty.
+    assert!(
+        query(Some(TimeRange {
+            from_ms: None,
+            to_ms: Some(from + 86_400_000.0),
+        }))
+        .hourly
+        .is_empty()
+    );
+    assert!(
+        query(Some(TimeRange {
+            from_ms: Some(from),
+            to_ms: None,
+        }))
+        .hourly
+        .is_empty()
+    );
+    assert!(query(None).hourly.is_empty());
 }
 
-/// Child half of `activity_bars_follow_dst_changes`: prints hourly bar widths (minutes) around
-/// both 2026 US DST changes under the inherited `TZ`.
+/// Child half of `hourly_follows_dst_changes_with_conservation`: writes real requests across both
+/// 2026 US DST transitions under the inherited `TZ` and verifies widths and request/cost
+/// conservation.
 #[test]
-#[ignore = "spawned by activity_bars_follow_dst_changes with TZ set"]
+#[ignore = "spawned by hourly_follows_dst_changes_with_conservation with TZ set"]
 fn dst_probe() {
     if std::env::var_os("CV_DST_PROBE").is_none() {
         return;
     }
-    let env = scanned(MIXED);
-    let widths = |from_utc: &str| {
-        let from = DateTime::parse_from_rfc3339(from_utc)
-            .unwrap()
-            .timestamp_millis() as f64;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("projects").join("-tmp-dst");
+    fs::create_dir_all(&dir).unwrap();
+    let sid = "22222222-3333-4444-5555-666666666601";
+    let usage = r#"{"input_tokens":1000,"output_tokens":500}"#;
+    let mk = |uuid: &str, id: &str, ts: &str| {
+        format!(
+            r#"{{"type":"assistant","uuid":"{uuid}","parentUuid":null,"sessionId":"{sid}","timestamp":"{ts}","message":{{"id":"{id}","role":"assistant","model":"claude-sonnet-4-6","content":[{{"type":"text","text":"ok"}}],"usage":{usage}}}}}"#
+        )
+    };
+    fs::write(
+        dir.join(format!("{sid}.jsonl")),
+        [
+            format!(
+                r#"{{"type":"user","uuid":"u0","parentUuid":null,"sessionId":"{sid}","timestamp":"2026-03-08T06:00:00.000Z","message":{{"role":"user","content":"dst"}}}}"#
+            ),
+            // Spring forward (America/New_York): 01:30 EST and 03:30 EDT (02:00 does not exist).
+            mk("s1", "m-s1", "2026-03-08T06:30:00.000Z"),
+            mk("s2", "m-s2", "2026-03-08T07:30:00.000Z"),
+            // Fall back (America/New_York): 01:20 EDT (first 01:00) and 01:40 EST (second 01:00).
+            mk("f1", "m-f1", "2026-11-01T05:20:00.000Z"),
+            mk("f2", "m-f2", "2026-11-01T06:40:00.000Z"),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    let env = common::engine::Env::scanned(root);
+    let parse_ms = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis() as f64;
+    let check = |from_utc: &str, to_utc: &str, want_reqs: u32| {
         let st = env
             .engine
             .stats(&StatsRequest {
                 time_range: Some(TimeRange {
-                    from_ms: Some(from),
-                    to_ms: Some(from + 5.0 * 3_600_000.0),
+                    from_ms: Some(parse_ms(from_utc)),
+                    to_ms: Some(parse_ms(to_utc)),
                 }),
             })
             .unwrap();
-        let bars = &st.activity.bars;
-        assert!(bars.windows(2).all(|w| w[0].end_ms == w[1].start_ms));
-        bars.iter()
-            .map(|b| ((b.end_ms - b.start_ms) / 60_000.0).to_string())
+        let h = &st.hourly;
+        assert!(h.windows(2).all(|w| w[0].end_ms == w[1].start_ms));
+        assert_eq!(st.overview.requests, want_reqs);
+        assert!(st.overview.cost > 0.0);
+        assert_eq!(
+            h.iter().map(|b| b.requests).sum::<u32>(),
+            st.overview.requests
+        );
+        assert!(close(
+            h.iter().map(|b| b.cost).sum::<f64>(),
+            st.overview.cost
+        ));
+        h.iter()
+            .map(|b| format!("{}:{}", ((b.end_ms - b.start_ms) / 60_000.0), b.requests))
             .collect::<Vec<_>>()
             .join(",")
     };
-    // 00:00 local on each change day in New York (EDT / EST).
-    println!(
-        "DST_PROBE {}|{}",
-        widths("2026-11-01T04:00:00Z"),
-        widths("2026-03-08T05:00:00Z")
-    );
+    // 00:00 local to +5h on fall-back (04:00 EST) and spring-forward (06:00 EDT).
+    let fall = check("2026-11-01T04:00:00Z", "2026-11-01T09:00:00Z", 2);
+    // Inside the repeated hour where wall clock goes backwards (01:50 EDT -> 01:45 EST) while
+    // unix ms goes forward: still produces the merged 120-minute bucket with the 01:40 EST request.
+    let fold_sub = check("2026-11-01T05:50:00Z", "2026-11-01T06:45:00Z", 1);
+    let spring = check("2026-03-08T05:00:00Z", "2026-03-08T10:00:00Z", 2);
+    println!("DST_PROBE {fall}|{fold_sub}|{spring}");
 }
 
 #[test]
-fn activity_bars_follow_dst_changes() {
+fn hourly_follows_dst_changes_with_conservation() {
     let out = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "dst_probe", "--ignored", "--nocapture"])
         .env("CV_DST_PROBE", "1")
@@ -738,9 +1199,12 @@ fn activity_bars_follow_dst_changes() {
         .lines()
         .find_map(|l| l.strip_prefix("DST_PROBE "))
         .expect("probe output");
-    let (fall, spring) = line.split_once('|').unwrap();
-    // Clocks go back at 02:00: the 01:00 bar holds both readings of that hour (00:00 to 04:00 local).
-    assert_eq!(fall, "60,120,60,60,60");
-    // Clocks go forward at 02:00: that hour does not exist and gets no bar (00:00 to 06:00 local).
-    assert_eq!(spring, "60,60,60,60,60,60");
+    let parts: Vec<&str> = line.split('|').collect();
+    assert_eq!(parts.len(), 3, "{line}");
+    // Clocks go back at 02:00: the 01:00 bucket holds both readings of that hour (120 min, 2 reqs).
+    assert_eq!(parts[0], "60:0,120:2,60:0,60:0,60:0");
+    // 01:50 EDT -> 01:45 EST: ms order holds even though wall clock went backwards (120 min, 1 req).
+    assert_eq!(parts[1], "120:1");
+    // Clocks go forward at 02:00: that hour gets no bucket (00:00, 01:00, 03:00, 04:00, 05:00, 06:00).
+    assert_eq!(parts[2], "60:0,60:1,60:1,60:0,60:0,60:0");
 }

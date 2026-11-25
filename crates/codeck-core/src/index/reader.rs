@@ -13,7 +13,7 @@ use crate::model::{
     Drill, FileRole, ForkChild, ForkOrigin, ModelCost, ProjectSummary, SessionQuery, SessionSort,
     SessionSummary, TokenTotals,
 };
-use crate::stats::{self, MAIN_FILE_SQL, billed_tokens_sql};
+use crate::stats::{self, billed_tokens_sql};
 use transcript::assemble::AgentStats;
 
 /// A `files` row.
@@ -199,15 +199,17 @@ pub fn project_match(ids: &[String], args: &mut Vec<Value>) -> String {
     )
 }
 
+/// Maximum distinct models accepted by `Drill::Model` (extras are dropped after deduplication).
+const MAX_DRILL_MODELS: usize = 64;
+
 /// Listed sessions (non-empty, not superseded) matching `q` (live filtering and `live` states are
 /// applied by the engine).
 ///
 /// Without a drill, the time range keeps sessions whose span overlaps it. With a drill, the
-/// session must have a contributing row inside the range, mirroring `stats::compute` exactly
-/// (both use the predicates `stats::MAIN_FILE_SQL` and `stats::billed_tokens_sql`):
-/// - `Day`: a main-file message on that local day;
-/// - `Model`: a main or Subagent message of that model that carries tokens;
-/// - `Span`: a main-file message in `[from_ms, to_ms)` (an activity bar).
+/// session (or a superseded session it carries on) must have a contributing billed request inside
+/// the range, mirroring `stats::compute` (`stats::billed_tokens_sql`):
+/// - `Day`: a billed request on that local day;
+/// - `Model`: a billed request of any listed model (empty matches none).
 pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<SessionSummary>> {
     let mut conds = vec!["s.is_empty = 0 AND s.superseded = 0".to_owned()];
     let mut args: Vec<Value> = Vec::new();
@@ -241,32 +243,41 @@ pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<Sess
     match &q.drill {
         Some(Drill::Day { day }) => match local_day_bounds_ms(day) {
             Some((start, end)) => {
-                conds.push(format!(
-                    "s.id IN (SELECT m.session_id FROM messages m WHERE {MAIN_FILE_SQL}
-                        AND m.ts_ms >= ? AND m.ts_ms <= ?)"
-                ));
-                args.push(Value::Integer(start.max(from)));
-                args.push(Value::Integer((end - 1).min(to)));
+                let lo = start.max(from);
+                let hi = (end - 1).min(to);
+                if lo > hi {
+                    conds.push("0".into());
+                } else {
+                    args.push(Value::Integer(lo));
+                    args.push(Value::Integer(hi));
+                    conds.push(drill_in_sessions_sql(&format!(
+                        "{billed} AND m.ts_ms >= ? AND m.ts_ms <= ?",
+                        billed = billed_tokens_sql()
+                    )));
+                }
             }
             None => conds.push("0".into()),
         },
-        Some(Drill::Span { from_ms, to_ms }) => {
-            conds.push(format!(
-                "s.id IN (SELECT m.session_id FROM messages m WHERE {MAIN_FILE_SQL}
-                    AND m.ts_ms >= ? AND m.ts_ms <= ?)"
-            ));
-            args.push(Value::Integer((*from_ms as i64).max(from)));
-            args.push(Value::Integer((*to_ms as i64 - 1).min(to)));
-        }
-        Some(Drill::Model { model }) => {
-            args.push(Value::Text(stats::UNKNOWN.to_owned()));
-            args.push(Value::Text(model.clone()));
-            let range = in_range("m.ts_ms", &mut args);
-            conds.push(format!(
-                "EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id
-                    AND coalesce(m.model, ?) = ? AND {billed}{range})",
-                billed = billed_tokens_sql()
-            ));
+        Some(Drill::Model { models }) => {
+            let mut seen = HashSet::new();
+            let unique: Vec<&str> = models
+                .iter()
+                .map(String::as_str)
+                .filter(|m| !m.is_empty() && seen.insert(*m))
+                .take(MAX_DRILL_MODELS)
+                .collect();
+            if unique.is_empty() {
+                conds.push("0".into());
+            } else {
+                let marks = vec!["?"; unique.len()].join(",");
+                args.push(Value::Text(stats::UNKNOWN.to_owned()));
+                args.extend(unique.into_iter().map(|m| Value::Text(m.to_owned())));
+                let range = in_range("m.ts_ms", &mut args);
+                conds.push(drill_in_sessions_sql(&format!(
+                    "coalesce(m.model, ?) IN ({marks}) AND {billed}{range}",
+                    billed = billed_tokens_sql()
+                )));
+            }
         }
         None => {}
     }
@@ -285,6 +296,28 @@ pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<Sess
     let mut st = conn.prepare(&sql)?;
     let rows = st.query_map(params_from_iter(args), summary_from_row)?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// SQL predicate matching listed sessions that either directly own a message satisfying
+/// `where_sql` (over `messages m`) or carry on a superseded session (through any `continued_in_id`
+/// chain) that does.
+fn drill_in_sessions_sql(where_sql: &str) -> String {
+    format!(
+        "s.id IN (
+            WITH RECURSIVE climb(sid) AS (
+                SELECT DISTINCT m.session_id
+                FROM messages m
+                WHERE {where_sql}
+                  AND m.session_id IN (SELECT id FROM sessions WHERE is_empty = 0)
+                UNION
+                SELECT cur.continued_in_id
+                FROM climb c
+                JOIN sessions cur ON cur.id = c.sid
+                WHERE cur.superseded = 1 AND cur.continued_in_id IS NOT NULL
+            )
+            SELECT sid FROM climb
+        )"
+    )
 }
 
 /// `[start, end)` of a local calendar day (`YYYY-MM-DD`) in unix ms.

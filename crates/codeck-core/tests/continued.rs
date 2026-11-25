@@ -148,13 +148,11 @@ fn the_continued_session_bills_the_copy_and_totals_do_not_change() {
     let stats = env.engine.stats(&StatsRequest::default()).unwrap();
     assert_eq!(stats.overview.output_tokens, alone.0);
     assert!((stats.overview.cost - alone.1).abs() < 1e-9);
-    assert_eq!(stats.overview.sessions, 1);
-    let ranked: Vec<&str> = stats
-        .sessions
-        .iter()
-        .map(|s| s.session_id.as_str())
-        .collect();
-    assert_eq!(ranked, vec![NEW]);
+    assert!(stats.overview.requests > 0);
+    assert_eq!(
+        stats.daily.iter().map(|d| d.requests).sum::<u32>(),
+        stats.overview.requests
+    );
 }
 
 #[test]
@@ -218,6 +216,20 @@ fn without_a_full_copy_in_the_index_both_sessions_are_shown() {
     ));
     assert_eq!(listed(&env), vec![NEW]);
     assert_eq!(billed(&env, OLD).0, 3.0);
+    // Drilling into the superseded session's leftover billed row maps to the visible successor.
+    let drilled: Vec<String> = env
+        .engine
+        .list_sessions(&SessionQuery {
+            drill: Some(codeck_core::model::Drill::Model {
+                models: vec!["claude-opus-5-5".into()],
+            }),
+            ..SessionQuery::default()
+        })
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(drilled, vec![NEW]);
 
     // The old one goes on with a prompt the continued one lacks: both are shown.
     append(format!(
