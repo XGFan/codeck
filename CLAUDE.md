@@ -36,7 +36,7 @@ pnpm format                    # 前端格式化（Prettier，printWidth 120；�
 scripts/install-git-hooks.sh   # 装 pre-commit 钩子：暂存了没按 rustfmt / Prettier 排版、或违反 hooks 规则的文件就拦下；与 pre-push 钩子
 scripts/check.sh               # 推送前的检查（代替 CI，pre-push 钩子跑的就是它；--all 不看改动全跑）：改了 Rust 跑 fmt / clippy / cargo test，改了 ccrpc 加 mock e2e，改了前端跑 Prettier / typecheck / lint / vitest / E2E，共几分钟；每组按自己会读到的文件记通过（只改前端的提交不会让 Rust 与 ccrpc mock e2e 重跑；`--keys` 看各组的键），同样的内容通过过就跳过，所以提交后先跑它，git push 就不用再等。git push 没有输出不是卡住，是钩子在跑
 
-pnpm typecheck && pnpm lint && pnpm test           # tsc + ESLint（只开 react-hooks 两条规则）+ vitest（src/**/*.test.ts）
+pnpm typecheck && pnpm lint && pnpm test           # tsc + ESLint（react-hooks 两条规则，加导入方向：ipc / lib / components / state / queries 不引用 features，mock 只经 ipc/index.ts 接入）+ vitest（src/**/*.test.ts）
 pnpm vitest run src/lib/diff.test.ts               # 单个前端单测
 pnpm exec playwright install webkit                # 首次跑 E2E 前
 pnpm test:e2e                                      # Playwright，WebKit，mock 模式：先构建到 dist-e2e/<端口>/ 再起静态服务（端口上已有服务就用它）；同一文件里的用例也并行
