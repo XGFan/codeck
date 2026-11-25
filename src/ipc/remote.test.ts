@@ -40,6 +40,7 @@ describe("remote api", () => {
       "haaWatch",
       "keepAliveMinutes",
       "setKeepAliveMinutes",
+      "notify",
       "removeNotifications",
     ]);
     for (const c of commands) {

@@ -17,6 +17,7 @@ import type {
   JumpTarget,
   LanStatus,
   LiveChanged,
+  Notice,
   ProjectSummary,
   SearchRequest,
   SearchResponse,
@@ -131,10 +132,13 @@ export interface Api {
   onKeepAlive(cb: (e: { sessionId: string; active: boolean; error: string | null }) => void): Promise<Unlisten>;
   /** The Dock badge; 0 clears it. */
   setBadge(count: number): Promise<void>;
-  /** A system notification; a click on it brings the window back and reports `url` (a `codeck://` link). */
-  notify(n: { title: string; body: string; url: string }): Promise<void>;
-  /** Takes this app's notifications with exactly this title and body out of Notification Center. */
-  removeNotification(title: string, body: string): Promise<void>;
+  /**
+   * A system notification, in place of the one with its `id` when that is still there; a click on it brings the
+   * window back and reports `url` (a `codeck://` link).
+   */
+  notify(n: Notice): Promise<void>;
+  /** Takes the notifications with these `id`s out of Notification Center. */
+  removeNotifications(ids: string[]): Promise<void>;
   /** A notification sent by `notify` was clicked: its `url`. */
   onNotificationClick(cb: (url: string) => void): Promise<Unlisten>;
   /** ccrpc's lines, parsed (lines that are not JSON are dropped). */

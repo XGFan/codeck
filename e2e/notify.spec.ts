@@ -4,12 +4,19 @@ import { RICH_TITLE } from "./helpers";
 const WAITING_TITLE = "优化首页首屏加载（LCP 3.2s → 1.8s）";
 
 type Probe = {
-  notifications: { title: string; body: string; url: string }[];
+  notifications: {
+    id: string;
+    title: string;
+    body: string;
+    url: string;
+    thread: string | null;
+    timeSensitive: boolean;
+  }[];
   clickNotification(url: string): void;
   keepAlive: number;
   badge: number;
   keepAliveEvent(sessionId: string, active: boolean): void;
-  removedNotifications: { title: string; body: string }[];
+  removedNotifications: string[];
 };
 const notifications = (page: Page) =>
   page.evaluate(() => (window.__cvCcrpc as unknown as Probe).notifications.map((n) => ({ ...n })));
@@ -64,6 +71,9 @@ test("等待作答到设定时长才发通知，点通知打开该 Session", asy
   const [n] = await notifications(page);
   expect(n.title).toBe(WAITING_TITLE);
   expect(n.body).toMatch(/^等待作答 3 分钟 · /);
+  // Its own in Notification Center: named and grouped by the Session, and let through a Focus.
+  const sessionId = await liveRow(page, WAITING_TITLE).getAttribute("data-session-id");
+  expect(n).toMatchObject({ id: `session-${sessionId}`, thread: sessionId, timeSensitive: true });
   // Once only.
   await page.clock.fastForward("05:00");
   expect(await notifications(page)).toHaveLength(1);
@@ -74,7 +84,7 @@ test("等待作答到设定时长才发通知，点通知打开该 Session", asy
   await page.clock.fastForward("00:02");
   await expect
     .poll(() => page.evaluate(() => (window.__cvCcrpc as unknown as Probe).removedNotifications))
-    .toEqual([{ title: n.title, body: n.body }]);
+    .toEqual([n.id]);
 });
 
 test("已完成到点发通知", async ({ page }) => {
@@ -83,7 +93,11 @@ test("已完成到点发通知", async ({ page }) => {
   await expect.poll(() => notifications(page)).toHaveLength(1);
   await endTurn(page);
   await expect.poll(() => notifications(page)).toHaveLength(2);
-  expect((await notifications(page))[1]).toMatchObject({ title: RICH_TITLE, body: expect.stringMatching(/^已完成/) });
+  expect((await notifications(page))[1]).toMatchObject({
+    title: RICH_TITLE,
+    body: expect.stringMatching(/^已完成/),
+    timeSensitive: false,
+  });
 });
 
 test("设置里关闭的通知不发", async ({ page }) => {

@@ -85,3 +85,9 @@ pub struct HaaWatchEndedEvent {
     pub id: u32,
     pub message: String,
 }
+
+/// A system notification was clicked: the `url` it was sent with (`commands::notify`).
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct NotificationClickEvent {
+    pub url: String,
+}

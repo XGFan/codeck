@@ -96,10 +96,12 @@ export const commands = {
 	 */
 	haaWatch: (on: boolean, id: number) => __TAURI_INVOKE<null>("haa_watch", { on, id }),
 	/**
-	 *  Takes this app's delivered notifications with exactly this title and body out of Notification Center (the
-	 *  notification plugin cannot on macOS). Not in the Host's table: it is the window's, like the Dock badge.
+	 *  Shows a system notification, in place of the one with its `id` when that is still there. Not in the Host's
+	 *  table: it is the window's, like the Dock badge.
 	 */
-	removeNotifications: (title: string, body: string) => __TAURI_INVOKE<null>("remove_notifications", { title, body }),
+	notify: (notice: Notice) => __TAURI_INVOKE<void>("notify", { notice }),
+	/**  Takes the notifications with these `id`s (as given to `notify`) out of Notification Center. */
+	removeNotifications: (ids: string[]) => __TAURI_INVOKE<void>("remove_notifications", { ids }),
 };
 
 /** Events */
@@ -115,6 +117,7 @@ export const events = {
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	keepAliveEvent: makeEvent<KeepAliveEvent>("keep-alive-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
+	notificationClickEvent: makeEvent<NotificationClickEvent>("notification-click-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
 	sessionsChangedEvent: makeEvent<SessionsChangedEvent>("sessions-changed-event"),
 };
@@ -551,6 +554,28 @@ relayed: RelayedMessage[] } | { kind: "assistant"; messageId: string | null; mod
 text: string } | 
 /**  A tool result not absorbed into its call (the call is not on the shown path). */
 { kind: "toolResult"; text: string } | { kind: "attachment"; attachmentType: string; text: string } | { kind: "unknown"; entryType: string; rawJson: string };
+
+/**  A notification to show. */
+export type Notice = {
+	/**  Names it: a later one with the same `id` takes its place, and `remove` finds it by this. */
+	id: string,
+	title: string,
+	body: string,
+	/**  Reported when it is clicked (a `codeck://` link). */
+	url: string,
+	/**  Notification Center keeps the notifications of one thread together. */
+	thread: string | null,
+	/**
+	 *  Time-sensitive: shown during a Focus that lets such notifications through. It takes the entitlement
+	 *  `com.apple.developer.usernotifications.time-sensitive`; an app signed without it has it shown as a plain one.
+	 */
+	timeSensitive: boolean,
+};
+
+/**  A system notification was clicked: the `url` it was sent with (`commands::notify`). */
+export type NotificationClickEvent = {
+	url: string,
+};
 
 /**  Where a [`PromptOrigin::Peer`] message came from. */
 export type PeerSource = 

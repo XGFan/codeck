@@ -83,49 +83,71 @@ export interface Subject extends Due {
   project: string | null;
 }
 
+export interface Message {
+  /** Names the notification: a Session's own is `session-<id>`, so its next one takes this one's place. */
+  id: string;
+  title: string;
+  body: string;
+  /** The Session a click opens. */
+  sessionId: string;
+  /** Notification Center keeps a Session's notifications apart from the others'; null for one about several. */
+  thread: string | null;
+  /** Someone is being waited for: it may come through a Focus. */
+  timeSensitive: boolean;
+}
+
 /**
  * One notification for everything due at once: a single Session by its title, several counted. A click opens the
  * Session it names (the first waiting one, else the first done).
  */
-export function message(items: Subject[], at: number): { title: string; body: string; sessionId: string } {
+export function message(items: Subject[], at: number): Message {
   const first = items.find((i) => i.kind === "waiting") ?? items[0];
   if (items.length === 1) {
     const mins = Math.floor((at - first.since) / 60_000);
     const what = first.kind === "waiting" ? (mins > 0 ? `等待作答 ${mins} 分钟` : "等待作答") : "已完成";
-    return { title: first.title, body: first.project ? `${what} · ${first.project}` : what, sessionId: first.id };
+    return {
+      id: `session-${first.id}`,
+      title: first.title,
+      body: first.project ? `${what} · ${first.project}` : what,
+      sessionId: first.id,
+      thread: first.id,
+      timeSensitive: first.kind === "waiting",
+    };
   }
   const waiting = items.filter((i) => i.kind === "waiting").length;
   const done = items.length - waiting;
   const body = [waiting > 0 && `${waiting} 个等待作答`, done > 0 && `${done} 个已完成`].filter(Boolean).join("，");
-  return { title: `${items.length} 个 Session 需要处理`, body, sessionId: first.id };
+  return {
+    id: `sessions-${at}`,
+    title: `${items.length} 个 Session 需要处理`,
+    body,
+    sessionId: first.id,
+    thread: null,
+    timeSensitive: waiting > 0,
+  };
 }
 
-/** A notification that went out: what it says (Notification Center finds it by that) and for which Sessions. */
+/** A notification that went out: its `id` (Notification Center finds it by that) and the Sessions it is about. */
 export interface Sent {
-  title: string;
-  body: string;
-  ids: string[];
+  id: string;
+  sessions: string[];
   at: number;
+}
+
+/** `sent` with `s` gone out. An earlier one with its `id` is no longer there: `s` took its place. */
+export function record(sent: Sent[], s: Sent): Sent[] {
+  return [...sent.filter((o) => o.id !== s.id), s];
 }
 
 /** Each of its Sessions was looked at, changed status or left Live since it went out: nothing left to tell. */
 const settled = (s: Sent, tracks: Tracks) =>
-  s.ids.every((id) => {
+  s.sessions.every((id) => {
     const t = tracks[id];
     return !t || t.since > s.at || t.seen;
   });
 
-/**
- * The notifications to take out of Notification Center (by title and body) and the ones still standing. One whose
- * words an unsettled one shares stays: Notification Center would take out both.
- */
-export function sweep(sent: Sent[], tracks: Tracks): { remove: { title: string; body: string }[]; keep: Sent[] } {
+/** The notifications to take out of Notification Center (their `id`s) and the ones still standing. */
+export function sweep(sent: Sent[], tracks: Tracks): { remove: string[]; keep: Sent[] } {
   const keep = sent.filter((s) => !settled(s, tracks));
-  const same = (a: { title: string; body: string }, b: { title: string; body: string }) =>
-    a.title === b.title && a.body === b.body;
-  const remove: { title: string; body: string }[] = [];
-  for (const s of sent)
-    if (!keep.includes(s) && !keep.some((k) => same(k, s)) && !remove.some((r) => same(r, s)))
-      remove.push({ title: s.title, body: s.body });
-  return { remove, keep };
+  return { remove: sent.filter((s) => !keep.includes(s)).map((s) => s.id), keep };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { due, markNotified, message, step, sweep, type Sent, type Tracks } from "./rules";
+import { due, markNotified, message, record, step, sweep, type Sent, type Tracks } from "./rules";
 
 const MIN = 60_000;
 const DELAYS = { waiting: 3 * MIN, done: 3 * MIN };
@@ -64,8 +64,16 @@ describe("due", () => {
 describe("message", () => {
   it("names one Session with how long it waited and its Project", () => {
     const m = message([{ id: "a", kind: "waiting", since: 0, title: "修登录", project: "codeck" }], 3 * MIN + 5000);
-    expect(m).toEqual({ title: "修登录", body: "等待作答 3 分钟 · codeck", sessionId: "a" });
-    expect(message([{ id: "a", kind: "done", since: 0, title: "修登录", project: null }], 0).body).toBe("已完成");
+    expect(m).toEqual({
+      id: "session-a",
+      title: "修登录",
+      body: "等待作答 3 分钟 · codeck",
+      sessionId: "a",
+      thread: "a",
+      timeSensitive: true,
+    });
+    const done = message([{ id: "a", kind: "done", since: 0, title: "修登录", project: null }], 0);
+    expect(done).toMatchObject({ id: "session-a", body: "已完成", timeSensitive: false });
   });
 
   it("counts several and opens the first waiting one", () => {
@@ -77,28 +85,41 @@ describe("message", () => {
       ],
       MIN,
     );
-    expect(m).toEqual({ title: "3 个 Session 需要处理", body: "2 个等待作答，1 个已完成", sessionId: "w" });
+    expect(m).toEqual({
+      id: `sessions-${MIN}`,
+      title: "3 个 Session 需要处理",
+      body: "2 个等待作答，1 个已完成",
+      sessionId: "w",
+      thread: null,
+      timeSensitive: true,
+    });
   });
 });
 
 describe("sweep", () => {
   const waiting: Tracks = step({}, { w: "waiting", x: "waiting" }, 0, null);
-  const sent = (ids: string[], body = "b"): Sent => ({ title: "t", body, ids, at: 10 });
+  const sent = (sessions: string[], id = "n"): Sent => ({ id, sessions, at: 10 });
 
   it("takes a notification out once its Session was looked at, changed status or left Live", () => {
     expect(sweep([sent(["w"])], waiting).remove).toEqual([]);
-    expect(sweep([sent(["w"])], step(waiting, { w: "waiting", x: "waiting" }, 20, "w")).remove).toEqual([
-      { title: "t", body: "b" },
-    ]);
+    expect(sweep([sent(["w"])], step(waiting, { w: "waiting", x: "waiting" }, 20, "w")).remove).toEqual(["n"]);
     expect(sweep([sent(["w"])], step(waiting, { w: "busy", x: "waiting" }, 20, null)).keep).toEqual([]);
-    expect(sweep([sent(["w"])], step(waiting, { x: "waiting" }, 20, null)).remove).toHaveLength(1);
+    expect(sweep([sent(["w"])], step(waiting, { x: "waiting" }, 20, null)).remove).toEqual(["n"]);
   });
 
-  it("keeps one for several Sessions until each is settled, and one whose words another still needs", () => {
+  it("keeps one for several Sessions until each is settled", () => {
     const seenW = step(waiting, { w: "waiting", x: "waiting" }, 20, "w");
     expect(sweep([sent(["w", "x"])], seenW).remove).toEqual([]);
-    const both = sweep([sent(["w"], "same"), { ...sent(["x"], "same"), at: 30 }], seenW);
-    expect(both.remove).toEqual([]);
-    expect(both.keep).toHaveLength(1);
+    const both = sweep([sent(["w"], "a"), sent(["x"], "b")], seenW);
+    expect(both.remove).toEqual(["a"]);
+    expect(both.keep).toEqual([sent(["x"], "b")]);
+  });
+
+  it("leaves a Session's new notification alone when it took the place of the settled one", () => {
+    // Done and told at 10; at 20 it asks something and, with no delay, is told again under the same id.
+    const asking = step(step(step({}, { w: "busy" }, 0, null), { w: "idle" }, 5, null), { w: "waiting" }, 20, null);
+    const again = record([sent(["w"], "session-w")], { id: "session-w", sessions: ["w"], at: 20 });
+    expect(again).toHaveLength(1);
+    expect(sweep(again, asking)).toEqual({ remove: [], keep: again });
   });
 });

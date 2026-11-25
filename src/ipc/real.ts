@@ -2,7 +2,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { open } from "@tauri-apps/plugin-dialog";
-import { onAction, sendNotification } from "@tauri-apps/plugin-notification";
 import type { InMsg, LsEntry } from "@/features/connect/protocol";
 import { parseHaaWorkers } from "@/features/haa/protocol";
 import type { Api } from "./api";
@@ -70,16 +69,10 @@ export function createRealApi(): Api {
     keepAliveMinutes: commands.keepAliveMinutes,
     setKeepAliveMinutes: commands.setKeepAliveMinutes,
     onKeepAlive: (cb) => events.keepAliveEvent.listen(({ payload }) => cb(payload)),
-    notify: async ({ title, body, url }) => sendNotification({ title, body, extra: { url } }),
-    removeNotification: async (title, body) => void (await commands.removeNotifications(title, body)),
-    onNotificationClick: async (cb) => {
-      // The shell brings the window back (`on_action` in lib.rs); the link says which Session to open.
-      const listener = await onAction((e) => {
-        const url = e.notification?.extra?.url;
-        if (e.actionId === "tap" && typeof url === "string") cb(url);
-      });
-      return () => void listener.unregister();
-    },
+    notify: async (n) => void (await commands.notify(n)),
+    removeNotifications: async (ids) => void (await commands.removeNotifications(ids)),
+    // The shell brings the window back (`notify::init` in lib.rs); the link says which Session to open.
+    onNotificationClick: (cb) => events.notificationClickEvent.listen(({ payload }) => cb(payload.url)),
     onCcrpcLine: (cb) =>
       events.ccrpcLineEvent.listen(({ payload }) => {
         let msg: InMsg;

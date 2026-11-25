@@ -18,7 +18,7 @@
 
 import type { InMsg, LsEntry, ModelInfo, QueueItem, RequestEvent, Task } from "@/features/connect/protocol";
 import type { Api, Unlisten } from "./api";
-import type { AnalyzerInfo, AppError, LanStatus, LaunchRule } from "./bindings";
+import type { AnalyzerInfo, AppError, LanStatus, LaunchRule, Notice } from "./bindings";
 
 /** A rejected IPC call as the backend rejects it (`AppError`, not an `Error`). */
 export const appError = (code: AppError["code"], message: string): AppError => ({ code, message });
@@ -150,9 +150,9 @@ export interface CcrpcProbe {
   guiLog: string[];
   badge: number;
   /** System notifications sent (`notify`), in order. */
-  notifications: { title: string; body: string; url: string }[];
-  /** Notifications taken out of Notification Center (`removeNotification`), in order. */
-  removedNotifications: { title: string; body: string }[];
+  notifications: Notice[];
+  /** The `id`s of the notifications taken out of Notification Center (`removeNotifications`), in order. */
+  removedNotifications: string[];
   /** The user clicks a notification with this link. */
   clickNotification: (url: string) => void;
   /** 「缓存保活」 as last saved (minutes, 0 = off). */
@@ -513,7 +513,7 @@ type CcrpcApi = Pick<
   | "pickDir"
   | "setBadge"
   | "notify"
-  | "removeNotification"
+  | "removeNotifications"
   | "keepAliveMinutes"
   | "setKeepAliveMinutes"
   | "onKeepAlive"
@@ -722,8 +722,8 @@ export function createMockCcrpc(): CcrpcApi {
     notify: async (n) => {
       probe.notifications.push(n);
     },
-    removeNotification: async (title, body) => {
-      probe.removedNotifications.push({ title, body });
+    removeNotifications: async (ids) => {
+      probe.removedNotifications.push(...ids);
     },
     onNotificationClick: (cb) => subscribe(notificationCbs, cb),
     keepAliveMinutes: async () => probe.keepAlive,
