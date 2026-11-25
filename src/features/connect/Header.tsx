@@ -17,7 +17,7 @@ import { errorText } from "@/lib/errors";
 import { formatTokens } from "@/lib/format";
 import { useUi } from "@/state/ui";
 import type { ConnState } from "./conn";
-import type { ModelInfo } from "./protocol";
+import type { ModelInfo } from "@/ipc/protocol/ccrpc";
 import { ModelPicker } from "./Model";
 import { resumeOffer } from "./resume";
 import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useConnect } from "./store";

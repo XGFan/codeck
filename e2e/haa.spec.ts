@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { HaaWorker } from "../src/features/haa/protocol";
+import type { HaaWorker } from "../src/ipc/protocol/haa";
 import { disableAutoConnect, pick } from "./connect-helpers";
 import { RICH_TITLE } from "./helpers";
 

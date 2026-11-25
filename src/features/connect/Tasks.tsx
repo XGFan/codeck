@@ -7,7 +7,7 @@ import { useUi } from "@/state/ui";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import type { Transcript } from "@/ipc/bindings";
 import type { ConnState } from "./conn";
-import type { Task } from "./protocol";
+import type { Task } from "@/ipc/protocol/ccrpc";
 import { errorKey, useConnect } from "./store";
 
 /** The kinds in the order they are listed; an unknown kind (a newer ccrpc) goes last under its own name. */

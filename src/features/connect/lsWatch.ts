@@ -1,4 +1,4 @@
-import type { LsEntry } from "./protocol";
+import type { LsEntry } from "@/ipc/protocol/ccrpc";
 
 /**
  * Keeps `ccrpc ls --json --watch` running while it is wanted (`setWanted`) and `canWatch` says so: started (it sends

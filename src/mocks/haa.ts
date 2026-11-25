@@ -1,4 +1,4 @@
-import type { HaaWorker } from "@/features/haa/protocol";
+import type { HaaWorker } from "@/ipc/protocol/haa";
 import type { Api, Unlisten } from "@/ipc/api";
 
 export interface HaaProbe {

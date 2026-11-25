@@ -2,8 +2,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { InMsg, LsEntry } from "@/features/connect/protocol";
-import { parseHaaWorkers } from "@/features/haa/protocol";
+import type { InMsg, LsEntry } from "@/ipc/protocol/ccrpc";
+import { parseHaaWorkers } from "@/ipc/protocol/haa";
 import type { Api } from "./api";
 import { commands, events } from "./bindings";
 

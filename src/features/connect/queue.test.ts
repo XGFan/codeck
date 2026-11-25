@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { token } from "./imageTokens";
-import type { QueueItem } from "./protocol";
+import type { QueueItem } from "@/ipc/protocol/ccrpc";
 import { queueText, rememberImages, takenBack } from "./queue";
 
 describe("queueText", () => {

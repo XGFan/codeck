@@ -3,7 +3,7 @@
 
 import { useEffect } from "react";
 import type { ConnState } from "@/features/connect/conn";
-import type { LsEntry } from "@/features/connect/protocol";
+import type { LsEntry } from "@/ipc/protocol/ccrpc";
 import { useConnect } from "@/features/connect/store";
 import { termAvailable, termBridge } from "./bridge";
 import { termStatus, type TermStatus } from "./status";

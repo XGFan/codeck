@@ -1,7 +1,7 @@
 // Rewind in a Connected Session (ccrpc `rewind` / `answer_rewind`): which prompts can be rewound to, and the words
 // of the confirm card and the transcript's marker.
 import type { BranchPoint, Node } from "@/ipc/bindings";
-import type { RewindCode, RewindOption } from "./protocol";
+import type { RewindCode, RewindOption } from "@/ipc/protocol/ccrpc";
 
 /** The card's buttons, in this order (only those the confirm page offers). */
 export const REWIND_LABELS: Record<RewindOption, string> = {

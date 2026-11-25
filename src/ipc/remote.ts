@@ -1,4 +1,4 @@
-import type { InMsg, LsEntry } from "@/features/connect/protocol";
+import type { InMsg, LsEntry } from "@/ipc/protocol/ccrpc";
 import type { Api, Unlisten } from "./api";
 
 declare global {

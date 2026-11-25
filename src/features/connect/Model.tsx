@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import type { ConnState } from "./conn";
-import type { ModelInfo } from "./protocol";
+import type { ModelInfo } from "@/ipc/protocol/ccrpc";
 import { errorKey, isLive, useConnect } from "./store";
 
 const FAMILIES = ["opus", "fable", "sonnet", "haiku"] as const;

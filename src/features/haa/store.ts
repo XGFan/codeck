@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, type Unlisten } from "@/ipc";
 import { errorText } from "@/lib/errors";
-import type { HaaWorker } from "./protocol";
+import type { HaaWorker } from "@/ipc/protocol/haa";
 
 export interface HaaWatchDeps {
   watch: (on: boolean, id: number) => Promise<void>;

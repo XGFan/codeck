@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseHaaWorkers } from "./protocol";
+import { parseHaaWorkers } from "./haa";
 
 describe("parseHaaWorkers", () => {
   it("parses a valid array of workers with full and minimal fields", () => {

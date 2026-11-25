@@ -10,7 +10,7 @@ import type {
   Task,
   TurnEndEvent,
   Waiting,
-} from "./protocol";
+} from "@/ipc/protocol/ccrpc";
 
 const fold = (msgs: InMsg[], s: ConnState = initial("c1", "h1")) => msgs.reduce(apply, s);
 const st = (state: StateName, waiting: Waiting | null = null): InMsg => ({ type: "state", state, waiting });

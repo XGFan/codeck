@@ -1,4 +1,4 @@
-import type { InMsg } from "./protocol";
+import type { InMsg } from "@/ipc/protocol/ccrpc";
 
 /** One thing ccrpc said on a connection: a line, or its exit. */
 export type Early = { kind: "line"; msg: InMsg } | { kind: "exit"; code: number | null; stderr: string };

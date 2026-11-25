@@ -1,4 +1,4 @@
-import type { AskQuestion, PermissionRequestEvent, ResponseMsg } from "./protocol";
+import type { AskQuestion, PermissionRequestEvent, ResponseMsg } from "@/ipc/protocol/ccrpc";
 
 /** What to say when ccrpc refuses an answer. */
 export function answerError(error: ResponseMsg["error"]): string {

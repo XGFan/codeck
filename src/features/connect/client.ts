@@ -3,7 +3,7 @@
 import type { Api } from "@/ipc";
 import { errorText } from "@/lib/errors";
 import { createEarlyBuffer, type Early } from "./early";
-import type { ResponseMsg } from "./protocol";
+import type { ResponseMsg } from "@/ipc/protocol/ccrpc";
 
 export interface Timers {
   setTimeout(f: () => void, ms: number): unknown;

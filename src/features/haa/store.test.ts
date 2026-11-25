@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HaaWorker } from "./protocol";
+import type { HaaWorker } from "@/ipc/protocol/haa";
 import { createHaaWatch } from "./store";
 
 type Deferred<T = void> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void };

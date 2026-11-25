@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HaaWorker } from "./protocol";
+import type { HaaWorker } from "@/ipc/protocol/haa";
 import {
   formatCollapsedSummary,
   formatTaskText,

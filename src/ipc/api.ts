@@ -34,8 +34,8 @@ import type {
   Transcript,
   TranscriptRequest,
 } from "./bindings";
-import type { InMsg, LsEntry } from "@/features/connect/protocol";
-import type { HaaWorker } from "@/features/haa/protocol";
+import type { InMsg, LsEntry } from "@/ipc/protocol/ccrpc";
+import type { HaaWorker } from "@/ipc/protocol/haa";
 
 export type Unlisten = () => void;
 

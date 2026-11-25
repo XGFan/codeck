@@ -1,6 +1,6 @@
 // The Connect store against a fake backend: early events, Resume's failure, replacing a connection.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { InMsg, TurnEndEvent } from "./protocol";
+import type { InMsg, TurnEndEvent } from "@/ipc/protocol/ccrpc";
 
 type Fn = (...a: never[]) => unknown;
 const h = vi.hoisted(() => ({ api: {} as Record<string, Fn> }));

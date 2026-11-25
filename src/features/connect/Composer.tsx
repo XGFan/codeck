@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, usePathCompletions, useSlashCommands } from "@/queries";
 import type { ConnState } from "./conn";
-import type { FeedbackDraft, QueueItem } from "./protocol";
+import type { FeedbackDraft, QueueItem } from "@/ipc/protocol/ccrpc";
 import { applyPath, commandOf, matchCommands, pathAt, typedCommand, typedName } from "./slash";
 import { ConnectFooter } from "./Header";
 import { EMPTY_DRAFT, isDraft, type Draft } from "./drafts";

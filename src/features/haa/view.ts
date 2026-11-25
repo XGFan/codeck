@@ -1,5 +1,5 @@
 import { formatDuration } from "@/lib/format";
-import type { HaaWorker, HaaWorkerState } from "./protocol";
+import type { HaaWorker, HaaWorkerState } from "@/ipc/protocol/haa";
 
 export const STATE_LABEL: Record<HaaWorkerState, string> = {
   running: "运行中",

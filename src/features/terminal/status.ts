@@ -1,7 +1,7 @@
 // What a terminal window shows about its Session, decided in the main window (which keeps the Connect state).
 
 import type { ConnState } from "@/features/connect/conn";
-import type { LsEntry } from "@/features/connect/protocol";
+import type { LsEntry } from "@/ipc/protocol/ccrpc";
 import { isLive } from "@/features/connect/store";
 
 /**

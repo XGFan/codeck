@@ -15,7 +15,7 @@ import type {
   Task,
   TurnEndEvent,
   Waiting,
-} from "./protocol";
+} from "@/ipc/protocol/ccrpc";
 
 /** Something waiting for an answer, as a card. */
 export type Request = RequestEvent;

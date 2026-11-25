@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLsWatch } from "./lsWatch";
-import type { LsEntry } from "./protocol";
+import type { LsEntry } from "@/ipc/protocol/ccrpc";
 
 const entry = (holder_id: string) => ({ holder_id }) as LsEntry;
 

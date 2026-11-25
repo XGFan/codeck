@@ -29,7 +29,7 @@ import type {
   QuestionEvent,
   RewindOption,
   RewindRequest,
-} from "./protocol";
+} from "@/ipc/protocol/ccrpc";
 import { NoticeCard } from "./Notice";
 import { QuestionForm } from "./QuestionForm";
 import { codeLine, REWIND_DESC, REWIND_LABELS, REWIND_ORDER, REWIND_WARNING } from "./rewind";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { answerError, otherChosen, permissionLabel, questionAnswers, togglePick } from "./answers";
-import type { AskQuestion } from "./protocol";
+import type { AskQuestion } from "@/ipc/protocol/ccrpc";
 
 describe("permissionLabel", () => {
   const opts = (allow: string, deny: string) => [

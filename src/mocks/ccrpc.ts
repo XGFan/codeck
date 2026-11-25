@@ -16,7 +16,7 @@
 // `__cvCcrpc.list(name)`. `__cvCcrpc.remoteConn(name)` and `remoteDisconnect(conn)` stand for an iPhone on the LAN; what
 // has to be there before the app starts (`snapshot`, `lan`) comes from an init script's `window.__cvCcrpcPreset`.
 
-import type { InMsg, LsEntry, ModelInfo, QueueItem, RequestEvent, Task } from "@/features/connect/protocol";
+import type { InMsg, LsEntry, ModelInfo, QueueItem, RequestEvent, Task } from "@/ipc/protocol/ccrpc";
 import type { Api, Unlisten } from "@/ipc/api";
 import type { AnalyzerInfo, AppError, LanStatus, LaunchRule, Notice } from "@/ipc/bindings";
 

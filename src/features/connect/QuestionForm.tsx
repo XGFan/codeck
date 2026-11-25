@@ -6,7 +6,7 @@ import { isComposingKey } from "@/lib/hotkeys";
 import { otherChosen, questionAnswers, togglePick } from "./answers";
 import type { ConnState } from "./conn";
 import { hasPreview, OptionPreview } from "./OptionPreview";
-import type { AskQuestion, QuestionEvent } from "./protocol";
+import type { AskQuestion, QuestionEvent } from "@/ipc/protocol/ccrpc";
 import { useAnswer } from "./useAnswer";
 
 /** The questions of an AskUserQuestion to pick and submit, styled as the transcript's 「向你提问」 card. */

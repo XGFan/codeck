@@ -16,7 +16,7 @@ import {
   type ResponseMsg,
   type RewindOption,
   type RewindRequest,
-} from "./protocol";
+} from "@/ipc/protocol/ccrpc";
 import { errorText, isNotFound } from "@/lib/errors";
 import { ALL_SESSIONS } from "@/queries/hooks";
 

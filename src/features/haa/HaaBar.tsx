@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
 import { useUi } from "@/state/ui";
 import { HAA_KEY } from "@/features/transcript/keys";
-import type { HaaWorker, HaaWorkerState } from "./protocol";
+import type { HaaWorker, HaaWorkerState } from "@/ipc/protocol/haa";
 import { useHaa } from "./store";
 import {
   formatCollapsedSummary,

@@ -19,7 +19,7 @@ import { haaAvailable, HaaBar, HaaRoot, useHaa } from "@/features/haa";
 import type { LiveStatus } from "@/ipc/bindings";
 import { Composer } from "./Composer";
 import type { ConnState } from "./conn";
-import type { QuestionEvent, TurnEndEvent } from "./protocol";
+import type { QuestionEvent, TurnEndEvent } from "@/ipc/protocol/ccrpc";
 import { useNativeConnect } from "./native";
 import { ErrorNotice, NoticeCard } from "./Notice";
 import { arrived, PENDING_MAX_MS } from "./pending";

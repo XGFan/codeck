@@ -1,6 +1,6 @@
 import type { Draft, DraftImage } from "./drafts";
 import { token } from "./imageTokens";
-import type { QueueItem } from "./protocol";
+import type { QueueItem } from "@/ipc/protocol/ccrpc";
 
 const firstLine = (s: string) =>
   s
