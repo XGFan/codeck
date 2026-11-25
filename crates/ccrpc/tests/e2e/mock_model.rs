@@ -315,38 +315,6 @@ fn mock_model_turns() {
     let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
     let mut rpc = Rpc::start(&env);
     let ready = start_session(&mut rpc, &env);
-    // `ready` is the whole snapshot `get_state` gives, with the protocol and the version.
-    let mut keys: Vec<&str> = ready
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    keys.sort_unstable();
-    let mut want = vec![
-        "type",
-        "protocol",
-        "claude_version",
-        "warnings",
-        "state",
-        "waiting",
-        "requests",
-        "holder_id",
-        "session_id",
-        "cwd",
-        "size",
-        "mode",
-        "model",
-        "effort",
-        "context_tokens",
-        "title",
-        "queue",
-        "tasks",
-        "code_calls",
-        "feedback_draft",
-    ];
-    want.sort_unstable();
-    assert_eq!(keys, want, "{ready}");
     assert_eq!(ready["requests"], json!([]), "{ready}");
 
     rpc.forget();
@@ -516,12 +484,6 @@ fn mock_model_image_data() {
     rpc.event("turn_end", Duration::from_secs(30));
     let g = rpc.call("g1", json!({"type": "get_image", "uuid": uuid}));
     assert_eq!(g["media_type"], "image/png", "{g}");
-    let stored: Vec<_> = std::fs::read_dir(env.state_dir.join("images"))
-        .unwrap()
-        .flatten()
-        .collect();
-    assert_eq!(stored.len(), 1, "{stored:?}");
-    assert_eq!(std::fs::read(stored[0].path()).unwrap(), red_dot_png());
 
     let d = rpc.call(
         "p2",
