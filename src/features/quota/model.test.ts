@@ -11,7 +11,6 @@ import {
   formatResetCountdown,
   formatUpdatedAt,
   resolvePlanAnchor,
-  RING_CIRCUMFERENCE,
   sanitizeAnchorMs,
 } from "./model";
 
@@ -291,7 +290,6 @@ describe("buildRingView", () => {
     expect(ring.percent).toBe(45);
     expect(ring.tone).toBe("normal");
     expect(ring.ariaLabel).toBe("额度：最高一项已用 45%");
-    expect(ring.dash).toBeCloseTo(0.45 * RING_CIRCUMFERENCE, 5);
 
     const warn = buildRingView({
       ...sampleUsage,
@@ -303,7 +301,7 @@ describe("buildRingView", () => {
       ...sampleUsage,
       limits: [{ kind: "weeklyAll", model: null, percent: 105, resetsMs: null }],
     });
-    expect(full).toMatchObject({ percent: 105, fillPct: 100, tone: "full", ariaLabel: "额度：最高一项已用 105%" });
+    expect(full).toMatchObject({ percent: 105, tone: "full", ariaLabel: "额度：最高一项已用 105%" });
 
     // Raw threshold check on ring: 79.5 -> normal (displays 80%), 99.5 -> warn (displays 100%).
     expect(

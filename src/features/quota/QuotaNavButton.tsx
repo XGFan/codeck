@@ -9,10 +9,11 @@ import { useMinuteNow, usePlanUsage } from "./hooks";
 import { buildMeterView, buildRingView, formatPlanBadge, formatUpdatedAt, type QuotaTone } from "./model";
 import { QuotaMeter } from "./QuotaMeter";
 
-const RING_STROKE: Record<QuotaTone, string> = {
-  normal: "stroke-accent",
-  warn: "stroke-live-waiting",
-  full: "stroke-error",
+/** The stats icon takes the tone's colour only when a limit is nearly or fully used. */
+const ICON_TONE: Record<QuotaTone, string> = {
+  normal: "",
+  warn: "text-live-waiting",
+  full: "text-error",
 };
 
 function QuotaPopoverBody({
@@ -106,21 +107,7 @@ export function QuotaNavButton({ className, side = "top" }: { className?: string
           title={ring.ariaLabel}
           className={cn(TOOL_CLASS, "data-[state=open]:bg-selection", className)}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <circle cx="12" cy="12" r="8.5" className="stroke-text/18" strokeWidth="3" />
-            {ring.fillPct > 0 && (
-              <circle
-                cx="12"
-                cy="12"
-                r="8.5"
-                className={RING_STROKE[ring.tone]}
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeDasharray={`${ring.dash.toFixed(1)} ${ring.circumference.toFixed(1)}`}
-                transform="rotate(-90 12 12)"
-              />
-            )}
-          </svg>
+          <ChartColumn size={15} strokeWidth={1.6} aria-hidden className={ICON_TONE[ring.tone]} />
         </button>
       </Popover.Trigger>
       <Popover.Portal>

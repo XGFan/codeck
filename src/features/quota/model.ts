@@ -10,8 +10,6 @@ export const MAX_ANCHOR_MS = Date.UTC(2100, 0, 1);
 
 const FIVE_HOURS_MS = 5 * 3_600_000;
 const AHEAD_THRESHOLD_PCT = 3;
-const RING_RADIUS = 8.5;
-export const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export type PlanState =
   | { kind: "loading" }
@@ -44,10 +42,7 @@ export interface MeterView {
 
 export interface RingView {
   percent: number;
-  fillPct: number;
   tone: QuotaTone;
-  dash: number;
-  circumference: number;
   ariaLabel: string;
 }
 
@@ -190,18 +185,14 @@ export function buildMeterView(limit: PlanLimit, nowMs: number, variant: "strip"
   };
 }
 
-/** Builds the sidebar ring's display values from the highest used limit. */
+/** What the sidebar's quota button says and how it is toned: the highest used limit. */
 export function buildRingView(usage: PlanUsage): RingView {
   const maxRaw = usage.limits.reduce((max, l) => (Number.isFinite(l.percent) && l.percent > max ? l.percent : max), 0);
   const percent = Math.max(0, Math.round(maxRaw));
-  const fillPct = Math.min(100, percent);
   const tone = quotaTone(maxRaw);
   return {
     percent,
-    fillPct,
     tone,
-    dash: (fillPct / 100) * RING_CIRCUMFERENCE,
-    circumference: RING_CIRCUMFERENCE,
     ariaLabel: `额度：最高一项已用 ${percent}%`,
   };
 }
