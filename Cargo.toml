@@ -3,7 +3,6 @@ members = [
     "crates/transcript",
     "crates/codeck-core",
     "crates/codeck-host",
-    "crates/codeck-daemon",
     "crates/ccrpc",
     "crates/codeck-cli",
     "crates/codeck-term",

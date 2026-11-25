@@ -9,7 +9,7 @@ CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude
 | 目录 | 内容 | 说明 |
 |---|---|---|
 | `crates/transcript` | 解析库：读 Claude Code 的数据（transcript、进程文件、价格），组装成显示模型；无 SQLite、无 tauri | 本文件「架构」 |
-| `crates/codeck-core`、`crates/codeck-host`、`crates/codeck-daemon`、`src-tauri`、`src` | CoDeck 本体（桌面与 daemon） | 本文件 |
+| `crates/codeck-core`、`crates/codeck-host`、`src-tauri`、`src` | CoDeck 本体（桌面与 daemon） | 本文件 |
 | `ios` | iPhone App（SwiftUI，xcodegen） | 本文件「ios」 |
 | `crates/ccrpc` | ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code | 见 [crates/ccrpc/CLAUDE.md](crates/ccrpc/CLAUDE.md) |
 | `crates/codeck-cli` | 命令行 `codeck`：给 AI 查询 Session 与新建 Session（ADR-0013） | 本文件「架构」 |
@@ -51,7 +51,7 @@ pnpm tauri build --bundles app --target aarch64-apple-darwin
 
 cargo run -p codeck-cli -- sessions --limit 5   # 命令行（只读打开桌面的索引）；用法见 crates/codeck-cli/SKILL.md
 pnpm build:web                 # iPhone 用的只读 Transcript 页 → dist-web/（vite --mode host）
-cargo run -p codeck-daemon -- --listen 127.0.0.1 --state-dir /tmp/h --web-dir dist-web   # 本机试 daemon（别用桌面的状态目录）
+cargo run -p codeck-host -- --listen 127.0.0.1 --state-dir /tmp/h --web-dir dist-web   # 本机试 daemon（别用桌面的状态目录）
 pnpm test:e2e:host             # 真实后端 E2E：起 codeck-host 读 fixture 副本
 cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDeck -destination 'platform=iOS Simulator,name=iPhone 15 Pro Max' test
 ```
@@ -68,7 +68,7 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 
 ## 架构
 
-数据单向流动：`crates/transcript`（解析）→ `crates/codeck-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `crates/codeck-host`（运行时：worker、监听、设置、ccrpc、Connect 状态；无 tauri 依赖）→ 外壳：`src-tauri`（桌面，进程内调用）或 `crates/codeck-daemon`（HTTP + WebSocket）→ `src`（React）/ `ios`（SwiftUI）。ccrpc 也依赖 `crates/transcript`，不依赖 codeck-core。
+数据单向流动：`crates/transcript`（解析）→ `crates/codeck-core`（索引、搜索、统计；纯 Rust，无 tauri 依赖）→ `crates/codeck-host`（运行时：worker、监听、设置、ccrpc、Connect 状态；无 tauri 依赖）→ 外壳：`src-tauri`（桌面，进程内调用）或 daemon（`crates/codeck-host/src/bin/codeck-host.rs`，HTTP + WebSocket）→ `src`（React）/ `ios`（SwiftUI）。ccrpc 也依赖 `crates/transcript`，不依赖 codeck-core。
 
 ### transcript 与 codeck-core
 
@@ -84,12 +84,12 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 - Cost：`pricing.rs` 按 ccusage 的算法给单条消息定价，通过 SQLite 函数 `cv_cost` 写入 `messages.cost`。`writer::rebill` 实现去重：同一 `message.id` 出现在多个 Session 时只把最早 Session 那份标为 `billed`，Session 的 token / 金额列和统计只累加 billed 的消息。每次同步结束时，对变化的 Session 及与它们共享消息的 Session 重算（`engine/sync/write.rs` 的 `rebill_changed`）。价格表在 `Engine` 里，联网下载在 codeck-host（`prices.rs`，ADR-0005）。
 - 统计（`stats.rs`）：「请求」是计费且带 token 的 assistant 消息（`billed_tokens_sql`，含 Subagent）。`daily`（按天按模型）总给；`hourly` 只在范围上下界都有且不超过 8 天时给；`hourly_models`（每小时按模型）与 `sessions`（各 Session 的 Cost 与时段，相邻请求相隔不超过 10 分钟连成一段）只在不超过 26 小时（单日）时给。下钻（`Drill::Day` / `Model`，`index/reader.rs`）与统计同一口径；被接替的 Session 留下的计费行，下钻与 `sessions` 都沿 `continued_in_id` 归到可见的续接后继。
 
-### codeck-host、src-tauri 与 codeck-daemon
+### codeck-host（含 daemon）与 src-tauri
 
 - `crates/codeck-host`：`Host::start(HostConfig, 事件 sink)` 启动一切；路径（缓存、settings.json、ccrpc 日志、图片）由 `HostConfig` 注入，`HostConfig::desktop()` 即桌面的原路径。事件是 `HostEvent`（名字与载荷同 tauri 事件，src-tauri 有测试对照）。
 - **命令表只定义一次**：`methods.rs` 的 `for_each_method!` 列出每个命令（`remote` 或 `local`、参数、返回类型、文档注释），codeck-host 由它生成 `dispatch`，src-tauri 的 `commands.rs` 由它生成 tauri 命令（名字、参数、顺序决定 bindings）。新增命令：在 `Host` 上写同名 async 方法（`commands.rs` / `ccrpc/mod.rs`，阻塞工作经 `tokio::task::spawn_blocking`，错误转 `AppError`，`message` 是面向用户的中文文案），再加进表里；`local` 只给桌面（设置、数据根、Finder 等），daemon 只暴露 `remote`。
 - `src-tauri`：只剩外壳——生成命令、把 `HostEvent` 转成 tauri 事件、插件与窗口；退出时 `host.shutdown()`；「局域网访问」打开时关窗只隐藏（ADR-0012）。`codeck://` 链接（ADR-0014，deep-link 插件）：外壳只负责把窗口带到前面，解析与打开在前端（`lib/deepLink.ts`、`features/deep-link`，经 `Api.onOpenUrl`）；链接只导航，不加有副作用的链接。
-- `crates/codeck-daemon`（可执行文件 `codeck-host`）只是命令行外壳；HTTP 服务在 `codeck-host` 的 `lan/`，daemon 一直提供，桌面在「局域网访问」打开时提供（`lan/mod.rs` 的 `LanService`，开发时 `CODECK_LAN_PORT` 可换端口）。axum；`/health`（`apiVersion`）、`POST /v1/rpc {method, args}`（args 的键同 tauri invoke 的 camelCase）、`/v1/events`（WebSocket，先发 `hello`，不保留历史，客户端每次连上都整体重新同步）、`/web/*`（`--web-dir`，即 `dist-web`）。默认只监听局域网网卡（按名字白名单：`en*`、`eth*`、`wl*`）的私网 IPv4，每 5 秒按当前地址增减监听（`--listen` 指定时不跟随）；校验来源子网与 Host 头（只认监听的 IP，防 DNS 重绑定），`/v1/rpc` 只收 `application/json`，拒绝 `Origin: null` 与不认识的 Origin，`/web/` 带 CSP（`net.rs`、`server.rs`）；没有鉴权（ADR-0011）。状态目录与桌面分开，开发时也别指向桌面的目录。
+- daemon 是 `codeck-host` 包自己的可执行文件（`src/bin/codeck-host.rs`，`cargo build -p codeck-host`），只是命令行外壳；HTTP 服务在库的 `lan/`，daemon 一直提供，桌面在「局域网访问」打开时提供（`lan/mod.rs` 的 `LanService`，开发时 `CODECK_LAN_PORT` 可换端口）。axum；`/health`（`apiVersion`）、`POST /v1/rpc {method, args}`（args 的键同 tauri invoke 的 camelCase）、`/v1/events`（WebSocket，先发 `hello`，不保留历史，客户端每次连上都整体重新同步）、`/web/*`（`--web-dir`，即 `dist-web`）。默认只监听局域网网卡（按名字白名单：`en*`、`eth*`、`wl*`）的私网 IPv4，每 5 秒按当前地址增减监听（`--listen` 指定时不跟随）；校验来源子网与 Host 头（只认监听的 IP，防 DNS 重绑定），`/v1/rpc` 只收 `application/json`，拒绝 `Origin: null` 与不认识的 Origin，`/web/` 带 CSP（`net.rs`、`server.rs`）；没有鉴权（ADR-0011）。状态目录与桌面分开，开发时也别指向桌面的目录。
 - Connect 状态（`HostConfig.track_connect`，daemon 与桌面都开）：`connect/state.rs` 把 ccrpc 的行归约成 `ConnState`（`src/features/connect/state/conn.ts` 规则的 Rust 版，改一边要对照另一边；Code Mode 的 `code_call` / `code_call_end` 两边都折叠成 `codeCalls`，Host 只留最近 50 个、序列化超过 4KB 的返回值不留，iPhone 经 `setConnect` 把它交给对话记录页），`connect/mod.rs` 的 `ConnectHub` 推 `connect-state-event` / `connect-removed-event`；折叠只跟 ccrpc 的事件走（协议 6）：请求事件按 `request_id` 增改、`request_end` 删除、Session 结束或更换时清空，排队项与后台任务照 `queue` / `tasks` 事件原样存，Host 不轮询、也不折叠命令的响应；远程方法 `connect_states` / `ccrpc_ls` / `connect_shared` / `connect_command` 不在命令表里（不是 tauri 命令）。格式由 `tests/conn_state_golden.rs` 与 `ios/Tests/Fixtures/conn-state.json` 钉住。`ccrpc ls --watch` 的常驻由 `keep_ls_watch` 决定：daemon 启动即开，桌面在「局域网访问」打开期间才开，这期间前端的启停不动它、只补发缓存的列表。桌面窗口的 Connect 状态仍由前端自己折叠（ADR-0012）：只有远程发起或关闭的连接才发 `CcrpcRemoteConn` / `CcrpcClosing` 让前端认领或放手，前端重新载入时用 `connect_snapshot` 取回已有的连接。
 - `worker.rs`：单个后台 worker 通过 channel 消费 `Job`（FullScan / Fs 批次（排队中的合并成一个）/ TextBacklog / Rebuild / SetRoot / SwapRoot（切换数据根：在两个任务之间换 Engine，命令等它回复）/ Rescan / RefreshPrices / ApplyPrices）。Live 轮询不排进 worker：计时线程每 3 秒直接读进程文件，免得排在索引后面、又打断全文积压。全文索引积压 `TextBacklog` 在空闲时运行，任何其他任务入队都会让它在当前事务提交后让位——改调度逻辑时注意别造成互相重新入队的活锁（曾出现过）。
 - `keepalive.rs`：缓存保活。`cv-keepalive` 线程每 30 秒用 `Engine::live_now`（不动 `poll_live` 比较用的快照）看 Live Session，空闲满设定时长、缓存还没过 1 小时的（`due`，纯函数）先 `ccrpc ls --json` 确认在 clay 里、有插件、空闲，再发 `/btw ping, just say pong.`：有连接的经 `ConnectHub::command`（等答案用 `observe` 看行），没有的临时 `ccrpc attach`。这条 `/btw` 按问题开头的 `ping, just say pong` 认出（Rust 的 `keepalive::MARKER` 与 `state/conn.ts` 的 `isKeepAlive` 要一致）：Host 的 `ConnState` 与前端 `state/conn.ts` 都不当作请求；前后发 `KeepAlive` 事件（不转发给 LAN），前端 `features/attention` 在这期间不把它的等待作答当真。

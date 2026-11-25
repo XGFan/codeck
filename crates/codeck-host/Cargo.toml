@@ -1,6 +1,6 @@
 [package]
 name = "codeck-host"
-description = "CoDeck Host: the runtime around codeck_core::Engine (worker, watcher, settings, ccrpc) and the method table, without tauri."
+description = "CoDeck Host: the runtime around codeck_core::Engine (worker, watcher, settings, ccrpc) and the method table, without tauri; and the headless daemon `codeck-host` that serves it over HTTP + WebSocket on the LAN (ADR-0011)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,8 +22,11 @@ base64.workspace = true
 chrono.workspace = true
 libc.workspace = true
 axum.workspace = true
-tokio = { workspace = true, features = ["sync", "time", "net", "macros", "rt"] }
+tokio = { workspace = true, features = ["sync", "time", "net", "macros", "rt", "rt-multi-thread", "signal"] }
 tower-http = { workspace = true, features = ["fs", "set-header"] }
+# Only the daemon (src/bin/codeck-host.rs) uses these two.
+tracing-subscriber.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

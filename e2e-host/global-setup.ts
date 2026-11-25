@@ -24,7 +24,7 @@ async function waitHealth(child: ChildProcess) {
 }
 
 export default async function globalSetup() {
-  execSync("cargo build -p codeck-daemon", { cwd: root, stdio: "inherit", timeout: 20 * 60_000 });
+  execSync("cargo build -p codeck-host", { cwd: root, stdio: "inherit", timeout: 20 * 60_000 });
   execSync("pnpm build:web", { cwd: root, stdio: "inherit", timeout: 5 * 60_000 });
 
   const tmp = mkdtempSync(path.join(tmpdir(), "codeck-e2e-host-"));

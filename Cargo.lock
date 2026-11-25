@@ -681,18 +681,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codeck-daemon"
-version = "0.1.0"
-dependencies = [
- "codeck-core",
- "codeck-host",
- "dirs",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "codeck-host"
 version = "0.1.0"
 dependencies = [
@@ -701,6 +689,7 @@ dependencies = [
  "chrono",
  "codeck-core",
  "crossbeam-channel",
+ "dirs",
  "futures-util",
  "libc",
  "notify",
@@ -714,6 +703,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "ureq",
 ]
 

@@ -122,7 +122,7 @@ Linux 或不想开桌面版时，启动 daemon（与桌面版的索引、设置�
 
 ```sh
 pnpm build:web                                   # Transcript 页 → dist-web/
-cargo build --release -p codeck-daemon           # → target/release/codeck-host
+cargo build --release -p codeck-host             # → target/release/codeck-host
 target/release/codeck-host --web-dir dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
 ```
 
@@ -184,10 +184,9 @@ crates/transcript/ 解析库：容错解析、对话组装、组装用的显示�
 crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）、搜索、统计、诊断；应用层的 IPC 类型
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
 crates/codeck-cli/    codeck 命令行（可执行文件 codeck）：给 AI 用，查询 Session，新建 Session（ADR-0013）
-crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态、局域网 HTTP + WebSocket 服务（命令表的 remote 部分与 Transcript 页）；命令表只定义一次
-crates/codeck-daemon/ headless daemon（可执行文件 codeck-host）：命令行外壳，一直提供上述服务
+crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态、局域网 HTTP + WebSocket 服务（命令表的 remote 部分与 Transcript 页）；命令表只定义一次。可执行文件 codeck-host（src/bin/）是 headless daemon 的命令行外壳，一直提供上述服务
 src-tauri/        Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件；局域网访问打开时也提供上述服务
-src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / mock / remote 三种实现）；transcript.html 是给 iPhone 的只读 Transcript 页
+src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / remote 两种实现与 ccrpc、haa 的协议类型），mocks/ 为 mock 实现与数据；transcript.html 是给 iPhone 的只读 Transcript 页
 ios/              iPhone App（SwiftUI；xcodegen 的 project.yml）
 e2e/              Playwright 用例（mock）；e2e-host/ 为真实后端用例
 ```
