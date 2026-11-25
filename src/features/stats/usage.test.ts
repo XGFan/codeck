@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { DailyModelTokens } from "@/ipc/bindings";
-import { buildUsageSeries, chooseUsageBucket, elapsedDays, inputTotals, modelMetricBreakdown, mondayOf } from "./usage";
+import type { DailyModelTokens, HourModelUsage } from "@/ipc/bindings";
+import {
+  buildHourlyUsageSeries,
+  buildUsageSeries,
+  chooseUsageBucket,
+  elapsedDays,
+  inputTotals,
+  modelMetricBreakdown,
+  mondayOf,
+} from "./usage";
 
 const DAY_MS = 86_400_000;
 
@@ -129,5 +137,52 @@ describe("modelMetricBreakdown & inputTotals", () => {
       { family: "fable", value: 800, shareExact: 80, sharePct: 80, models: ["claude-fable-5-1"] },
       { family: "opus", value: 200, shareExact: 20, sharePct: 20, models: ["claude-opus-4-7", "claude-opus-4-8"] },
     ]);
+  });
+});
+
+describe("buildHourlyUsageSeries", () => {
+  const dayStart = new Date("2026-11-24T00:00:00").getTime();
+  const H = 3_600_000;
+  const hm = (hourOffset: number, model: string, opts: Partial<HourModelUsage> = {}): HourModelUsage => ({
+    startMs: dayStart + hourOffset * H,
+    model,
+    input: opts.input ?? 100,
+    output: opts.output ?? 50,
+    cacheRead: opts.cacheRead ?? 1000,
+    cacheCreation: opts.cacheCreation ?? 200,
+    cost: opts.cost ?? 1,
+    requests: opts.requests ?? 2,
+  });
+
+  it("按 24 个钟点聚合（1h），横轴只标 0/6/12/18 时，支持指标切换并忽略非当天数据", () => {
+    const rows: HourModelUsage[] = [
+      hm(2, "claude-fable-5-1", { cost: 12, input: 100, cacheRead: 400, cacheCreation: 50, output: 300 }),
+      hm(2, "claude-opus-4-7", { cost: 8, input: 200, cacheRead: 100, cacheCreation: 0, output: 150 }),
+      hm(14, "claude-opus-4-8", { cost: 5, input: 10, cacheRead: 90, cacheCreation: 20, output: 40 }),
+      hm(-1, "claude-sonnet-5-5", { cost: 99 }), // previous day -> ignored
+      hm(24, "claude-haiku-4-5", { cost: 88 }), // next day -> ignored
+    ];
+
+    const byCost = buildHourlyUsageSeries(rows, "cost", dayStart);
+    expect(byCost.bucket).toBe("1h");
+    expect(byCost.items).toHaveLength(24);
+    expect(byCost.families).toEqual(["fable", "opus"]);
+    expect(byCost.items.map((it) => it.axisLabel).filter(Boolean)).toEqual(["0 时", "6 时", "12 时", "18 时"]);
+    expect(byCost.items[0]!.axisLabel).toBe("0 时");
+    expect(byCost.items[6]!.axisLabel).toBe("6 时");
+    expect(byCost.items[12]!.axisLabel).toBe("12 时");
+    expect(byCost.items[18]!.axisLabel).toBe("18 时");
+    expect(byCost.items[14]!.title).toBe("14 时");
+    expect(byCost.items[2]!.byFamily).toMatchObject({ fable: 12, opus: 8 });
+    expect(byCost.items[14]!.byFamily).toMatchObject({ fable: 0, opus: 5 });
+    expect(byCost.items[5]!.byFamily.opus).toBe(0);
+
+    const byInput = buildHourlyUsageSeries(rows, "input", dayStart);
+    expect(byInput.items[2]!.byFamily).toMatchObject({ fable: 550, opus: 300 });
+    expect(byInput.items[14]!.byFamily.opus).toBe(120);
+
+    const byOutput = buildHourlyUsageSeries(rows, "output", dayStart);
+    expect(byOutput.items[2]!.byFamily).toMatchObject({ fable: 300, opus: 150 });
+    expect(byOutput.items[14]!.byFamily.opus).toBe(40);
   });
 });

@@ -394,6 +394,20 @@ export type HaaWorkersEvent = {
 	workers: string,
 };
 
+/**  Billed per-model tokens, cost, and requests in one local hour. */
+export type HourModelUsage = {
+	startMs: number,
+	model: string,
+	input: number,
+	output: number,
+	cacheRead: number,
+	cacheCreation: number,
+	/**  API cost in USD (0 for a model without a price). */
+	cost: number,
+	/**  Billed assistant requests carrying tokens. */
+	requests: number,
+};
+
 /**  Billed requests and API cost in `[start_ms, end_ms)` (one local hour). */
 export type HourUsage = {
 	startMs: number,
@@ -805,6 +819,17 @@ export type SessionSummary = {
 	editedProjectIds: string[],
 };
 
+/**  Per-session cost, request count, and active spans within a single-day range. */
+export type SessionUsage = {
+	sessionId: string,
+	title: string,
+	/**  API cost in USD (0 for unpriced models). */
+	cost: number,
+	/**  Billed assistant requests carrying tokens. */
+	requests: number,
+	spans: TimeSpan[],
+};
+
 /**  Emitted after each debounced filesystem batch. */
 export type SessionsChanged = {
 	changed: string[],
@@ -860,6 +885,8 @@ export type Stats = {
 	overview: StatsOverview,
 	daily: DailyModelTokens[],
 	hourly: HourUsage[],
+	hourlyModels: HourModelUsage[],
+	sessions: SessionUsage[],
 };
 
 export type StatsOverview = {
@@ -934,6 +961,12 @@ export type TeammateEvent =
 export type TimeRange = {
 	fromMs: number | null,
 	toMs: number | null,
+};
+
+/**  Inclusive `[start_ms, end_ms]` activity span of a session within the queried range. */
+export type TimeSpan = {
+	startMs: number,
+	endMs: number,
 };
 
 export type TitleSource = "custom" | "ai" | "firstPrompt" | "untitled";

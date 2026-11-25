@@ -5,6 +5,7 @@ import {
   buildCumulativeSeries,
   computeQuotaEstimate,
   computeTrendSummary,
+  trendLabels,
   trendYAxis,
   trendYAxisMax,
   usablePrevStats,
@@ -101,6 +102,93 @@ describe("computeTrendSummary", () => {
     expect(ended.inProgress).toBe(false);
     expect(ended.subtitle).toBe("共 $200.00 · 比前一周期多 $50.00");
   });
+
+  it("单日走势：已结束与今天分别按全天/同一时刻比较前一天或上周期同一天，图例附日期", () => {
+    const dayStart = new Date("2026-11-24T00:00:00").getTime();
+    const dayEnd = new Date("2026-11-25T00:00:00").getTime();
+    const prevDayStart = new Date("2026-11-23T00:00:00").getTime();
+    const prevWeekStart = new Date("2026-11-17T00:00:00").getTime();
+
+    expect(trendLabels({ kind: "day", offset: -1 }, "prevDay", prevDayStart)).toEqual({
+      current: "这一天",
+      previous: "前一天",
+      previousLegend: "前一天（11月23日 周一）",
+    });
+    expect(trendLabels({ kind: "day", offset: -1 }, "prevWeek", prevWeekStart)).toEqual({
+      current: "这一天",
+      previous: "上周期同一天",
+      previousLegend: "上周期同一天（11月17日 周二）",
+    });
+
+    const cur = [
+      [0, 0],
+      [24 * H, 143.6],
+    ] as [number, number][];
+    const prevDayPts = [
+      [0, 0],
+      [24 * H, 111.56],
+    ] as [number, number][];
+    const prevWeekPts = [
+      [0, 0],
+      [24 * H, 173.63],
+    ] as [number, number][];
+
+    const vsPrevDay = computeTrendSummary({
+      sel: { kind: "day", offset: -1 },
+      rangeStartMs: dayStart,
+      rangeEndMs: dayEnd,
+      nowMs: dayEnd + 14 * H,
+      currentPts: cur,
+      prevPts: prevDayPts,
+      isPlaceholderData: false,
+      dayCompare: "prevDay",
+    });
+    expect(vsPrevDay.subtitle).toBe("共 $143.60 · 比前一天多 $32.04");
+
+    const vsPrevWeek = computeTrendSummary({
+      sel: { kind: "day", offset: -1 },
+      rangeStartMs: dayStart,
+      rangeEndMs: dayEnd,
+      nowMs: dayEnd + 14 * H,
+      currentPts: cur,
+      prevPts: prevWeekPts,
+      isPlaceholderData: false,
+      dayCompare: "prevWeek",
+    });
+    expect(vsPrevWeek.subtitle).toBe("共 $143.60 · 比上周期同一天少 $30.03");
+
+    const noCompare = computeTrendSummary({
+      sel: { kind: "day", offset: -1 },
+      rangeStartMs: dayStart,
+      rangeEndMs: dayEnd,
+      nowMs: dayEnd + 14 * H,
+      currentPts: cur,
+      prevPts: null,
+      isPlaceholderData: false,
+      dayCompare: "prevDay",
+    });
+    expect(noCompare.subtitle).toBe("共 $143.60");
+
+    // Today in progress at 12:00: linear interpolation against compare day.
+    const todayLive = computeTrendSummary({
+      sel: { kind: "day", offset: 0 },
+      rangeStartMs: dayStart,
+      rangeEndMs: dayEnd,
+      nowMs: dayStart + 12 * H,
+      currentPts: [
+        [0, 0],
+        [12 * H, 60],
+      ],
+      prevPts: [
+        [0, 0],
+        [24 * H, 100], // at 12h -> 50
+      ],
+      isPlaceholderData: false,
+      dayCompare: "prevWeek",
+    });
+    expect(todayLive.inProgress).toBe(true);
+    expect(todayLive.subtitle).toBe("到现在 $60.00 · 比上周期同一天同一时刻多 $10.00");
+  });
 });
 
 describe("computeQuotaEstimate", () => {
@@ -138,6 +226,7 @@ describe("computeQuotaEstimate", () => {
       isPlaceholderData: false,
     };
     expect(computeQuotaEstimate({ ...base, sel: { kind: "cycle", offset: -1 } })).toBeNull();
+    expect(computeQuotaEstimate({ ...base, sel: { kind: "day", offset: 0 } })).toBeNull();
     expect(computeQuotaEstimate({ ...base, sel: { kind: "last7", offset: 0 } })).toBeNull();
     expect(computeQuotaEstimate({ ...base, isPlaceholderData: true })).toBeNull();
     expect(computeQuotaEstimate({ ...base, planState: { kind: "none" } })).toBeNull();
@@ -163,7 +252,13 @@ describe("trendYAxisMax", () => {
 });
 
 describe("usablePrevStats", () => {
-  const sample = { overview: { outputTokens: 0, cost: 10, unpricedMessages: 0, requests: 1 }, daily: [], hourly: [] };
+  const sample = {
+    overview: { outputTokens: 0, cost: 10, unpricedMessages: 0, requests: 1 },
+    daily: [],
+    hourly: [],
+    hourlyModels: [],
+    sessions: [],
+  };
 
   it("仅在 status 为 success 且无错误时返回参照数据，后台重取失败即使保留旧 data 也忽略", () => {
     expect(usablePrevStats({ data: sample, status: "success", error: null })).toBe(sample);

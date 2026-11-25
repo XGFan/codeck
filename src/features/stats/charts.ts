@@ -130,7 +130,8 @@ export function usageBarOption(usage: UsageSeries, metric: UsageMetric, t: Theme
       axisLine: { lineStyle: { color: t.axis } },
       axisLabel: {
         color: t.muted,
-        hideOverlap: true,
+        interval: bucket === "1h" ? 0 : "auto",
+        hideOverlap: bucket !== "1h",
         formatter: (_val: string, idx: number) => items[idx]?.axisLabel ?? "",
       },
     },
@@ -148,6 +149,7 @@ export function usageBarOption(usage: UsageSeries, metric: UsageMetric, t: Theme
 }
 
 const WEEKDAYS_SUN = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
+const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
 /** Cumulative Cost line chart for 「用量走势」 (current curve, optional previous curve, "现在" line, optional estimate). */
@@ -160,9 +162,11 @@ export function trendOption(args: {
   nowElapsedMs: number | null;
   estimate: QuotaEstimate | null;
   theme: Theme;
+  mode?: "day" | "week";
 }): ChartOption {
-  const { rangeStartMs, rangeEndMs, currentPts, prevPts, labels, nowElapsedMs, estimate, theme: t } = args;
+  const { rangeStartMs, rangeEndMs, currentPts, prevPts, labels, nowElapsedMs, estimate, theme: t, mode } = args;
   const totalMs = Math.max(1, rangeEndMs - rangeStartMs);
+  const isDay = mode === "day" || (mode == null && totalMs <= 26 * HOUR_MS);
 
   const curMax = currentPts.length ? currentPts[currentPts.length - 1]![1] : 0;
   const prevMax = prevPts?.length ? prevPts[prevPts.length - 1]![1] : 0;
@@ -239,15 +243,21 @@ export function trendOption(args: {
 
   return {
     ...base(t),
-    grid: { left: 42, right: 12, top: 14, bottom: 22 },
+    grid: { left: 42, right: isDay ? 18 : 12, top: 14, bottom: 22 },
     tooltip: {
       ...base(t).tooltip,
       trigger: "axis",
       formatter: (ps: { value: [number, number]; marker: string; seriesName: string }[]) => {
         if (!ps.length) return "";
         const elapsed = ps[0]!.value[0];
-        const d = new Date(rangeStartMs + elapsed);
-        const title = `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAYS_SUN[d.getDay()]} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        let title: string;
+        if (isDay && elapsed >= totalMs) {
+          const day = new Date(rangeStartMs);
+          title = `${day.getMonth() + 1}月${day.getDate()}日 ${WEEKDAYS_SUN[day.getDay()]} 24:00`;
+        } else {
+          const d = new Date(rangeStartMs + elapsed);
+          title = `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAYS_SUN[d.getDay()]} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        }
         const lines = ps.map((p) => `${p.marker}${p.seriesName}　${formatCost(p.value[1])}`);
         return `<b>${title}</b><br/>${lines.join("<br/>")}`;
       },
@@ -256,14 +266,16 @@ export function trendOption(args: {
       type: "value",
       min: 0,
       max: totalMs,
-      interval: DAY_MS,
+      interval: isDay ? 6 * HOUR_MS : DAY_MS,
       axisTick: { show: false },
       axisLine: { lineStyle: { color: t.axis } },
       splitLine: { show: true, lineStyle: { color: t.grid } },
       axisLabel: {
         color: t.muted,
         hideOverlap: true,
-        formatter: (v: number) => WEEKDAYS_SUN[new Date(rangeStartMs + v).getDay()]!,
+        formatter: isDay
+          ? (v: number) => (v >= totalMs - 1 ? "24 时" : `${Math.round(v / HOUR_MS)} 时`)
+          : (v: number) => WEEKDAYS_SUN[new Date(rangeStartMs + v).getDay()]!,
       },
     },
     yAxis: {

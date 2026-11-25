@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WEEK_MS, type CycleRule } from "@/lib/cycle";
-import { pageable, resolveRange } from "./range";
+import { dayOffset, pageable, resolveDayCompareRange, resolvePrev7Range, resolveRange } from "./range";
 
 // A Thursday morning; the cycle resets on Mondays at 14:00.
 const now = new Date("2026-10-15T10:03:27");
@@ -62,5 +62,70 @@ describe("resolveRange", () => {
     });
     expect(pageable("last7")).toBe(false);
     expect(pageable("cycle")).toBe(true);
+    expect(pageable("day")).toBe(true);
+  });
+
+  it("天：标签、说明（今天带剩余时间）、上下界、跨月跨年 offset 与对照 / 前 7 天范围", () => {
+    const today = resolveRange({ kind: "day", offset: 0 }, new Date("2026-10-15T10:15:00"), weeklyRule);
+    expect(today.timeRange).toEqual({
+      fromMs: at("2026-10-15T00:00:00"),
+      toMs: at("2026-10-16T00:00:00") - 1,
+    });
+    expect(today.startMs).toBe(at("2026-10-15T00:00:00"));
+    expect(today.endMs).toBe(at("2026-10-16T00:00:00"));
+    expect(today.label).toBe("今天");
+    expect(today.detail).toBe("10月15日 周四，还剩 13 小时 45 分");
+
+    const yest = resolveRange({ kind: "day", offset: -1 }, new Date("2026-10-15T10:15:00"), weeklyRule);
+    expect(yest.timeRange).toEqual({
+      fromMs: at("2026-10-14T00:00:00"),
+      toMs: at("2026-10-15T00:00:00") - 1,
+    });
+    expect(yest.label).toBe("昨天");
+    expect(yest.detail).toBe("10月14日 周三");
+
+    // Cross-month offset from Oct 2 back 3 days -> Sep 29.
+    const crossMonth = resolveRange({ kind: "day", offset: -3 }, new Date("2026-10-02T08:00:00"), weeklyRule);
+    expect(crossMonth.timeRange).toEqual({
+      fromMs: at("2026-09-29T00:00:00"),
+      toMs: at("2026-09-30T00:00:00") - 1,
+    });
+    expect(crossMonth.label).toBe("9月29日");
+    expect(crossMonth.detail).toBe("9月29日 周二");
+
+    // Cross-year offset from Jan 1 back 1 day -> Dec 31.
+    const crossYear = resolveRange({ kind: "day", offset: -1 }, new Date("2027-01-01T08:00:00"), weeklyRule);
+    expect(crossYear.timeRange).toEqual({
+      fromMs: at("2026-12-31T00:00:00"),
+      toMs: at("2027-01-01T00:00:00") - 1,
+    });
+    expect(crossYear.label).toBe("昨天");
+    expect(crossYear.detail).toBe("12月31日 周四");
+
+    // Calendar day offset helper.
+    const refNow = new Date("2026-11-25T18:30:00");
+    expect(dayOffset("2026-11-25", refNow)).toBe(0);
+    expect(dayOffset("2026-11-24", refNow)).toBe(-1);
+    expect(dayOffset("2026-10-25", refNow)).toBe(-31);
+
+    // Previous 7 full days before Nov 24 -> Nov 17 00:00 .. Nov 24 00:00 - 1.
+    const prev7 = resolvePrev7Range(-1, refNow);
+    expect(prev7).toEqual({
+      timeRange: { fromMs: at("2026-11-17T00:00:00"), toMs: at("2026-11-24T00:00:00") - 1 },
+      startMs: at("2026-11-17T00:00:00"),
+      endMs: at("2026-11-24T00:00:00"),
+    });
+
+    // Day compare ranges for Nov 24 (offset -1): prevDay -> Nov 23, prevWeek -> Nov 17.
+    expect(resolveDayCompareRange(-1, "prevDay", refNow, weeklyRule)).toEqual({
+      timeRange: { fromMs: at("2026-11-23T00:00:00"), toMs: at("2026-11-24T00:00:00") - 1 },
+      startMs: at("2026-11-23T00:00:00"),
+      endMs: at("2026-11-24T00:00:00"),
+    });
+    expect(resolveDayCompareRange(-1, "prevWeek", refNow, weeklyRule)).toEqual({
+      timeRange: { fromMs: at("2026-11-17T00:00:00"), toMs: at("2026-11-18T00:00:00") - 1 },
+      startMs: at("2026-11-17T00:00:00"),
+      endMs: at("2026-11-18T00:00:00"),
+    });
   });
 });

@@ -31,7 +31,7 @@ export function RangePicker({
 }) {
   const r = resolveRange(sel, now, rule);
   const steps = pageable(sel.kind);
-  const unit = sel.kind === "month" ? "个月" : "周期";
+  const unit = sel.kind === "day" ? "天" : sel.kind === "month" ? "个月" : "周期";
   return (
     <div role="group" aria-label="时间范围" className="flex items-center gap-1.5">
       <DropdownMenu>

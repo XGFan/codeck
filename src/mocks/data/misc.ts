@@ -2,13 +2,17 @@ import type {
   AppInfo,
   DailyModelTokens,
   Diagnostics,
+  HourModelUsage,
   HourUsage,
   IndexStatus,
+  SessionUsage,
   SlashCommand,
   Stats,
   StatsRequest,
+  TimeSpan,
 } from "@/ipc/bindings";
 import { costOf, DAY, HOUR, NOW, tok } from "./builders";
+import { sessionData } from "./sessions";
 
 export const appInfo = {
   version: "0.1.0",
@@ -106,19 +110,85 @@ function hourBreakdown(hourStartMs: number, cutoffMs: number): DailyModelTokens[
 }
 
 const ALL_HISTORY_DAYS = 400;
+const DAY_DETAIL_MAX_MS = 26 * HOUR;
+const SESSION_WEIGHTS = [0.3, 0.19, 0.14, 0.11, 0.08, 0.06, 0.05, 0.04, 0.03] as const;
+
+/** Deterministic per-session cost, requests, and active spans for a single-day mock query, using existing mock sessions. */
+function buildMockDaySessions(
+  hourly: HourUsage[],
+  totalCost: number,
+  totalReqs: number,
+  from: number,
+  to: number,
+  nowMs: number,
+): SessionUsage[] {
+  const activeHours = hourly.filter((h) => h.requests > 0 && h.startMs <= nowMs);
+  if (activeHours.length === 0) return [];
+
+  const pool = sessionData.filter((s) => s.summary.titleSource !== "untitled");
+  const d = new Date(from);
+  const daySeed = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  const count = Math.min(pool.length, SESSION_WEIGHTS.length);
+  const startIdx = daySeed % pool.length;
+  const picked = Array.from({ length: count }, (_, i) => pool[(startIdx + i) % pool.length]!.summary);
+
+  const rawWeights = SESSION_WEIGHTS.slice(0, count).map((w, i) => w * (0.85 + 0.3 * hash(daySeed * 17 + i)));
+  const weightSum = rawWeights.reduce((a, b) => a + b, 0);
+  const weights = rawWeights.map((w) => w / weightSum);
+
+  let remCost = totalCost;
+  let remReqs = totalReqs;
+  const sessions: SessionUsage[] = picked.map((s, i) => {
+    const isLast = i === count - 1;
+    const cost = isLast ? Math.max(0, remCost) : totalCost * weights[i]!;
+    remCost -= cost;
+    const minLeft = count - 1 - i;
+    const requests = isLast
+      ? Math.max(0, remReqs)
+      : totalReqs >= count
+        ? Math.max(1, Math.min(remReqs - minLeft, Math.round(totalReqs * weights[i]!)))
+        : Math.min(remReqs, Math.round(totalReqs * weights[i]!));
+    remReqs = Math.max(0, remReqs - requests);
+
+    const spanCount = Math.min(activeHours.length, i < 3 ? 4 : i < 6 ? 2 : 1);
+    const step = Math.max(1, Math.floor(activeHours.length / spanCount));
+    const offset = Math.floor(hash(daySeed * 41 + i * 11) * activeHours.length);
+    const chosenIndices = new Set<number>();
+    const spans: TimeSpan[] = [];
+    for (let j = 0; j < spanCount; j++) {
+      let hi = (offset + j * step) % activeHours.length;
+      while (chosenIndices.has(hi)) hi = (hi + 1) % activeHours.length;
+      chosenIndices.add(hi);
+      const h = activeHours[hi]!;
+      const effEnd = Math.max(h.startMs, Math.min(h.endMs - 1, to, nowMs));
+      const win = Math.max(0, effEnd - h.startMs);
+      const off = Math.floor(hash(daySeed * 53 + i * 19 + j * 7) * win * 0.55);
+      const len = Math.floor((0.12 + hash(daySeed * 59 + i * 23 + j * 13) * 0.35) * win);
+      const startMs = h.startMs + off;
+      const endMs = Math.min(effEnd, startMs + len);
+      spans.push({ startMs, endMs });
+    }
+    spans.sort((a, b) => a.startMs - b.startMs);
+    return { sessionId: s.id, title: s.title, cost, requests, spans };
+  });
+
+  return sessions.sort((a, b) => b.cost - a.cost || b.requests - a.requests);
+}
 
 /**
  * Generates mock `Stats` from one unified per-hour deterministic seed for every range:
  * - Each hour bucket is included in `daily` / `overview` iff `from <= startMs <= to` and `startMs <= nowMs`, so the
  *   same full calendar day produces identical totals across 7d, 30d, 90d, and 全部;
  * - When `fromMs <= toMs` and `toMs - fromMs <= 8 days`, also emits `hourly` from those exact same hour buckets so
- *   `sum(hourly.requests) === sum(daily.requests) === overview.requests` and cost conserves.
+ *   `sum(hourly.requests) === sum(daily.requests) === overview.requests` and cost conserves;
+ * - When `toMs - fromMs <= 26 hours`, also emits `hourlyModels` (conserving with `hourly`) and `sessions`.
  */
 export function buildMockStats(req: StatsRequest): Stats {
   const nowMs = Date.now();
   const from = req.timeRange?.fromMs ?? null;
   const to = req.timeRange?.toMs ?? null;
   const wantHourly = from != null && to != null && from <= to && to - from <= 8 * DAY;
+  const wantDayDetail = from != null && to != null && from <= to && to - from <= DAY_DETAIL_MAX_MS;
 
   const dailyMap = new Map<string, DailyModelTokens>();
   const addDaily = (r: DailyModelTokens) => {
@@ -145,6 +215,7 @@ export function buildMockStats(req: StatsRequest): Stats {
   const lastMs = last.getTime();
 
   const hourly: HourUsage[] = [];
+  const hourlyModels: HourModelUsage[] = [];
   while (cur.getTime() <= lastMs) {
     const startMs = cur.getTime();
     cur.setHours(cur.getHours() + 1);
@@ -158,6 +229,18 @@ export function buildMockStats(req: StatsRequest): Stats {
       addDaily(r);
       reqs += r.requests;
       cost += r.cost;
+      if (wantDayDetail) {
+        hourlyModels.push({
+          startMs,
+          model: r.model,
+          input: r.input,
+          output: r.output,
+          cacheRead: r.cacheRead,
+          cacheCreation: r.cacheCreation,
+          cost: r.cost,
+          requests: r.requests,
+        });
+      }
     }
     if (wantHourly) hourly.push({ startMs, endMs: cur.getTime(), requests: reqs, cost });
   }
@@ -172,7 +255,8 @@ export function buildMockStats(req: StatsRequest): Stats {
     }),
     { outputTokens: 0, cost: 0, unpricedMessages: 0, requests: 0 },
   );
-  return { overview, daily, hourly };
+  const sessions = wantDayDetail ? buildMockDaySessions(hourly, overview.cost, overview.requests, from, to, nowMs) : [];
+  return { overview, daily, hourly, hourlyModels, sessions };
 }
 
 /** Completion while driving (`listSlashCommands`): a few built-in commands, a project command, a plugin skill. */

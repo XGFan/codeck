@@ -3,8 +3,15 @@ import type { Drill, Stats, TimeRange } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatCost, formatCount, formatTokens } from "@/lib/format";
 import { Chart } from "./Chart";
-import { FAMILY_LABEL, usageBarOption, type Theme } from "./charts";
-import { buildUsageSeries, elapsedDays, inputTotals, modelMetricBreakdown, type UsageMetric } from "./usage";
+import { dayKey, FAMILY_LABEL, usageBarOption, type Theme } from "./charts";
+import {
+  buildHourlyUsageSeries,
+  buildUsageSeries,
+  elapsedDays,
+  inputTotals,
+  modelMetricBreakdown,
+  type UsageMetric,
+} from "./usage";
 
 const MODEL_TITLE: Record<UsageMetric, string> = {
   cost: "Cost 按模型",
@@ -24,35 +31,59 @@ const INPUT_PARTS = [
  */
 export function UsagePanel({
   stats,
+  isDay,
+  prev7Stats,
   timeRange,
   startMs,
   endMs,
   now,
   theme,
   onDrill,
+  onSelectDay,
 }: {
   stats: Stats;
+  isDay: boolean;
+  prev7Stats?: Stats | null;
   timeRange: TimeRange | null;
   startMs: number | null;
   endMs: number | null;
   now: Date;
   theme: Theme;
   onDrill: (d: Drill) => void;
+  onSelectDay: (day: string) => void;
 }) {
   const [metric, setMetric] = useState<UsageMetric>("cost");
   const [hitTip, setHitTip] = useState(false);
   const nowMs = now.getTime();
-  const { overview, daily } = stats;
+  const { overview, daily, hourlyModels } = stats;
 
   const days = useMemo(() => elapsedDays(startMs, endMs, daily, nowMs), [startMs, endMs, daily, nowMs]);
   const totals = useMemo(() => inputTotals(daily), [daily]);
   const totalInput = totals.input + totals.read + totals.write;
 
-  const series = useMemo(() => buildUsageSeries(daily, metric, timeRange, nowMs), [daily, metric, timeRange, nowMs]);
+  const prev7Avg = useMemo(() => {
+    if (!isDay || !prev7Stats) return null;
+    const p7In = inputTotals(prev7Stats.daily);
+    const p7TotalInput = p7In.input + p7In.read + p7In.write;
+    return {
+      cost: `前 7 天日均 ${formatCost(prev7Stats.overview.cost / 7)}`,
+      input: `前 7 天日均 ${formatTokens(Math.round(p7TotalInput / 7))}`,
+      output: `前 7 天日均 ${formatTokens(Math.round(prev7Stats.overview.outputTokens / 7))}`,
+    };
+  }, [isDay, prev7Stats]);
+
+  const series = useMemo(
+    () =>
+      isDay && startMs != null
+        ? buildHourlyUsageSeries(hourlyModels, metric, startMs)
+        : buildUsageSeries(daily, metric, timeRange, nowMs),
+    [isDay, startMs, hourlyModels, daily, metric, timeRange, nowMs],
+  );
   const barOption = useMemo(() => usageBarOption(series, metric, theme), [series, metric, theme]);
   const modelRows = useMemo(() => modelMetricBreakdown(daily, metric), [daily, metric]);
   const modelTitle = MODEL_TITLE[metric];
   const formatMetric = metric === "cost" ? formatCost : formatTokens;
+  const dayStr = isDay && startMs != null ? dayKey(new Date(startMs)) : null;
 
   const pct = (v: number) => (totalInput > 0 ? (v / totalInput) * 100 : 0);
   const hitRate = totalInput > 0 ? `${pct(totals.read).toFixed(1)}%` : "—";
@@ -67,7 +98,7 @@ export function UsagePanel({
       key: "cost",
       label: "Cost",
       value: formatCost(overview.cost),
-      avg: `日均 ${formatCost(overview.cost / days)}`,
+      avg: isDay ? (prev7Avg?.cost ?? "") : `日均 ${formatCost(overview.cost / days)}`,
       extra:
         overview.unpricedMessages > 0 ? `${formatCount(overview.unpricedMessages)} 条消息无价格，未计入` : undefined,
     },
@@ -75,19 +106,19 @@ export function UsagePanel({
       key: "input",
       label: "输入",
       value: formatTokens(totalInput),
-      avg: `日均 ${formatTokens(Math.round(totalInput / days))}`,
+      avg: isDay ? (prev7Avg?.input ?? "") : `日均 ${formatTokens(Math.round(totalInput / days))}`,
     },
     {
       key: "output",
       label: "输出",
       value: formatTokens(overview.outputTokens),
-      avg: `日均 ${formatTokens(Math.round(overview.outputTokens / days))}`,
+      avg: isDay ? (prev7Avg?.output ?? "") : `日均 ${formatTokens(Math.round(overview.outputTokens / days))}`,
     },
   ];
 
-  const chartLabel = `${series.bucket === "1d" ? "每日" : series.bucket === "1w" ? "每周" : "每月"} ${
-    metric === "cost" ? "Cost" : metric === "input" ? "输入" : "输出"
-  }，按模型堆叠`;
+  const periodLabel =
+    series.bucket === "1h" ? "每小时" : series.bucket === "1d" ? "每日" : series.bucket === "1w" ? "每周" : "每月";
+  const chartLabel = `${periodLabel} ${metric === "cost" ? "Cost" : metric === "input" ? "输入" : "输出"}，按模型堆叠`;
 
   return (
     <section
@@ -97,6 +128,16 @@ export function UsagePanel({
     >
       <div className="flex items-center gap-3">
         <h2 className="m-0 flex-1 text-[13px] font-semibold">用量</h2>
+        {dayStr && (
+          <button
+            type="button"
+            data-testid="day-drill"
+            onClick={() => onDrill({ kind: "day", day: dayStr })}
+            className="rounded text-[12px] text-accent outline-none hover:underline focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            查看这天的 Session
+          </button>
+        )}
         <span
           data-testid="usage-bucket"
           title="每根柱子的时长"
@@ -123,7 +164,7 @@ export function UsagePanel({
             >
               <span className="text-[12px] text-secondary">{f.label}</span>
               <span className="text-[24px] leading-[1.25] font-semibold tracking-tight tabular-nums">{f.value}</span>
-              <span className="text-[11px] text-secondary tabular-nums">{f.avg}</span>
+              <span className="min-h-[16px] text-[11px] leading-[16px] text-secondary tabular-nums">{f.avg}</span>
               {f.extra && (
                 <span data-testid="unpriced-note" className="text-[11px] text-secondary">
                   {f.extra}
@@ -181,7 +222,7 @@ export function UsagePanel({
         onPick={(p) => {
           if (series.bucket !== "1d") return;
           const day = p.dataIndex != null ? series.items[p.dataIndex]?.key : p.name;
-          if (day) onDrill({ kind: "day", day });
+          if (day) onSelectDay(day);
         }}
       />
 

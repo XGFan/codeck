@@ -22,11 +22,15 @@ export const openRich = (page: Page, opts?: { folded?: boolean }) => openSession
 /** Opens the stats dialog via the quota popover when the ring is visible, or via `nav-stats` otherwise. */
 export async function openStats(page: Page) {
   const btn = page.locator('[data-testid="nav-quota"], [data-testid="nav-stats"]').first();
-  await expect(btn).toBeVisible();
-  await btn.click();
   const stats = page.getByTestId("stats");
   const popover = page.getByTestId("quota-popover");
-  await expect(stats.or(popover)).toBeVisible();
+  // `nav-stats` swaps to `nav-quota` once plan usage resolves; retry if a click lands across that swap.
+  await expect(async () => {
+    if (!(await stats.isVisible()) && !(await popover.isVisible())) {
+      await btn.click({ timeout: 1000 });
+    }
+    await expect(stats.or(popover)).toBeVisible({ timeout: 1000 });
+  }).toPass();
   if (await popover.isVisible()) {
     await popover.getByTestId("quota-open-stats").click();
   }

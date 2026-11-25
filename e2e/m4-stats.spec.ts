@@ -269,7 +269,7 @@ test("预估额度只在本周期且额度可用时出现，上一周期 / 最�
   await expect(estimateLegend).toHaveCount(0);
 });
 
-test("下钻：模型行按模型族下钻并带时间范围，月历格与日柱按天下钻，小时格与周柱不下钻", async ({ page }) => {
+test("下钻与进单日：模型行按模型族下钻并带时间范围，月历格与日柱切到单日，小时格与周柱不响应", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto("/");
   const review = page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }); // last active 8 days ago
@@ -307,22 +307,24 @@ test("下钻：模型行按模型族下钻并带时间范围，月历格与日�
   await expect(chip).toContainText("模型 fable");
   await chip.getByRole("button", { name: "清除筛选" }).click();
 
-  // 3. Calendar cell drill (today's cell).
+  // 3. Calendar cell click switches to that single day without closing the dialog.
   await openStats(page);
   await pickRange(page, "本月");
   await expect(stats).not.toHaveAttribute("data-placeholder", "true");
   const todayCell = page.locator('[data-testid="freq-day"][data-today="true"]');
   await expect(todayCell).toBeVisible();
   await todayCell.click();
-  await expect(stats).toHaveCount(0);
-  await expect(chip).toHaveText(/\d+月\d+日/);
-  await chip.getByRole("button", { name: "清除筛选" }).click();
+  await expect(stats).toBeVisible();
+  await expect(page.getByTestId("range-trigger")).toHaveText("今天");
+  await expect(page.getByTestId("usage-bucket")).toHaveText("1h");
+  await expect(page.getByTestId("day-sessions")).toBeVisible();
 
-  // 4. Hourly cells and weekly bars do not drill.
-  await openStats(page);
+  // 4. Hourly cells and weekly bars do not drill or switch range.
+  await pickRange(page, "本周期");
   await expect(stats).not.toHaveAttribute("data-placeholder", "true");
   await page.getByTestId("freq-hour").first().click();
   await expect(stats).toBeVisible();
+  await expect(page.getByTestId("range-trigger")).toHaveText("本周期");
 
   await pickRange(page, "全部");
   await expect(stats).not.toHaveAttribute("data-placeholder", "true");
@@ -332,21 +334,23 @@ test("下钻：模型行按模型族下钻并带时间范围，月历格与日�
   const weekBox = (await usageChart.boundingBox())!;
   await page.mouse.click(weekBox.x + weekBox.width * 0.5, weekBox.y + weekBox.height - 30);
   await expect(stats).toBeVisible();
+  await expect(page.getByTestId("range-trigger")).toHaveText("全部");
 
-  // 5. Daily bar drill (on 上一周期's 1d chart).
+  // 5. Daily bar click (on 上一周期's 1d chart) switches to that single day without closing the dialog.
   await pickRange(page, "上一周期");
   await expect(stats).not.toHaveAttribute("data-placeholder", "true");
   await expect(page.getByTestId("usage-bucket")).toHaveText("1d");
   await usageChart.locator("canvas").first().waitFor();
+  const trigger = page.getByTestId("range-trigger");
   const dayBox = (await usageChart.boundingBox())!;
-  for (const f of [0.25, 0.4, 0.55, 0.7, 0.15, 0.85]) {
+  for (const f of [1.5 / 8, 2.5 / 8, 3.5 / 8, 4.5 / 8, 5.5 / 8, 6.5 / 8]) {
     await page.mouse.click(dayBox.x + 42 + (dayBox.width - 50) * f, dayBox.y + dayBox.height - 28);
-    if ((await stats.count()) === 0) break;
+    if ((await trigger.textContent()) !== "上一周期") break;
   }
-  await expect(stats).toHaveCount(0);
-  await expect(chip).toHaveText(/\d+月\d+日/);
-  await chip.getByRole("button", { name: "清除筛选" }).click();
-  await expect(chip).toHaveCount(0);
+  await expect(stats).toBeVisible();
+  await expect(trigger).toHaveText(/^(?:今天|昨天|\d+月\d+日)$/);
+  await expect(page.getByTestId("usage-bucket")).toHaveText("1h");
+  await expect(page.getByTestId("day-sessions")).toBeVisible();
 });
 
 test("统计是盖在窗口上的大弹窗：点弹窗外、Esc 或关闭按钮都会关闭", async ({ page }) => {
@@ -481,4 +485,146 @@ test("切换时间范围时标题栏与 ‹ › 位置不变，最长标签完�
   await expect(trigger).toHaveText("12月26日起的周期");
   expect(await positions()).toEqual(before);
   expect(await trigger.locator("span").evaluate((l) => l.scrollWidth <= l.clientWidth)).toBe(true);
+});
+
+test("单日统计：选昨天显示用量、Session 面板与用量走势，无使用频率，可用 ‹ › 逐天翻页", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-25T14:11:00"));
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await openStats(page);
+
+  await pickRange(page, "昨天");
+  const usage = page.getByTestId("stats-usage");
+  const sessions = page.getByTestId("day-sessions");
+  const trend = page.getByTestId("stats-trend");
+
+  await expect(usage).toBeVisible();
+  await expect(sessions).toBeVisible();
+  await expect(trend).toBeVisible();
+  await expect(page.getByTestId("stats-frequency")).toHaveCount(0);
+
+  // Usage panel shows 1h bucket and 前 7 天日均 under all three figures.
+  await expect(usage.getByTestId("usage-bucket")).toHaveText("1h");
+  await expect(usage.getByTestId("metric-cost")).toContainText("前 7 天日均");
+  await expect(usage.getByTestId("metric-input")).toContainText("前 7 天日均");
+  await expect(usage.getByTestId("metric-output")).toContainText("前 7 天日均");
+
+  // Session timeline shows top 6 clickable rows plus remainder summary.
+  await expect(sessions.getByTestId("day-session-row")).toHaveCount(6);
+  await expect(sessions.getByTestId("day-sessions-rest")).toContainText(/^其余 \d+ 个/);
+
+  // Step backward and forward day by day; today disables 下一天.
+  const trigger = page.getByTestId("range-trigger");
+  const span = page.getByTestId("cycle-span");
+  const prevDay = page.getByLabel("上一天", { exact: true });
+  const nextDay = page.getByLabel("下一天", { exact: true });
+  await expect(trigger).toHaveText("昨天");
+  await expect(span).toHaveText("11月24日 周二");
+  await expect(nextDay).toBeEnabled();
+
+  await prevDay.click();
+  await expect(trigger).toHaveText("11月23日");
+  await expect(span).toHaveText("11月23日 周一");
+
+  await nextDay.click();
+  await expect(trigger).toHaveText("昨天");
+  await expect(span).toHaveText("11月24日 周二");
+
+  await nextDay.click();
+  await expect(trigger).toHaveText("今天");
+  await expect(span).toContainText("11月25日 周三，还剩");
+  await expect(nextDay).toBeDisabled();
+});
+
+test("单日走势对照：切到上周期同一天后图例与小字变化，刷新页面后仍保留选择", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-25T14:11:00"));
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await openStats(page);
+  await pickRange(page, "昨天");
+
+  const trend = page.getByTestId("stats-trend");
+  const compare = trend.getByTestId("day-compare");
+  const prevDayBtn = compare.getByRole("button", { name: "前一天", exact: true });
+  const prevWeekBtn = compare.getByRole("button", { name: "上周期同一天", exact: true });
+
+  await expect(prevDayBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(trend.getByTestId("trend-prev-legend")).toHaveText("前一天（11月23日 周一）");
+  await expect(trend.getByTestId("trend-subtitle")).toContainText("比前一天");
+
+  await prevWeekBtn.click();
+  await expect(prevWeekBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(prevDayBtn).toHaveAttribute("aria-pressed", "false");
+  await expect(trend.getByTestId("trend-prev-legend")).toHaveText("上周期同一天（11月17日 周二）");
+  await expect(trend.getByTestId("trend-subtitle")).toContainText("比上周期同一天");
+
+  // Reloading keeps the saved compare preference in localStorage.
+  await page.reload();
+  await openStats(page);
+  await pickRange(page, "昨天");
+  await expect(prevWeekBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(trend.getByTestId("trend-prev-legend")).toHaveText("上周期同一天（11月17日 周二）");
+  await expect(trend.getByTestId("trend-subtitle")).toContainText("比上周期同一天");
+});
+
+test("单日交互：点 Session 行打开该 Session，点「查看这天的 Session」按天下钻", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-25T14:11:00"));
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await openStats(page);
+  await pickRange(page, "昨天");
+
+  const stats = page.getByTestId("stats");
+  const firstRow = page.getByTestId("day-session-row").first();
+  await expect(firstRow).toBeVisible();
+  const title = (await firstRow.locator("span").first().getAttribute("title"))!;
+  await firstRow.click();
+
+  await expect(stats).toHaveCount(0);
+  await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
+
+  // Reopen stats, pick 昨天, and click 查看这天的 Session to drill into the session list.
+  await openStats(page);
+  await pickRange(page, "昨天");
+  await page.getByTestId("day-drill").click();
+
+  await expect(stats).toHaveCount(0);
+  const chip = page.getByTestId("drill-chip");
+  await expect(chip).toContainText("11月24日");
+});
+
+test("从上月月块与本周期日柱进入单日：切到对应日期且不关弹窗", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-25T14:11:00"));
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/");
+  await openStats(page);
+
+  const stats = page.getByTestId("stats");
+  const trigger = page.getByTestId("range-trigger");
+
+  // Click a calendar cell in 上月 -> switches to that day without closing dialog.
+  await pickRange(page, "上月");
+  await expect(stats).not.toHaveAttribute("data-placeholder", "true");
+  await page.locator('[data-testid="freq-day"][data-day="2026-10-14"]').click();
+  await expect(stats).toBeVisible();
+  await expect(trigger).toHaveText("10月14日");
+  await expect(page.getByTestId("cycle-span")).toHaveText("10月14日 周三");
+  await expect(page.getByTestId("usage-bucket")).toHaveText("1h");
+  await expect(page.getByTestId("day-sessions")).toBeVisible();
+
+  // Switch to 本周期 and click a daily bar -> switches to that day without closing dialog.
+  await pickRange(page, "本周期");
+  await expect(stats).not.toHaveAttribute("data-placeholder", "true");
+  await expect(page.getByTestId("usage-bucket")).toHaveText("1d");
+  const usageChart = page.getByTestId("usage-chart");
+  await usageChart.locator("canvas").first().waitFor();
+  const box = (await usageChart.boundingBox())!;
+  for (const f of [0.5 / 8, 1.5 / 8, 2.5 / 8, 3.5 / 8, 4.5 / 8]) {
+    await page.mouse.click(box.x + 42 + (box.width - 50) * f, box.y + box.height - 28);
+    if ((await trigger.textContent()) !== "本周期") break;
+  }
+  await expect(stats).toBeVisible();
+  await expect(trigger).toHaveText(/^(?:今天|昨天|\d+月\d+日)$/);
+  await expect(page.getByTestId("usage-bucket")).toHaveText("1h");
+  await expect(page.getByTestId("day-sessions")).toBeVisible();
 });

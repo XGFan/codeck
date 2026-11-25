@@ -1,12 +1,18 @@
 import { useMemo } from "react";
 import type { Stats } from "@/ipc/bindings";
 import type { PlanState } from "@/features/quota";
+import { cn } from "@/lib/cn";
 import { Chart } from "./Chart";
 import { trendOption, type Theme } from "./charts";
-import type { RangeSel } from "./range";
+import type { DayCompare, RangeSel } from "./range";
 import { buildCumulativeSeries, computeQuotaEstimate, computeTrendSummary, trendLabels, trendYAxisMax } from "./trend";
 
-/** Right column (bottom), shown only for cycles and last 7 days: cumulative Cost curve vs previous period + estimate. */
+const DAY_COMPARE_OPTIONS: { key: DayCompare; label: string }[] = [
+  { key: "prevDay", label: "前一天" },
+  { key: "prevWeek", label: "上周期同一天" },
+];
+
+/** Right column (bottom), shown for days, cycles, and last 7 days: cumulative Cost curve vs reference + optional estimate. */
 export function TrendPanel({
   sel,
   stats,
@@ -19,6 +25,8 @@ export function TrendPanel({
   planState,
   isPlaceholderData,
   theme,
+  dayCompare = "prevDay",
+  onDayCompareChange,
 }: {
   sel: RangeSel;
   stats: Stats;
@@ -31,10 +39,13 @@ export function TrendPanel({
   planState: PlanState;
   isPlaceholderData: boolean;
   theme: Theme;
+  dayCompare?: DayCompare;
+  onDayCompareChange?: (c: DayCompare) => void;
 }) {
   const nowMs = now.getTime();
+  const isDay = sel.kind === "day";
   const inProgress = rangeEndMs > nowMs && rangeStartMs <= nowMs;
-  const labels = trendLabels(sel);
+  const labels = trendLabels(sel, dayCompare, prevStartMs);
 
   const currentPts = useMemo(
     () => buildCumulativeSeries(stats.hourly, rangeStartMs, rangeEndMs, inProgress ? nowMs : undefined),
@@ -57,8 +68,9 @@ export function TrendPanel({
         currentPts,
         prevPts,
         isPlaceholderData,
+        dayCompare,
       }),
-    [sel, rangeStartMs, rangeEndMs, nowMs, currentPts, prevPts, isPlaceholderData],
+    [sel, rangeStartMs, rangeEndMs, nowMs, currentPts, prevPts, isPlaceholderData, dayCompare],
   );
 
   const estimate = useMemo(
@@ -84,8 +96,9 @@ export function TrendPanel({
         nowElapsedMs: summary.nowElapsedMs,
         estimate,
         theme,
+        mode: isDay ? "day" : "week",
       }),
-    [rangeStartMs, rangeEndMs, currentPts, prevPts, labels, summary.nowElapsedMs, estimate, theme],
+    [rangeStartMs, rangeEndMs, currentPts, prevPts, labels, summary.nowElapsedMs, estimate, theme, isDay],
   );
 
   const yMax = useMemo(() => {
@@ -103,16 +116,50 @@ export function TrendPanel({
       className="flex min-h-0 min-w-0 flex-col gap-2 rounded-[10px] border border-border bg-ground px-3.5 py-3"
     >
       <div className="flex items-center gap-3">
-        <h2 className="m-0 flex-1 text-[13px] font-semibold">用量走势</h2>
-        <span data-testid="trend-subtitle" className="truncate text-[11px] text-secondary tabular-nums">
+        <h2 className={cn("m-0 text-[13px] font-semibold", isDay ? "shrink-0" : "flex-1")}>用量走势</h2>
+        <span
+          data-testid="trend-subtitle"
+          className={cn("truncate text-[11px] text-secondary tabular-nums", isDay && "min-w-0 flex-1")}
+        >
           {summary.subtitle}
         </span>
+        {isDay && onDayCompareChange && (
+          <div
+            role="group"
+            aria-label="对照"
+            data-testid="day-compare"
+            className="flex shrink-0 overflow-hidden rounded-[6px] border border-border bg-ground"
+          >
+            {DAY_COMPARE_OPTIONS.map((opt, idx) => {
+              const active = dayCompare === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => onDayCompareChange(opt.key)}
+                  className={cn(
+                    "h-6 px-2 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                    idx > 0 && "border-l border-border",
+                    active ? "bg-accent/15 text-accent" : "text-secondary hover:bg-text/5",
+                  )}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <Chart
         testId="trend-chart"
-        height={156}
-        label={`从${labels.current}开始累计的 Cost${prevPts ? `，对照${labels.previous}` : ""}${estimate ? "与预估额度" : ""}`}
+        height={isDay ? 140 : 156}
+        label={
+          isDay
+            ? `这一天累计的 Cost${prevPts ? `，对照${labels.previous}` : ""}`
+            : `从${labels.current}开始累计的 Cost${prevPts ? `，对照${labels.previous}` : ""}${estimate ? "与预估额度" : ""}`
+        }
         option={option}
       />
 
@@ -124,7 +171,7 @@ export function TrendPanel({
         {prevPts && (
           <span data-testid="trend-prev-legend" className="inline-flex items-center gap-1">
             <i className="block h-[2px] w-[14px] rounded-[1px]" style={{ background: theme.prevLine }} aria-hidden />
-            {labels.previous}
+            {labels.previousLegend ?? labels.previous}
           </span>
         )}
         {estimate && (

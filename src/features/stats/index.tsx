@@ -8,10 +8,20 @@ import { useStats } from "@/queries";
 import { useUi } from "@/state/ui";
 import { useDark } from "./Chart";
 import { themes } from "./charts";
+import { DaySessionsPanel } from "./DaySessionsPanel";
 import { FrequencyPanel } from "./FrequencyPanel";
-import { DEFAULT_RANGE, resolveRange, type RangeSel, type ResolvedRange } from "./range";
+import {
+  dayOffset,
+  DEFAULT_RANGE,
+  resolveDayCompareRange,
+  resolvePrev7Range,
+  resolveRange,
+  type DayCompare,
+  type RangeSel,
+  type ResolvedRange,
+} from "./range";
 import { RangePicker } from "./RangePicker";
-import { usablePrevStats } from "./trend";
+import { loadDayCompare, saveDayCompare, usablePrevStats } from "./trend";
 import { TrendPanel } from "./TrendPanel";
 import { UsagePanel } from "./UsagePanel";
 
@@ -28,6 +38,8 @@ interface StatsSnapshot {
   range: RangeSel;
   resolved: ResolvedRange;
   prev: PrevSnapshot | null;
+  prev7: Stats | null;
+  dayCompare: DayCompare;
 }
 
 function Empty({ text = "所选范围内没有数据" }: { text?: string }) {
@@ -56,6 +68,7 @@ function StatsPanel() {
   const dark = useDark();
   const theme = themes[dark ? "dark" : "light"];
   const [range, setRange] = useState<RangeSel>(DEFAULT_RANGE);
+  const [dayCompare, setDayCompare] = useState<DayCompare>(loadDayCompare);
 
   const now = useMinuteNow();
   const { rule } = useCycleRule();
@@ -65,9 +78,10 @@ function StatsPanel() {
 
   const { data: stats, isPending, isError, isPlaceholderData } = useStats({ timeRange });
 
-  const wantPrevQuery = range.kind === "cycle" || range.kind === "last7";
+  const wantPrevQuery = range.kind === "day" || range.kind === "cycle" || range.kind === "last7";
   const prevBounds = useMemo(() => {
     if (!wantPrevQuery || startMs == null || endMs == null) return null;
+    if (range.kind === "day") return resolveDayCompareRange(range.offset, dayCompare, now, rule);
     if (range.kind === "cycle") {
       const prev = resolveRange({ kind: "cycle", offset: range.offset - 1 }, now, rule);
       return prev.timeRange && prev.startMs != null && prev.endMs != null
@@ -77,7 +91,7 @@ function StatsPanel() {
     const prevStart = startMs - 7 * DAY_MS;
     const prevEnd = startMs;
     return { timeRange: { fromMs: prevStart, toMs: prevEnd - 1 }, startMs: prevStart, endMs: prevEnd };
-  }, [wantPrevQuery, range, now, rule, startMs, endMs]);
+  }, [wantPrevQuery, range, dayCompare, now, rule, startMs, endMs]);
 
   const prevQuery = useStats(
     { timeRange: prevBounds?.timeRange ?? null },
@@ -87,6 +101,17 @@ function StatsPanel() {
   const currentPrev: PrevSnapshot | null =
     prevStats && prevBounds ? { stats: prevStats, startMs: prevBounds.startMs, endMs: prevBounds.endMs } : null;
 
+  const wantPrev7Query = range.kind === "day";
+  const prev7Bounds = useMemo(
+    () => (wantPrev7Query ? resolvePrev7Range(range.offset, now) : null),
+    [wantPrev7Query, range.offset, now],
+  );
+  const prev7Query = useStats(
+    { timeRange: prev7Bounds?.timeRange ?? null },
+    { enabled: wantPrev7Query && prev7Bounds != null, keepPrevious: false },
+  );
+  const currentPrev7 = usablePrevStats(prev7Query) ?? null;
+
   // Pair placeholder data with its own range + reference snapshot so the previous view stays intact until new data arrives.
   const [settled, setSettled] = useState<StatsSnapshot | null>(null);
   if (
@@ -95,12 +120,18 @@ function StatsPanel() {
     (settled?.stats !== stats ||
       settled.resolved !== resolved ||
       settled.prev?.stats !== currentPrev?.stats ||
-      settled.prev?.startMs !== currentPrev?.startMs)
+      settled.prev?.startMs !== currentPrev?.startMs ||
+      settled.prev7 !== currentPrev7 ||
+      settled.dayCompare !== dayCompare)
   ) {
-    setSettled({ stats, range, resolved, prev: currentPrev });
+    setSettled({ stats, range, resolved, prev: currentPrev, prev7: currentPrev7, dayCompare });
   }
   const shown: StatsSnapshot | null =
-    isPlaceholderData && settled ? settled : stats ? { stats, range, resolved, prev: currentPrev } : null;
+    isPlaceholderData && settled
+      ? settled
+      : stats
+        ? { stats, range, resolved, prev: currentPrev, prev7: currentPrev7, dayCompare }
+        : null;
 
   const drill = (d: Drill) => {
     if (isPlaceholderData) return;
@@ -111,8 +142,32 @@ function StatsPanel() {
     ui.setStatsOpen(false);
   };
 
-  const empty = shown != null && shown.stats.daily.length === 0;
-  const shownTrend = shown != null && (shown.range.kind === "cycle" || shown.range.kind === "last7");
+  const selectDay = (day: string) => {
+    if (isPlaceholderData) return;
+    const offset = dayOffset(day, now);
+    if (offset > 0) return;
+    setRange({ kind: "day", offset });
+  };
+
+  const openSession = (id: string) => {
+    if (isPlaceholderData) return;
+    const ui = useUi.getState();
+    ui.setProjectIds([]);
+    ui.setStatsDrill(null);
+    ui.selectSession(id);
+    ui.setStatsOpen(false);
+  };
+
+  const changeDayCompare = (next: DayCompare) => {
+    if (isPlaceholderData || next === dayCompare) return;
+    saveDayCompare(next);
+    setDayCompare(next);
+  };
+
+  const shownDay = shown?.range.kind === "day";
+  const empty = shown != null && !shownDay && shown.stats.daily.length === 0;
+  const shownTrend =
+    shown != null && (shown.range.kind === "day" || shown.range.kind === "cycle" || shown.range.kind === "last7");
 
   return (
     <div
@@ -149,23 +204,35 @@ function StatsPanel() {
           <div className="grid grid-cols-1 items-start gap-3 @3xl:grid-cols-2">
             <UsagePanel
               stats={shown.stats}
+              isDay={shownDay}
+              prev7Stats={shown.prev7}
               timeRange={shown.resolved.timeRange}
               startMs={shown.resolved.startMs}
               endMs={shown.resolved.endMs}
               now={now}
               theme={theme}
               onDrill={drill}
+              onSelectDay={selectDay}
             />
             <div className="flex min-w-0 flex-col gap-3">
-              <FrequencyPanel
-                stats={shown.stats}
-                timeRange={shown.resolved.timeRange}
-                startMs={shown.resolved.startMs}
-                endMs={shown.resolved.endMs}
-                now={now}
-                theme={theme}
-                onDrill={drill}
-              />
+              {shownDay && shown.resolved.startMs != null && shown.resolved.endMs != null ? (
+                <DaySessionsPanel
+                  sessions={shown.stats.sessions}
+                  dayStartMs={shown.resolved.startMs}
+                  dayEndMs={shown.resolved.endMs}
+                  onOpenSession={openSession}
+                />
+              ) : (
+                <FrequencyPanel
+                  stats={shown.stats}
+                  timeRange={shown.resolved.timeRange}
+                  startMs={shown.resolved.startMs}
+                  endMs={shown.resolved.endMs}
+                  now={now}
+                  theme={theme}
+                  onSelectDay={selectDay}
+                />
+              )}
               {shownTrend && shown.resolved.startMs != null && shown.resolved.endMs != null && (
                 <TrendPanel
                   sel={shown.range}
@@ -179,6 +246,8 @@ function StatsPanel() {
                   planState={planState}
                   isPlaceholderData={isPlaceholderData}
                   theme={theme}
+                  dayCompare={shown.dayCompare}
+                  onDayCompareChange={shownDay ? changeDayCompare : undefined}
                 />
               )}
             </div>

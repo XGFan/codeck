@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
-import type { Drill, Stats, TimeRange } from "@/ipc/bindings";
+import type { Stats, TimeRange } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatCount } from "@/lib/format";
 import type { Theme } from "./charts";
@@ -109,14 +109,14 @@ function MonthBlockCard({
   block,
   columns,
   showWeekdays,
-  onDrill,
+  onSelectDay,
   onHover,
   onLeave,
 }: {
   block: MonthBlock;
   columns: 1 | 2 | 4;
   showWeekdays: boolean;
-  onDrill: (d: Drill) => void;
+  onSelectDay: (day: string) => void;
   onHover: (anchor: HTMLElement, title: string, requests: number) => void;
   onLeave: () => void;
 }) {
@@ -150,7 +150,7 @@ function MonthBlockCard({
               aria-label={`${c.tipTitle} · ${formatCount(c.requests)} 次请求`}
               onMouseEnter={(e) => onHover(e.currentTarget, c.tipTitle, c.requests)}
               onMouseLeave={onLeave}
-              onClick={() => onDrill({ kind: "day", day: c.day })}
+              onClick={() => onSelectDay(c.day)}
               className={cn(
                 "block outline-none focus-visible:ring-2 focus-visible:ring-accent",
                 style.cell,
@@ -168,11 +168,11 @@ function MonthBlockCard({
 function MonthBlocksSection({
   view,
   theme,
-  onDrill,
+  onSelectDay,
 }: {
   view: MonthBlocksView;
   theme: Theme;
-  onDrill: (d: Drill) => void;
+  onSelectDay: (day: string) => void;
 }) {
   const [tip, setTip] = useState<ScopedTip | null>(null);
   const dismiss = useCallback(() => setTip(null), []);
@@ -198,7 +198,7 @@ function MonthBlocksSection({
                     block={b}
                     columns={4}
                     showWeekdays={false}
-                    onDrill={onDrill}
+                    onSelectDay={onSelectDay}
                     onHover={hover}
                     onLeave={dismiss}
                   />
@@ -222,7 +222,7 @@ function MonthBlocksSection({
                   block={b}
                   columns={view.columns}
                   showWeekdays={view.columns === 1}
-                  onDrill={onDrill}
+                  onSelectDay={onSelectDay}
                   onHover={hover}
                   onLeave={dismiss}
                 />
@@ -240,7 +240,7 @@ function MonthBlocksSection({
 /**
  * Right column (top): 「使用频率」 colored by request count (5 levels: 0 + non-zero quartiles).
  * - Hourly day-by-day grid (7–8 rows × 24 hours) when `hourly` is non-empty (cycles & last 7 days, no drill);
- * - One block per calendar month otherwise (1 col with weekday header for 1 month, 2 cols for 2–4, 4 cols by year for >4; click day to drill).
+ * - One block per calendar month otherwise (1 col with weekday header for 1 month, 2 cols for 2–4, 4 cols by year for >4; click day to open that day).
  */
 export function FrequencyPanel({
   stats,
@@ -249,7 +249,7 @@ export function FrequencyPanel({
   endMs,
   now,
   theme,
-  onDrill,
+  onSelectDay,
 }: {
   stats: Stats;
   timeRange: TimeRange | null;
@@ -257,7 +257,7 @@ export function FrequencyPanel({
   endMs: number | null;
   now: Date;
   theme: Theme;
-  onDrill: (d: Drill) => void;
+  onSelectDay: (day: string) => void;
 }) {
   const nowMs = now.getTime();
   const mode = chooseFrequencyMode(stats.hourly.length);
@@ -288,7 +288,9 @@ export function FrequencyPanel({
       </div>
 
       {mode === "hourly" && hourlyGrid && <HourlyGridSection grid={hourlyGrid} theme={theme} />}
-      {mode === "months" && monthBlocks && <MonthBlocksSection view={monthBlocks} theme={theme} onDrill={onDrill} />}
+      {mode === "months" && monthBlocks && (
+        <MonthBlocksSection view={monthBlocks} theme={theme} onSelectDay={onSelectDay} />
+      )}
     </section>
   );
 }

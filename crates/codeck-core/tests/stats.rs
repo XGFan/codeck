@@ -1167,6 +1167,23 @@ fn dst_probe() {
             h.iter().map(|b| b.cost).sum::<f64>(),
             st.overview.cost
         ));
+        // Single-day DST probes also emit `hourly_models` conserving per-hour requests and cost.
+        let mut hm_by_hour: BTreeMap<i64, (u32, f64)> = BTreeMap::new();
+        for hm in &st.hourly_models {
+            assert!(hm.requests > 0);
+            let e = hm_by_hour.entry(hm.start_ms as i64).or_default();
+            e.0 += hm.requests;
+            e.1 += hm.cost;
+        }
+        for b in h {
+            let (reqs, cost) = hm_by_hour.remove(&(b.start_ms as i64)).unwrap_or((0, 0.0));
+            assert_eq!(reqs, b.requests);
+            assert!(close(cost, b.cost));
+        }
+        assert!(
+            hm_by_hour.is_empty(),
+            "every hourly_models bucket matches an hourly bucket"
+        );
         h.iter()
             .map(|b| format!("{}:{}", ((b.end_ms - b.start_ms) / 60_000.0), b.requests))
             .collect::<Vec<_>>()
@@ -1207,4 +1224,453 @@ fn hourly_follows_dst_changes_with_conservation() {
     assert_eq!(parts[1], "120:1");
     // Clocks go forward at 02:00: that hour gets no bucket (00:00, 01:00, 03:00, 04:00, 05:00, 06:00).
     assert_eq!(parts[2], "60:0,60:1,60:1,60:0,60:0,60:0");
+}
+
+// ---------------------------------------------------------------- single-day breakdown
+
+#[test]
+fn single_day_hourly_models_and_sessions_conserve_totals() {
+    // Fixture with two visible sessions on the same day, multiple models (including a missing
+    // model that must map to `stats::UNKNOWN`), and a tie-break on cost by `session_id`.
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("projects").join("-tmp-single-day");
+    fs::create_dir_all(&dir).unwrap();
+
+    let sid_high = "33333333-0000-4000-8000-000000000002";
+    let sid_tie_a = "33333333-0000-4000-8000-000000000001";
+    let sid_tie_b = "33333333-0000-4000-8000-000000000003";
+
+    let prompt = |sid: &str, ts: &str, text: &str| {
+        format!(
+            r#"{{"type":"user","uuid":"p-{sid}","parentUuid":null,"sessionId":"{sid}","timestamp":"{ts}","message":{{"role":"user","content":"{text}"}}}}"#
+        )
+    };
+    let asst = |sid: &str, uuid: &str, id: &str, ts: &str, model: Option<&str>, out_tok: i64| {
+        let model_field = match model {
+            Some(m) => format!(r#""model":"{m}","#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{"type":"assistant","uuid":"{uuid}","parentUuid":"p-{sid}","sessionId":"{sid}","timestamp":"{ts}","message":{{"id":"{id}","role":"assistant",{model_field}"content":[{{"type":"text","text":"ok"}}],"usage":{{"input_tokens":1000,"output_tokens":{out_tok},"cache_read_input_tokens":200,"cache_creation_input_tokens":50}}}}}}"#
+        )
+    };
+
+    fs::write(
+        dir.join(format!("{sid_high}.jsonl")),
+        [
+            prompt(sid_high, "2026-06-10T09:00:00.000Z", "High cost session"),
+            asst(
+                sid_high,
+                "h1",
+                "m-h1",
+                "2026-06-10T09:05:00.000Z",
+                Some("claude-sonnet-4-6"),
+                2000,
+            ),
+            asst(
+                sid_high,
+                "h2",
+                "m-h2",
+                "2026-06-10T09:10:00.000Z",
+                Some("claude-haiku-4-5"),
+                1000,
+            ),
+            asst(
+                sid_high,
+                "h3",
+                "m-h3",
+                "2026-06-10T10:15:00.000Z",
+                None,
+                500,
+            ),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    for (sid, title) in [(sid_tie_b, "Tie B"), (sid_tie_a, "Tie A")] {
+        fs::write(
+            dir.join(format!("{sid}.jsonl")),
+            [
+                prompt(sid, "2026-06-10T11:00:00.000Z", title),
+                asst(
+                    sid,
+                    &format!("t-{sid}"),
+                    &format!("m-t-{sid}"),
+                    "2026-06-10T11:02:00.000Z",
+                    Some("claude-haiku-4-5"),
+                    400,
+                ),
+            ]
+            .join("\n")
+                + "\n",
+        )
+        .unwrap();
+    }
+
+    let env = common::engine::Env::scanned(root);
+    let from = DateTime::parse_from_rfc3339("2026-06-10T00:00:00Z")
+        .unwrap()
+        .timestamp_millis() as f64;
+    let st = env
+        .engine
+        .stats(&StatsRequest {
+            time_range: Some(TimeRange {
+                from_ms: Some(from),
+                to_ms: Some(from + 86_400_000.0 - 1.0),
+            }),
+        })
+        .unwrap();
+
+    assert_eq!(st.overview.requests, 5);
+    assert!(!st.hourly_models.is_empty());
+    assert!(
+        st.hourly_models
+            .iter()
+            .any(|hm| hm.model == codeck_core::stats::UNKNOWN),
+        "missing model maps to stats::UNKNOWN"
+    );
+
+    // Every hourly_models row has requests > 0 and sums per-hour to match `hourly`.
+    let mut hm_by_hour: BTreeMap<i64, (u32, f64)> = BTreeMap::new();
+    for hm in &st.hourly_models {
+        assert!(hm.requests > 0);
+        let e = hm_by_hour.entry(hm.start_ms as i64).or_default();
+        e.0 += hm.requests;
+        e.1 += hm.cost;
+    }
+    for h in &st.hourly {
+        let (reqs, cost) = hm_by_hour.remove(&(h.start_ms as i64)).unwrap_or((0, 0.0));
+        assert_eq!(reqs, h.requests);
+        assert!(close(cost, h.cost));
+    }
+    assert!(hm_by_hour.is_empty());
+    assert_eq!(
+        st.hourly_models.iter().map(|m| m.output).sum::<f64>(),
+        st.overview.output_tokens
+    );
+
+    // `sessions` conserves against `overview` (all rows belong to visible sessions), sorted by
+    // cost desc then session_id asc, with titles from `sessions`.
+    assert_eq!(st.sessions.len(), 3);
+    assert_eq!(
+        st.sessions.iter().map(|s| s.requests).sum::<u32>(),
+        st.overview.requests
+    );
+    assert!(close(
+        st.sessions.iter().map(|s| s.cost).sum::<f64>(),
+        st.overview.cost
+    ));
+    let ids_in_order: Vec<&str> = st.sessions.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(ids_in_order, vec![sid_high, sid_tie_a, sid_tie_b]);
+    assert_eq!(st.sessions[0].title, "High cost session");
+    assert_eq!(st.sessions[1].title, "Tie A");
+    assert_eq!(st.sessions[2].title, "Tie B");
+    assert!(st.sessions[0].cost > st.sessions[1].cost);
+    assert!(close(st.sessions[1].cost, st.sessions[2].cost));
+}
+
+#[test]
+fn single_day_range_boundaries() {
+    let env = scanned(MIXED);
+    let from = DateTime::parse_from_rfc3339("2026-06-09T00:00:00Z")
+        .unwrap()
+        .timestamp_millis() as f64;
+    let limit = 26.0 * 3_600_000.0;
+    let query =
+        |time_range: Option<TimeRange>| env.engine.stats(&StatsRequest { time_range }).unwrap();
+
+    // Exact 26-hour boundary: both single-day fields emitted and conserve totals.
+    let at_limit = query(Some(TimeRange {
+        from_ms: Some(from),
+        to_ms: Some(from + limit),
+    }));
+    assert!(at_limit.overview.requests > 0);
+    assert!(!at_limit.hourly_models.is_empty());
+    assert!(!at_limit.sessions.is_empty());
+    assert_eq!(
+        at_limit
+            .hourly_models
+            .iter()
+            .map(|m| m.requests)
+            .sum::<u32>(),
+        at_limit.overview.requests
+    );
+    assert_eq!(
+        at_limit.sessions.iter().map(|s| s.requests).sum::<u32>(),
+        at_limit.overview.requests
+    );
+    assert!(close(
+        at_limit.sessions.iter().map(|s| s.cost).sum::<f64>(),
+        at_limit.overview.cost
+    ));
+
+    // 1 ms and 0.5 ms past 26 hours: single-day fields empty, while `hourly` (<= 8d) still populated.
+    for extra in [1.0, 0.5] {
+        let over = query(Some(TimeRange {
+            from_ms: Some(from),
+            to_ms: Some(from + limit + extra),
+        }));
+        assert!(!over.hourly.is_empty());
+        assert!(over.hourly_models.is_empty());
+        assert!(over.sessions.is_empty());
+    }
+
+    // Reversed bounds (whole ms and fractional ms) and missing bounds -> empty.
+    for range in [
+        Some(TimeRange {
+            from_ms: Some(from + 1000.0),
+            to_ms: Some(from),
+        }),
+        Some(TimeRange {
+            from_ms: Some(from + 0.8),
+            to_ms: Some(from + 0.2),
+        }),
+        Some(TimeRange {
+            from_ms: None,
+            to_ms: Some(from + 86_400_000.0),
+        }),
+        Some(TimeRange {
+            from_ms: Some(from),
+            to_ms: None,
+        }),
+        None,
+    ] {
+        let st = query(range);
+        assert!(st.hourly_models.is_empty());
+        assert!(st.sessions.is_empty());
+    }
+}
+
+#[test]
+fn single_day_session_spans_merge_within_ten_minutes() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("projects").join("-tmp-spans");
+    fs::create_dir_all(&dir).unwrap();
+
+    let sid_multi = "44444444-0000-4000-8000-000000000001";
+    let sid_single = "44444444-0000-4000-8000-000000000002";
+    let parse_ms = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis() as f64;
+    let mk = |sid: &str, uuid: &str, id: &str, ts: &str| {
+        format!(
+            r#"{{"type":"assistant","uuid":"{uuid}","parentUuid":null,"sessionId":"{sid}","timestamp":"{ts}","message":{{"id":"{id}","role":"assistant","model":"claude-sonnet-4-6","content":[{{"type":"text","text":"ok"}}],"usage":{{"input_tokens":100,"output_tokens":50}}}}}}"#
+        )
+    };
+
+    // Multi-span session:
+    // - 10:00 -> 10:09 (9 min gap: merged) -> 10:19 (10 min exact gap: merged) => [10:00, 10:19]
+    // - 10:30 (11 min gap: split, single request) => [10:30, 10:30]
+    let t0 = "2026-06-11T10:00:00.000Z";
+    let t1 = "2026-06-11T10:09:00.000Z";
+    let t2 = "2026-06-11T10:19:00.000Z";
+    let t3 = "2026-06-11T10:30:00.000Z";
+    let t_solo = "2026-06-11T12:00:00.000Z";
+
+    fs::write(
+        dir.join(format!("{sid_multi}.jsonl")),
+        [
+            format!(
+                r#"{{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"{sid_multi}","timestamp":"{t0}","message":{{"role":"user","content":"multi"}}}}"#
+            ),
+            // Write out of timestamp order to verify sorting before span merging.
+            mk(sid_multi, "a3", "m3", t3),
+            mk(sid_multi, "a1", "m1", t1),
+            mk(sid_multi, "a0", "m0", t0),
+            mk(sid_multi, "a2", "m2", t2),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join(format!("{sid_single}.jsonl")),
+        [
+            format!(
+                r#"{{"type":"user","uuid":"u2","parentUuid":null,"sessionId":"{sid_single}","timestamp":"{t_solo}","message":{{"role":"user","content":"solo"}}}}"#
+            ),
+            mk(sid_single, "s0", "ms0", t_solo),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    let env = common::engine::Env::scanned(root);
+    let from = parse_ms("2026-06-11T00:00:00.000Z");
+    let st = env
+        .engine
+        .stats(&StatsRequest {
+            time_range: Some(TimeRange {
+                from_ms: Some(from),
+                to_ms: Some(from + 86_400_000.0 - 1.0),
+            }),
+        })
+        .unwrap();
+
+    let multi = st
+        .sessions
+        .iter()
+        .find(|s| s.session_id == sid_multi)
+        .expect("multi session");
+    assert_eq!(multi.requests, 4);
+    assert_eq!(
+        multi.spans,
+        vec![
+            codeck_core::model::TimeSpan {
+                start_ms: parse_ms(t0),
+                end_ms: parse_ms(t2),
+            },
+            codeck_core::model::TimeSpan {
+                start_ms: parse_ms(t3),
+                end_ms: parse_ms(t3),
+            },
+        ]
+    );
+
+    let solo = st
+        .sessions
+        .iter()
+        .find(|s| s.session_id == sid_single)
+        .expect("single session");
+    assert_eq!(solo.requests, 1);
+    assert_eq!(
+        solo.spans,
+        vec![codeck_core::model::TimeSpan {
+            start_ms: parse_ms(t_solo),
+            end_ms: parse_ms(t_solo),
+        }]
+    );
+}
+
+#[test]
+fn single_day_sessions_attributes_superseded_rows_to_visible_successor() {
+    let root = data_root(&["continued"]);
+    let cont_dir = root.path().join("projects").join(ids::CONTINUED_DIR);
+    let parse_ms = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis() as f64;
+
+    // 1-hop superseded leftover billed row on CONTINUED_OLD -> CONTINUED_NEW, plus a request on
+    // CONTINUED_NEW 5 minutes later so their timestamps merge into one span under CONTINUED_NEW.
+    // Pick a date with no pre-existing messages in the `continued` fixture.
+    let ts_old = "2026-11-10T01:30:00.000Z";
+    let ts_new = "2026-11-10T01:35:00.000Z";
+    {
+        let mut f = OpenOptions::new()
+            .append(true)
+            .open(cont_dir.join(format!("{}.jsonl", ids::CONTINUED_OLD)))
+            .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","uuid":"u-cont-old-1","parentUuid":null,"sessionId":"{old}","timestamp":"{ts_old}","message":{{"id":"msg_sd_1hop_old","role":"assistant","model":"claude-sonnet-4-6","content":[{{"type":"text","text":"old"}}],"usage":{{"input_tokens":1000,"output_tokens":200}}}}}}"#,
+            old = ids::CONTINUED_OLD
+        )
+        .unwrap();
+    }
+    {
+        let mut f = OpenOptions::new()
+            .append(true)
+            .open(cont_dir.join(format!("{}.jsonl", ids::CONTINUED_NEW)))
+            .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","uuid":"u-cont-new-1","parentUuid":null,"sessionId":"{new}","timestamp":"{ts_new}","message":{{"id":"msg_sd_1hop_new","role":"assistant","model":"claude-sonnet-4-6","content":[{{"type":"text","text":"new"}}],"usage":{{"input_tokens":1000,"output_tokens":300}}}}}}"#,
+            new = ids::CONTINUED_NEW
+        )
+        .unwrap();
+    }
+
+    // 2-hop continuation chain A -> B -> C with a leftover billed row on A.
+    const CHAIN_A: &str = "55555555-2222-3333-4444-555555555501";
+    const CHAIN_B: &str = "55555555-2222-3333-4444-555555555502";
+    const CHAIN_C: &str = "55555555-2222-3333-4444-555555555503";
+    let ts_chain = "2026-11-10T02:00:00.000Z";
+    let chain_prompt = |sid: &str, text: &str| {
+        format!(
+            r#"{{"type":"user","uuid":"p-sd-chain","parentUuid":null,"sessionId":"{sid}","timestamp":"2026-11-10T01:59:00.000Z","message":{{"role":"user","content":"{text}"}}}}"#
+        )
+    };
+    fs::write(
+        cont_dir.join(format!("{CHAIN_A}.jsonl")),
+        format!(
+            "{prompt}\n\
+{{\"type\":\"assistant\",\"uuid\":\"u-sd-a\",\"parentUuid\":\"p-sd-chain\",\"sessionId\":\"{CHAIN_A}\",\"timestamp\":\"{ts_chain}\",\"message\":{{\"id\":\"msg_sd_2hop\",\"role\":\"assistant\",\"model\":\"claude-haiku-4-5\",\"content\":[{{\"type\":\"text\",\"text\":\"a\"}}],\"usage\":{{\"input_tokens\":500,\"output_tokens\":100}}}}}}\n\
+{{\"type\":\"continued-in\",\"sessionId\":\"{CHAIN_A}\",\"continuedInSessionId\":\"{CHAIN_B}\"}}\n",
+            prompt = chain_prompt(CHAIN_A, "Chain A"),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        cont_dir.join(format!("{CHAIN_B}.jsonl")),
+        format!(
+            "{prompt}\n\
+{{\"type\":\"continued-in\",\"sessionId\":\"{CHAIN_B}\",\"continuedInSessionId\":\"{CHAIN_C}\"}}\n",
+            prompt = chain_prompt(CHAIN_B, "Chain B"),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        cont_dir.join(format!("{CHAIN_C}.jsonl")),
+        format!(
+            "{prompt}\n\
+{{\"type\":\"assistant\",\"uuid\":\"u-sd-c\",\"parentUuid\":\"p-sd-chain\",\"sessionId\":\"{CHAIN_C}\",\"timestamp\":\"2026-11-12T10:00:00.000Z\",\"message\":{{\"id\":\"msg_sd_c\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-6\",\"content\":[{{\"type\":\"text\",\"text\":\"c\"}}],\"usage\":{{\"input_tokens\":100,\"output_tokens\":100}}}}}}\n",
+            prompt = chain_prompt(CHAIN_C, "Chain C visible"),
+        ),
+    )
+    .unwrap();
+
+    let env = common::engine::Env::scanned(root);
+    let from = parse_ms("2026-11-10T00:00:00.000Z");
+    let req = StatsRequest {
+        time_range: Some(TimeRange {
+            from_ms: Some(from),
+            to_ms: Some(from + 86_400_000.0 - 1.0),
+        }),
+    };
+    let st = env.engine.stats(&req).unwrap();
+
+    // Superseded sessions never appear; their rows belong to CONTINUED_NEW and CHAIN_C.
+    let ids: Vec<&str> = st.sessions.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(ids, vec![ids::CONTINUED_NEW, CHAIN_C]);
+    assert_eq!(st.sessions[0].requests, 2);
+    assert_eq!(
+        st.sessions[0].spans,
+        vec![codeck_core::model::TimeSpan {
+            start_ms: parse_ms(ts_old),
+            end_ms: parse_ms(ts_new),
+        }]
+    );
+    assert_eq!(st.sessions[1].title, "Chain C visible");
+    assert_eq!(st.sessions[1].requests, 1);
+    assert_eq!(
+        st.sessions[1].spans,
+        vec![codeck_core::model::TimeSpan {
+            start_ms: parse_ms(ts_chain),
+            end_ms: parse_ms(ts_chain),
+        }]
+    );
+    assert_eq!(
+        st.sessions.iter().map(|s| s.requests).sum::<u32>(),
+        st.overview.requests
+    );
+    assert!(close(
+        st.sessions.iter().map(|s| s.cost).sum::<f64>(),
+        st.overview.cost
+    ));
+
+    // A superseded row that cannot reach a visible session (e.g. broken continued_in_id) is
+    // omitted from `sessions` while still counted in `overview`.
+    let db = env.db();
+    db.execute(
+        "UPDATE sessions SET continued_in_id = 'missing-session' WHERE id = ?1",
+        [CHAIN_B],
+    )
+    .unwrap();
+    let st_broken = codeck_core::stats::compute(&db, &req).unwrap();
+    let broken_ids: Vec<&str> = st_broken
+        .sessions
+        .iter()
+        .map(|s| s.session_id.as_str())
+        .collect();
+    assert_eq!(broken_ids, vec![ids::CONTINUED_NEW]);
+    assert_eq!(st_broken.overview.requests, 3);
+    assert_eq!(st_broken.sessions[0].requests, 2);
 }

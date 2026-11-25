@@ -1,7 +1,26 @@
 import type { HourUsage, Stats } from "@/ipc/bindings";
 import type { PlanState } from "@/features/quota";
 import { formatCost } from "@/lib/format";
-import type { RangeSel } from "./range";
+import { formatDayWithWeekday, type DayCompare, type RangeSel } from "./range";
+
+export const DAY_COMPARE_STORAGE_KEY = "codeck.statsDayCompare";
+
+export function loadDayCompare(): DayCompare {
+  try {
+    const raw = localStorage.getItem(DAY_COMPARE_STORAGE_KEY);
+    return raw === "prevWeek" ? "prevWeek" : "prevDay";
+  } catch {
+    return "prevDay";
+  }
+}
+
+export function saveDayCompare(compare: DayCompare): void {
+  try {
+    localStorage.setItem(DAY_COMPARE_STORAGE_KEY, compare);
+  } catch {
+    // Not remembered; the choice still applies to this window.
+  }
+}
 
 export type TrendPoint = [elapsedMs: number, cumulativeCost: number];
 
@@ -74,9 +93,20 @@ export function valueAtElapsed(pts: TrendPoint[], elapsedMs: number): number {
 export interface TrendLabels {
   current: string;
   previous: string;
+  /** Optional legend label for the reference curve (e.g. `前一天（11月23日 周一）`); defaults to `previous`. */
+  previousLegend?: string;
 }
 
-export function trendLabels(sel: RangeSel): TrendLabels {
+export function trendLabels(
+  sel: RangeSel,
+  dayCompare: DayCompare = "prevDay",
+  prevStartMs?: number | null,
+): TrendLabels {
+  if (sel.kind === "day") {
+    const previous = dayCompare === "prevWeek" ? "上周期同一天" : "前一天";
+    const dateSuffix = prevStartMs != null ? `（${formatDayWithWeekday(new Date(prevStartMs))}）` : "";
+    return { current: "这一天", previous, previousLegend: `${previous}${dateSuffix}` };
+  }
   if (sel.kind === "last7") return { current: "最近 7 天", previous: "前 7 天" };
   if (sel.offset === 0) return { current: "本周期", previous: "上一周期" };
   return { current: sel.offset === -1 ? "上一周期" : "该周期", previous: "前一周期" };
@@ -99,12 +129,13 @@ export function computeTrendSummary(args: {
   currentPts: TrendPoint[];
   prevPts: TrendPoint[] | null;
   isPlaceholderData: boolean;
+  dayCompare?: DayCompare;
 }): TrendSummary {
-  const { sel, rangeStartMs, rangeEndMs, nowMs, currentPts, prevPts, isPlaceholderData } = args;
+  const { sel, rangeStartMs, rangeEndMs, nowMs, currentPts, prevPts, isPlaceholderData, dayCompare = "prevDay" } = args;
   const inProgress = rangeEndMs > nowMs && rangeStartMs <= nowMs;
   const nowElapsedMs = inProgress ? Math.max(0, nowMs - rangeStartMs) : null;
   const currentCost = currentPts.length > 0 ? currentPts[currentPts.length - 1]![1] : 0;
-  const labels = trendLabels(sel);
+  const labels = trendLabels(sel, dayCompare);
 
   if (!prevPts || prevPts.length === 0 || isPlaceholderData) {
     return {

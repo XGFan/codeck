@@ -1,17 +1,19 @@
-import type { DailyModelTokens, TimeRange } from "@/ipc/bindings";
+import type { DailyModelTokens, HourModelUsage, TimeRange } from "@/ipc/bindings";
 import { dayKey, FAMILIES, family, parseDay, type ModelFamily } from "./charts";
 
 export type UsageMetric = "cost" | "input" | "output";
-export type UsageBucket = "1d" | "1w" | "1mo";
+export type UsageBucket = "1h" | "1d" | "1w" | "1mo";
 
 export const MAX_USAGE_BARS = 170;
 const DAY_MS = 86_400_000;
 
-/** Total input tokens across a row: uncached input + cache reads + cache writes. */
-export const inputOf = (d: DailyModelTokens): number => d.input + d.cacheRead + d.cacheCreation;
+type MetricRow = Pick<DailyModelTokens, "input" | "output" | "cacheRead" | "cacheCreation" | "cost">;
 
-/** Metric value of a single `DailyModelTokens` row. */
-export function metricValue(d: DailyModelTokens, metric: UsageMetric): number {
+/** Total input tokens across a row: uncached input + cache reads + cache writes. */
+export const inputOf = (d: MetricRow): number => d.input + d.cacheRead + d.cacheCreation;
+
+/** Metric value of a single `DailyModelTokens` or `HourModelUsage` row. */
+export function metricValue(d: MetricRow, metric: UsageMetric): number {
   switch (metric) {
     case "cost":
       return d.cost;
@@ -211,6 +213,36 @@ export function buildUsageSeries(
   const kept = items.length > MAX_USAGE_BARS ? items.slice(-MAX_USAGE_BARS) : items;
   const families = FAMILIES.filter((f) => kept.some((it) => it.byFamily[f] > 0));
   return { bucket, families, items: kept };
+}
+
+/**
+ * Aggregates single-day `hourlyModels` into 24 fixed local-hour buckets (`0 时`–`23 时`, `bucket: "1h"`) stacked by
+ * model family. Rows outside `dayStartMs`'s local calendar day are ignored; x-axis labels appear at 0 / 6 / 12 / 18 时.
+ */
+export function buildHourlyUsageSeries(
+  hourlyModels: HourModelUsage[],
+  metric: UsageMetric,
+  dayStartMs: number,
+): UsageSeries {
+  const targetDay = dayKey(new Date(dayStartMs));
+  const items: UsageBucketItem[] = Array.from({ length: 24 }, (_, h) => ({
+    key: String(h),
+    axisLabel: h % 6 === 0 ? `${h} 时` : "",
+    title: `${h} 时`,
+    byFamily: emptyByFamily(),
+  }));
+
+  for (const row of hourlyModels) {
+    const d = new Date(row.startMs);
+    if (dayKey(d) !== targetDay) continue;
+    const h = d.getHours();
+    const target = items[h];
+    if (!target) continue;
+    target.byFamily[family(row.model)] += metricValue(row, metric);
+  }
+
+  const families = FAMILIES.filter((f) => items.some((it) => it.byFamily[f] > 0));
+  return { bucket: "1h", families, items };
 }
 
 export interface ModelBreakdownRow {

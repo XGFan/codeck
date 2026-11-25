@@ -4,19 +4,28 @@ import type { TimeRange } from "@/ipc/bindings";
 import { cycleBounds, roundToMinute, type CycleRule } from "@/lib/cycle";
 
 /**
- * The stats' time range: a usage cycle or a calendar month (paged with `offset`, 0 = the current one, -1 the one
- * before…), the last N days up to now, or everything.
+ * The stats' time range: a local calendar day, a usage cycle or a calendar month (paged with `offset`, 0 = the
+ * current one, -1 the one before…), the last N days up to now, or everything.
  */
-export type RangeKind = "cycle" | "month" | "last7" | "last30" | "last90" | "all";
+export type RangeKind = "day" | "cycle" | "month" | "last7" | "last30" | "last90" | "all";
 export interface RangeSel {
   kind: RangeKind;
   offset: number;
 }
 
+export type DayCompare = "prevDay" | "prevWeek";
+
 export const DEFAULT_RANGE: RangeSel = { kind: "cycle", offset: 0 };
 
 /** The dropdown's choices, in groups. */
 export const RANGE_MENU: { group: string | null; items: { label: string; sel: RangeSel }[] }[] = [
+  {
+    group: "天",
+    items: [
+      { label: "今天", sel: { kind: "day", offset: 0 } },
+      { label: "昨天", sel: { kind: "day", offset: -1 } },
+    ],
+  },
   {
     group: "周期",
     items: [
@@ -44,8 +53,16 @@ export const RANGE_MENU: { group: string | null; items: { label: string; sel: Ra
 
 export const sameRange = (a: RangeSel, b: RangeSel) => a.kind === b.kind && a.offset === b.offset;
 
-/** Cycles and months page with ‹ ›; the rolling ranges and 全部 do not. */
-export const pageable = (k: RangeKind) => k === "cycle" || k === "month";
+/** Days, cycles, and months page with ‹ ›; the rolling ranges and 全部 do not. */
+export const pageable = (k: RangeKind) => k === "day" || k === "cycle" || k === "month";
+
+/** Local calendar day difference from `now`'s day to `day` (`YYYY-MM-DD`): 0 = today, -1 = yesterday. */
+export function dayOffset(day: string, now: Date): number {
+  const [y, m, d] = day.split("-").map(Number);
+  const targetUtc = Date.UTC(y!, m! - 1, d!);
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((targetUtc - todayUtc) / DAY);
+}
 
 export interface ResolvedRange {
   /** What the stats query covers (both bounds set except for 全部). */
@@ -62,7 +79,36 @@ export interface ResolvedRange {
 const DAY = 86_400_000;
 const FIVE_MIN = 5 * 60_000;
 const fmtReset = (d: Date) => format(d, "M月d日 EEE HH:mm", { locale: zhCN });
+const fmtDay = (d: Date) => format(d, "M月d日");
+const fmtDayDetail = (d: Date) => format(d, "M月d日 EEE", { locale: zhCN });
 const fmtMonth = (d: Date) => format(d, "yyyy 年 M 月");
+
+/** Local calendar day label with weekday (`M月d日 周X`). */
+export const formatDayWithWeekday = (d: Date): string => fmtDayDetail(d);
+
+/** Exact `[fromMs, toMs]` & half-open `[startMs, endMs)` of the 7 full calendar days strictly before `offset`'s day. */
+export function resolvePrev7Range(
+  dayOffsetVal: number,
+  now: Date,
+): { timeRange: TimeRange; startMs: number; endMs: number } {
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffsetVal);
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 7);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  return { timeRange: { fromMs: startMs, toMs: endMs - 1 }, startMs, endMs };
+}
+
+/** Reference day bounds for single-day trend comparison: previous day (`-1`) or same weekday last week (`-7`). */
+export function resolveDayCompareRange(
+  dayOffsetVal: number,
+  compare: DayCompare,
+  now: Date,
+  rule: CycleRule,
+): { timeRange: TimeRange; startMs: number; endMs: number } {
+  const delta = compare === "prevWeek" ? -7 : -1;
+  const r = resolveRange({ kind: "day", offset: dayOffsetVal + delta }, now, rule);
+  return { timeRange: r.timeRange!, startMs: r.startMs!, endMs: r.endMs! };
+}
 
 /** What is left until `end`: days and hours, or hours and minutes under a day. */
 export function remaining(ms: number): string {
@@ -72,6 +118,20 @@ export function remaining(ms: number): string {
 
 export function resolveRange(sel: RangeSel, now: Date, rule: CycleRule): ResolvedRange {
   switch (sel.kind) {
+    case "day": {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + sel.offset);
+      const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+      const current = sel.offset === 0;
+      return {
+        timeRange: { fromMs: startMs, toMs: endMs - 1 },
+        startMs,
+        endMs,
+        label: current ? "今天" : sel.offset === -1 ? "昨天" : fmtDay(start),
+        detail: `${fmtDayDetail(start)}${current ? `，还剩 ${remaining(endMs - now.getTime())}` : ""}`,
+      };
+    }
     case "cycle": {
       const { start, end } = cycleBounds(now, rule, sel.offset);
       const startMs = start.getTime();
