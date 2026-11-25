@@ -628,8 +628,10 @@ fn mock_model_edit_queue() {
     assert_eq!(r["error"]["code"], "not_busy", "{r}");
 }
 
-/// `cancel_queue`: one of two queued steers is taken out, the other stays in Claude Code's queue
-/// (with a new id) and is the only one delivered; a steer that is not in the queue is `not_found`.
+/// Steers while busy wait in Claude Code's queue; one with an image is pasted by path like a prompt's and
+/// waits with its `[Image #1]` placeholder. `cancel_queue`: one of two queued steers is taken out, the
+/// other stays in the queue (with a new id) and is the only one delivered, which empties the queue; a
+/// steer that is not in the queue is `not_found`.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_cancel_queue() {
@@ -649,9 +651,19 @@ fn mock_model_cancel_queue() {
         "s3",
         json!({"type": "steer", "text": "MOCK-STEERED second", "images": [img]}),
     );
-    rpc.until("queue", Duration::from_secs(10), |v| {
+    assert_eq!(second["delivered_as"], "queued", "{second}");
+    let q = rpc.until("queue", Duration::from_secs(10), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| a.len() == 2)
     });
+    // The one with the image, as it waits: its id, the image's path, the placeholder before its words.
+    let item = &q["items"][1];
+    assert_eq!(item["id"], second["queue_id"], "{q}");
+    assert_eq!(item["images"], json!([img.display().to_string()]), "{q}");
+    let text = item["text"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("[Image #1]") && text.ends_with("MOCK-STEERED second"),
+        "{q}"
+    );
 
     rpc.send(json!({"id": "c0", "type": "cancel_queue", "queue_id": "q99999"}));
     let e = rpc.until("响应 c0", Duration::from_secs(10), |v| v["id"] == "c0");
@@ -682,9 +694,14 @@ fn mock_model_cancel_queue() {
         "{q}"
     );
     assert_eq!(item["images"], json!([img.display().to_string()]), "{q}");
+    // The queue as it was on the way here is forgotten: an empty one from now on is the delivery.
+    rpc.seen.retain(|v| v["type"] != "queue");
 
-    // The turn ends; the second runs as the turn after it, the first never does.
+    // The turn ends; the second runs as the turn after it (the queue is empty then), the first never does.
     rpc.event("turn_end", Duration::from_secs(30));
+    rpc.until("queue", Duration::from_secs(30), |v| {
+        v["type"] == "queue" && v["items"] == json!([])
+    });
     let t2 = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t2["last_text"], "STEER-TURN", "{t2}");
     settle_idle(&mut rpc);
@@ -703,48 +720,6 @@ fn mock_model_cancel_queue() {
         users.iter().any(|t| t.contains("MOCK-STEERED second")),
         "{users:?}"
     );
-}
-
-/// A steer with an image while busy: pasted by path like a prompt's, it waits in Claude Code's
-/// queue with its `[Image #1]` placeholder, on the scripted model (no credits).
-#[test]
-#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
-fn mock_model_steer_image() {
-    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
-    let mut rpc = Rpc::start(&env);
-    start_session(&mut rpc, &env);
-    let img = env.work.join("dot.png");
-    std::fs::write(&img, red_dot_png()).unwrap();
-
-    rpc.forget();
-    rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    // The reply is streaming (the spinner counts tokens): a steer now waits in the queue.
-    rpc.until("streaming", Duration::from_secs(10), |v| {
-        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
-    });
-    let d = rpc.call(
-        "s2",
-        json!({"type": "steer", "text": "MOCK-STEERED with image", "images": [img]}),
-    );
-    assert_eq!(d["delivered_as"], "queued", "{d}");
-    let q = rpc.until("queue", Duration::from_secs(10), |v| {
-        v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
-    });
-    assert_eq!(q["items"][0]["id"], d["queue_id"], "{q}");
-    assert_eq!(
-        q["items"][0]["images"],
-        json!([img.display().to_string()]),
-        "{q}"
-    );
-    let item = q["items"][0]["text"].as_str().unwrap_or_default();
-    assert!(
-        item.contains("[Image #1]") && item.ends_with("MOCK-STEERED with image"),
-        "{q}"
-    );
-    rpc.event("turn_end", Duration::from_secs(30));
-    rpc.until("queue", Duration::from_secs(30), |v| {
-        v["type"] == "queue" && v["items"] == json!([])
-    });
 }
 
 /// `[Image #n]` tags in `s` replaced by `#`, so the text around them can be compared (Claude Code
@@ -1641,32 +1616,6 @@ fn mock_model_worktree_moves_the_transcript() {
     let back = run_turn_allowing(&mut rpc, "b", "said after coming back");
     assert_eq!(prompts(&back, "after coming back"), 1, "{back:?}");
     assert_eq!(prompts(&back, "in the worktree"), 0, "{back:?}");
-}
-
-/// A plugin's skill typed by its bare name (`/probe x`) is recorded with the plugin's name
-/// (`/<plugin>:probe x`); `prompt` still finds it (on the scripted model, no credits).
-#[test]
-#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
-fn mock_model_plugin_command_by_bare_name() {
-    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
-    let skill = env.plugin_dir.join("skills").join("probe");
-    std::fs::create_dir_all(&skill).unwrap();
-    std::fs::write(
-        skill.join("SKILL.md"),
-        "---\nname: probe\ndescription: A probe skill for tests.\n---\nReply ok.\n",
-    )
-    .unwrap();
-    let mut rpc = Rpc::start(&env);
-    start_session(&mut rpc, &env);
-
-    rpc.forget();
-    let r = rpc.call(
-        "p1",
-        json!({"type": "prompt", "text": "/probe 第一行\n第二行"}),
-    );
-    assert!(r["uuid"].as_str().is_some(), "{r}");
-    assert!(r["prompt_id"].as_str().is_some(), "{r}");
-    rpc.event("turn_end", Duration::from_secs(30));
 }
 
 /// A plugin's monitor has no tool call, and Stop's `background_tasks` lists it as a shell: once its
@@ -2986,7 +2935,8 @@ fn mock_model_start_failed() {
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_fatal() {
-    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    // No claude runs here: nothing listens at the model's address.
+    let env = setup_with("mock-key", "http://127.0.0.1:9", "claude-sonnet-4-5");
     let mut rpc = Rpc::attach(&env, &["no-such-target"]);
     let f = rpc.event("fatal", Duration::from_secs(20));
     assert!(f["message"].as_str().is_some_and(|m| !m.is_empty()), "{f}");
@@ -3030,11 +2980,20 @@ fn mock_model_start_failed_untrusted() {
 
 /// `prompt` with a slash command, whatever it does: a panel that leaves no record (`/cost`) is
 /// delivered `as "command"` within a few seconds, not after 30 s; a local command with a record
-/// (`/rename`) has its uuid; a Tab in a prompt is recorded as spaces and still confirmed.
+/// (`/rename`) has its uuid; a Tab in a prompt is recorded as spaces and still confirmed; a plugin's
+/// skill typed by its bare name (`/probe x`) is recorded with the plugin's name (`/<plugin>:probe x`)
+/// and still found.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_prompt_slash_and_tab() {
     let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let skill = env.plugin_dir.join("skills").join("probe");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: probe\ndescription: A probe skill for tests.\n---\nReply ok.\n",
+    )
+    .unwrap();
     let mut rpc = Rpc::start(&env);
     start_session(&mut rpc, &env);
 
@@ -3061,5 +3020,15 @@ fn mock_model_prompt_slash_and_tab() {
     let p = rpc.call("p1", json!({"type": "prompt", "text": "a\tb\tc"}));
     assert!(p["uuid"].is_string(), "{p}");
     assert!(t.elapsed() < Duration::from_secs(15), "{:?}", t.elapsed());
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    until_idle(&mut rpc);
+    rpc.forget();
+    let s = rpc.call(
+        "s1",
+        json!({"type": "prompt", "text": "/probe 第一行\n第二行"}),
+    );
+    assert!(s["uuid"].as_str().is_some(), "{s}");
+    assert!(s["prompt_id"].as_str().is_some(), "{s}");
     rpc.event("turn_end", Duration::from_secs(30));
 }

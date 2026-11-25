@@ -7,7 +7,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=$(mktemp -d)
-(cd "$root/crates/ccrpc" && CCRPC_E2E_WIRE_DIR="$out" cargo test --test e2e mock_model_t -- --ignored --test-threads=1)
+(cd "$root/crates/ccrpc" && CCRPC_E2E_WIRE_DIR="$out" cargo test --test e2e -- --ignored --test-threads=1 mock_model_tools mock_model_turns)
 for name in tools turns; do
   f="$root/src/mocks/data/connect/$name.jsonl"
   { head -n 1 "$f" | grep '"dir": *"meta"' || true; cat "$out/mock_model_$name-0.jsonl"; } > "$f.new"
