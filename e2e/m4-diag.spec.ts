@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { openApp } from "./helpers";
 
 test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
@@ -31,7 +32,7 @@ test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) =
 });
 
 test("更改数据目录调用 API 并更新显示，恢复默认", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("tab", { name: "数据" }).click();

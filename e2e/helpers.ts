@@ -5,6 +5,15 @@ import { unfoldAll } from "./unfold";
 export const RICH_TITLE = "为 /v1/chat 接口增加令牌桶限流中间件";
 
 /**
+ * Opens the app and waits for its first render. The shortcuts (⌘K, ⌘, …) are bound in effects, a moment after the
+ * page's load event: a key pressed right after `goto` can come before them.
+ */
+export async function openApp(page: Page) {
+  await page.goto("/");
+  await expect(page.getByTestId("session-row").first()).toBeVisible();
+}
+
+/**
  * Opens a Session with every turn's process unfolded (most tests look inside it); `folded` leaves it as it opens.
  * Returns its id.
  */

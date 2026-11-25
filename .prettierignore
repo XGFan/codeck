@@ -3,6 +3,7 @@ crates/
 src-tauri/
 target/
 dist/
+dist-e2e/
 test-results/
 playwright-report/
 .omc/

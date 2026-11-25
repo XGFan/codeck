@@ -109,23 +109,32 @@ test("对话记录里的图片块离顶端太近时，预览出现在下方，�
   // Right under the top edge (a short window, so the transcript scrolls that far): below it, and drawn over what
   // follows.
   await page.setViewportSize({ width: 1280, height: 420 });
-  await place(20);
-  await chip.hover();
-  await expect(preview).toHaveAttribute("data-below", "true");
-  await expect(preview.locator("img")).toBeVisible();
-  const box = (await preview.boundingBox())!;
-  expect(box.y).toBeGreaterThan(top);
-  // Hit-tested with the preview taking the pointer for a moment (it lets the pointer through).
-  const onTop = await preview.evaluate(
-    (p, { x, y }) => {
+  // The list adjusts to the new height a moment later and can move the block after it was placed (the preview then
+  // reaches past the short window): placed and hovered again until the block is still where it was put.
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await place(20);
+    await chip.hover();
+    await expect(preview).toHaveAttribute("data-below", "true", { timeout: 1000 });
+    await expect(preview.locator("img")).toBeVisible({ timeout: 1000 });
+    // Measured and hit-tested in one step, with the preview taking the pointer for a moment (it lets the pointer
+    // through).
+    const at = await preview.evaluate((p) => {
+      const r = p.getBoundingClientRect();
       p.style.pointerEvents = "auto";
-      const hit = !!document.elementFromPoint(x, y)?.closest("[data-testid=prompt-image-preview]");
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.bottom - 8);
       p.style.pointerEvents = "";
-      return hit;
-    },
-    { x: box.x + box.width / 2, y: box.y + box.height - 8 },
-  );
-  expect(onTop).toBe(true);
+      const chip = p.parentElement!.querySelector("[data-testid=prompt-image]")!;
+      return {
+        y: r.y,
+        chip: chip.getBoundingClientRect().top,
+        onTop: !!hit?.closest("[data-testid=prompt-image-preview]"),
+      };
+    });
+    expect(Math.abs(at.chip - top - 20)).toBeLessThan(40);
+    expect(at.y).toBeGreaterThan(top);
+    expect(at.onTop).toBe(true);
+  }).toPass();
 });
 
 test("图片缩略图渲染并可放大", async ({ page }) => {

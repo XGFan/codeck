@@ -251,6 +251,8 @@ test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点
     await expect(call.getByTestId("tool-link")).toHaveAttribute("href", "https://claude.ai/artifact/M0ckDesignCanvas");
     await expect(call.getByTestId("tool-link")).toHaveAttribute("target", "_blank");
   }
+  // The new window's page is served from here: the test does not depend on the real site answering.
+  await page.context().route("https://claude.ai/**", (route) => route.fulfill({ contentType: "text/html", body: "" }));
   const popup = page.waitForEvent("popup");
   await byPath.getByTestId("tool-link").click();
   await (await popup).close();

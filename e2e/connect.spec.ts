@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { connectTo, disableAutoConnect, inMenu, lastSent, open, pick, probe, state, TOOLS } from "./connect-helpers";
+import { openApp } from "./helpers";
 import { composeEnd, composeStart } from "./ime";
 
 /** The `turn_end` prompt ids of a recorded fixture, in order (they change when it is re-recorded). */
@@ -1364,7 +1365,7 @@ test("「···」›「显示 Terminal」：没有 Connect 也能打开 clay �
 test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分析器的 Key、Endpoint、模型可在这里设置", async ({
   page,
 }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "ccrpc" }).click();
   await expect(page.getByTestId("set-ccrpc")).toContainText("/mock/bin/ccrpc");
@@ -1407,7 +1408,7 @@ test("设置 › ccrpc：ccrpc 路径、doctor 的失败项、日志目录；分
 });
 
 test("设置 › ccrpc：分析记录从新到旧列出学会的对话框与失败原因，可打开记录目录", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "ccrpc" }).click();
   const rows = page.getByTestId("analyzer-record");
@@ -1422,7 +1423,7 @@ test("设置 › ccrpc：分析记录从新到旧列出学会的对话框与失�
 });
 
 test("设置 › ccrpc › 启动参数：选目录、填参数、保存；参数为空的目录保存时去掉，可删除", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "ccrpc" }).click();
   const box = page.getByTestId("set-launch-rules");
@@ -1452,7 +1453,7 @@ test("设置 › ccrpc › 启动参数：选目录、填参数、保存；参�
 });
 
 test("设置 › ccrpc › 新开的 Pane：默认显示，选「隐藏」即保存", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   await page.getByRole("tab", { name: "ccrpc" }).click();
   const box = page.getByTestId("set-hide-new-panes");

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { RICH_TITLE } from "./helpers";
+import { openApp, RICH_TITLE } from "./helpers";
 
 const WAITING_TITLE = "优化首页首屏加载（LCP 3.2s → 1.8s）";
 
@@ -102,7 +102,7 @@ test("已完成到点发通知", async ({ page }) => {
 
 test("设置里关闭的通知不发", async ({ page }) => {
   await delays(page, { waiting: 0, done: 0 });
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   await page.getByTestId("notify-waiting-off").click();
   await page.getByTestId("notify-done-off").click();
@@ -146,7 +146,7 @@ test("缓存保活期间 /btw 面板的等待不算等待作答，「已完成�
 });
 
 test("设置里的缓存保活：默认 40 分钟，可关闭", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+,");
   await expect(page.getByTestId("keep-alive-40")).toHaveAttribute("aria-checked", "true");
   await page.getByTestId("keep-alive-0").click();

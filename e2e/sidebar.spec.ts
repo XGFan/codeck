@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { RICH_TITLE } from "./helpers";
+import { openApp, RICH_TITLE } from "./helpers";
 
 const LUMEN = "/Users/dev/Developer/lumen-api";
 const group = (page: Page, path: string) => page.locator(`[data-testid=sidebar-group][data-path="${path}"]`);
@@ -316,7 +316,7 @@ test("Recent 可收起，重启后保持", async ({ page }) => {
 });
 
 test("⌘K 按 Project 筛选时只替换中间的 Project，Live 与 Recent 保留", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+K");
   await page.getByTestId("search").getByRole("combobox").fill("lumen-api");
   await page.getByTestId("search-project").filter({ hasText: "lumen-api" }).click();
@@ -363,7 +363,7 @@ test("收拢子 Project：路径下的 Project 成为子组，已单独添加的
 });
 
 test("⌘N 选已添加的 Project 新建 Session；组头「+」与右键菜单直接在它的目录新建", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.keyboard.press("Meta+N");
   const dialog = page.getByTestId("new-session-dialog");
   const targets = dialog.getByTestId("new-session-target");

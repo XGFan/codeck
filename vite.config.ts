@@ -25,6 +25,8 @@ export default defineConfig(({ mode }) => ({
         input: {
           main: path.resolve(import.meta.dirname, "index.html"),
           terminal: path.resolve(import.meta.dirname, "terminal.html"),
+          // The mock build is what E2E runs on: it also has the iPhone's transcript page, as the dev server does.
+          ...(mode === "mock" && { transcript: path.resolve(import.meta.dirname, "transcript.html") }),
         },
       },
     },
