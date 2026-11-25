@@ -45,16 +45,6 @@ test("输入后 Session 段即时出现，对话内容按 Session 分组并高�
   await expect(input(page)).toHaveValue("zod");
 });
 
-test("Session 与 Project 支持短语和排除词", async ({ page }) => {
-  await openSearch(page);
-  await input(page).fill("lumen -redis");
-  await expect(page.getByTestId("search-project")).toHaveText([/lumen-api/]);
-  await expect(sessions(page).filter({ hasText: "排查 Redis 连接池泄漏" })).toHaveCount(0);
-  await expect(sessions(page).filter({ hasText: RICH_TITLE })).toHaveCount(1);
-  await input(page).fill('"表单校验"');
-  await expect(sessions(page)).toHaveText([/迁移表单校验到 zod/]);
-});
-
 test("⇥ 跳到对话内容段，Enter 打开命中并定位", async ({ page }) => {
   await openSearch(page);
   await input(page).fill("令牌桶");

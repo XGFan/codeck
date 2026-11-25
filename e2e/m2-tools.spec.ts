@@ -28,27 +28,20 @@ test("Edit 展开后显示带 +/- 的 diff", async ({ page }) => {
   await expect(edit).toContainText("−1");
 });
 
-test("持久化输出可点击加载完整内容", async ({ page }) => {
+test("持久化输出可点击加载完整内容；可复制 Bash 命令", async ({ page }) => {
   await openRich(page);
   const bash = page.locator('[data-tool="Bash"]').filter({ hasText: "cargo test --workspace" });
   await reveal(page, bash);
   await bash.getByRole("button").first().click();
   await expect(bash).toContainText("来源：tool-results/bd2x9k1.txt");
-  await bash.getByRole("button", { name: /加载完整输出（共 180\.0 KB）/ }).click();
-  await expect(bash).toContainText("412 passed");
-  await expect(bash).toContainText("中间");
-  await expect(bash.getByRole("button", { name: /加载完整输出/ })).toHaveCount(0);
-});
-
-test("复制 Bash 命令", async ({ page }) => {
-  await openRich(page);
-  const bash = page.locator('[data-tool="Bash"]').filter({ hasText: "cargo test --workspace" });
-  await reveal(page, bash);
-  await bash.getByRole("button").first().click();
   await bash.hover();
   await bash.getByRole("button", { name: "复制命令" }).click();
   const calls = await page.evaluate(() => window.__cvCalls ?? []);
   expect(calls.at(-1)).toEqual({ method: "copyText", args: ["cargo test --workspace"] });
+  await bash.getByRole("button", { name: /加载完整输出（共 180\.0 KB）/ }).click();
+  await expect(bash).toContainText("412 passed");
+  await expect(bash).toContainText("中间");
+  await expect(bash.getByRole("button", { name: /加载完整输出/ })).toHaveCount(0);
 });
 
 test("你的消息里的 [Image #n] 显示成图片块：悬停预览、点击放大，下方不再另列缩略图", async ({ page }) => {

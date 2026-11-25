@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asstNode, call, text, userNode } from "@/mocks/data/builders";
+import { codeModeNodes } from "@/mocks/data/codeMode";
 import { foldTurns } from "./fold";
 import { buildRows, locate, rowIndexOf } from "./grouping";
 import { input } from "./testHelpers";
@@ -65,6 +66,11 @@ describe("按轮折叠", () => {
     // Rows it hides point at it, so a jump lands on it.
     expect(rowIndexOf(g, "a1", "t1")).toBe(1);
     expect(rowIndexOf(g, "a2")).toBe(2);
+  });
+
+  it("counts the tools called by REPL runs in a folded turn", () => {
+    const g = foldTurns(buildRows(input(codeModeNodes(1_000))), {});
+    expect(g.rows.find((r) => r.kind === "fold")).toMatchObject({ key: "fold:cm-u0", open: false, calls: 7 });
   });
 
   it("the last turn without an answer (still running) starts open; a click decides after that", () => {

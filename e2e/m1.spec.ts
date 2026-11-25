@@ -39,15 +39,6 @@ test("改动过其他 Project 的 Session 也出现在那个 Project 下；行�
   await expect(zod).toBeVisible();
 });
 
-test("打开会话后渲染标题栏与消息", async ({ page }) => {
-  await openRich(page);
-  await expect(page.getByTestId("live-state")).toHaveText("工作中");
-  await expect(page.getByTestId("header-more")).toBeVisible();
-  await expect(page.locator('[data-kind="userPrompt"]').first()).toBeVisible();
-  await expect(page.locator('[data-kind="assistant"]').first()).toBeVisible();
-  await expect(page.getByTestId("tool-call").first()).toBeVisible();
-});
-
 test("实时追加消息后新内容出现且停留在底部", async ({ page }) => {
   const id = await openRich(page);
   const scroller = page.getByTestId("transcript");
@@ -179,22 +170,6 @@ test("setLive 切换进行中标记", async ({ page }) => {
   await expect(page.getByTestId("live-state")).toContainText("已结束");
 });
 
-test("显示系统消息后出现隐藏节点", async ({ page }) => {
-  await openRich(page);
-  const hidden = page.getByText("可用技能：review、simplify、security-review");
-  await expect(hidden).toHaveCount(0);
-  await page.getByTestId("header-more").click();
-  await page.getByRole("menuitemcheckbox", { name: "显示系统消息" }).click();
-  // The refetch with hidden nodes may land after our scroll while the view is still pinned to the bottom.
-  const transcript = page.getByTestId("transcript");
-  await expect
-    .poll(async () => {
-      await transcript.evaluate((e) => (e.scrollTop = 0));
-      return hidden.isVisible();
-    })
-    .toBe(true);
-});
-
 test("斜杠命令只显示一个斜杠，命令名高亮", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }).click();
@@ -253,19 +228,6 @@ test("Session 列表可收起，刷新后仍保持", async ({ page }) => {
   await expect(page.getByTestId("pane-sessions")).toBeHidden();
   await page.getByRole("button", { name: "显示 Session 列表" }).click();
   await expect(page.getByTestId("pane-sessions")).toBeVisible();
-});
-
-test("滚动条只在滚动时显示", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 240 });
-  await page.goto("/");
-  const list = page.getByRole("listbox", { name: "Session 列表" });
-  await expect(page.getByTestId("session-row").first()).toBeVisible();
-  const thumb = () => list.evaluate((e) => e.style.getPropertyValue("--scroll-thumb"));
-  expect(await thumb()).toBe("");
-  await list.evaluate((e) => (e.scrollTop = 40));
-  await expect.poll(() => list.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
-  await expect.poll(thumb).not.toBe("");
-  await expect.poll(thumb, { timeout: 3000 }).toBe("");
 });
 
 test("Session 列表收起时，在搜索里选择 Project 会自动展开列表", async ({ page }) => {

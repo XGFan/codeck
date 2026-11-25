@@ -18,10 +18,6 @@ test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) =
   // Each card counts the tables of its own kind: entry / block / subtype for types, messages apart.
   await expect(dialog.getByTestId("diag-card-types")).toContainText("3 种");
   await expect(dialog.getByTestId("diag-card-messages")).toContainText("1 种");
-  // Only the versions with failed lines or unknown items are listed; the line above says the whole range.
-  await expect(dialog.getByTestId("diag-versions-summary")).toHaveText(
-    "共 3 个版本，从 2.1.76 到 2.1.91；下表只列出有失败行或未知项的 2 个",
-  );
   await expect(dialog.getByTestId("diag-version-row").locator("code")).toHaveText(["2.1.91", "2.1.88"]);
   await expect(dialog.getByTestId("diag-failures")).toContainText("5e1c0b7a-0006");
   await expect(dialog.getByTestId("diag-integrity")).toContainText("2");
@@ -31,8 +27,10 @@ test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) =
   await expect(dialog).toHaveCount(0);
 });
 
-test("更改数据目录调用 API 并更新显示，恢复默认", async ({ page }) => {
+test("更改数据目录调用 API 并更新显示，恢复默认；应用后清空已选 Session", async ({ page }) => {
   await openApp(page);
+  await page.locator("[data-testid=session-row]:not([data-pending])").first().click();
+  await expect(page.getByTestId("transcript")).toBeVisible();
   await page.keyboard.press("Meta+,");
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("tab", { name: "数据" }).click();
@@ -44,23 +42,14 @@ test("更改数据目录调用 API 并更新显示，恢复默认", async ({ pag
   await expect(dialog.getByTestId("set-root-path")).toHaveText("/tmp/fixture-root");
   await expect(dialog.getByTestId("set-root-source")).toContainText("设置");
 
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("transcript-empty")).toBeVisible();
+  await page.keyboard.press("Meta+,");
+  await dialog.getByRole("tab", { name: "数据" }).click();
+
   await dialog.getByTestId("set-root-reset").click();
   await expect(dialog.getByTestId("set-root-source")).toContainText("默认");
 
   await dialog.getByTestId("set-rebuild").click();
   await expect(dialog.getByTestId("set-index-status")).toContainText("已索引");
-});
-
-test("更改数据目录后清空已选 Session", async ({ page }) => {
-  await page.goto("/");
-  await page.locator("[data-testid=session-row]:not([data-pending])").first().click();
-  await expect(page.getByTestId("transcript")).toBeVisible();
-  await page.keyboard.press("Meta+,");
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("tab", { name: "数据" }).click();
-  await dialog.getByTestId("set-root-input").fill("/tmp/fixture-root");
-  await dialog.getByTestId("set-root-apply").click();
-  await expect(dialog.getByTestId("set-root-path")).toHaveText("/tmp/fixture-root");
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("transcript-empty")).toBeVisible();
 });

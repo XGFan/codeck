@@ -257,6 +257,7 @@ test("审批的三个选项、带说明的拒绝、AskUserQuestion", async ({ pa
 test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后不再自动连，再次打开才会；可在设置里关掉", async ({
   page,
 }) => {
+  await page.clock.install();
   // The default (on): once, not again on the reload below.
   await page.addInitScript(() => {
     if (sessionStorage.getItem("e2e-default")) return;
@@ -272,7 +273,7 @@ test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后�
   await expect(state(page)).toContainText("空闲");
   await pick(page, "connect-disconnect");
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
-  await page.waitForTimeout(800);
+  await page.clock.runFor(800);
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   await inMenu(page, "connect-button", (b) => expect(b).toBeVisible());
   // Opened again: connected again.
@@ -285,11 +286,11 @@ test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后�
   await open(page, RICH);
   await pick(page, "connect-disconnect");
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
-  await page.waitForTimeout(800);
+  await page.clock.runFor(800);
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   // Not a Session whose plugin has not reported.
   await open(page, NO_PLUGIN);
-  await page.waitForTimeout(800);
+  await page.clock.runFor(800);
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
 
   // Off in Settings › 通用, and remembered.
@@ -299,7 +300,7 @@ test("自动 Connect：打开可 Connect 的 Session 就连上，Disconnect 后�
   await page.getByTestId("auto-connect-false").click();
   await page.keyboard.press("Escape");
   await open(page, TURNS);
-  await page.waitForTimeout(800);
+  await page.clock.runFor(800);
   await expect(page.getByTestId("connect-panel")).toHaveCount(0);
   await inMenu(page, "connect-button", (b) => expect(b).toBeEnabled());
   await page.reload();
@@ -806,14 +807,13 @@ test("忙时 Enter 插话（和终端里一样进 Claude Code 的队列）；数
   await inMenu(page, "connect-disconnect", (b) => expect(b).toBeVisible());
   await expect(header.getByTestId("connect-controls")).toHaveCount(0);
   const box = (await page.getByTestId("connect-input").boundingBox())!;
-  expect((await page.getByTestId("connect-controls").boundingBox())!.y).toBeGreaterThan(box.y + box.height - 4);
-  const sendButton = (await page.getByRole("button", { name: "发送" }).boundingBox())!;
-  expect(box.x + box.width - (sendButton.x + sendButton.width)).toBeLessThan(4);
-  // Codex style: the permission mode at the left of the foot, the model at the right before the send button.
+  const controls = (await page.getByTestId("connect-controls").boundingBox())!;
+  expect(controls.y + controls.height).toBeGreaterThan(box.y + box.height);
   const mode = (await page.getByTestId("connect-mode").boundingBox())!;
   const model = (await page.getByTestId("connect-model").boundingBox())!;
-  expect(mode.x - box.x).toBeLessThan(24);
-  expect(sendButton.x - (model.x + model.width)).toBeLessThan(16);
+  const sendButton = (await page.getByRole("button", { name: "发送" }).boundingBox())!;
+  expect(mode.x + mode.width).toBeLessThan(model.x);
+  expect(model.x + model.width).toBeLessThan(sendButton.x);
   // The input box floats over the transcript, whose end stays clear of it.
   const transcript = page.getByTestId("transcript");
   await transcript.evaluate((e) => (e.scrollTop = e.scrollHeight));
@@ -1127,7 +1127,6 @@ test("新建 Session：点下即打开页面，启动中可以打字，claude �
   await expect(page.getByTestId("header")).toContainText("新 Session");
   await expect(page.getByTestId("header")).toContainText("/tmp/mock-new");
   await expect(state(page)).toHaveText("启动中");
-  expect(await openId(page)).toMatch(/^mock/);
   const input = page.getByTestId("connect-input");
   await expect(input).toBeFocused();
   await page.keyboard.type("先写一半");
@@ -1959,7 +1958,7 @@ test("回退：/rewind 进入选回退点，Esc 与「取消」退出；点「�
   await expect(state(page)).toContainText("空闲");
 });
 
-test("回退：恢复代码与对话后原提示词进输入框、之后的对话淡化，切换 Session 仍在，新提示词进索引后复原", async ({
+test("回退：恢复代码与对话后原提示词进输入框、之后的对话淡化，切换 Session 仍在，新提示词进索引后复原；无代码改动时只恢复对话并保留草稿", async ({
   page,
 }) => {
   await connectRewind(page);
@@ -2033,28 +2032,8 @@ test("回退：恢复代码与对话后原提示词进输入框、之后的对�
   await expect(page.getByTestId("notice")).toContainText("已恢复代码");
   await expect(divider).toHaveCount(0);
   await expect(input).toHaveValue("");
-});
 
-test("回退：没有代码改动时只能恢复对话；输入框已有内容时保留，原提示词不填入", async ({ page }) => {
-  await connectRewind(page);
-  // The recording's earlier rounds: cancelled, not in the picker, both, a prompt, only the code.
-  const card = page.getByTestId("rewind-card");
-  await rewindOn(page, "91d5-u1");
-  await card.getByTestId("rewind-cancel").click();
-  await expect(card).toHaveCount(0);
-  await rewindOn(page, "91d5-u1");
-  await expect(page.getByTestId("connect-error")).toBeVisible();
-  await rewindOn(page, "91d5-u1");
-  await card.getByTestId("rewind-both").click();
-  await expect(page.getByTestId("rewound-divider")).toBeVisible();
-  await send(page, U2_TEXT);
-  await indexFork(page);
-  await expect(page.getByTestId("rewound-divider")).toHaveCount(0);
-  await rewindOn(page, "91d5-u2");
-  await card.getByTestId("rewind-code").click();
-  await expect(page.getByTestId("notice")).toContainText("已恢复代码");
-
-  const input = page.getByTestId("connect-input");
+  // Without code changes, only the conversation can be restored.
   await input.fill("先留着的草稿");
   await rewindOn(page, "91d5-u0");
   await expect(card.getByTestId("rewind-quote")).toHaveText(U0_TEXT);

@@ -67,12 +67,6 @@ test("Code Mode：代码里调用的工具各占一行，代码只留一行浅�
   await expect(running).toContainText("执行中…");
 });
 
-test("Code Mode：按轮折叠只数代码里调用的工具", async ({ page }) => {
-  await openSession(page, CODE_MODE_TITLE, { folded: true });
-  // Three code runs made 4 + 1 + 2 calls; the runs themselves are not counted.
-  await expect(page.getByTestId("turn-fold").first()).toContainText("7 次工具调用");
-});
-
 test("Code Mode：⌘F 找到代码里调用的工具的输出，打开那个调用", async ({ page }) => {
   await openSession(page, CODE_MODE_TITLE, { folded: true });
   await page.keyboard.press("Meta+f");

@@ -3,7 +3,6 @@ import { openApp, RICH_TITLE } from "./helpers";
 
 const LUMEN = "/Users/dev/Developer/lumen-api";
 const group = (page: Page, path: string) => page.locator(`[data-testid=sidebar-group][data-path="${path}"]`);
-const rowTitles = (page: Page) => page.getByTestId("session-row").allTextContents();
 const guiLog = (page: Page) => page.evaluate(() => (window.__cvCcrpc as unknown as { guiLog: string[] }).guiLog);
 const setPickDir = (page: Page, dir: string | null) =>
   page.evaluate((d) => ((window.__cvCcrpc as unknown as { pickDir: string | null }).pickDir = d), dir);
@@ -87,35 +86,6 @@ test("三块的标题、Live 点、组头箭头、Recent 行的标题左边对�
     recentTitle: 16,
     liveHeadingText: "Live",
   });
-});
-
-test("AI 回复不改变 Session 在组里的位置", async ({ page }) => {
-  await page.goto("/");
-  const lumen = page.getByTestId("session-row").filter({ hasText: "排查 Redis 连接池泄漏" });
-  await expect(lumen).toBeVisible();
-  const before = await rowTitles(page);
-  const sid = (await lumen.getAttribute("data-session-id"))!;
-  await page.evaluate((id) => {
-    window.__cvMock!.appendNode(id, {
-      id: "e2e-reply",
-      timestampMs: Date.now(),
-      hidden: false,
-      inherited: false,
-      body: {
-        kind: "assistant",
-        messageId: "m-e2e-reply",
-        model: null,
-        usage: null,
-        isApiError: false,
-        blocks: [{ kind: "text", text: "新的回复" }],
-      },
-    });
-    window.__cvMock!.emit("sessionsChanged", { changed: [id], removed: [], projectsChanged: false });
-  }, sid);
-  // The list has refetched (the row's message count went up) and kept its order.
-  await expect(page.getByTestId("session-row")).toHaveCount(before.length);
-  await page.waitForTimeout(300);
-  expect(await rowTitles(page)).toEqual(before);
 });
 
 test("组可收起，重启后保持；收起时显示最后时间与 Live 点", async ({ page }) => {

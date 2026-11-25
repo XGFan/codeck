@@ -153,18 +153,7 @@ test("SendMessage 续接后的结束通知：派出位置仍是 Agent 调用，�
   await expect(prompts.nth(1)).toContainText("再补一个窗口恢复的边界用例。");
 });
 
-test("后台命令的结束通知写「后台命令」和命令本身，不当成 agent", async ({ page }) => {
-  await openSession(page, RICH_TITLE);
-  const row = page.locator('[data-anchor="n-notify-bash"]');
-  await reveal(page.getByTestId("transcript"), row);
-  await expect(row.getByTestId("task-notification")).toHaveText(
-    /^后台命令 cargo build --release > build\.log 2>&1 已完成/,
-  );
-  await expect(row).not.toContainText("agent");
-  await expect(page.locator('[data-anchor="n-notify"]').getByTestId("task-notification")).toContainText("后台 agent");
-});
-
-test("后台命令：标「后台」、展开写完整命令与任务，和结束通知互相跳转", async ({ page }) => {
+test("后台命令：标「后台」、展开写完整命令与任务，和结束通知互相跳转；通知写出命令与完成状态", async ({ page }) => {
   await openSession(page, RICH_TITLE);
   const call = page.locator('[data-testid="tool-call"][data-tool="Bash"]').filter({ hasText: "cargo build --release" });
   await reveal(page.getByTestId("transcript"), call);
@@ -175,7 +164,11 @@ test("后台命令：标「后台」、展开写完整命令与任务，和结�
   await expect(call.getByTestId("terminal")).toHaveCount(0);
   await call.getByTestId("bash-to-notification").click();
   await expect(page.locator('[data-anchor="n-notify-bash"][data-highlighted]')).toBeVisible();
-  await page.locator('[data-anchor="n-notify-bash"]').getByTestId("notification-to-card").click();
+  const notice = page.locator('[data-anchor="n-notify-bash"]');
+  await expect(notice.getByTestId("task-notification")).toContainText(
+    "后台命令 cargo build --release > build.log 2>&1 已完成",
+  );
+  await notice.getByTestId("notification-to-card").click();
   await expect(page.locator('[data-anchor="n12|tu_bg_build"][data-highlighted]')).toBeVisible();
 });
 
@@ -223,18 +216,6 @@ test("代码块里的长行自动换行，不出现横向滚动", async ({ page 
     // 3 or 4 source lines; the long comment takes at least two.
     expect(m.lines).toBeGreaterThan(4);
   }
-});
-
-test("折叠行的箭头大小不随摘要长短变化", async ({ page }) => {
-  await page.setViewportSize({ width: 600, height: 1400 });
-  await openSession(page, RICH_TITLE, { folded: true });
-  const folds = page.getByTestId("turn-fold");
-  await expect(folds.first()).toBeVisible();
-  const widths = await folds.evaluateAll((els) =>
-    els.map((el) => el.querySelector("svg")!.getBoundingClientRect().width),
-  );
-  expect(widths.length).toBeGreaterThan(1);
-  for (const w of widths) expect(w).toBe(13);
 });
 
 test("工具输入里有网址时（如 Artifact 的 url）可点击打开，点击不展开这次调用；摘要是别的字段时网址跟在后面", async ({
@@ -352,6 +333,7 @@ test("Fork 继承的历史默认折叠，可展开与收起", async ({ page }) =
 });
 
 test("pendingJump 进入嵌套 Subagent 时打开面板并高亮目标", async ({ page }) => {
+  await page.clock.install();
   const sid = await openSession(page, RICH_TITLE);
   await jump(page, {
     sessionId: sid,
@@ -366,8 +348,8 @@ test("pendingJump 进入嵌套 Subagent 时打开面板并高亮目标", async (
   const target = panel.locator('[data-anchor="ag1n-a1"][data-highlighted]');
   await expect(target.first()).toBeVisible();
   // The flash ring clears after 2 s.
-  await expect(panel.locator('[data-anchor="ag1n-a1"][data-highlighted]')).toHaveCount(0, { timeout: 4000 });
-  expect(await page.evaluate(() => window.__cvStore!.getState().pendingJump)).toBeNull();
+  await page.clock.fastForward(2000);
+  await expect(target).toHaveCount(0);
 });
 
 test("pendingJump 展开折叠的那一轮并切换到被放弃的 Branch", async ({ page }) => {

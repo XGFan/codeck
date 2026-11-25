@@ -48,6 +48,7 @@ test("局域网访问：默认关闭，打开后显示地址，再关闭；切�
 });
 
 test("局域网访问：端口被占用时写明原因，之后的状态每 5 秒刷新；没有地址时写明", async ({ page }) => {
+  await page.clock.install();
   await page.addInitScript((lan) => (window.__cvCcrpcPreset = { lan }), {
     enabled: true,
     addresses: [],
@@ -60,13 +61,13 @@ test("局域网访问：端口被占用时写明原因，之后的状态每 5 �
 
   // The port was freed: picked up by the refresh, with the dialog left open.
   await setLan(page, { enabled: true, addresses: ["192.168.2.50:38471", "10.0.0.8:38471"], error: null });
-  await expect(page.getByTestId("lan-addresses")).toHaveText("地址：192.168.2.50:38471、10.0.0.8:38471", {
-    timeout: 7000,
-  });
+  await page.clock.fastForward(5000);
+  await expect(page.getByTestId("lan-addresses")).toHaveText("地址：192.168.2.50:38471、10.0.0.8:38471");
   await expect(page.getByTestId("lan-error")).toHaveCount(0);
 
   await setLan(page, { enabled: true, addresses: [], error: null });
-  await expect(page.getByTestId("lan-addresses")).toHaveText("没有可用的局域网地址。", { timeout: 7000 });
+  await page.clock.fastForward(5000);
+  await expect(page.getByTestId("lan-addresses")).toHaveText("没有可用的局域网地址。");
 });
 
 test("界面主题：自动跟随系统，浅色 / 暗色固定，选择会被记住", async ({ page }) => {

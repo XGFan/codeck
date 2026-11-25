@@ -86,6 +86,28 @@ describe("matchProjects", () => {
   });
 });
 
+it("Session 与 Project 支持短语和排除词", () => {
+  const lumen = "/Users/dev/Developer/lumen-api";
+  const orbit = "/Users/dev/Developer/orbit-web";
+  const list = [
+    session("rate-limit", "为 /v1/chat 接口增加令牌桶限流中间件", lumen),
+    session("redis", "排查 Redis 连接池泄漏", lumen),
+    session("zod", "迁移表单校验到 zod", orbit, [lumen]),
+  ];
+  const projectNames = new Map([
+    [lumen, "lumen-api"],
+    [orbit, "orbit-web"],
+  ]);
+  const projects: ProjectSummary[] = [
+    { id: lumen, path: lumen, displayName: "lumen-api", missing: false, sessionCount: 3, lastActiveMs: 2 },
+    { id: orbit, path: orbit, displayName: "orbit-web", missing: false, sessionCount: 1, lastActiveMs: 1 },
+  ];
+  const excluded = parseQuery("lumen -redis");
+  expect(matchProjects(projects, excluded).map((p) => p.id)).toEqual([lumen]);
+  expect(matchSessions(list, projectNames, excluded).map((s) => s.id)).toEqual(["rate-limit", "zod"]);
+  expect(matchSessions(list, projectNames, parseQuery('"表单校验"')).map((s) => s.id)).toEqual(["zod"]);
+});
+
 describe("highlight", () => {
   it("不区分大小写标出所有词，正则字符按字面匹配", () => {
     expect(highlight("Fix ZOD and zod.parse", ["zod.parse", "zod"])).toEqual([

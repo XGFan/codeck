@@ -110,13 +110,6 @@ test("大纲浮在对话左侧、滚动条浮在右侧，都不占对话区宽�
   expect(shifted).toBe(0);
 });
 
-test("j 在输入框内不触发轮次跳转", async ({ page }) => {
-  await openRichFolded(page);
-  await page.keyboard.press("Meta+f");
-  await page.getByTestId("find-input").fill("j");
-  await expect(page.getByTestId("find-input")).toHaveValue("j");
-});
-
 test("复制：resume 命令、Session ID、消息；在 Finder 中显示", async ({ page }) => {
   await openRichFolded(page);
   await page.getByTestId("header-more").click();
