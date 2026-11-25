@@ -507,4 +507,66 @@ fn code_mode_unowned_virtual_calls_still_appear_in_transcript() {
     assert_eq!(read.via_code, None);
     let out = read.result.as_ref().expect("virtual tool result");
     assert!(out.text.contains("port = 8080"), "{}", out.text);
+    // What the code returned has no code to show under: its `Poll` is shown, with the delivery.
+    let poll = call(&t, "p1").result.as_ref().expect("Poll result");
+    assert!(poll.text.contains("<result>ok</result>"), "{}", poll.text);
+}
+
+/// One `REPL` call (eval 48) and the `Poll` made with it, whose result is `poll` (the
+/// `tool_result` block's fields after `tool_use_id`).
+fn polled(poll: &str) -> Transcript {
+    let result = format!(
+        r#"{{"type":"user","uuid":"u3","parentUuid":"a2","timestamp":"2026-01-01T00:01:00Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"p1",{poll}}}]}}}}"#
+    );
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"go"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"1"}}]}}"#,
+        r#"{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"p1","name":"Poll","input":{}}]}}"#,
+        r#"{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"(dispatched #48)"}]},"toolUseResult":{"evalId":48,"asyncDispatched":true}}"#,
+        &result,
+        r#"{"type":"assistant","uuid":"a3","parentUuid":"u3","timestamp":"2026-01-01T00:01:05Z","message":{"id":"m2","model":"x","content":[{"type":"text","text":"done"}]}}"#,
+    ]);
+    let s = assemble(
+        "s",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    main_t(&s, false)
+}
+
+/// A `Poll` is left out only when all its result holds was understood; otherwise it is an
+/// ordinary tool call, so what it brought stays readable.
+#[test]
+fn code_mode_poll_is_shown_unless_its_result_was_understood() {
+    let shown = |t: &Transcript| tool_calls(t).iter().any(|c| c.tool_use_id == "p1");
+    let outcome = |t: &Transcript| code_of(t, "r1").outcome.as_ref().map(|o| o.text.clone());
+
+    // The code's outcome, an event of a kind that is not shown, nothing at all: left out.
+    let t = polled(
+        r#""content":"<event kind=\"repl-status\" eval=\"48\">running</event>\n<event kind=\"repl-eval\" eval=\"48\" ms=\"5\">\n<result>42</result>\n</event>""#,
+    );
+    assert!(!shown(&t));
+    assert_eq!(outcome(&t).as_deref(), Some("42"));
+    assert!(!shown(&polled(
+        r#""content":"<event kind=\"task-notification\">done</event>""#
+    )));
+    assert!(!shown(&polled(r#""content":"(no pending events)""#)));
+
+    // An event kind not known here (the format changed): the code has no outcome, the `Poll` shows
+    // what came.
+    let t = polled(
+        r#""content":"<event kind=\"code-eval\" eval=\"48\">\n<result>42</result>\n</event>""#,
+    );
+    assert_eq!(outcome(&t), None);
+    let text = &call(&t, "p1").result.as_ref().unwrap().text;
+    assert!(text.contains("<result>42</result>"), "{text}");
+
+    // An outcome no code on the path asked for, text that is no event, an error.
+    assert!(shown(&polled(
+        r#""content":"<event kind=\"repl-eval\" eval=\"7\">\n<result>42</result>\n</event>""#
+    )));
+    assert!(shown(&polled(r#""content":"{\"events\":[]}""#)));
+    let t = polled(r#""is_error":true,"content":"The user doesn't want to proceed""#);
+    assert!(call(&t, "p1").result.as_ref().unwrap().is_error);
 }

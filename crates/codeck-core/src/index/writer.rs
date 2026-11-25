@@ -121,6 +121,13 @@ pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> F
                 .entry((DIAG_MESSAGE, mark, version.clone()))
                 .or_default() += 1;
         }
+        // Code Mode: an event kind not known here is a message not recognized too.
+        for mark in transcript::assemble::code_mode::unrecognized_events(e) {
+            *rows
+                .diag
+                .entry((DIAG_MESSAGE, mark, version.clone()))
+                .or_default() += 1;
+        }
         if ty == "system"
             && let Some(sub) = e.subtype.as_deref()
             && !known::is_known_system_subtype(sub)
@@ -960,6 +967,7 @@ mod tests {
             r#"{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"<persisted-output>\nOutput too large (42.4KB). Full output saved to: /x/y/tool-results/abc.txt\n\nPreview"}]},"toolUseResult":"Error"}"#,
             r#"{"type":"user","uuid":"u3","timestamp":"2026-01-01T00:00:04Z","isMeta":true,"message":{"role":"user","content":"<system-reminder>x"}}"#,
             r#"{"type":"hologram","uuid":"h1"}"#,
+            r#"{"type":"user","uuid":"u4","timestamp":"2026-01-01T00:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"p1","content":"<event kind=\"hologram\">x</event>"}]},"toolUseResult":{"eventCount":1}}"#,
         ];
         let buf = lines.join("\n") + "\n";
         let chunk = parse_bytes(buf.as_bytes(), 0);
@@ -976,6 +984,11 @@ mod tests {
         assert_eq!(
             rows.diag
                 .get(&(DIAG_ENTRY, "hologram".into(), String::new())),
+            Some(&1)
+        );
+        assert_eq!(
+            rows.diag
+                .get(&(DIAG_MESSAGE, "event kind: hologram".into(), String::new())),
             Some(&1)
         );
     }

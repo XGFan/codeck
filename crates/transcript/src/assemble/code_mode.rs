@@ -6,7 +6,10 @@
 //!
 //! Public entry points and their callers:
 //! - [`is_plumbing`]: `summarize`, `codeck-core` index writer — skip `REPL` / `Poll` in tool counts.
-//! - [`is_poll`]: `nodes` — omit `Poll` calls (and `Poll`-only assistant messages) from rendering.
+//! - [`is_hidden_poll`]: `nodes` — omit the `Poll` calls whose result was understood (and messages
+//!   holding only such calls) from rendering.
+//! - [`unrecognized_events`]: `codeck-core` index writer — event kinds not known here, for the
+//!   diagnostics.
 //! - [`is_made_by_code`], [`is_made_by_code_entry`]: `skeleton`, `summarize`, `codeck-core` index
 //!   writer — identify virtual code-made records so they are not treated as replies or branch heads.
 //! - [`is_code_call`]: `subagent` — attribute unrecorded `Agent` calls via `enclosingToolUseId`.
@@ -18,7 +21,7 @@
 //! - [`attachment_picture`]: `content` — resolve on-demand images stored in `poll_events` attachments.
 //! - [`owner_of`]: `jump` — redirect jumps targeting a virtual entry to its owning `REPL` call.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -42,10 +45,18 @@ pub fn is_plumbing(tool: &str) -> bool {
     tool == REPL || tool == POLL
 }
 
-/// Whether `tool` is Code Mode's poll/wait call (omitted from rendered messages; its result
-/// delivers the owning `REPL` call's outcome).
-pub fn is_poll(tool: &str) -> bool {
-    tool == POLL
+/// Whether the `tool_use` block `b` is a `Poll` call that is not shown: it has no result yet, or its
+/// result held only what was understood ([`CodeRuns::quiet_polls`]). One whose result was not is
+/// shown as an ordinary tool call, so that what it brought (a returned value, an error) is not lost.
+pub fn is_hidden_poll(ctx: &RenderCtx<'_>, b: &RawBlock, shown: &[bool], runs: &CodeRuns) -> bool {
+    b.name.as_deref() == Some(POLL)
+        && b.id.as_deref().is_none_or(|id| {
+            runs.quiet_polls.contains(id)
+                || ctx
+                    .skeleton
+                    .tool_result_block(ctx.files, id, Some(shown))
+                    .is_none()
+        })
 }
 
 /// Whether this skeleton node is a synthetic record of a tool call Claude's code made (or its
@@ -78,14 +89,36 @@ struct EvalEvent {
     index: usize,
 }
 
-/// The `repl-eval` events in `text`: a `poll_events` envelope, a `Poll` result or a `REPL` result
+/// Event kinds a delivery holds besides `repl-eval` that are not shown: how a running script is
+/// doing, and that a background task ended.
+const QUIET_KINDS: &[&str] = &["repl-status", "task-notification"];
+/// What a `Poll` answers when nothing came.
+const NO_EVENTS: &str = "(no pending events)";
+
+/// The events of one delivery: a `poll_events` envelope, a `Poll` result or a `REPL` result.
+#[derive(Debug, Default)]
+struct Delivery {
+    /// Its `repl-eval` events, and a `REPL` result's `<repl-output>`.
+    evals: Vec<EvalEvent>,
+    /// What was not understood, by event kind: a kind not known here, or one whose event could not
+    /// be read (`repl-eval` too).
+    unknown: Vec<String>,
+    /// How many events it held, of any kind.
+    count: usize,
+}
+
+/// The `repl-eval` events in `text` ([`parse_delivery`]).
+fn parse_events(text: &str) -> Vec<EvalEvent> {
+    parse_delivery(text).evals
+}
+
+/// Reads a delivery: a `poll_events` envelope, a `Poll` result or a `REPL` result
 /// (`<repl-output eval="N">`, when the code finished before the call returned). A delivery that
 /// lists its event nonces (`authentic event nonces for this delivery: …`) counts only events
 /// carrying one of them; any other `<event>` is quoted text.
-fn parse_events(text: &str) -> Vec<EvalEvent> {
+fn parse_delivery(text: &str) -> Delivery {
     let nonces = delivery_nonces(text);
-    let mut out = Vec::new();
-    let mut index = 0;
+    let mut d = Delivery::default();
     let mut rest = text;
     while let Some(start) = next_open(rest) {
         let (tag, close) = if rest[start..].starts_with("<event") {
@@ -95,33 +128,96 @@ fn parse_events(text: &str) -> Vec<EvalEvent> {
         };
         let after = &rest[start + 1 + tag.len()..];
         let Some(head_end) = after.find('>') else {
+            // Cut short. With nonces listed it may as well be quoted text.
+            if nonces.is_none() {
+                d.unknown.push(tag.to_owned());
+            }
             break;
         };
         let attrs = attributes(&after[..head_end]);
+        let attr = |k: &str| attrs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.as_str());
+        let quoted = tag == "event"
+            && nonces
+                .as_ref()
+                .is_some_and(|list| !attr("nonce").is_some_and(|n| list.iter().any(|x| x == n)));
         let body_and_rest = &after[head_end + 1..];
         let Some(body_end) = body_and_rest.find(close) else {
+            if !quoted {
+                d.unknown.push(attr("kind").unwrap_or(tag).to_owned());
+            }
             break;
         };
         let body = &body_and_rest[..body_end];
         rest = &body_and_rest[body_end + close.len()..];
-        let attr = |k: &str| attrs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.as_str());
-        if tag == "event"
-            && let Some(list) = &nonces
-            && !attr("nonce").is_some_and(|n| list.iter().any(|x| x == n))
-        {
+        if quoted {
             continue;
         }
-        let at = index;
-        index += 1;
-        if tag == "event" && attr("kind") != Some("repl-eval") {
+        let at = d.count;
+        d.count += 1;
+        let kind = attr("kind").unwrap_or_default();
+        if tag == "event" && kind != "repl-eval" {
+            if !QUIET_KINDS.contains(&kind) {
+                d.unknown.push(kind.to_owned());
+            }
             continue;
         }
         let ms = attr("ms").and_then(|v| v.parse::<f64>().ok());
         let eval = attr("eval").and_then(|v| v.parse::<u32>().ok());
-        if let Some(mut ev) = parse_body(body, eval, ms) {
-            ev.index = at;
-            out.push(ev);
+        match parse_body(body, eval, ms) {
+            Some(mut ev) => {
+                ev.index = at;
+                d.evals.push(ev);
+            }
+            None => d
+                .unknown
+                .push(if tag == "event" { kind } else { tag }.to_owned()),
         }
+    }
+    d
+}
+
+/// For the diagnostics: the event kinds in `e`'s Code Mode deliveries that are not known here
+/// (`event kind: <kind>`), so a changed format surfaces there. Looks at a `poll_events` attachment
+/// and at a `Poll` result, told by `toolUseResult.eventCount` (the entry does not name its tool): one
+/// that says it holds events of which none is found counts too (`event: none read`).
+pub fn unrecognized_events(e: &RawEntry) -> Vec<String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PollCount {
+        #[serde(default)]
+        event_count: Option<u64>,
+    }
+    let mut deliveries: Vec<Delivery> = Vec::new();
+    let mut expected = 0;
+    if let Some(raw) = e.attachment.as_deref() {
+        if memchr::memmem::find(raw.get().as_bytes(), b"poll_events").is_some()
+            && let Ok(p) = serde_json::from_str::<PollEvents<'_>>(raw.get())
+            && p.kind == Some("poll_events")
+        {
+            deliveries.extend(p.envelopes.iter().map(|s| parse_delivery(s)));
+        }
+    } else if let Some(raw) = e.tool_use_result.as_deref()
+        && raw.get().starts_with('{')
+        && memchr::memmem::find(raw.get().as_bytes(), b"\"eventCount\"").is_some()
+        && let Ok(PollCount {
+            event_count: Some(n),
+        }) = serde_json::from_str::<PollCount>(raw.get())
+    {
+        expected = n;
+        deliveries.extend(
+            e.blocks()
+                .iter()
+                .filter(|b| b.block_type() == "tool_result")
+                .map(|b| parse_delivery(&result_content(b.content.as_deref()).0)),
+        );
+    }
+    let mut out: Vec<String> = deliveries
+        .iter()
+        .flat_map(|d| &d.unknown)
+        .map(|k| format!("event kind: {}", if k.is_empty() { "(none)" } else { k }))
+        .collect();
+    if expected > 0 && deliveries.iter().all(|d| d.count == 0) {
+        out.push("event: none read".to_owned());
     }
     out
 }
@@ -282,6 +378,9 @@ pub struct CodeRuns {
     /// pictures, in the order it read them), each addressed where it is stored: the `Poll` or
     /// `REPL` result, or the `poll_events` attachment.
     pub media: HashMap<String, Vec<ImageRef>>,
+    /// `Poll` tool_use ids whose result held nothing but what was understood: outcomes of `REPL`
+    /// calls on the path, events of kinds that are not shown, or no events. Not shown.
+    pub quiet_polls: HashSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -357,7 +456,7 @@ pub fn collect(sk: &SessionSkeleton, files: &[LoadedFile], order: &[usize]) -> C
     let mut runs = CodeRuns::default();
     if !order
         .iter()
-        .any(|&i| sk.nodes[i].tool_uses.iter().any(|(_, n)| n == REPL))
+        .any(|&i| sk.nodes[i].tool_uses.iter().any(|(_, n)| is_plumbing(n)))
     {
         return runs;
     }
@@ -478,7 +577,20 @@ fn take_result(
     {
         eval_owner.insert(n, id.to_owned());
     }
-    let events = parse_events(&text);
+    let delivery = parse_delivery(&text);
+    let understood = block.is_error != Some(true)
+        && delivery.unknown.is_empty()
+        && match delivery.count {
+            0 => text.trim() == NO_EVENTS,
+            _ => delivery
+                .evals
+                .iter()
+                .all(|ev| eval_owner.contains_key(&ev.eval)),
+        };
+    if name == POLL && understood {
+        runs.quiet_polls.insert(id.to_owned());
+    }
+    let events = delivery.evals;
     let media = result_media(e, id, images, &events);
     deliver(runs, current, eval_owner, events, media);
 }
@@ -801,6 +913,67 @@ mod tests {
         assert!(
             parse_events("<events kind=\"repl-eval\" eval=\"1\"><result>x</result></events>")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_delivery_says_what_it_did_not_understand() {
+        let d = parse_delivery(
+            "<event kind=\"repl-status\" eval=\"1\">x</event><event kind=\"hologram\">y</event><event kind=\"repl-eval\">no eval number</event><event>z</event>",
+        );
+        assert_eq!((d.count, d.evals.len()), (4, 0));
+        assert_eq!(d.unknown, ["hologram", "repl-eval", ""]);
+        // Cut short; with nonces listed, quoted text is not counted.
+        assert_eq!(
+            parse_delivery("<event kind=\"repl-eval\" eval=\"1\"><result>x").unknown,
+            ["repl-eval"]
+        );
+        let quoted = parse_delivery(
+            "<system>authentic event nonces for this delivery: n1 — …</system>\n<event kind=\"hologram\" nonce=\"zz\">y</event>\n<event nonce=\"n1\" kind=\"repl-eval\" eval=\"1\"><result>ok</result></event>\n<event kind=\"hologram\" nonce=\"zz\">cut",
+        );
+        assert_eq!((quoted.count, quoted.evals.len()), (1, 1));
+        assert!(quoted.unknown.is_empty(), "{:?}", quoted.unknown);
+    }
+
+    #[test]
+    fn unrecognized_events_of_an_attachment_and_a_poll_result() {
+        let entry = |line: &str| serde_json::from_str::<RawEntry>(line).unwrap();
+        assert_eq!(
+            unrecognized_events(&entry(
+                r#"{"type":"attachment","attachment":{"type":"poll_events","envelopes":["<event kind=\"repl-eval\" eval=\"1\"><result>ok</result></event>","<event kind=\"hologram\">x</event>"]}}"#
+            )),
+            ["event kind: hologram"]
+        );
+        let poll = |content: &str, tur: &str| {
+            entry(&format!(
+                r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"p1","content":"{content}"}}]}},"toolUseResult":{tur}}}"#
+            ))
+        };
+        assert_eq!(
+            unrecognized_events(&poll(
+                r#"<event kind=\"hologram\">x</event><event kind=\"repl-status\">y</event>"#,
+                r#"{"eventCount":2}"#
+            )),
+            ["event kind: hologram"]
+        );
+        // It says it holds events, none is found: the format changed.
+        assert_eq!(
+            unrecognized_events(&poll(
+                r#"[{\"kind\":\"repl-eval\"}]"#,
+                r#"{"eventCount":1}"#
+            )),
+            ["event: none read"]
+        );
+        assert!(
+            unrecognized_events(&poll("(no pending events)", r#"{"eventCount":0}"#)).is_empty()
+        );
+        // Not a Poll result (nothing says it is one): not looked at.
+        assert!(
+            unrecognized_events(&poll(
+                r#"<event kind=\"hologram\">x</event>"#,
+                r#"{"stdout":""}"#
+            ))
+            .is_empty()
         );
     }
 

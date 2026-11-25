@@ -199,8 +199,8 @@ pub fn render(ctx: &RenderCtx<'_>, display: &[usize]) -> Rendered {
     }
 }
 
-/// `None` when the message held only `Poll` calls, which are not shown (their result is a `REPL`
-/// call's outcome).
+/// `None` when the message held only `Poll` calls that are not shown
+/// ([`code_mode::is_hidden_poll`]: their result is a `REPL` call's outcome).
 fn assistant_body(
     ctx: &RenderCtx<'_>,
     frags: &[usize],
@@ -240,7 +240,7 @@ fn assistant_body(
                     }
                 }
                 "redacted_thinking" => {}
-                "tool_use" if b.name.as_deref().is_some_and(code_mode::is_poll) => polls = true,
+                "tool_use" if code_mode::is_hidden_poll(ctx, b, shown, runs) => polls = true,
                 "tool_use" => blocks.extend(
                     code_mode::expand_tool_call(ctx, b, shown, node_id, runs)
                         .into_iter()
