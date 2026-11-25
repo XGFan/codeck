@@ -30,6 +30,10 @@
   --color-tag-border: #f5d4a6;
   --color-tag-text: #7a3e00;
   --color-accent-border: #b9cdee;
+  /* Quota bar deepened segments when usage runs ahead of elapsed time. */
+  --color-quota-ahead: #083f8a;
+  --color-quota-ahead-warn: #8a5a0a;
+  --color-quota-ahead-full: #7a1a12;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
 }
@@ -58,6 +62,9 @@
   --color-tag-border: #6b4c22;
   --color-tag-text: #f2c27c;
   --color-accent-border: #34507a;
+  --color-quota-ahead: #1f58b8;
+  --color-quota-ahead-warn: #a3680c;
+  --color-quota-ahead-full: #d43f35;
 }
 
 .shk {

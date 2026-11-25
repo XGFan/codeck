@@ -10,7 +10,6 @@ import {
   quartileThresholds,
 } from "./frequency";
 
-const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
 const dayRow = (day: string, requests: number): DailyModelTokens => ({
@@ -59,45 +58,97 @@ describe("chooseFrequencyMode", () => {
   });
 });
 
+function makeHourlyBuckets(fromMs: number, toMs: number, counts: Record<string, number> = {}): HourUsage[] {
+  const cur = new Date(fromMs);
+  cur.setMinutes(0, 0, 0);
+  const last = new Date(toMs);
+  last.setMinutes(0, 0, 0);
+  const lastMs = last.getTime();
+  const out: HourUsage[] = [];
+  while (cur.getTime() <= lastMs) {
+    const startMs = cur.getTime();
+    const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}:${cur.getHours()}`;
+    cur.setHours(cur.getHours() + 1);
+    out.push({ startMs, endMs: cur.getTime(), requests: counts[key] ?? 0, cost: 0 });
+  }
+  return out;
+}
+
 describe("buildHourlyGrid", () => {
-  it("折进 7×24 格，同格相加，未来画空框，无桶格按 0 画，标出起点与最忙格", () => {
+  it("起点 14:00 的 7 天得到 8 行，首尾同星期，首行前 14 格与末行后 10 格不画，现在之后为空框", () => {
     // 2026-11-23 is Monday.
     const startMs = new Date("2026-11-23T14:00:00").getTime();
-    const nowMs = new Date("2026-11-25T14:30:00").getTime(); // Wednesday 14:30
-    const hourly: HourUsage[] = [
-      { startMs, endMs: startMs + HOUR_MS, requests: 10, cost: 1 }, // Mon 14h (past)
-      {
-        startMs: new Date("2026-11-24T02:00:00").getTime(),
-        endMs: new Date("2026-11-24T03:00:00").getTime(),
-        requests: 50,
-        cost: 5,
-      }, // Tue 2h
-      // Second Mon 14h (if a range wraps same hour) would add, here add a past bucket on Tue 2h to verify sum:
-      {
-        startMs: new Date("2026-11-24T02:00:00").getTime(),
-        endMs: new Date("2026-11-24T03:00:00").getTime(),
-        requests: 25,
-        cost: 2,
-      },
-      {
-        startMs: new Date("2026-11-26T10:00:00").getTime(),
-        endMs: new Date("2026-11-26T11:00:00").getTime(),
-        requests: 0,
-        cost: 0,
-      }, // Thu 10h (future)
-    ];
-    const grid = buildHourlyGrid(hourly, startMs, nowMs);
+    const endMs = startMs + 7 * DAY_MS; // 2026-11-30 Mon 14:00
+    const nowMs = new Date("2026-11-25T14:30:00").getTime(); // Wed 14:30
+    const hourly = makeHourlyBuckets(startMs, endMs - 1, {
+      "2026-11-23:14": 10,
+      "2026-11-24:2": 50,
+      "2026-11-25:12": 120,
+      "2026-11-25:14": 8, // current in-progress hour: startMs <= nowMs -> data
+    });
+
+    const grid = buildHourlyGrid(hourly, startMs, endMs, nowMs);
+    expect(grid.rows).toHaveLength(8);
+    expect(grid.rows.map((r) => r.weekday)).toEqual(["周一", "周二", "周三", "周四", "周五", "周六", "周日", "周一"]);
+    for (const row of grid.rows) expect(row.cells).toHaveLength(24);
+
+    // First row (Mon 11/23): 0..13 out, 14..23 data.
+    expect(grid.rows[0]!.cells.slice(0, 14).every((c) => c.kind === "out")).toBe(true);
+    expect(grid.rows[0]!.cells.slice(14).every((c) => c.kind === "data")).toBe(true);
+    expect(grid.rows[0]!.cells[14]).toMatchObject({ kind: "data", requests: 10, title: "周一 14 时 · 10 次请求" });
+
+    // Wed 11/25: 14h is data, 15h..23h are future empty boxes.
+    expect(grid.rows[2]!.cells[14]).toMatchObject({ kind: "data", requests: 8 });
+    expect(grid.rows[2]!.cells.slice(15).every((c) => c.kind === "future" && c.title === "")).toBe(true);
+
+    // Last row (Mon 11/30): 0..13 future, 14..23 out.
+    expect(grid.rows[7]!.cells.slice(0, 14).every((c) => c.kind === "future")).toBe(true);
+    expect(grid.rows[7]!.cells.slice(14).every((c) => c.kind === "out")).toBe(true);
+
+    expect(grid.hasFuture).toBe(true);
+    expect(grid.activeHours).toBe(4);
+    expect(grid.busiest).toEqual({ day: "2026-11-25", weekday: "周三", hour: 12, requests: 120 });
+    expect(grid.subtitle).toBe("4 个小时有请求 · 最忙 周三 12 时");
+  });
+
+  it("起点 0:00 的 7 天得到 7 行且无缺格，已结束周期不含空框", () => {
+    const startMs = new Date("2026-11-16T00:00:00").getTime(); // Monday 00:00
+    const endMs = startMs + 7 * DAY_MS; // 2026-11-23 Mon 00:00
+    const nowMs = new Date("2026-11-25T14:30:00").getTime();
+    const hourly = makeHourlyBuckets(startMs, endMs - 1, { "2026-11-21:2": 90 });
+
+    const grid = buildHourlyGrid(hourly, startMs, endMs, nowMs);
     expect(grid.rows).toHaveLength(7);
-    expect(grid.rows[0]!).toHaveLength(24);
-    expect(grid.rows[0]![14]!.isStart).toBe(true);
-    expect(grid.rows[0]![14]!.requests).toBe(10);
-    expect(grid.rows[1]![2]!.requests).toBe(75); // 50 + 25 summed
-    expect(grid.rows[3]![10]!.future).toBe(true); // Thu 10h is future
-    expect(grid.rows[4]![0]!.future).toBe(false); // No bucket -> treated as 0, not future
-    expect(grid.rows[4]![0]!.requests).toBe(0);
-    expect(grid.activeHours).toBe(3); // counted by buckets with requests > 0
-    expect(grid.busiest).toEqual({ row: 1, hour: 2, requests: 75 });
-    expect(grid.subtitle).toBe("3 个小时有请求 · 最忙 周二 2 时");
+    expect(grid.rows.map((r) => r.weekday)).toEqual(["周一", "周二", "周三", "周四", "周五", "周六", "周日"]);
+    expect(grid.rows.every((r) => r.cells.every((c) => c.kind === "data"))).toBe(true);
+    expect(grid.hasFuture).toBe(false);
+    expect(grid.activeHours).toBe(1);
+    expect(grid.subtitle).toBe("1 个小时有请求 · 最忙 周六 2 时");
+  });
+
+  it("最近 7 天（起止不是整点）：得到 8 行，首尾两行各缺一部分且无空框", () => {
+    // 2026-11-18 Wed 14:10 to 2026-11-25 Wed 14:10, buckets span 11/18 14:00 .. 11/25 14:00.
+    const endMs = new Date("2026-11-25T14:10:00").getTime();
+    const startMs = endMs - 7 * DAY_MS;
+    const nowMs = new Date("2026-11-25T14:11:00").getTime();
+    const hourly = makeHourlyBuckets(startMs, endMs, {
+      "2026-11-18:14": 5,
+      "2026-11-25:14": 15,
+    });
+
+    const grid = buildHourlyGrid(hourly, startMs, endMs, nowMs);
+    expect(grid.rows).toHaveLength(8);
+    expect(grid.rows[0]!.weekday).toBe("周三");
+    expect(grid.rows[7]!.weekday).toBe("周三");
+    // First row: 0..13 out (14 cells), 14..23 data (10 cells).
+    expect(grid.rows[0]!.cells.slice(0, 14).every((c) => c.kind === "out")).toBe(true);
+    expect(grid.rows[0]!.cells.slice(14).every((c) => c.kind === "data")).toBe(true);
+    // Last row: 0..14 data (15 cells), 15..23 out (9 cells).
+    expect(grid.rows[7]!.cells.slice(0, 15).every((c) => c.kind === "data")).toBe(true);
+    expect(grid.rows[7]!.cells.slice(15).every((c) => c.kind === "out")).toBe(true);
+    expect(grid.hasFuture).toBe(false);
+    expect(grid.activeHours).toBe(2);
+    expect(grid.busiest).toEqual({ day: "2026-11-25", weekday: "周三", hour: 14, requests: 15 });
   });
 });
 

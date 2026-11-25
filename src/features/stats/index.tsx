@@ -159,7 +159,6 @@ function StatsPanel() {
             <div className="flex min-w-0 flex-col gap-3">
               <FrequencyPanel
                 stats={shown.stats}
-                rangeKind={shown.range.kind}
                 timeRange={shown.resolved.timeRange}
                 startMs={shown.resolved.startMs}
                 endMs={shown.resolved.endMs}

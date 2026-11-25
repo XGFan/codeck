@@ -10,7 +10,6 @@ import {
   WEEKDAYS_MON,
   type HeatLevel,
 } from "./frequency";
-import type { RangeKind } from "./range";
 import { resolveDaySpan } from "./usage";
 
 const LEVEL_BG: Record<HeatLevel, string> = {
@@ -47,13 +46,12 @@ function Legend({ caption }: { caption: string }) {
 
 /**
  * Right column (top): 「使用频率」 colored by request count (5 levels: 0 + non-zero quartiles).
- * - Hourly 7×24 grid when `hourly` is non-empty (cycles & last 7 days, no drill);
+ * - Hourly day-by-day grid (7–8 rows × 24 hours) when `hourly` is non-empty (cycles & last 7 days, no drill);
  * - Monthly calendar when `<= 31` days (months & last 30 days, click day to drill);
  * - Mini month blocks when longer (2 per row for `<= 4` blocks; 4 per row grouped by year otherwise, click day to drill).
  */
 export function FrequencyPanel({
   stats,
-  rangeKind,
   timeRange,
   startMs,
   endMs,
@@ -61,7 +59,6 @@ export function FrequencyPanel({
   onDrill,
 }: {
   stats: Stats;
-  rangeKind: RangeKind;
   timeRange: TimeRange | null;
   startMs: number | null;
   endMs: number | null;
@@ -74,8 +71,8 @@ export function FrequencyPanel({
   const mode = chooseFrequencyMode(stats.hourly.length, durationMs, span?.spanDays ?? 0);
 
   const hourlyGrid = useMemo(
-    () => (mode === "hourly" ? buildHourlyGrid(stats.hourly, startMs, nowMs) : null),
-    [mode, stats.hourly, startMs, nowMs],
+    () => (mode === "hourly" ? buildHourlyGrid(stats.hourly, startMs, endMs, nowMs) : null),
+    [mode, stats.hourly, startMs, endMs, nowMs],
   );
   const calendarGrid = useMemo(
     () => (mode === "calendar" ? buildCalendarGrid(stats.daily, timeRange, nowMs) : null),
@@ -112,7 +109,7 @@ export function FrequencyPanel({
           <div
             data-testid="freq-hourly"
             role="img"
-            aria-label="按小时的请求数：一行是星期几，一格一小时"
+            aria-label="按小时的请求数：一行一天，一格一小时"
             className="flex flex-col gap-[2px]"
           >
             <div className="flex items-center gap-2">
@@ -123,29 +120,30 @@ export function FrequencyPanel({
                 </span>
               ))}
             </div>
-            {hourlyGrid.rows.map((cells, r) => (
-              <div key={WEEKDAYS_MON[r]} className="flex items-center gap-2">
-                <span className="w-[26px] shrink-0 text-[10px] whitespace-nowrap text-secondary">
-                  {WEEKDAYS_MON[r]}
-                </span>
+            {hourlyGrid.rows.map((row) => (
+              <div key={row.day} data-testid="freq-hour-row" className="flex items-center gap-2">
+                <span className="w-[26px] shrink-0 text-[10px] whitespace-nowrap text-secondary">{row.weekday}</span>
                 {[0, 6, 12, 18].map((offset) => (
                   <span key={offset} className="grid flex-1 grid-cols-6 gap-[2px]">
-                    {cells.slice(offset, offset + 6).map((c) => (
-                      <i
-                        key={c.hour}
-                        data-testid="freq-hour"
-                        data-level={c.level}
-                        data-future={c.future ? "true" : undefined}
-                        data-start={c.isStart ? "true" : undefined}
-                        title={c.title || undefined}
-                        className={cn(
-                          "relative block aspect-square rounded-[3px]",
-                          c.future ? "bg-list ring-1 ring-inset ring-border" : LEVEL_BG[c.level],
-                          c.isStart &&
-                            "before:absolute before:top-[-2px] before:bottom-[-2px] before:left-[-2px] before:w-[2px] before:rounded-[1px] before:bg-text",
-                        )}
-                      />
-                    ))}
+                    {row.cells
+                      .slice(offset, offset + 6)
+                      .map((c) =>
+                        c.kind === "out" ? (
+                          <i key={c.hour} data-testid="freq-hour-out" className="block aspect-square" aria-hidden />
+                        ) : (
+                          <i
+                            key={c.hour}
+                            data-testid="freq-hour"
+                            data-level={c.level}
+                            data-future={c.kind === "future" ? "true" : undefined}
+                            title={c.title || undefined}
+                            className={cn(
+                              "block aspect-square rounded-[3px]",
+                              c.kind === "future" ? "bg-list ring-1 ring-inset ring-border" : LEVEL_BG[c.level],
+                            )}
+                          />
+                        ),
+                      )}
                   </span>
                 ))}
               </div>
@@ -153,9 +151,7 @@ export function FrequencyPanel({
           </div>
           <Legend
             caption={
-              rangeKind === "cycle"
-                ? "一格一小时，颜色是请求数 · 竖线是周期的起止"
-                : "一格一小时，颜色是请求数 · 竖线是范围起点"
+              hourlyGrid.hasFuture ? "一格一小时，颜色是请求数 · 空框是还没到的时间" : "一格一小时，颜色是请求数"
             }
           />
         </>

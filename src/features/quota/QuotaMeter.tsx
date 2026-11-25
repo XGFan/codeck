@@ -7,14 +7,26 @@ const BAR_COLOR: Record<QuotaTone, string> = {
   full: "bg-error",
 };
 
+const AHEAD_COLOR: Record<QuotaTone, string> = {
+  normal: "bg-quota-ahead",
+  warn: "bg-quota-ahead-warn",
+  full: "bg-quota-ahead-full",
+};
+
 const TEXT_COLOR: Record<QuotaTone, string> = {
   normal: "text-text",
   warn: "text-tag-text",
   full: "text-error",
 };
 
-/** One rate-limit row: label + percentage, progress bar with optional elapsed tick, and reset/status caption. */
+/** One rate-limit row: label + percentage, progress bar with optional darkened ahead segment, and caption. */
 export function QuotaMeter({ view }: { view: MeterView }) {
+  const subtextTitle = view.aheadText
+    ? view.subtext
+      ? `${view.subtext} · ${view.aheadText}`
+      : view.aheadText
+    : view.subtext || undefined;
+
   return (
     <div
       data-testid="quota-meter"
@@ -28,28 +40,56 @@ export function QuotaMeter({ view }: { view: MeterView }) {
           {view.percent}%
         </span>
       </div>
-      <span role="img" aria-label={view.ariaLabel} className="relative block h-[6px] rounded-[3px] bg-border">
-        <span
-          className={cn("block h-full max-w-full rounded-[3px]", BAR_COLOR[view.tone])}
-          style={{ width: `${view.fillPct}%` }}
-        />
-        {view.elapsedPct != null && (
+      <span
+        role="img"
+        aria-label={view.ariaLabel}
+        title={view.elapsedTitle ?? undefined}
+        className="relative block h-[6px] overflow-hidden rounded-[3px] bg-border"
+      >
+        {view.isAhead && view.aheadStartPct != null ? (
+          <>
+            <span
+              className={cn("absolute inset-y-0 left-0 block", BAR_COLOR[view.tone])}
+              style={{ width: `${view.aheadStartPct}%` }}
+            />
+            <span
+              data-testid="quota-ahead"
+              className={cn("absolute inset-y-0 block", AHEAD_COLOR[view.tone])}
+              style={{ left: `${view.aheadStartPct}%`, width: `${Math.max(0, view.fillPct - view.aheadStartPct)}%` }}
+            />
+          </>
+        ) : (
           <span
-            data-testid="quota-tick"
-            className="absolute top-[-3px] h-[12px] w-[2px] -translate-x-1/2 rounded-[1px] bg-text"
-            style={{ left: `${view.elapsedPct}%` }}
+            className={cn("absolute inset-y-0 left-0 block", BAR_COLOR[view.tone])}
+            style={{ width: `${view.fillPct}%` }}
           />
         )}
       </span>
       <span
         data-testid="quota-subtext"
-        title={view.subtext || undefined}
+        title={subtextTitle}
         className={cn(
           "min-h-[15px] truncate text-[11px]",
           view.tone === "normal" ? "text-secondary" : TEXT_COLOR[view.tone],
         )}
       >
-        {view.subtext || "\u00A0"}
+        {view.subtext || view.aheadText ? (
+          <>
+            {view.subtext}
+            {view.aheadText && (
+              <>
+                {view.subtext ? " · " : ""}
+                <i
+                  className={cn("mr-1 inline-block size-[7px] rounded-[2px] align-baseline", AHEAD_COLOR[view.tone])}
+                  aria-hidden
+                />
+                {view.aheadText}
+              </>
+            )}
+          </>
+        ) : (
+          "\u00A0"
+        )}
       </span>
     </div>
   );

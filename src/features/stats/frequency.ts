@@ -49,102 +49,148 @@ export function colorLevel(value: number, scale: HeatScale): HeatLevel {
   return 4;
 }
 
+export type HourlyCellKind = "out" | "future" | "data";
+
 export interface HourlyCell {
-  row: number; // 0 = Mon .. 6 = Sun
   hour: number; // 0 .. 23
+  kind: HourlyCellKind;
   requests: number;
   level: HeatLevel;
-  future: boolean;
-  isStart: boolean;
   title: string;
 }
 
+export interface HourlyRow {
+  /** Local calendar day `YYYY-MM-DD`. */
+  day: string;
+  /** Local weekday label (`周一` .. `周日`). */
+  weekday: string;
+  /** 24 cells for hours `0..23`. */
+  cells: HourlyCell[];
+}
+
 export interface HourlyGrid {
-  /** 7 rows (Mon..Sun) × 24 hours. */
-  rows: HourlyCell[][];
-  /** Number of hourly buckets with requests > 0. */
+  /** One row per local calendar day touched by `[startMs, endMs)`, in chronological order. */
+  rows: HourlyRow[];
+  /** Number of hourly cells with requests > 0. */
   activeHours: number;
-  /** Busiest folded cell, or null when all zero. */
-  busiest: { row: number; hour: number; requests: number } | null;
+  /** True when at least one cell is a future empty box. */
+  hasFuture: boolean;
+  /** Busiest cell (bucket), or null when all zero. */
+  busiest: { day: string; weekday: string; hour: number; requests: number } | null;
   subtitle: string;
 }
 
 /**
- * Folds `hourly` buckets into a 7 (Mon..Sun) × 24 grid in local time:
- * - Multiple buckets falling on the same (weekday, hour) sum together;
- * - Cells with no bucket (DST gap) render as 0;
- * - Cells whose buckets all start strictly after `nowMs` render as empty future boxes;
- * - The cell containing `startMs` gets `isStart = true`.
+ * Lays out `hourly` buckets chronologically, one row per local calendar day touched by `[startMs, endMs)`:
+ * - Each row carries 24 hourly slots (`0..23`) and its weekday label;
+ * - Slots without a matching bucket render as transparent placeholders (`kind: "out"`);
+ * - Slots whose bucket starts strictly after `nowMs` render as empty future boxes (`kind: "future"`);
+ * - All other bucket slots render with their request count and quartile heat level (`kind: "data"`).
  */
-export function buildHourlyGrid(hourly: HourUsage[], startMs: number | null, nowMs: number): HourlyGrid {
-  const cells = Array.from({ length: 7 }, (_, row) =>
-    Array.from({ length: 24 }, (_, hour) => ({
-      row,
-      hour,
-      requests: 0,
-      hasPast: false,
-      hasFuture: false,
-    })),
-  );
-
-  let activeHours = 0;
+export function buildHourlyGrid(
+  hourly: HourUsage[],
+  startMs: number | null,
+  endMs: number | null,
+  nowMs: number,
+): HourlyGrid {
+  const bucketMap = new Map<string, { requests: number; hasPast: boolean; hasFuture: boolean }>();
   for (const b of hourly) {
-    if (b.requests > 0) activeHours++;
     const d = new Date(b.startMs);
-    const row = (d.getDay() + 6) % 7;
-    const hour = d.getHours();
-    const cell = cells[row]![hour]!;
+    const key = `${dayKey(d)}:${d.getHours()}`;
+    let entry = bucketMap.get(key);
+    if (!entry) {
+      entry = { requests: 0, hasPast: false, hasFuture: false };
+      bucketMap.set(key, entry);
+    }
     if (b.startMs > nowMs) {
-      cell.hasFuture = true;
+      entry.hasFuture = true;
     } else {
-      cell.hasPast = true;
-      cell.requests += b.requests;
+      entry.hasPast = true;
+      entry.requests += b.requests;
     }
   }
 
-  const startAnchor = startMs ?? hourly[0]?.startMs ?? null;
-  const startPos =
-    startAnchor != null
-      ? { row: (new Date(startAnchor).getDay() + 6) % 7, hour: new Date(startAnchor).getHours() }
-      : null;
+  let firstDay: string | null = null;
+  let lastDay: string | null = null;
+  if (startMs != null && endMs != null && endMs > startMs) {
+    firstDay = dayKey(new Date(startMs));
+    lastDay = dayKey(new Date(endMs - 1));
+  } else if (hourly.length > 0) {
+    let minMs = hourly[0]!.startMs;
+    let maxMs = hourly[0]!.startMs;
+    for (const b of hourly) {
+      if (b.startMs < minMs) minMs = b.startMs;
+      if (b.startMs > maxMs) maxMs = b.startMs;
+    }
+    firstDay = dayKey(new Date(minMs));
+    lastDay = dayKey(new Date(maxMs));
+  }
 
-  const nonFutureVals: number[] = [];
-  let busiest: { row: number; hour: number; requests: number } | null = null;
-  for (const row of cells) {
-    for (const c of row) {
-      const future = !c.hasPast && c.hasFuture;
-      if (!future) {
-        nonFutureVals.push(c.requests);
-        if (c.requests > 0 && (!busiest || c.requests > busiest.requests)) {
-          busiest = { row: c.row, hour: c.hour, requests: c.requests };
+  if (!firstDay || !lastDay) {
+    return { rows: [], activeHours: 0, hasFuture: false, busiest: null, subtitle: "0 个小时有请求" };
+  }
+
+  interface RawSlot {
+    hour: number;
+    kind: HourlyCellKind;
+    requests: number;
+  }
+  interface RawRow {
+    day: string;
+    weekday: string;
+    slots: RawSlot[];
+  }
+
+  const rawRows: RawRow[] = [];
+  const dataVals: number[] = [];
+  let activeHours = 0;
+  let hasFuture = false;
+  let busiest: { day: string; weekday: string; hour: number; requests: number } | null = null;
+
+  const endDate = parseDay(lastDay);
+  for (let d = parseDay(firstDay); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const day = dayKey(d);
+    const weekday = WEEKDAYS_SUN[d.getDay()]!;
+    const slots: RawSlot[] = [];
+    for (let hour = 0; hour < 24; hour++) {
+      const entry = bucketMap.get(`${day}:${hour}`);
+      if (!entry) {
+        slots.push({ hour, kind: "out", requests: 0 });
+      } else if (!entry.hasPast && entry.hasFuture) {
+        hasFuture = true;
+        slots.push({ hour, kind: "future", requests: 0 });
+      } else {
+        slots.push({ hour, kind: "data", requests: entry.requests });
+        dataVals.push(entry.requests);
+        if (entry.requests > 0) {
+          activeHours++;
+          if (!busiest || entry.requests > busiest.requests) {
+            busiest = { day, weekday, hour, requests: entry.requests };
+          }
         }
       }
     }
+    rawRows.push({ day, weekday, slots });
   }
 
-  const thresholds = quartileThresholds(nonFutureVals);
-  const rows: HourlyCell[][] = cells.map((row) =>
-    row.map((c) => {
-      const future = !c.hasPast && c.hasFuture;
-      const isStart = startPos != null && startPos.row === c.row && startPos.hour === c.hour;
-      const wd = WEEKDAYS_MON[c.row]!;
-      return {
-        row: c.row,
-        hour: c.hour,
-        requests: c.requests,
-        level: future ? 0 : colorLevel(c.requests, thresholds),
-        future,
-        isStart,
-        title: future ? "" : `${wd} ${c.hour} 时 · ${formatCount(c.requests)} 次请求`,
-      };
-    }),
-  );
+  const thresholds = quartileThresholds(dataVals);
+  const rows: HourlyRow[] = rawRows.map(({ day, weekday, slots }) => ({
+    day,
+    weekday,
+    cells: slots.map((s) => ({
+      hour: s.hour,
+      kind: s.kind,
+      requests: s.requests,
+      level: s.kind === "data" ? colorLevel(s.requests, thresholds) : 0,
+      title: s.kind === "data" ? `${weekday} ${s.hour} 时 · ${formatCount(s.requests)} 次请求` : "",
+    })),
+  }));
 
   const subtitle = busiest
-    ? `${activeHours} 个小时有请求 · 最忙 ${WEEKDAYS_MON[busiest.row]} ${busiest.hour} 时`
+    ? `${activeHours} 个小时有请求 · 最忙 ${busiest.weekday} ${busiest.hour} 时`
     : "0 个小时有请求";
 
-  return { rows, activeHours, busiest, subtitle };
+  return { rows, activeHours, hasFuture, busiest, subtitle };
 }
 
 export interface DayCell {

@@ -73,25 +73,29 @@ test("各时间范围的使用频率形态与用量走势显示规则", async ({
   const freq = page.getByTestId("stats-frequency");
   const trend = page.getByTestId("stats-trend");
 
-  // Current cycle: 7×24 hourly grid + cumulative trend with previous-cycle reference line.
+  // Current cycle (non-midnight start): 8 chronological day rows, no start marker, future boxes noted in legend.
   await expect(freq).toHaveAttribute("data-mode", "hourly");
-  await expect(freq.getByTestId("freq-hour")).toHaveCount(7 * 24);
-  await expect(freq.locator('[data-testid="freq-hour"][data-start="true"]')).toHaveCount(1);
+  await expect(freq.getByTestId("freq-hour-row")).toHaveCount(8);
+  await expect(freq.locator('[data-start="true"]')).toHaveCount(0);
+  await expect(freq).toContainText("空框是还没到的时间");
   await expect(freq.getByTestId("freq-subtitle")).toContainText("个小时有请求");
   await expect(trend).toBeVisible();
   await expect(trend.getByTestId("trend-chart").locator("canvas").first()).toBeVisible();
   await expect(trend.getByTestId("trend-subtitle")).toContainText("到现在");
   await expect(trend.getByTestId("trend-prev-legend")).toHaveText("上一周期");
 
-  // Previous cycle: 7×24 hourly grid + completed trend ("共").
+  // Previous cycle: 8 chronological day rows (completed, no future boxes) + completed trend ("共").
   await pickRange(page, "上一周期");
   await expect(freq).toHaveAttribute("data-mode", "hourly");
+  await expect(freq.getByTestId("freq-hour-row")).toHaveCount(8);
+  await expect(freq).not.toContainText("空框是还没到的时间");
   await expect(trend).toBeVisible();
   await expect(trend.getByTestId("trend-subtitle")).toContainText("共");
 
-  // Last 7 days: 7×24 hourly grid + trend vs previous 7 days.
+  // Last 7 days: 8 chronological day rows + trend vs previous 7 days.
   await pickRange(page, "最近 7 天");
   await expect(freq).toHaveAttribute("data-mode", "hourly");
+  await expect(freq.getByTestId("freq-hour-row")).toHaveCount(8);
   await expect(trend).toBeVisible();
   await expect(trend.getByTestId("trend-prev-legend")).toHaveText("前 7 天");
 

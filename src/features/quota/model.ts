@@ -9,6 +9,7 @@ export const MIN_ANCHOR_MS = Date.UTC(2020, 0, 1);
 export const MAX_ANCHOR_MS = Date.UTC(2100, 0, 1);
 
 const FIVE_HOURS_MS = 5 * 3_600_000;
+const AHEAD_THRESHOLD_PCT = 3;
 const RING_RADIUS = 8.5;
 export const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
@@ -26,8 +27,18 @@ export interface MeterView {
   percent: number;
   fillPct: number;
   tone: QuotaTone;
-  elapsedPct: number | null;
+  /** True when clamped usage exceeds unrounded elapsed time by at least 3 percentage points. */
+  isAhead: boolean;
+  /** Unrounded elapsed percentage (0–100) where the deepened segment starts; null when not ahead. */
+  aheadStartPct: number | null;
+  /** Rounded percentage points ahead of elapsed time; null when not ahead. */
+  aheadByPct: number | null;
+  /** Hover title on the progress bar (`时间已过 N%`), or null when reset is absent/past. */
+  elapsedTitle: string | null;
+  /** Status and reset caption (`[快用完了 · ]X 后重置[ · 今天 16:40]`). */
   subtext: string;
+  /** Strip-only ahead caption (`超前 N%`), rendered beside a colored swatch. */
+  aheadText: string | null;
   ariaLabel: string;
 }
 
@@ -122,22 +133,36 @@ export function buildMeterView(limit: PlanLimit, nowMs: number, variant: "strip"
   const label = limitLabel(limit);
   const raw = Number.isFinite(limit.percent) ? Math.max(0, limit.percent) : 0;
   const percent = Math.round(raw);
-  const fillPct = Math.min(100, percent);
+  const fillPct = Math.min(100, raw);
   const tone = quotaTone(raw);
   const statusText = tone === "full" ? "已用完" : tone === "warn" ? "快用完了" : null;
 
   const hasReset = limit.resetsMs != null && Number.isFinite(limit.resetsMs) && limit.resetsMs > nowMs;
-  let elapsedPct: number | null = null;
+  let isAhead = false;
+  let aheadStartPct: number | null = null;
+  let aheadByPct: number | null = null;
+  let elapsedTitle: string | null = null;
   let subtext = statusText ?? "";
+  let aheadText: string | null = null;
 
   if (hasReset) {
     const resetsMs = limit.resetsMs!;
     const windowMs = limit.kind === "session" ? FIVE_HOURS_MS : WEEK_MS;
     const startMs = resetsMs - windowMs;
-    elapsedPct = Math.round(Math.min(100, Math.max(0, ((nowMs - startMs) / windowMs) * 100)));
+    const rawElapsed = Math.min(100, Math.max(0, ((nowMs - startMs) * 100) / windowMs));
+    elapsedTitle = `时间已过 ${Math.round(rawElapsed)}%`;
+
+    const diff = fillPct - rawElapsed;
+    if (diff >= AHEAD_THRESHOLD_PCT) {
+      isAhead = true;
+      aheadStartPct = rawElapsed;
+      aheadByPct = Math.round(diff);
+    }
+
     const resetIn = `${formatResetCountdown(resetsMs - nowMs)}后重置`;
     if (variant === "strip") {
-      subtext = statusText ? `${statusText} · ${resetIn}` : `${resetIn} · 时间已过 ${elapsedPct}%`;
+      subtext = statusText ? `${statusText} · ${resetIn}` : resetIn;
+      if (isAhead && aheadByPct != null) aheadText = `超前 ${aheadByPct}%`;
     } else {
       const resetAt = formatResetAt(resetsMs, nowMs);
       subtext = statusText ? `${statusText} · ${resetIn} · ${resetAt}` : `${resetIn} · ${resetAt}`;
@@ -145,9 +170,24 @@ export function buildMeterView(limit: PlanLimit, nowMs: number, variant: "strip"
   }
 
   const ariaLabel =
-    elapsedPct != null ? `${label}已用 ${percent}%，时间已过 ${elapsedPct}%` : `${label}已用 ${percent}%`;
+    isAhead && aheadByPct != null
+      ? `${label}已用 ${percent}%，比时间进度多 ${aheadByPct}%`
+      : `${label}已用 ${percent}%`;
 
-  return { kind: limit.kind, label, percent, fillPct, tone, elapsedPct, subtext, ariaLabel };
+  return {
+    kind: limit.kind,
+    label,
+    percent,
+    fillPct,
+    tone,
+    isAhead,
+    aheadStartPct,
+    aheadByPct,
+    elapsedTitle,
+    subtext,
+    aheadText,
+    ariaLabel,
+  };
 }
 
 /** Builds the sidebar ring's display values from the highest used limit. */

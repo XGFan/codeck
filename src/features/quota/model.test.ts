@@ -74,7 +74,7 @@ describe("formatPlanBadge & formatUpdatedAt", () => {
 describe("buildMeterView", () => {
   const nowMs = new Date("2026-11-25T13:28:00").getTime();
 
-  it("正常状态：四舍五入百分比、竖线按窗长计算、strip 与 popover 小字不同", () => {
+  it("落后于时间进度：不标记超前，strip 只写重置倒计时，popover 写重置时刻，bar 悬停提示时间已过", () => {
     const session: PlanLimit = {
       kind: "session",
       model: null,
@@ -85,54 +85,126 @@ describe("buildMeterView", () => {
     expect(strip).toMatchObject({
       label: "当前 5 小时",
       percent: 16,
-      fillPct: 16,
+      fillPct: 16.4,
       tone: "normal",
-      elapsedPct: 36,
-      subtext: "3 小时 12 分后重置 · 时间已过 36%",
-      ariaLabel: "当前 5 小时已用 16%，时间已过 36%",
+      isAhead: false,
+      aheadStartPct: null,
+      aheadByPct: null,
+      elapsedTitle: "时间已过 36%",
+      subtext: "3 小时 12 分后重置",
+      aheadText: null,
+      ariaLabel: "当前 5 小时已用 16%",
     });
 
     const pop = buildMeterView(session, nowMs, "popover");
-    expect(pop.subtext).toBe("3 小时 12 分后重置 · 今天 16:40");
+    expect(pop).toMatchObject({
+      isAhead: false,
+      aheadStartPct: null,
+      aheadByPct: null,
+      elapsedTitle: "时间已过 36%",
+      subtext: "3 小时 12 分后重置 · 今天 16:40",
+      aheadText: null,
+      ariaLabel: "当前 5 小时已用 16%",
+    });
   });
 
-  it("本周项：跨日浮层显示月日星期与时刻（四舍五入到分钟）", () => {
+  it("超前阈值：差 2.9 个百分点不算、差 3 个算；strip 带超前文案，popover 不带超前文案但进度条与 aria 标出超前", () => {
+    // 5h window: 2h 30m remaining -> elapsed = 50% exactly.
+    const halfElapsedReset = nowMs + 150 * 60_000;
+
+    const under3 = buildMeterView(
+      { kind: "session", model: null, percent: 52.9, resetsMs: halfElapsedReset },
+      nowMs,
+      "strip",
+    );
+    expect(under3).toMatchObject({
+      percent: 53,
+      fillPct: 52.9,
+      isAhead: false,
+      aheadStartPct: null,
+      aheadByPct: null,
+      elapsedTitle: "时间已过 50%",
+      subtext: "2 小时 30 分后重置",
+      aheadText: null,
+      ariaLabel: "当前 5 小时已用 53%",
+    });
+
+    const at3 = buildMeterView(
+      { kind: "session", model: null, percent: 53, resetsMs: halfElapsedReset },
+      nowMs,
+      "strip",
+    );
+    expect(at3).toMatchObject({
+      percent: 53,
+      fillPct: 53,
+      isAhead: true,
+      aheadStartPct: 50,
+      aheadByPct: 3,
+      elapsedTitle: "时间已过 50%",
+      subtext: "2 小时 30 分后重置",
+      aheadText: "超前 3%",
+      ariaLabel: "当前 5 小时已用 53%，比时间进度多 3%",
+    });
+
+    // Weekly item ahead: strip shows aheadText, popover keeps reset wall-clock time without aheadText.
+    // 5d remaining of 7d -> elapsed = 2/7 * 100 ≈ 28.5714%, 45 - 28.5714 = 16.4286 -> rounded 16%.
     const weekly: PlanLimit = {
       kind: "weeklyScoped",
       model: "Fable",
       percent: 45,
       resetsMs: new Date("2026-11-30T13:59:59.800").getTime(),
     };
+    const weeklyStrip = buildMeterView(weekly, nowMs, "strip");
+    expect(weeklyStrip.isAhead).toBe(true);
+    expect(weeklyStrip.aheadStartPct).toBeCloseTo(((7 * 24 - 120.5333) / (7 * 24)) * 100, 1);
+    expect(weeklyStrip.aheadByPct).toBe(17);
+    expect(weeklyStrip.aheadText).toBe("超前 17%");
+    expect(weeklyStrip.ariaLabel).toBe("本周 · Fable已用 45%，比时间进度多 17%");
+
     const pop = buildMeterView(weekly, nowMs, "popover");
     expect(pop.label).toBe("本周 · Fable");
+    expect(pop.isAhead).toBe(true);
+    expect(pop.aheadText).toBeNull();
     expect(pop.subtext).toBe("5 天后重置 · 11月30日 周一 14:00");
+    expect(pop.ariaLabel).toBe("本周 · Fable已用 45%，比时间进度多 17%");
   });
 
-  it("≥80% 琥珀色写「快用完了」，≥100% 红色写「已用完」且条宽封顶 100%；阈值按原始百分比判定，显示数字仍四舍五入", () => {
+  it("≥80% 琥珀色写「快用完了」，≥100% 红色写「已用完」且用量按 100 封顶计算超前；阈值按原始百分比判定", () => {
+    // 48 min left of 300 min -> elapsed = 84%.
     const under80: PlanLimit = { kind: "session", model: null, percent: 79.5, resetsMs: nowMs + 48 * 60_000 };
     expect(buildMeterView(under80, nowMs, "strip")).toMatchObject({
       percent: 80,
       tone: "normal",
-      ariaLabel: "当前 5 小时已用 80%，时间已过 84%",
+      isAhead: false,
+      elapsedTitle: "时间已过 84%",
+      subtext: "48 分后重置",
+      aheadText: null,
+      ariaLabel: "当前 5 小时已用 80%",
     });
-    expect(buildMeterView(under80, nowMs, "strip").subtext).not.toContain("快用完了");
 
     const at80: PlanLimit = { kind: "session", model: null, percent: 80, resetsMs: nowMs + 48 * 60_000 };
     expect(buildMeterView(at80, nowMs, "strip")).toMatchObject({
       percent: 80,
       tone: "warn",
+      isAhead: false,
       subtext: "快用完了 · 48 分后重置",
+      aheadText: null,
     });
 
     const under100: PlanLimit = { kind: "session", model: null, percent: 99.5, resetsMs: nowMs + 48 * 60_000 };
     expect(buildMeterView(under100, nowMs, "strip")).toMatchObject({
       percent: 100,
-      fillPct: 100,
+      fillPct: 99.5,
       tone: "warn",
+      isAhead: true,
+      aheadStartPct: 84,
+      aheadByPct: 16,
       subtext: "快用完了 · 48 分后重置",
-      ariaLabel: "当前 5 小时已用 100%，时间已过 84%",
+      aheadText: "超前 16%",
+      ariaLabel: "当前 5 小时已用 100%，比时间进度多 16%",
     });
 
+    // 125 min left of 300 min -> elapsed = 175/300 * 100 = 58.3333%.
     const at100: PlanLimit = {
       kind: "session",
       model: null,
@@ -143,48 +215,73 @@ describe("buildMeterView", () => {
       percent: 100,
       fillPct: 100,
       tone: "full",
+      isAhead: true,
+      aheadByPct: 42,
+      elapsedTitle: "时间已过 58%",
       subtext: "已用完 · 2 小时 5 分后重置",
+      aheadText: "超前 42%",
     });
 
-    const over100: PlanLimit = {
+    // Over 100% clamps usage to 100 when computing ahead diff: 103.2 clamped to 100, 100 - 98 = 2 < 3 -> not ahead.
+    const over100NearEnd: PlanLimit = {
       kind: "session",
       model: null,
       percent: 103.2,
-      resetsMs: nowMs + (2 * 60 + 5) * 60_000,
+      resetsMs: nowMs + 6 * 60_000, // elapsed = 294/300 = 98%
     };
-    expect(buildMeterView(over100, nowMs, "strip")).toMatchObject({
+    expect(buildMeterView(over100NearEnd, nowMs, "strip")).toMatchObject({
       percent: 103,
       fillPct: 100,
       tone: "full",
+      isAhead: false,
+      aheadStartPct: null,
+      aheadByPct: null,
+      aheadText: null,
     });
   });
 
-  it("没有 resetsMs 或已过去：不画竖线、不写重置时间", () => {
-    const noReset: PlanLimit = { kind: "weeklyAll", model: null, percent: 30, resetsMs: null };
+  it("没有 resetsMs 或已过去：不算超前、无时间提示、不写重置时间", () => {
+    const noReset: PlanLimit = { kind: "weeklyAll", model: null, percent: 90, resetsMs: null };
     expect(buildMeterView(noReset, nowMs, "strip")).toMatchObject({
       label: "本周 · 全部模型",
-      elapsedPct: null,
-      subtext: "",
-      ariaLabel: "本周 · 全部模型已用 30%",
+      tone: "warn",
+      isAhead: false,
+      aheadStartPct: null,
+      aheadByPct: null,
+      elapsedTitle: null,
+      subtext: "快用完了",
+      aheadText: null,
+      ariaLabel: "本周 · 全部模型已用 90%",
     });
 
     const past: PlanLimit = { kind: "session", model: null, percent: 85, resetsMs: nowMs - 1000 };
     expect(buildMeterView(past, nowMs, "strip")).toMatchObject({
-      elapsedPct: null,
+      isAhead: false,
+      aheadStartPct: null,
+      aheadByPct: null,
+      elapsedTitle: null,
       subtext: "快用完了",
+      aheadText: null,
       ariaLabel: "当前 5 小时已用 85%",
     });
 
     const exactNow: PlanLimit = { kind: "session", model: null, percent: 100, resetsMs: nowMs };
     expect(buildMeterView(exactNow, nowMs, "popover")).toMatchObject({
-      elapsedPct: null,
+      isAhead: false,
+      elapsedTitle: null,
       subtext: "已用完",
     });
   });
 
-  it("时间比例夹在 0–100%", () => {
+  it("时间比例夹在 0–100%（远期重置时间已过为 0%）", () => {
     const farFuture: PlanLimit = { kind: "session", model: null, percent: 10, resetsMs: nowMs + 10 * 3_600_000 };
-    expect(buildMeterView(farFuture, nowMs, "strip").elapsedPct).toBe(0);
+    expect(buildMeterView(farFuture, nowMs, "strip")).toMatchObject({
+      isAhead: true,
+      aheadStartPct: 0,
+      aheadByPct: 10,
+      elapsedTitle: "时间已过 0%",
+      aheadText: "超前 10%",
+    });
   });
 });
 
