@@ -3032,3 +3032,190 @@ fn mock_model_prompt_slash_and_tab() {
     assert!(s["prompt_id"].as_str().is_some(), "{s}");
     rpc.event("turn_end", Duration::from_secs(30));
 }
+
+/// A successful `new -- --resume` keeps the original Session. Its old blocks are available as
+/// history without being replayed, and the next turn emits live blocks.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_resume_keeps_the_session() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    let ready = start_session(&mut rpc, &env);
+    until_idle(&mut rpc);
+
+    let old_text = "Remember the resume marker: amber compass.";
+    let old = rpc.call("p1", json!({"type": "prompt", "text": old_text}));
+    let end = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(end["prompt_id"], old["prompt_id"], "{end}");
+    let state = until_idle(&mut rpc);
+    let session = state["session_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("缺少 session_id：{state}"));
+    let history = rpc.call("m1", json!({"type": "get_messages"}));
+    let old_blocks = history["blocks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("缺少 blocks：{history}"));
+    assert!(
+        old_blocks
+            .iter()
+            .any(|b| b["kind"] == "user" && b["text"] == old_text)
+            && old_blocks
+                .iter()
+                .any(|b| b["kind"] == "text" && b["text"] == "ok"),
+        "{history}"
+    );
+
+    let exit = rpc.call("x1", json!({"type": "exit", "close_pane": true}));
+    rpc.event("session_exit", Duration::from_secs(10));
+    assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(0), "{exit}");
+    let holder = ready["holder_id"].as_str().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while let Some(pid) = shell_pid(&env, holder) {
+        assert!(
+            Instant::now() < deadline,
+            "Pane 仍在运行（PID {pid}）：{ready}"
+        );
+    }
+    rpc.shell_pid = None;
+
+    let mut cmd = ccrpc_cmd(&env);
+    cmd.args(["new", "--cwd"])
+        .arg(&env.work)
+        .args(["--", "--plugin-dir"])
+        .arg(&env.plugin_dir)
+        .args(["--resume", session]);
+    let mut resumed = Rpc::spawn(cmd);
+    let ready = resumed.event("ready", Duration::from_secs(20));
+    resumed.shell_pid = shell_pid(&env, ready["holder_id"].as_str().unwrap());
+    let connected = if ready["session_id"].is_null() {
+        resumed.until("resume startup", Duration::from_secs(20), |v| {
+            v["type"] == "started" || v["type"] == "start_failed"
+        })
+    } else {
+        ready
+    };
+    assert_ne!(connected["type"], "start_failed", "{connected}");
+    assert_eq!(connected["session_id"], session, "{connected}");
+    until_idle(&mut resumed);
+
+    let history = resumed.call("m2", json!({"type": "get_messages"}));
+    let blocks = history["blocks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("缺少 blocks：{history}"));
+    for old in old_blocks {
+        assert!(blocks.contains(old), "缺少历史块 {old}：{history}");
+    }
+    for v in &resumed.seen {
+        assert_ne!(v["type"], "block", "恢复时重播了历史块：{v}");
+    }
+
+    let text = "Continue after resume with a silver compass.";
+    let prompt = resumed.call("p2", json!({"type": "prompt", "text": text}));
+    let end = resumed.event("turn_end", Duration::from_secs(30));
+    assert_eq!(end["prompt_id"], prompt["prompt_id"], "{end}");
+    assert_eq!(end["aborted"], false, "{end}");
+    assert_eq!(end["last_text"], "ok", "{end}");
+    until_idle(&mut resumed);
+    for v in &resumed.seen {
+        assert_ne!(v["type"], "start_failed", "{v}");
+        if v["type"] == "block" {
+            assert!(
+                !old_blocks.iter().any(|b| b["uuid"] == v["uuid"]),
+                "恢复时重播了历史块：{v}"
+            );
+        }
+    }
+    assert!(
+        resumed.seen.iter().any(|v| v["type"] == "block"
+            && v["kind"] == "user"
+            && v["uuid"] == prompt["uuid"]
+            && v["text"] == text)
+            && resumed
+                .seen
+                .iter()
+                .any(|v| v["type"] == "block" && v["kind"] == "text" && v["text"] == "ok"),
+        "缺少新一轮的实时块：{end}，已收到 {:?}",
+        resumed.seen
+    );
+}
+
+/// `clear` switches the Session in place. The same Claude process emits live blocks from the new
+/// transcript, and history contains only the new Session's messages.
+#[test]
+#[ignore = "real Claude Code against a local mock model; needs toh and claude"]
+fn mock_model_clear_changes_the_session() {
+    let env = setup_with("mock-key", &mock_model(), "claude-sonnet-4-5");
+    let mut rpc = Rpc::start(&env);
+    start_session(&mut rpc, &env);
+    until_idle(&mut rpc);
+
+    let old_text = "Remember the clear marker: copper lantern.";
+    let old = rpc.call("p1", json!({"type": "prompt", "text": old_text}));
+    let end = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(end["prompt_id"], old["prompt_id"], "{end}");
+    let before = until_idle(&mut rpc);
+    assert!(before["session_id"].is_string(), "{before}");
+    let holder = before["holder_id"].as_str().unwrap();
+    let pid = pane_claude(&env, holder);
+    assert!(pid.is_some(), "{before}");
+    let history = rpc.call("m1", json!({"type": "get_messages"}));
+    let old_blocks = history["blocks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("缺少 blocks：{history}"));
+    assert!(
+        old_blocks
+            .iter()
+            .any(|b| b["kind"] == "user" && b["text"] == old_text)
+            && old_blocks
+                .iter()
+                .any(|b| b["kind"] == "text" && b["text"] == "ok"),
+        "{history}"
+    );
+
+    let clear = rpc.call("c1", json!({"type": "clear"}));
+    assert_eq!(clear, json!({}), "{clear}");
+    let changed = rpc.event("session_changed", Duration::from_secs(20));
+    assert_eq!(changed["previous"], before["session_id"], "{changed}");
+    assert!(changed["session_id"].is_string(), "{changed}");
+    assert_ne!(changed["session_id"], before["session_id"], "{changed}");
+    assert_eq!(changed["cwd"], before["cwd"], "{changed}");
+    let after = until_idle(&mut rpc);
+    assert_eq!(after["session_id"], changed["session_id"], "{after}");
+    assert_eq!(after["holder_id"], holder, "{after}");
+    assert_eq!(pane_claude(&env, holder), pid, "{after}");
+    rpc.forget();
+
+    let text = "Start after clear with a glass lantern.";
+    let prompt = rpc.call("p2", json!({"type": "prompt", "text": text}));
+    let end = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(end["prompt_id"], prompt["prompt_id"], "{end}");
+    assert_eq!(end["aborted"], false, "{end}");
+    assert_eq!(end["last_text"], "ok", "{end}");
+    let user = rpc.until("new Session's user block", Duration::from_secs(10), |v| {
+        v["type"] == "block" && v["kind"] == "user"
+    });
+    assert_eq!(user["uuid"], prompt["uuid"], "{user}");
+    assert_eq!(user["text"], text, "{user}");
+    let reply = rpc.until("new Session's reply block", Duration::from_secs(10), |v| {
+        v["type"] == "block" && v["kind"] == "text"
+    });
+    assert_eq!(reply["text"], "ok", "{reply}");
+    let history = rpc.call("m2", json!({"type": "get_messages"}));
+    let blocks = history["blocks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("缺少 blocks：{history}"));
+    for v in [&user, &reply] {
+        assert!(
+            blocks
+                .iter()
+                .any(|b| b["uuid"] == v["uuid"] && b["text"] == v["text"]),
+            "{history}"
+        );
+    }
+    for b in blocks {
+        assert!(
+            b["text"] != old_text && !old_blocks.iter().any(|old| old["uuid"] == b["uuid"]),
+            "清空后仍有旧块：{b}"
+        );
+    }
+}
