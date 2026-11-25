@@ -770,7 +770,7 @@ impl Engine {
                     .find(|q| q.id == id)
                     .cloned()
                     .unwrap_or_else(|| {
-                        let mut q = transcript::queue_item(0, &text);
+                        let mut q = tail::queue_item(0, &text);
                         q.id = id;
                         q
                     })
@@ -990,7 +990,7 @@ impl Engine {
         // Background tasks still running make Claude Code ask first: answered only when the
         // question is the known one (`Some(cursor on "Exit and stop tasks")`).
         let asked = self.wait_screen(Duration::from_secs(10), |_, s| {
-            if !::transcript::live::pid_exists(pid) {
+            if !transcript::live::pid_exists(pid) {
                 return Some(None);
             }
             recognize::exit_with_tasks(&s.lines).map(Some)
@@ -1010,13 +1010,13 @@ impl Engine {
             // unknown question (no key); at the input box claude may just be slow to exit.
             None => {
                 let s = self.screen().map_err(|e| ("io", format!("{e:#}")))?;
-                if ::transcript::live::pid_exists(pid) && recognize::input_text(&s).is_none() {
+                if transcript::live::pid_exists(pid) && recognize::input_text(&s).is_none() {
                     return Err(self.unrecognized("exit", Some(&s)));
                 }
             }
         }
         if !self.wait_until(Duration::from_secs(15), |_| {
-            !::transcript::live::pid_exists(pid)
+            !transcript::live::pid_exists(pid)
         }) {
             return err("timeout", "15 秒内 claude 没有退出");
         }

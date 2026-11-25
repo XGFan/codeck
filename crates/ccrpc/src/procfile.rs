@@ -1,8 +1,8 @@
 //! Process Files: `<claude config>/sessions/<pid>.json` written by every running Claude Code.
 //! The struct and the liveness check (pid plus `procStart`) are the transcript crate's.
 
-pub use ::transcript::live::{ProcessFile, is_alive};
 use serde::Deserialize;
+pub use transcript::live::{ProcessFile, is_alive};
 
 use crate::locate::Roots;
 

@@ -2,10 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use ::transcript::assemble::{content, nodes};
-use ::transcript::raw::RawBlock;
 use serde::Serialize;
 use serde_json::Value;
+use transcript::assemble::{content, nodes};
+use transcript::raw::RawBlock;
 
 /// Cap on text carried by one block event (tool outputs can be huge).
 pub const MAX_BLOCK_TEXT: usize = 100 * 1024;

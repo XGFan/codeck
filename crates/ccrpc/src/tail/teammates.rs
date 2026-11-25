@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use ::transcript::assemble::{prompt, subagent};
-use ::transcript::raw::RawEntry;
 use serde_json::Value;
+use transcript::assemble::{prompt, subagent};
+use transcript::raw::RawEntry;
 
 #[derive(Debug, Default)]
 pub(super) struct Teammates {

@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use serde_json::{Value, json};
 
-use crate::transcript::{Block, Tailer, TxEvent};
+use crate::tail::{Block, Tailer, TxEvent};
 use crate::wake::Wake;
 
 /// The blocks of one transcript, as following it from the start gives them (`branch` applied).
@@ -228,7 +228,7 @@ mod tests {
             ["prompt 5"]
         );
         // Same view as reading the whole file afresh.
-        let (fresh, _) = crate::transcript::main_blocks(&p, 0);
+        let (fresh, _) = crate::tail::main_blocks(&p, 0);
         assert_eq!(h.page(0, None, None, false)["blocks"], json!(fresh));
     }
 }

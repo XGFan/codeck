@@ -1,6 +1,6 @@
 //! What Claude Code's own records in the main file say: local settings, commands as typed.
 
-use ::transcript::assemble::prompt;
+use transcript::assemble::prompt;
 
 /// What a `/model` or `/effort` output says it set: `Set model to \`Opus 4.7\` and saved …`,
 /// `Kept model as Opus 4.7`, `Set model to Opus 4.7 (default) …`, `Set effort level to low (…`.

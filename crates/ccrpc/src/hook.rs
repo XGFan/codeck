@@ -446,7 +446,7 @@ pub fn prune_checkins(state: &Path) {
                 .and_then(|n| n.split('.').next())
                 .and_then(|s| s.parse::<u32>().ok());
             if let Some(pid) = pid
-                && !::transcript::live::pid_exists(pid)
+                && !transcript::live::pid_exists(pid)
             {
                 let _ = std::fs::remove_file(&p);
             }

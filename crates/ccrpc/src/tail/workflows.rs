@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::SystemTime;
 
-use ::transcript::assemble::{WorkflowFiles, workflow};
-use ::transcript::layout;
 use serde_json::{Value, json};
+use transcript::assemble::{WorkflowFiles, workflow};
+use transcript::layout;
 
 use super::TxEvent;
 

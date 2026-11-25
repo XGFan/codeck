@@ -47,7 +47,7 @@ impl ForkJob {
         title: Option<String>,
     ) -> ForkJob {
         ForkJob {
-            copied: transcript::entry_uuids(&origin_path),
+            copied: tail::entry_uuids(&origin_path),
             origin,
             origin_path,
             at,

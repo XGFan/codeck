@@ -4,9 +4,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use ::transcript::assemble::{LoadedFile, prompt, skeleton, tree};
-use ::transcript::model::FileRole;
-use ::transcript::raw::RawContent;
+use transcript::assemble::{LoadedFile, prompt, skeleton, tree};
+use transcript::model::FileRole;
+use transcript::raw::RawContent;
 
 use super::TxEvent;
 use super::block::BlockKind;
@@ -139,7 +139,7 @@ impl Branches {
 /// The Main Line itself follows the transcript crate's rules (merged fragments, absorbed tool results, compact
 /// boundaries). `None` if unreadable.
 pub fn off_main_uuids(main: &Path, leaf: &str, upto: u64) -> Option<HashSet<String>> {
-    let mut chunk = ::transcript::parse::read_entries(main, 0).ok()?;
+    let mut chunk = transcript::parse::read_entries(main, 0).ok()?;
     chunk.records.retain(|r| r.offset <= upto);
     let real_root: HashSet<String> = chunk
         .records

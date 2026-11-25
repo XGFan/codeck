@@ -3,10 +3,10 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use ::transcript::layout;
-use ::transcript::parse::{ReadOptions, read_entries_with};
-use ::transcript::raw::RawEntry;
 use serde_json::Value;
+use transcript::layout;
+use transcript::parse::{ReadOptions, read_entries_with};
+use transcript::raw::RawEntry;
 
 use super::block::{MAX_BLOCK_TEXT, cap};
 

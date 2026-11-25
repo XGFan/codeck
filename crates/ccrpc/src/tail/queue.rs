@@ -1,9 +1,9 @@
 //! Claude Code's input queue (main line), as the main file's `queue-operation` entries leave it.
 
-use ::transcript::assemble::{nodes, prompt};
-use ::transcript::model::PeerSource;
-use ::transcript::raw::{RawEntry, decode_str};
 use serde::Serialize;
+use transcript::assemble::{nodes, prompt};
+use transcript::model::PeerSource;
+use transcript::raw::{RawEntry, decode_str};
 
 use super::TxEvent;
 

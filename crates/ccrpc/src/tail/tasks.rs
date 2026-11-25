@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use ::transcript::assemble::{prompt, subagent};
 use serde::Serialize;
 use serde_json::Value;
+use transcript::assemble::{prompt, subagent};
 
 use super::block::PendingTool;
 

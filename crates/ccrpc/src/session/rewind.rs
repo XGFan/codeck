@@ -124,11 +124,9 @@ fn age_fits(page: &RewindConfirm, prompt: &Prompt, now_ms: f64) -> bool {
 /// them (`/greet world`, `! echo bang`). A typed prompt's text is the transcript's own (the
 /// assembled one may be cut short).
 fn main_line_prompts(path: &Path) -> Vec<Prompt> {
-    use ::transcript::assemble::{LoadedFile, SessionSidecar};
-    use ::transcript::model::{
-        FileRole, NodeBody, PromptOrigin, TranscriptRequest, TranscriptScope,
-    };
-    let Ok(chunk) = ::transcript::parse::read_entries(path, 0) else {
+    use transcript::assemble::{LoadedFile, SessionSidecar};
+    use transcript::model::{FileRole, NodeBody, PromptOrigin, TranscriptRequest, TranscriptScope};
+    let Ok(chunk) = transcript::parse::read_entries(path, 0) else {
         return Vec::new();
     };
     let sid = path
@@ -141,7 +139,7 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
         agent_id: None,
         records: chunk.records,
     };
-    let session = ::transcript::assemble::assemble(
+    let session = transcript::assemble::assemble(
         &sid,
         &path.with_extension(""),
         vec![file],
@@ -153,11 +151,11 @@ fn main_line_prompts(path: &Path) -> Vec<Prompt> {
         branch_choices: Vec::new(),
         include_hidden: false,
     };
-    let Ok(view) = ::transcript::assemble::transcript(&session, &req, None) else {
+    let Ok(view) = transcript::assemble::transcript(&session, &req, None) else {
         return Vec::new();
     };
     // ccrpc's own reading of the prompts: whole texts, and which were typed while busy.
-    let (blocks, _) = transcript::main_blocks(path, 0);
+    let (blocks, _) = tail::main_blocks(path, 0);
     let mut typed: HashMap<String, (Option<String>, bool)> = HashMap::new();
     for b in blocks.into_iter().filter(|b| b.kind == BlockKind::User) {
         // A prompt's first text block is what was typed (later ones: an opened file…).

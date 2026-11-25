@@ -377,7 +377,7 @@ pub(super) struct TurnTracker {
     /// When ccrpc ran a `!` command (its turn already open): its transcript record, coming within
     /// [`BANG_RECORD`], opens nothing.
     bang_sent: Option<Instant>,
-    prices: ::transcript::pricing::PriceTable,
+    prices: transcript::pricing::PriceTable,
 }
 
 impl TurnTracker {
@@ -390,7 +390,7 @@ impl TurnTracker {
             stop_pending: None,
             deferred_stop: None,
             bang_sent: None,
-            prices: ::transcript::pricing::PriceTable::embedded(),
+            prices: transcript::pricing::PriceTable::embedded(),
         }
     }
 
@@ -433,7 +433,7 @@ impl TurnTracker {
         match m.event.as_str() {
             "UserPromptSubmit" => {
                 let text =
-                    ::transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
+                    transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
                 self.prompt_submitted(s("prompt_id").unwrap_or_default(), text, now, busy)
             }
             "Stop" | "StopFailure" => self.stop(
@@ -574,7 +574,7 @@ impl TurnTracker {
                 if b.kind == BlockKind::User {
                     if b.text
                         .as_deref()
-                        .is_some_and(::transcript::assemble::prompt::is_interruption)
+                        .is_some_and(transcript::assemble::prompt::is_interruption)
                     {
                         self.stats.aborted = true;
                     }
@@ -827,7 +827,7 @@ impl Engine {
                 // A person's prompt after a rewind (a resend of the same one forks no Branch):
                 // the transcript's conversation is the TUI's again (a `!` command too). Slash commands and task
                 // notifications are not.
-                if !text.starts_with('/') && transcript::task_notification(&text).is_none() {
+                if !text.starts_with('/') && tail::task_notification(&text).is_none() {
                     self.rewound = None;
                 }
                 self.marks.prompt(uuid, text, images)
@@ -920,8 +920,8 @@ impl Engine {
             "UserPromptSubmit" => {
                 let pid = s("prompt_id").unwrap_or_default();
                 let text =
-                    ::transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
-                if let Some((id, status)) = transcript::task_notification(&text) {
+                    transcript::assemble::prompt::unwrap_pasted(&s("prompt").unwrap_or_default());
+                if let Some((id, status)) = tail::task_notification(&text) {
                     self.set_task_status(&id, &status);
                 }
                 self.hook_seq += 1;
@@ -1001,7 +1001,7 @@ impl Engine {
         &mut self,
         model: Option<&str>,
         effort: Option<&str>,
-        u: &::transcript::pricing::Usage,
+        u: &transcript::pricing::Usage,
     ) {
         if let Some(m) = model.filter(|m| !m.is_empty() && *m != "<synthetic>") {
             self.model = Some(Model::replied(self.model.as_ref(), m));
@@ -1054,7 +1054,7 @@ fn switched_effort(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcript::Block;
+    use crate::tail::Block;
 
     #[test]
     fn a_model_switched_back_to_has_its_last_effort_level() {
@@ -1175,7 +1175,7 @@ mod tests {
                 )
             ]
         );
-        let usage = ::transcript::pricing::Usage {
+        let usage = transcript::pricing::Usage {
             input: 10.0,
             output: 3.0,
             ..Default::default()
@@ -1644,7 +1644,7 @@ mod tests {
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
         std::fs::write(&main, text).unwrap();
         let mut m = Marks::default();
-        for e in crate::transcript::Tailer::new(&main).poll() {
+        for e in crate::tail::Tailer::new(&main).poll() {
             match e {
                 TxEvent::UserPrompt { uuid, text, images } => m.prompt(uuid, text, images),
                 TxEvent::Enqueued { id, content } => m.enqueue(id, content),

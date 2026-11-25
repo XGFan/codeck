@@ -25,8 +25,8 @@ use crate::pty::{self, HolderConn, key};
 use crate::recognize::{self, PermissionDialog};
 use crate::rpc::{self, Answer, Command, Decision, Out, Request, RpcError};
 use crate::screen::Screen;
+use crate::tail::{self, BgTask, BlockKind, QueueItem, Queued, Tailer, TaskKind, TxEvent};
 use crate::toh::{self, Pane};
-use crate::transcript::{self, BgTask, BlockKind, QueueItem, Queued, Tailer, TaskKind, TxEvent};
 use crate::wake::{FsWatch, Wake};
 
 mod announce;
@@ -229,7 +229,7 @@ pub struct Engine {
     /// The Session's title (the transcript's last `custom-title`, else `ai-title`), read on as
     /// the transcript grows (`len`: its length when last read).
     title: Option<String>,
-    title_tail: ::transcript::assemble::skeleton::TitleTail,
+    title_tail: transcript::assemble::skeleton::TitleTail,
     title_len: Option<u64>,
     /// The feedback draft card last reported (`feedback_draft`), and since when it has been off
     /// the screen.
@@ -754,7 +754,7 @@ impl Engine {
         {
             let old = PathBuf::from(c.transcript_path);
             if locate::is_transcript_path(&self.roots, &old) {
-                copied = transcript::entry_uuids(&old);
+                copied = tail::entry_uuids(&old);
             }
         }
         match HookServer::bind(&self.state_dir, pid.unwrap_or(pane_pid), self.wake.clone()) {
@@ -932,7 +932,7 @@ impl Engine {
             }
         }
         if let Some(pid) = self.claude_pid {
-            if !::transcript::live::pid_exists(pid) {
+            if !transcript::live::pid_exists(pid) {
                 self.gone();
                 return;
             }
@@ -1395,7 +1395,7 @@ impl Engine {
             .iter()
             .filter(|q| in_queue(&q.text))
             .map(|q| {
-                let mut item = transcript::queue_item(q.id, &q.text);
+                let mut item = tail::queue_item(q.id, &q.text);
                 if item.images.is_none() {
                     item.images = self.queue_images.get(&q.id).cloned();
                 }

@@ -121,7 +121,7 @@ struct LsState {
     /// The Panes' shells and the Process Files the map below was made for.
     key: Option<(Vec<u32>, Vec<std::ffi::OsString>)>,
     claude: HashMap<u32, locate::Proc>,
-    titles: HashMap<PathBuf, ::transcript::assemble::skeleton::TitleTail>,
+    titles: HashMap<PathBuf, transcript::assemble::skeleton::TitleTail>,
 }
 
 /// One row per Pane running Claude Code.
@@ -134,7 +134,7 @@ fn ls_rows(roots: &Roots, panes: &[Pane], st: &mut LsState) -> Result<Vec<Value>
     let gone = st
         .claude
         .values()
-        .any(|c| !::transcript::live::pid_exists(c.pid));
+        .any(|c| !transcript::live::pid_exists(c.pid));
     if st.key.as_ref() != Some(&key) || gone {
         let table = locate::process_table()?;
         st.claude = panes
@@ -556,7 +556,7 @@ fn cmd_layouts(args: &[String]) -> Result<()> {
 /// Replays transcripts line by line through the tail and checks that the live view (blocks minus
 /// what each `branch` drops) equals `get_messages`; prints each Branch. Fails on a mismatch.
 fn cmd_replay(files: &[String]) -> Result<()> {
-    use crate::transcript::{Tailer, TxEvent, main_blocks};
+    use crate::tail::{Tailer, TxEvent, main_blocks};
     use std::io::Write;
     if files.is_empty() {
         bail!("用法：ccrpc debug replay <transcript.jsonl>…");

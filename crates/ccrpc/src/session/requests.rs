@@ -5,7 +5,7 @@ use super::*;
 
 /// A main-line AskUserQuestion call as the plugin recorded it ([`hook::read_asks`]).
 pub(super) struct RecordedAsk {
-    pub(super) call: transcript::PendingTool,
+    pub(super) call: tail::PendingTool,
     /// Its dialog has been seen on the screen: only then is it taken for the question.
     pub(super) shown: bool,
 }
@@ -32,14 +32,14 @@ pub(super) fn recorded_call(
     r: hook::AskRecord,
     session_id: Option<&str>,
     resolved: &HashSet<String>,
-) -> Option<transcript::PendingTool> {
+) -> Option<tail::PendingTool> {
     if session_id.is_none() || r.session_id.as_deref() != session_id {
         return None;
     }
     if resolved.contains(&r.tool_use_id) {
         return None;
     }
-    Some(transcript::PendingTool {
+    Some(tail::PendingTool {
         id: r.tool_use_id,
         name: "AskUserQuestion".into(),
         input: r.tool_input,
@@ -75,8 +75,8 @@ fn dialog_needle(name: &str, input: &Value) -> Option<String> {
 fn pick_pending<'a>(
     d: &PermissionDialog,
     body: &str,
-    cands: &[&'a transcript::PendingTool],
-) -> Option<&'a transcript::PendingTool> {
+    cands: &[&'a tail::PendingTool],
+) -> Option<&'a tail::PendingTool> {
     if d.select == Select::Cursor {
         let of_tool: Vec<_> = match &d.tool {
             Some(tool) => cands.iter().filter(|p| &p.name == tool).collect(),
@@ -407,7 +407,7 @@ impl Engine {
     /// The main line's AskUserQuestion still waiting for its result in the transcript, else the
     /// one the plugin recorded (asked from Code Mode's code: in the transcript only later) once
     /// its dialog has been seen on the screen.
-    pub(super) fn pending_ask(&self) -> Option<&transcript::PendingTool> {
+    pub(super) fn pending_ask(&self) -> Option<&tail::PendingTool> {
         self.tailer
             .as_ref()
             .and_then(|t| {
@@ -1113,7 +1113,7 @@ mod tests {
         .map(str::to_string)
         .collect();
         let call = |id: &str, title: &str| RecordedAsk {
-            call: transcript::PendingTool {
+            call: tail::PendingTool {
                 id: id.into(),
                 name: "AskUserQuestion".into(),
                 input: json!({"questions": [{"question": title, "multiSelect": false,
@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn a_tools_own_dialog_is_tied_only_to_a_call_of_its_tool() {
-        let call = |id: &str, name: &str, input: Value| transcript::PendingTool {
+        let call = |id: &str, name: &str, input: Value| tail::PendingTool {
             id: id.into(),
             name: name.into(),
             input,
@@ -1169,7 +1169,7 @@ mod tests {
             cursor: None,
             tool: tool.map(str::to_string),
         };
-        let ids = |p: Option<&transcript::PendingTool>| p.map(|p| p.id.clone());
+        let ids = |p: Option<&tail::PendingTool>| p.map(|p| p.id.clone());
         let built_in = dialog(Select::Cursor, Some("mcp__computer-use__request_access"));
         // Other pending calls (a background Subagent's MCP call, a shell) are not the grant's.
         assert_eq!(

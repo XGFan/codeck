@@ -10,10 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use ::transcript::assemble::{nodes, prompt};
-use ::transcript::layout::{self, AgentFile};
-use ::transcript::raw::{RawBlock, RawContent, RawEntry, decode_str};
 use serde_json::Value;
+use transcript::assemble::{nodes, prompt};
+use transcript::layout::{self, AgentFile};
+use transcript::raw::{RawBlock, RawContent, RawEntry, decode_str};
 
 mod block;
 mod branch;
@@ -77,7 +77,7 @@ pub enum TxEvent {
         model: Option<String>,
         /// The effort level the reply ran at, when Claude Code recorded one.
         effort: Option<String>,
-        usage: ::transcript::pricing::Usage,
+        usage: transcript::pricing::Usage,
         /// Cost Claude Code logged itself, if any.
         logged_cost: Option<f64>,
     },
@@ -706,7 +706,7 @@ impl Tailer {
                     main: agent.is_none(),
                     model: msg.model.clone(),
                     effort: e.effort.clone(),
-                    usage: ::transcript::pricing::Usage::from_tokens(
+                    usage: transcript::pricing::Usage::from_tokens(
                         n(u.input_tokens),
                         n(u.output_tokens),
                         n(u.cache_read_input_tokens),
