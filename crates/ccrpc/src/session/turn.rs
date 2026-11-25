@@ -1017,24 +1017,74 @@ impl Engine {
     }
 
     /// `/model` or `/effort` set something (here or in the TUI). A new model may not have the
-    /// old effort level, or any: the screen's mark says again.
+    /// old effort level, or any: the screen's mark says again. That mark can wait behind another
+    /// notice for a while (Code Mode's, about 18 s), so a model switched back to has the level last
+    /// known for it until then: with `modelSettings` Claude Code keeps one for each model. Without,
+    /// `/effort` sets one for all, so it drops the levels known for the others.
     pub(super) fn note_setting(&mut self, model: Option<String>, effort: Option<String>) {
         if let Some(m) = model {
-            if self.model.as_ref().map(|c| c.name.as_str()) != Some(m.as_str()) {
-                self.effort = None;
+            let old = self.model.as_ref().map(|c| c.name.clone());
+            if old.as_deref() != Some(m.as_str()) {
+                let effort = self.effort.take();
+                self.effort = switched_effort(&mut self.model_efforts, old.as_deref(), effort, &m);
             }
             self.model = Some(Model::set(m));
         }
         if let Some(e) = effort {
             self.effort = Some(e);
+            self.model_efforts.clear();
         }
     }
+}
+
+/// The effort level once the model changes from `old` (at `effort`, kept in `known`) to `new`:
+/// the level last known for `new`, none for a model never seen with one.
+fn switched_effort(
+    known: &mut HashMap<String, String>,
+    old: Option<&str>,
+    effort: Option<String>,
+    new: &str,
+) -> Option<String> {
+    if let (Some(o), Some(e)) = (old, effort) {
+        known.insert(o.to_string(), e);
+    }
+    known.get(new).cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::transcript::Block;
+
+    #[test]
+    fn a_model_switched_back_to_has_its_last_effort_level() {
+        let mut known = HashMap::new();
+        let x = Some("xhigh".to_string());
+        // Opus at xhigh → Fable, not seen yet: unknown until its mark or a reply.
+        assert_eq!(
+            switched_effort(&mut known, Some("Opus 5.5"), x.clone(), "Fable 5.2"),
+            None
+        );
+        // Fable's level never known (its mark waited behind a notice) → Opus: xhigh again.
+        assert_eq!(
+            switched_effort(&mut known, Some("Fable 5.2"), None, "Opus 5.5"),
+            x
+        );
+        // Fable seen at high meanwhile; a model without effort levels stays without.
+        let h = Some("high".to_string());
+        assert_eq!(
+            switched_effort(&mut known, Some("Opus 5.5"), x.clone(), "Fable 5.2"),
+            None
+        );
+        assert_eq!(
+            switched_effort(&mut known, Some("Fable 5.2"), h.clone(), "Haiku 4.5"),
+            None
+        );
+        assert_eq!(
+            switched_effort(&mut known, Some("Haiku 4.5"), None, "Fable 5.2"),
+            h
+        );
+    }
 
     fn hook(t: &mut TurnTracker, now: Instant, event: &str, input: Value) -> Vec<TurnOut> {
         let m = HookMsg {

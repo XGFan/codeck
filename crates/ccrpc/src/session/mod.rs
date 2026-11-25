@@ -218,6 +218,8 @@ pub struct Engine {
     /// The effort level: the TUI's `◉ xhigh · /effort` mark, what `/effort` said it set, else
     /// the last reply's; none for a model without effort levels.
     effort: Option<String>,
+    /// The effort level last known for each model (by display name) it was switched away from.
+    model_efforts: HashMap<String, String>,
     context_tokens: Option<u64>,
     hook_mode: Option<String>,
     /// The mode line last seen (a dialog may cover it).
@@ -437,6 +439,7 @@ impl Engine {
             pages: VecDeque::new(),
             model: None,
             effort: None,
+            model_efforts: HashMap::new(),
             context_tokens: None,
             hook_mode: None,
             screen_mode: None,

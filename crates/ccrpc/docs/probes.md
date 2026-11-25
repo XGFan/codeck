@@ -267,3 +267,10 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
   - Chat about this（`answer_question` 带 `chat`）与 Esc 关掉的提问都没有 PostToolUse / PostToolUseFailure，记录留到下一条提示词的 UserPromptSubmit。
   - 提问等着时后台任务（`run_in_background` 的 `sleep 4`）结束：15 秒内没有 UserPromptSubmit，也没有开新的一轮，记录与提问都在。
 - 没实测：代码里需要审批的调用（实测的 Session 是 bypass 模式）；Subagent Run 里的代码。
+
+## 思考等级标记（2026-11-25，2.1.332）
+
+- 输入框右上方的 `◉ xhigh · /effort` 是一条临时提示：启动、`/model`、`/effort` 之后出现，约 10–20 秒后消失；忙时不显示。`/model` 的记录里没有等级，标记不在时只有下一条回复的 `effort` 能说。
+- 它与别的提示共用这个位置，一次只显示一条：Code Mode 下在 codeck 仓库启动（带 `--add-dir`）几秒后出现 `No Chrome or computer use: exit and run CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=0 claude …`，占着时 `/model` 之后的标记要约 18 秒后才出现；在空目录里启动没有这条，标记随命令输出一起出现。
+- 设置里有 `modelSettings.<模型 id>.effortLevel` 时每个模型各用各的（切到 Fable 5.2 是 high，切回 Opus 5.5 是 xhigh）；没有时 `/effort` 设的等级对之后换的模型也有效（mock 模型上 `/effort high` 后 `/model opus` 是 high）。
+- hooks 也给不了换模型后的等级：`/model` 会触发 `PreModelSwitch` / `PostModelSwitch`（`from_model`、`to_model` 是解析后的模型 id，另有 `requested_model`、`source`、`context_tokens` 等），但不带 `effort`，hook 进程的 `CLAUDE_EFFORT` 也为空；`effort`（`{level}`）只在轮次里的 hook 上有（Stop 实测有，UserPromptSubmit 没有），比回复里的 `effort` 早不了多少。状态栏命令的输入带 `effort`，但状态栏是用户自己的设置。

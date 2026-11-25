@@ -472,7 +472,7 @@
             "string",
             "null"
           ],
-          "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
+          "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；换了模型时先取这个连接里那个模型上次的等级（`/effort` 之后不取），没有则为 null；模型没有思考等级时为 null。"
         },
         "context_tokens": {
           "type": [
@@ -3760,7 +3760,7 @@
               "string",
               "null"
             ],
-            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；模型没有思考等级时为 null。"
+            "description": "思考等级：输入框右上方的「◉ xhigh · /effort」，`/effort` 输出的设置，或主线最后一条 assistant 消息记下的；换了模型时先取这个连接里那个模型上次的等级（`/effort` 之后不取），没有则为 null；模型没有思考等级时为 null。"
           },
           "context_tokens": {
             "type": [
