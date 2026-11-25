@@ -162,7 +162,8 @@ fn controls_a_real_session() {
     assert!(tr["content"].as_str().unwrap().contains("teal green"));
     rpc.event("turn_end", Duration::from_secs(60));
 
-    // steer mid-turn + follow_up after the turn
+    // steer mid-turn (what waits in Claude Code's queue and taking it back are in the mock tests:
+    // send_now, edit_queue, cancel_queue)
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "Run this exact shell command in the foreground (do not set run_in_background; it is safe): python3 -c \"import time; time.sleep(8); print('first-done')\" Then reply DONE."}));
     if let Some(pr) = wait_permission_or_tool(&mut rpc) {
@@ -171,18 +172,6 @@ fn controls_a_real_session() {
             json!({"type": "answer_permission", "request_id": pr, "decision": "allow"}),
         );
     }
-    rpc.call(
-        "s2",
-        json!({"type": "follow_up", "text": "Reply with exactly FOLLOWUP-OK."}),
-    );
-    // A second follow-up, dropped again.
-    rpc.call(
-        "s2b",
-        json!({"type": "follow_up", "text": "Reply with exactly SHOULD-NOT-RUN."}),
-    );
-    let d = rpc.call("s2c", json!({"type": "cancel_follow_up", "index": 1}));
-    assert_eq!(d["removed"], 1);
-    assert_eq!(d["follow_ups"], json!(["Reply with exactly FOLLOWUP-OK."]));
     // The command is running now (its tool_use was seen, any permission answered).
     std::thread::sleep(Duration::from_secs(1));
     let d = rpc.call(
@@ -198,13 +187,6 @@ fn controls_a_real_session() {
         te["last_text"].as_str().unwrap_or("").contains("STEERED"),
         "{te}"
     );
-    rpc.until("follow_up turn", Duration::from_secs(60), |v| {
-        v["type"] == "turn_end"
-            && v["last_text"]
-                .as_str()
-                .unwrap_or("")
-                .contains("FOLLOWUP-OK")
-    });
 
     // abort
     rpc.forget();
