@@ -10,9 +10,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
-use super::nodes::{RESULT_BYTES, RESULT_LINES, cap_text, result_content};
+use super::nodes::{RESULT_BYTES, RESULT_LINES, cap_text, image_info, result_content};
 use super::{EntryKind, LoadedFile, SessionSkeleton};
-use crate::model::CodeOutcome;
+use crate::model::{CodeOutcome, ImageRef};
 use crate::raw::RawEntry;
 
 /// The tool Claude's code runs in.
@@ -30,6 +30,8 @@ pub fn is_plumbing(tool: &str) -> bool {
 pub struct EvalEvent {
     pub eval: u32,
     pub outcome: CodeOutcome,
+    /// Its position among the events (of any kind) of the text it was parsed from.
+    pub index: usize,
 }
 
 /// The `repl-eval` events in `text`: a `poll_events` envelope, a `Poll` result or a `REPL` result
@@ -39,6 +41,7 @@ pub struct EvalEvent {
 pub fn parse_events(text: &str) -> Vec<EvalEvent> {
     let nonces = delivery_nonces(text);
     let mut out = Vec::new();
+    let mut index = 0;
     let mut rest = text;
     while let Some(start) = next_open(rest) {
         let (tag, close) = if rest[start..].starts_with("<event") {
@@ -58,19 +61,21 @@ pub fn parse_events(text: &str) -> Vec<EvalEvent> {
         let body = &body_and_rest[..body_end];
         rest = &body_and_rest[body_end + close.len()..];
         let attr = |k: &str| attrs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.as_str());
-        if tag == "event" {
-            if attr("kind") != Some("repl-eval") {
-                continue;
-            }
-            if let Some(list) = &nonces
-                && !attr("nonce").is_some_and(|n| list.iter().any(|x| x == n))
-            {
-                continue;
-            }
+        if tag == "event"
+            && let Some(list) = &nonces
+            && !attr("nonce").is_some_and(|n| list.iter().any(|x| x == n))
+        {
+            continue;
+        }
+        let at = index;
+        index += 1;
+        if tag == "event" && attr("kind") != Some("repl-eval") {
+            continue;
         }
         let ms = attr("ms").and_then(|v| v.parse::<f64>().ok());
         let eval = attr("eval").and_then(|v| v.parse::<u32>().ok());
-        if let Some(ev) = parse_body(body, eval, ms) {
+        if let Some(mut ev) = parse_body(body, eval, ms) {
+            ev.index = at;
             out.push(ev);
         }
     }
@@ -190,6 +195,7 @@ fn event(eval: u32, ms: Option<f64>, log: &str, text: &str, is_error: bool) -> E
             truncated: truncated || log_truncated,
             duration_ms: ms,
         },
+        index: 0,
     }
 }
 
@@ -228,6 +234,10 @@ pub struct CodeRuns {
     pub calls: HashMap<String, Vec<usize>>,
     /// `REPL` tool_use id → what the code returned or threw (the first delivery wins).
     pub outcome: HashMap<String, CodeOutcome>,
+    /// `REPL` tool_use id → the pictures delivered with its outcome (the files its code read as
+    /// pictures, in the order it read them), each addressed where it is stored: the `Poll` or
+    /// `REPL` result, or the `poll_events` attachment.
+    pub media: HashMap<String, Vec<ImageRef>>,
 }
 
 #[derive(Deserialize)]
@@ -236,6 +246,56 @@ struct PollEvents<'a> {
     kind: Option<&'a str>,
     #[serde(default)]
     envelopes: Vec<String>,
+    /// What each envelope's event showed Claude besides text.
+    #[serde(default, borrow)]
+    media: Vec<Vec<MediaItem<'a>>>,
+}
+
+#[derive(Deserialize)]
+struct MediaItem<'a> {
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default, borrow)]
+    source: Option<&'a RawValue>,
+}
+
+/// `toolUseResult` of a `Poll` result: how many media items each event of the delivery brought.
+#[derive(Deserialize)]
+struct PollMedia {
+    #[serde(default)]
+    media: Vec<Vec<serde::de::IgnoredAny>>,
+}
+
+/// The `source` of each picture in a `poll_events` attachment's `media`, with the envelope it came
+/// with; an [`ImageRef`] into the attachment counts them in this order.
+fn attachment_pictures<'a>(p: &PollEvents<'a>) -> Vec<(usize, &'a RawValue)> {
+    p.media
+        .iter()
+        .enumerate()
+        .flat_map(|(k, items)| items.iter().map(move |it| (k, it)))
+        .filter(|(_, it)| it.kind.as_deref() == Some("image"))
+        .filter_map(|(k, it)| Some((k, it.source?)))
+        .collect()
+}
+
+/// The `source` of picture `ordinal` of a `poll_events` attachment.
+pub fn attachment_picture(raw: Option<&RawValue>, ordinal: usize) -> Option<&RawValue> {
+    let p: PollEvents<'_> = serde_json::from_str(raw?.get()).ok()?;
+    attachment_pictures(&p).get(ordinal).map(|&(_, s)| s)
+}
+
+/// Whether `toolUseResult` is that of a file read as a picture (`{"type":"image", …}`): the picture
+/// itself is not there, it was shown to Claude with the code's outcome.
+pub fn is_picture_result(raw: Option<&RawValue>) -> bool {
+    #[derive(Deserialize)]
+    struct Kind<'a> {
+        #[serde(rename = "type", default)]
+        kind: Option<&'a str>,
+    }
+    raw.map(RawValue::get)
+        .filter(|s| memchr::memmem::find(s.as_bytes(), b"\"image\"").is_some())
+        .and_then(|s| serde_json::from_str::<Kind<'_>>(s).ok())
+        .is_some_and(|k| k.kind == Some("image"))
 }
 
 #[derive(Deserialize)]
@@ -319,8 +379,31 @@ pub fn collect(sk: &SessionSkeleton, files: &[LoadedFile], order: &[usize]) -> C
                 if p.kind != Some("poll_events") {
                     continue;
                 }
-                let events = p.envelopes.iter().flat_map(|s| parse_events(s)).collect();
-                deliver(&mut runs, &mut current, &eval_owner, events);
+                // One event to an envelope: an event's media is its envelope's.
+                let events: Vec<EvalEvent> = p
+                    .envelopes
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(k, s)| {
+                        parse_events(s).into_iter().map(move |mut ev| {
+                            ev.index = k;
+                            ev
+                        })
+                    })
+                    .collect();
+                let mut media: Vec<Vec<ImageRef>> = Vec::new();
+                for (ordinal, (k, source)) in attachment_pictures(&p).into_iter().enumerate() {
+                    let (media_type, bytes) = image_info(Some(source));
+                    media.resize_with(media.len().max(k + 1), Vec::new);
+                    media[k].push(ImageRef {
+                        node_id: n.uuid.clone(),
+                        ordinal: ordinal as u32,
+                        media_type,
+                        bytes,
+                        tool_use_id: None,
+                    });
+                }
+                deliver(&mut runs, &mut current, &eval_owner, events, media);
             }
             _ => {}
         }
@@ -345,26 +428,81 @@ fn take_result(
     else {
         return;
     };
-    let (text, _) = result_content(block.content.as_deref());
+    let (text, images) = result_content(block.content.as_deref());
     if name == REPL
         && let Some(n) = eval_number(e, &text)
     {
         eval_owner.insert(n, id.to_owned());
     }
-    deliver(runs, current, eval_owner, parse_events(&text));
+    let events = parse_events(&text);
+    let media = result_media(e, id, images, &events);
+    deliver(runs, current, eval_owner, events, media);
 }
 
+/// The pictures of a `Poll` or `REPL` result (tool_use `id` in entry `e`) by the event they came
+/// with: `toolUseResult.media` says how many each event brought; without it they are the last
+/// outcome's (a delivery with pictures has had one outcome so far).
+fn result_media(
+    e: &RawEntry,
+    id: &str,
+    images: Vec<(String, f64)>,
+    events: &[EvalEvent],
+) -> Vec<Vec<ImageRef>> {
+    if images.is_empty() {
+        return Vec::new();
+    }
+    let total = images.len();
+    let mut refs = images
+        .into_iter()
+        .enumerate()
+        .map(|(k, (media_type, bytes))| ImageRef {
+            node_id: e.uuid.clone().unwrap_or_default(),
+            ordinal: k as u32,
+            media_type,
+            bytes,
+            tool_use_id: Some(id.to_owned()),
+        });
+    let counts = e
+        .tool_use_result
+        .as_deref()
+        .filter(|raw| raw.get().starts_with('{'))
+        .and_then(|raw| serde_json::from_str::<PollMedia>(raw.get()).ok())
+        .map(|m| m.media.iter().map(Vec::len).collect::<Vec<_>>())
+        .filter(|c| c.iter().sum::<usize>() == total);
+    match counts {
+        Some(counts) => counts
+            .into_iter()
+            .map(|n| refs.by_ref().take(n).collect())
+            .collect(),
+        None => {
+            let mut out = Vec::new();
+            if let Some(last) = events.last() {
+                out.resize_with(last.index + 1, Vec::new);
+                out[last.index] = refs.collect();
+            }
+            out
+        }
+    }
+}
+
+/// `media[k]`: the pictures that came with the delivery's event `k`.
 fn deliver(
     runs: &mut CodeRuns,
     current: &mut Option<String>,
     eval_owner: &HashMap<u32, String>,
     events: Vec<EvalEvent>,
+    mut media: Vec<Vec<ImageRef>>,
 ) {
     for ev in events {
         let Some(id) = eval_owner.get(&ev.eval) else {
             continue;
         };
-        runs.outcome.entry(id.clone()).or_insert(ev.outcome);
+        if !runs.outcome.contains_key(id) {
+            runs.outcome.insert(id.clone(), ev.outcome);
+            if let Some(m) = media.get_mut(ev.index).filter(|m| !m.is_empty()) {
+                runs.media.insert(id.clone(), std::mem::take(m));
+            }
+        }
         *current = Some(id.clone());
     }
 }

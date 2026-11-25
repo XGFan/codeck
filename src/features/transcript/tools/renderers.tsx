@@ -314,7 +314,8 @@ export function ReadView({ nodeId, call, startMs, ctx }: RenderProps) {
           ? `前 ${limit} 行`
           : "";
   const out = useOutput(call, ctx);
-  const imgOnly = (call.result?.images.length ?? 0) > 0 && /^\[image\]\s*$/.test(out.text);
+  // A picture: its text is "[image]", or empty when Code Mode's code read it.
+  const imgOnly = (call.result?.images.length ?? 0) > 0 && /^(\[image\])?\s*$/.test(out.text);
   const numbered = useMemo(() => splitNumbered(out.text), [out.text]);
   return (
     <Shell

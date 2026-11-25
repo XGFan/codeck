@@ -290,6 +290,9 @@ fn tool_calls(
     if !is_code {
         return vec![call];
     }
+    // A file the code read as a picture: the picture came with the code's outcome, not in the
+    // call's own result. The calls get them in the order they were made.
+    let mut pictures = runs.media.get(&id).into_iter().flatten();
     let made: Vec<ToolCall> = runs
         .calls
         .get(&id)
@@ -297,7 +300,21 @@ fn tool_calls(
         .flatten()
         .flat_map(|&v| s.entry(ctx.files, v).blocks())
         .filter(|b| b.block_type() == "tool_use" && b.name.as_deref() != Some(code_mode::REPL))
-        .map(|b| tool_call(ctx, b, shown, node_id, Some(&id)))
+        .map(|b| {
+            let mut c = tool_call(ctx, b, shown, node_id, Some(&id));
+            if let Some(r) = &mut c.result
+                && r.images.is_empty()
+                && r.text.is_empty()
+                && s.tool_result_block(ctx.files, &c.tool_use_id, Some(shown))
+                    .is_some_and(|(_, e, _)| {
+                        code_mode::is_picture_result(e.tool_use_result.as_deref())
+                    })
+                && let Some(p) = pictures.next()
+            {
+                r.images.push(p.clone());
+            }
+            c
+        })
         .chain(
             ctx.unrecorded_calls
                 .get(&id)

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use super::nodes::{persisted_ref, result_full};
-use super::{AssembledSession, LoadedFile, SessionSkeleton, skeleton};
+use super::{AssembledSession, LoadedFile, SessionSkeleton, code_mode, skeleton};
 use crate::error::{TranscriptError, TranscriptResult};
 use crate::model::{
     DetailSource, ImageData, ImageRequest, ToolDetail, ToolDetailRequest, ToolPart, TranscriptScope,
@@ -227,12 +227,19 @@ pub fn image(
             })
         }),
         None => sk.by_uuid.get(&r.image.node_id).and_then(|&i| {
-            sk.entry(files, i)
-                .blocks()
+            let e = sk.entry(files, i);
+            e.blocks()
                 .iter()
                 .filter(|b| b.block_type() == "image")
                 .nth(ordinal)
                 .and_then(|b| image_data(b.source.as_deref()))
+                // A picture Code Mode delivered in a `poll_events` attachment.
+                .or_else(|| {
+                    image_data(code_mode::attachment_picture(
+                        e.attachment.as_deref(),
+                        ordinal,
+                    ))
+                })
         }),
     };
     found.ok_or_else(|| TranscriptError::NotFound("该图片".to_owned()))

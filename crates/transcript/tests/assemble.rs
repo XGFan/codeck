@@ -1928,6 +1928,120 @@ fn code_mode_outcome_found_when_the_repl_result_is_off_the_path() {
     );
 }
 
+/// A file the code read as a picture: the virtual Read's own result has no picture (`toolUseResult`
+/// `{"type":"image"}`, the data dropped); the pictures were shown to Claude with the code's outcome,
+/// in the `Poll` result. They go to the Reads in order, and are fetched from where they are stored.
+#[test]
+fn code_mode_pictures_the_code_read_are_shown_on_their_reads() {
+    let img = |data: &str| {
+        format!(
+            r#"{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{data}"}}}}"#
+        )
+    };
+    let poll = format!(
+        r#"{{"type":"user","uuid":"u3","parentUuid":"a2","timestamp":"2026-01-01T00:01:00Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"p1","content":[{{"type":"text","text":"<event kind=\"repl-eval\" eval=\"7\" ms=\"120\" status=\"settled\">\n<result>ok</result>\n</event>"}},{},{}]}}]}},"toolUseResult":{{"eventCount":1,"media":[[{},{}]]}}}}"#,
+        img("QUFB"),
+        img("QkJC"),
+        img("QUFB"),
+        img("QkJC")
+    );
+    let read = |n: u32, parent: &str, file: &str| {
+        [
+            format!(
+                r#"{{"type":"assistant","uuid":"v{n}a","parentUuid":"{parent}","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{{"id":"mv{n}","model":"<synthetic>","content":[{{"type":"tool_use","id":"repl_{n}","name":"Read","input":{{"file_path":"{file}"}}}}]}}}}"#
+            ),
+            format!(
+                r#"{{"type":"user","uuid":"v{n}b","parentUuid":"v{n}a","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"repl_{n}","content":""}}]}},"toolUseResult":{{"type":"image","file":{{"base64":"","type":"image/png","originalSize":3}}}}}}"#
+            ),
+        ]
+    };
+    let [r1a, r1b] = read(1, "u3", "/tmp/a.png");
+    let [r3a, r3b] = read(3, "v2b", "/tmp/b.png");
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"look"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"await tools.Read({})"}}]}}"#,
+        r#"{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"p1","name":"Poll","input":{}}]}}"#,
+        r#"{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"(dispatched #7)"}]},"toolUseResult":{"evalId":7,"asyncDispatched":true}}"#,
+        &poll,
+        &r1a,
+        &r1b,
+        r#"{"type":"assistant","uuid":"v2a","parentUuid":"v1b","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{"id":"mv2","model":"<synthetic>","content":[{"type":"tool_use","id":"repl_2","name":"Read","input":{"file_path":"/tmp/notes.txt"}}]}}"#,
+        r#"{"type":"user","uuid":"v2b","parentUuid":"v2a","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"repl_2","content":""}]},"toolUseResult":{"type":"text","file":{"content":"an image\n","startLine":1}}}"#,
+        &r3a,
+        &r3b,
+        r#"{"type":"assistant","uuid":"a3","parentUuid":"v3b","timestamp":"2026-01-01T00:01:05Z","message":{"id":"m2","model":"x","content":[{"type":"text","text":"seen"}]}}"#,
+    ]);
+    let s = assemble(
+        "s",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    let t = main_t(&s, false);
+    let made = made_by(&t, "r1");
+    let pictures = |k: usize| &made[k].result.as_ref().expect("result").images;
+    assert_eq!(made.len(), 3);
+    assert_eq!(
+        [pictures(0).len(), pictures(1).len(), pictures(2).len()],
+        [1, 0, 1]
+    );
+    let data = |k: usize| {
+        content::image(
+            &s,
+            &ImageRequest {
+                session_id: "s".into(),
+                scope: TranscriptScope::Main,
+                image: pictures(k)[0].clone(),
+            },
+            None,
+        )
+        .expect("image data")
+    };
+    assert_eq!(pictures(0)[0].bytes, 3.0);
+    assert_eq!(
+        (data(0).media_type.as_str(), data(0).data_base64.as_str()),
+        ("image/png", "QUFB")
+    );
+    assert_eq!(data(2).data_base64, "QkJC");
+}
+
+/// The same when the outcome arrives in a `poll_events` attachment: the picture is in its `media`.
+#[test]
+fn code_mode_pictures_delivered_in_an_attachment() {
+    let f = from_lines(&[
+        r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"look"}}"#,
+        r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","model":"x","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"await tools.Read({})"}}]}}"#,
+        r#"{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"(dispatched #7)"}]},"toolUseResult":{"evalId":7,"asyncDispatched":true}}"#,
+        r#"{"type":"attachment","uuid":"at1","parentUuid":"u2","timestamp":"2026-01-01T00:01:00Z","attachment":{"type":"poll_events","envelopes":["<event kind=\"task\">x</event>","<event kind=\"repl-eval\" eval=\"7\" ms=\"5\"><result>ok</result></event>"],"kinds":["task","repl-eval"],"media":[[],[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"Q0ND"}}]]}}"#,
+        r#"{"type":"assistant","uuid":"v1a","parentUuid":"at1","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{"id":"mv1","model":"<synthetic>","content":[{"type":"tool_use","id":"repl_1","name":"Read","input":{"file_path":"/tmp/a.jpg"}}]}}"#,
+        r#"{"type":"user","uuid":"v1b","parentUuid":"v1a","isVirtual":true,"timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"repl_1","content":""}]},"toolUseResult":{"type":"image","file":{"base64":"","type":"image/jpeg"}}}"#,
+        r#"{"type":"assistant","uuid":"a3","parentUuid":"v1b","timestamp":"2026-01-01T00:01:05Z","message":{"id":"m2","model":"x","content":[{"type":"text","text":"seen"}]}}"#,
+    ]);
+    let s = assemble(
+        "s",
+        Path::new("/nonexistent"),
+        vec![f],
+        SessionSidecar::default(),
+    );
+    let t = main_t(&s, false);
+    let made = made_by(&t, "r1");
+    let image = made[0].result.as_ref().expect("result").images[0].clone();
+    let data = content::image(
+        &s,
+        &ImageRequest {
+            session_id: "s".into(),
+            scope: TranscriptScope::Main,
+            image,
+        },
+        None,
+    )
+    .expect("image data");
+    assert_eq!(
+        (data.media_type.as_str(), data.data_base64.as_str()),
+        ("image/jpeg", "Q0ND")
+    );
+}
+
 #[test]
 fn code_mode_call_that_failed_itself_has_its_error_as_outcome() {
     let f = from_lines(&[
