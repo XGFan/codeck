@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { disableAutoConnect } from "./connect-helpers";
 
 test("两栏布局与统计、设置入口可见", async ({ page }) => {
   await page.goto("/");
@@ -46,4 +47,14 @@ test("索引状态到达时按到一半的设置按钮仍然有效", async ({ pa
   await expect(page.getByTestId("statusbar")).toHaveCount(1);
   await page.mouse.up();
   await expect(page.getByTestId("settings")).toBeVisible();
+});
+
+test.describe(() => {
+  test.beforeEach(({ page }) => disableAutoConnect(page));
+
+  test("触摸板下拉不会把整个页面拉出空白", async ({ page }) => {
+    await page.goto("/");
+    // Rubber-banding itself is a trackpad gesture Playwright cannot drive; the root opt-out is what prevents it.
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY)).toBe("none");
+  });
 });

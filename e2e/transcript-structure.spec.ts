@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { disableAutoConnect } from "./connect-helpers";
 import { openSession, RICH_TITLE, reveal, scrollBy } from "./helpers";
 import type { JumpTarget } from "../src/ipc/bindings";
 
@@ -710,4 +711,42 @@ test("提问卡片：题目很长折行时，第二行从标签下方的最左�
   });
   expect(lines.rects.length).toBeGreaterThan(1);
   expect(Math.abs(lines.rects[1]! - lines.box)).toBeLessThan(2);
+});
+
+test.describe(() => {
+  test.beforeEach(({ page }) => disableAutoConnect(page));
+
+  test("斜杠命令只显示一个斜杠，命令名高亮", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }).click();
+    const transcript = page.getByTestId("transcript");
+    const name = transcript.getByTestId("command-name").first();
+    await expect(name).toHaveText("/review");
+    await expect(name.locator("..")).toHaveText("/review 订单列表页");
+    // Highlighted like the terminal: the command token is coloured differently from its arguments.
+    const [cmdColor, argColor] = await name.evaluate((e) => [
+      getComputedStyle(e).color,
+      getComputedStyle(e.parentElement!).color,
+    ]);
+    expect(cmdColor).not.toBe(argColor);
+  });
+
+  test("本地命令的输出去掉标签和控制码，按命令输出显示", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }).click();
+    const transcript = page.getByTestId("transcript");
+    await expect(transcript.getByTestId("command-name").last()).toHaveText("/rename");
+    const output = transcript.getByTestId("command-output").last();
+    await expect(output).toHaveText("命令输出Session renamed to: 订单列表页审查");
+  });
+
+  test("! shell 命令按输入的样子显示，输出按命令输出显示", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("session-row").filter({ hasText: "/review 订单列表页" }).click();
+    const transcript = page.getByTestId("transcript");
+    const name = transcript.getByTestId("command-name").nth(1);
+    await expect(name).toHaveText("!");
+    await expect(name.locator("..")).toHaveText("!git status");
+    await expect(transcript.getByTestId("command-output").first()).toHaveText("命令输出On branch feat/orders");
+  });
 });

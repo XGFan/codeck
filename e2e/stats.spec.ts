@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openStats } from "./helpers";
+import { disableAutoConnect } from "./connect-helpers";
+import { openStats, openRich } from "./helpers";
 
 /** Picks a time range from the stats' dropdown. */
 async function pickRange(page: Page, name: string) {
@@ -558,4 +559,22 @@ test("单日交互：点 Session 行打开该 Session，点「查看这天的 Se
   await expect(stats).toHaveCount(0);
   const chip = page.getByTestId("drill-chip");
   await expect(chip).toContainText("11月24日");
+});
+
+test.describe(() => {
+  test.beforeEach(({ page }) => disableAutoConnect(page));
+
+  test("头部显示 Cost，悬停可看按模型明细；其余统计在 ⓘ 的悬停卡片里", async ({ page }) => {
+    await openRich(page);
+    const cost = page.getByTestId("header").getByTestId("session-cost");
+    await expect(cost).toHaveText(/^Cost \$\d+\.\d{2}$/);
+    const details = page.getByTestId("session-details");
+    await expect(details).toBeHidden();
+    await page.getByTestId("header").getByRole("button", { name: "更多统计" }).hover();
+    await expect(details).toBeVisible();
+    await expect(details).toContainText("工具调用");
+    const title = (await cost.getAttribute("title"))!;
+    expect(title).toContain("claude-sonnet-5-5");
+    expect(title).toContain("claude-haiku-4-5");
+  });
 });

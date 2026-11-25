@@ -1,3 +1,12 @@
+// Connect against the mock ccrpc (src/mocks/ccrpc.ts): each src/mocks/data/connect/*.jsonl is a
+// recorded wire.jsonl replayed as one `ccrpc ls` entry, standing for a Session of the mock data:
+// ui-cases → the rich Live Session, tools → the Flux Session, session-changed → the auth Session
+// (its `/clear` moves to the JWT one), no-plugin → the LCP Live Session (plugin not reported),
+// turns → the zod Session, trust → the review Session, refused → the Longhorn Session (its ccrpc exits
+// before `ccrpcConnect` returns), clay-new → a Session not in the mock index (opened in clay, no prompt yet),
+// resumed → the untitled Session (it ends right after connecting, as if `/exit` in the terminal),
+// rewind → the Redis Session (listed only for the rewind tests: elsewhere it is the Session not in clay).
+
 import { expect, type Locator, type Page } from "@playwright/test";
 
 export const TOOLS = "为 Flux 增加 kestrel-cli 镜像自动更新";
@@ -58,3 +67,15 @@ export const disableAutoConnect = (page: Page) =>
   page.addInitScript(
     () => localStorage.getItem("codeck.autoConnect") ?? localStorage.setItem("codeck.autoConnect", '{"on":false}'),
   );
+
+export const RICH = "为 /v1/chat 接口增加令牌桶限流中间件";
+
+export const NOT_LISTED = "排查 Redis 连接池泄漏";
+
+export const TURNS = "迁移表单校验到 zod";
+
+export async function send(page: Page, text: string, mod?: "Meta") {
+  const input = page.getByTestId("connect-input");
+  await input.fill(text);
+  await input.press(mod ? `${mod}+Enter` : "Enter");
+}

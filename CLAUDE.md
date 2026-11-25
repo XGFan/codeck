@@ -40,7 +40,7 @@ pnpm typecheck && pnpm lint && pnpm test           # tsc + ESLint（react-hooks 
 pnpm vitest run src/lib/diff.test.ts               # 单个前端单测
 pnpm exec playwright install webkit                # 首次跑 E2E 前
 pnpm test:e2e                                      # Playwright，WebKit，mock 模式：先构建到 dist-e2e/<端口>/ 再起静态服务（端口上已有服务就用它）；同一文件里的用例也并行
-pnpm test:e2e e2e/m3-search.spec.ts -g "<title>"   # 单个 E2E
+pnpm test:e2e e2e/search.spec.ts -g "<title>"      # 单个 E2E
 E2E_PORT=1431 pnpm test:e2e                        # 并行跑多份时各用一个端口（默认 1421）
 
 pnpm bindings                  # 改了 IPC 类型/命令后重新生成 src/ipc/bindings.ts

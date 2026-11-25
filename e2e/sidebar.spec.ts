@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openApp, RICH_TITLE } from "./helpers";
+import { disableAutoConnect } from "./connect-helpers";
+import { openApp, RICH_TITLE, openRich } from "./helpers";
 
 const LUMEN = "/Users/dev/Developer/lumen-api";
 const group = (page: Page, path: string) => page.locator(`[data-testid=sidebar-group][data-path="${path}"]`);
@@ -366,4 +367,68 @@ test("首次启动自动打开「添加 Project」；取消后没有组，Sessio
   await expect(page.getByTestId("sidebar-group")).toHaveCount(0);
   await expect(page.getByTestId("live-row")).toHaveCount(3);
   await expect(page.getByTestId("recent-toggle")).toContainText("9");
+});
+
+test.describe(() => {
+  test.beforeEach(({ page }) => disableAutoConnect(page));
+
+  /** Filters the session list by a Project picked in the search dialog. */
+  async function filterProject(page: Page, name: string) {
+    await page.keyboard.press("Meta+K");
+    await page.getByTestId("search").getByRole("combobox").fill(name);
+    await page.getByTestId("search-project").filter({ hasText: name }).click();
+    await expect(page.getByTestId("search")).toBeHidden();
+  }
+
+  test("在搜索里选择 Project 后会话列表被过滤，清除筛选恢复全部", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toBeVisible();
+    await filterProject(page, "orbit-web");
+    await expect(page.getByTestId("project-chip")).toContainText("orbit-web");
+    await expect(page.getByTestId("list-title")).toHaveText("orbit-web");
+    await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toBeVisible();
+    await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toHaveCount(0);
+    await page.getByRole("button", { name: "清除 Project 筛选" }).click();
+    await expect(page.getByTestId("project-chip")).toHaveCount(0);
+    await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toBeVisible();
+  });
+
+  test("改动过其他 Project 的 Session 也出现在那个 Project 下；行上不显示 Project", async ({ page }) => {
+    await page.goto("/");
+    // Started in orbit-web, also edited lumen-api.
+    const zod = page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" });
+    await expect(zod).not.toContainText("orbit-web");
+    await filterProject(page, "lumen-api");
+    await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toBeVisible();
+    await expect(zod).toBeVisible();
+  });
+
+  test("Session 列表可收起，刷新后仍保持", async ({ page }) => {
+    await openRich(page);
+    const header = page.getByTestId("header");
+    const toolbar = (await page.getByTestId("toolbar").boundingBox())!;
+    // The toolbar has its own strip above the list; 「新建 Session」 sits below it.
+    expect((await page.getByTestId("new-session").boundingBox())!.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
+    const before = (await header.boundingBox())!;
+
+    await page.keyboard.press("Control+Meta+L");
+    await expect(page.getByTestId("pane-sessions")).toBeHidden();
+    const after = (await header.boundingBox())!;
+    expect(after.width).toBeGreaterThan(before.width + 300);
+    expect((await header.getByRole("heading").boundingBox())!.x).toBeGreaterThan(toolbar.x + toolbar.width);
+
+    await page.reload();
+    await expect(page.getByTestId("pane-sessions")).toBeHidden();
+    await page.getByRole("button", { name: "显示 Session 列表" }).click();
+    await expect(page.getByTestId("pane-sessions")).toBeVisible();
+  });
+
+  test("Session 列表收起时，在搜索里选择 Project 会自动展开列表", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "隐藏 Session 列表" }).click();
+    await expect(page.getByTestId("pane-sessions")).toBeHidden();
+    await filterProject(page, "orbit-web");
+    await expect(page.getByTestId("pane-sessions")).toBeVisible();
+    await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toBeVisible();
+  });
 });
