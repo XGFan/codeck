@@ -13,27 +13,15 @@ const MODEL_TITLE: Record<UsageMetric, string> = {
 };
 
 const INPUT_PARTS = [
-  {
-    key: "read" as const,
-    label: "缓存读取",
-    className: "bg-accent",
-    hint: "已在缓存中的前缀（系统提示词、之前的对话），约按 0.1 倍输入单价计费",
-  },
-  {
-    key: "write" as const,
-    label: "缓存写入",
-    className: "bg-accent/45",
-    hint: "本次写入缓存、下一轮可按缓存读取复用的内容，按 1.25 倍（5 分钟）或 2 倍（1 小时）输入单价计费",
-  },
-  {
-    key: "input" as const,
-    label: "未缓存输入",
-    className: "bg-text/20",
-    hint: "既未读取也未写入缓存的输入，按原价计费",
-  },
+  { key: "read" as const, label: "缓存读取", className: "bg-accent" },
+  { key: "write" as const, label: "缓存写入", className: "bg-accent/45" },
+  { key: "input" as const, label: "未缓存输入", className: "bg-text/20" },
 ];
 
-/** Left column of the stats dialog: Cost / input / output switcher, stacked bar chart, Cost by model, input composition. */
+/**
+ * Left column of the stats dialog: Cost / input / output switcher with the cache hit rate beside it (what the input
+ * was made of is in its hover tip), stacked bar chart, and the selected figure by model.
+ */
 export function UsagePanel({
   stats,
   timeRange,
@@ -52,6 +40,7 @@ export function UsagePanel({
   onDrill: (d: Drill) => void;
 }) {
   const [metric, setMetric] = useState<UsageMetric>("cost");
+  const [hitTip, setHitTip] = useState(false);
   const nowMs = now.getTime();
   const { overview, daily } = stats;
 
@@ -66,6 +55,7 @@ export function UsagePanel({
   const formatMetric = metric === "cost" ? formatCost : formatTokens;
 
   const pct = (v: number) => (totalInput > 0 ? (v / totalInput) * 100 : 0);
+  const hitRate = totalInput > 0 ? `${pct(totals.read).toFixed(1)}%` : "—";
   const figures: {
     key: UsageMetric;
     label: string;
@@ -142,6 +132,45 @@ export function UsagePanel({
             </button>
           );
         })}
+        <span className="flex-1" />
+        {/* Not a figure to chart: a plain number, with the input's composition in its tip. */}
+        <div
+          data-testid="cache-hit"
+          tabIndex={0}
+          aria-label={`缓存命中率 ${hitRate}，输入构成：${INPUT_PARTS.map((p) => `${p.label} ${formatTokens(totals[p.key])}`).join("，")}`}
+          onMouseEnter={() => setHitTip(true)}
+          onMouseLeave={() => setHitTip(false)}
+          onFocus={() => setHitTip(true)}
+          onBlur={() => setHitTip(false)}
+          className="relative flex cursor-default flex-col items-end gap-0.5 pb-2 text-right outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <span className="text-[12px] text-secondary">缓存命中率</span>
+          <span className="text-[24px] leading-[1.25] font-semibold tracking-tight tabular-nums">{hitRate}</span>
+          {hitTip && totalInput > 0 && (
+            <div
+              data-testid="cache-hit-tip"
+              role="tooltip"
+              style={{
+                backgroundColor: theme.tooltipBg,
+                borderColor: theme.grid,
+                color: theme.ink,
+                boxShadow: "0 4px 14px rgba(0,0,0,.18)",
+              }}
+              className="pointer-events-none absolute top-full right-0 z-10 flex flex-col gap-0.5 rounded-[6px] border px-[9px] py-[6px] text-left text-[12px] leading-[1.5] whitespace-nowrap"
+            >
+              <div className="font-semibold">输入构成</div>
+              {INPUT_PARTS.map((p) => (
+                <div key={p.key} className="flex items-center gap-1.5 tabular-nums">
+                  <span className={cn("size-[9px] shrink-0 rounded-[2px]", p.className)} />
+                  <span className="flex-1">{p.label}</span>
+                  <span className="pl-3">
+                    {formatTokens(totals[p.key])} · {pct(totals[p.key]).toFixed(1)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <Chart
@@ -191,34 +220,6 @@ export function UsagePanel({
           </div>
         </div>
       )}
-
-      <div className="h-px bg-border" />
-
-      <div data-testid="input-breakdown" className="flex flex-col gap-1.5">
-        <div className="flex items-baseline gap-2">
-          <span className="flex-1 text-[12px] text-secondary">输入构成</span>
-          <span data-testid="cache-hit" className="text-[12px] text-secondary">
-            缓存命中率 <span className="font-semibold text-text tabular-nums">{pct(totals.read).toFixed(1)}%</span>
-          </span>
-        </div>
-        <div
-          role="img"
-          aria-label={`输入构成：${INPUT_PARTS.map((p) => `${p.label} ${Math.round(pct(totals[p.key]))}%`).join("，")}`}
-          className="flex h-[6px] overflow-hidden rounded-[3px] bg-border"
-        >
-          {INPUT_PARTS.map((p) => (
-            <span key={p.key} className={p.className} style={{ width: `${pct(totals[p.key])}%` }} />
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-secondary">
-          {INPUT_PARTS.map((p) => (
-            <span key={p.key} title={p.hint} className="flex cursor-default items-center gap-1 whitespace-nowrap">
-              <span className={cn("size-[9px] shrink-0 rounded-[2px]", p.className)} />
-              {p.label} {formatTokens(totals[p.key])}
-            </span>
-          ))}
-        </div>
-      </div>
     </section>
   );
 }

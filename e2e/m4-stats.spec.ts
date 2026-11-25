@@ -68,10 +68,18 @@ test("统计页新布局：左用量、右使用频率与用量走势，已移�
   await expect(modelTitle).toHaveText("Cost 按模型");
   await expect(firstModelRow).toContainText("$");
 
-  await expect(usage.getByTestId("cache-hit")).toHaveText(/缓存命中率 \d+\.\d%/);
-  await expect(
-    usage.getByTestId("input-breakdown").getByRole("img", { name: /输入构成：缓存读取 \d+%/ }),
-  ).toBeVisible();
+  // The cache hit rate sits in the figures row; what the input was made of is in its hover tip only.
+  const hit = usage.getByTestId("cache-hit");
+  await expect(hit).toHaveText(/^缓存命中率\s*\d+\.\d%$/);
+  await expect(usage.getByTestId("input-breakdown")).toHaveCount(0);
+  await expect(usage.getByTestId("cache-hit-tip")).toHaveCount(0);
+  await hit.hover();
+  const hitTip = usage.getByTestId("cache-hit-tip");
+  await expect(hitTip).toBeVisible();
+  await expect(hitTip).toContainText("输入构成");
+  for (const part of ["缓存读取", "缓存写入", "未缓存输入"]) await expect(hitTip).toContainText(part);
+  await page.mouse.move(0, 0);
+  await expect(hitTip).toHaveCount(0);
 
   // Switching to 全部 widens bars to 1w.
   await pickRange(page, "全部");
