@@ -39,7 +39,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all                # Rust 格式化（默认 rustfmt 配置）；提交前必须是格式化过的
 pnpm format                    # 前端格式化（Prettier，printWidth 120；范围见 .prettierignore：不含 crates、src-tauri、Markdown、bindings.ts）；提交前必须是格式化过的
 scripts/install-git-hooks.sh   # 装 pre-commit 钩子：暂存了没按 rustfmt / Prettier 排版、或违反 hooks 规则的文件就拦下；与 pre-push 钩子
-scripts/check.sh               # 推送前的检查（代替 CI，pre-push 钩子跑的就是它；--all 不看改动全跑）：改了 Rust 跑 fmt / clippy / cargo test，改了 ccrpc 加 mock e2e，改了前端跑 Prettier / typecheck / lint / vitest / E2E，共几分钟；每组按自己会读到的文件记通过（只改前端的提交不会让 Rust 与 ccrpc mock e2e 重跑；`--keys` 看各组的键），同样的内容通过过就跳过，所以提交后先跑它，git push 就不用再等。git push 没有输出不是卡住，是钩子在跑
+scripts/check.sh               # 推送前的检查（代替 CI，pre-push 钩子跑的就是它；--all 不看改动全跑）：改了 Rust 跑 fmt / clippy / cargo test，改了 ccrpc 加 mock e2e，改了前端跑 Prettier / typecheck / lint / vitest / E2E，改了 daemon 或它提供的对话页会读到的文件（codeck-host / codeck-core / transcript、前端）加真实后端 E2E，共几分钟；每组按自己会读到的文件记通过（只改前端的提交不会让 Rust 与 ccrpc mock e2e 重跑；`--keys` 看各组的键），同样的内容通过过就跳过，所以提交后先跑它，git push 就不用再等。git push 没有输出不是卡住，是钩子在跑
 
 pnpm typecheck && pnpm lint && pnpm test           # tsc + ESLint（react-hooks 两条规则，加导入方向：ipc / lib / components / state / queries 不引用 features，mock 只经 ipc/index.ts 接入）+ vitest（src/**/*.test.ts）
 pnpm vitest run src/lib/diff.test.ts               # 单个前端单测

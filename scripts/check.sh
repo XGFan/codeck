@@ -3,7 +3,8 @@
 #   scripts/check.sh           what a push to origin/main would bring
 #   scripts/check.sh --all     every group, whatever changed
 # Rust changes → fmt, clippy, tests (plus ccrpc's mock end-to-end tests when ccrpc changed); frontend
-# changes → Prettier, typecheck, lint, vitest, E2E; docs only → nothing.
+# changes → Prettier, typecheck, lint, vitest, E2E; either, where the daemon or the page it serves reads
+# it → the real-backend E2E; docs only → nothing.
 #
 # A group that passed is remembered for the content it ran on, under <git-common-dir>/codeck-checks:
 # the same content is not checked twice, so running this before a push makes the push's own check
@@ -37,10 +38,12 @@ done
 # apart by what the other alone reads, so a path nobody listed counts for both; each also reads a
 # few of the other's files (the bindings a Rust test compares, the fixture the iPhone tests share
 # with the Host's, the schema a frontend test checks its recordings against). ccrpc's end-to-end
-# tests build ccrpc alone: its crate, the parsing library it uses, and Cargo's files.
+# tests build ccrpc alone: its crate, the parsing library it uses, and Cargo's files. The real-backend
+# E2E runs the daemon on a fixture and loads the transcript page it serves: both sides' files.
 tab=$(printf '\t')
 web_only='src/|e2e/|e2e-host/|public/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript|terminal)\.html$|\.env\.|\.prettier'
 rust_only='crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/'
+host_paths='crates/(codeck-host|codeck-core|transcript)/|Cargo\.(toml|lock)$|\.cargo/|src/|e2e-host/|public/|package\.json$|pnpm-lock\.yaml$|(vite|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|transcript\.html$|\.env\.'
 key_of() {
   tree=$(git ls-tree -r "$2" | grep -vE '\.md$')
   only() { echo "$tree" | grep -E "$tab($1)"; }
@@ -49,10 +52,11 @@ key_of() {
     rust) { without "$web_only|ios/"; only 'src/ipc/bindings\.ts$|ios/Tests/Fixtures/'; } ;;
     web) { without "$rust_only|ios/"; only 'crates/ccrpc/docs/protocol\.schema\.json$'; } ;;
     ccrpc) only 'crates/ccrpc/|crates/transcript/|crates/codeck-host/src/ccrpc/|Cargo\.(toml|lock)$|\.cargo/' ;;
+    host) only "$host_paths" ;;
   esac | git hash-object --stdin
 }
 if [ -n "$keys" ]; then
-  for g in rust ccrpc web; do echo "$g $(key_of "$g" "$keys")"; done
+  for g in rust ccrpc web host; do echo "$g $(key_of "$g" "$keys")"; done
   exit 0
 fi
 
@@ -79,10 +83,11 @@ trap 'stop; echo; echo "$me: 已中断。" >&2; exit 130' INT TERM HUP
 has() { echo "$changed" | grep -vE '\.md$' | grep -qE "$1"; }
 rust_re='^(crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/)'
 web_re='^(src/|e2e/|e2e-host/|package\.json$|pnpm-lock\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript)\.html$|\.env\.|\.prettier)'
-rust=false; ccrpc=false; web=false
+rust=false; ccrpc=false; web=false; host=false
 has "$rust_re" && rust=true
 has '^(crates/ccrpc/|crates/codeck-host/src/ccrpc/)' && ccrpc=true
 has "$web_re" && web=true
+has "^($host_paths)" && host=true
 if ! $rust && ! $web; then
   echo "$me: 只有文档等改动，跳过检查。"
   exit 0
@@ -104,6 +109,7 @@ label() {
     rust) echo "Rust（fmt、clippy、cargo test）" ;;
     ccrpc) echo "ccrpc mock e2e" ;;
     web) echo "前端（Prettier、typecheck、lint、vitest、E2E）" ;;
+    host) echo "真实后端 E2E" ;;
   esac
 }
 
@@ -111,7 +117,7 @@ todo=""
 plan=""
 secs=0
 known=true
-for g in rust ccrpc web; do
+for g in rust ccrpc web host; do
   eval "\$$g" || continue
   if passed "$g"; then
     echo "$me: $(label "$g") 这份内容已通过，跳过。"
@@ -194,6 +200,10 @@ for g in $todo; do
       step "vitest" pnpm test
       # Own port: never reuses a dev server left running by another worktree.
       step "E2E" env E2E_PORT="${CODECK_PUSH_E2E_PORT:-1499}" pnpm test:e2e
+      ;;
+    host)
+      # After the Rust group, so the daemon is already built. Own port, as above.
+      step "真实后端 E2E" env E2E_HOST_PORT="${CODECK_PUSH_E2E_HOST_PORT:-38499}" pnpm test:e2e:host
       ;;
   esac
   if $clean; then
