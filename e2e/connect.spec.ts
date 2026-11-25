@@ -1,5 +1,6 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { connectTo, disableAutoConnect, inMenu, lastSent, open, pick, probe, state, TOOLS } from "./connect-helpers";
 import { composeEnd, composeStart } from "./ime";
 
 /** The `turn_end` prompt ids of a recorded fixture, in order (they change when it is re-recorded). */
@@ -23,7 +24,6 @@ const toolsTurns = recordedTurns("tools");
 // rewind → the Redis Session (listed only for the rewind tests: elsewhere it is the Session not in clay).
 
 const RICH = "为 /v1/chat 接口增加令牌桶限流中间件";
-const TOOLS = "为 Flux 增加 kestrel-cli 镜像自动更新";
 const AUTH = "重构认证模块：拆分 token 校验与会话存储";
 const JWT = "认证模块重构（改用 JWT 轮换）";
 const NO_PLUGIN = "优化首页首屏加载（LCP 3.2s → 1.8s）";
@@ -31,52 +31,6 @@ const NOT_LISTED = "排查 Redis 连接池泄漏";
 const TURNS = "迁移表单校验到 zod";
 const TRUST = "/review 订单列表页";
 const REFUSED = "Longhorn 卷扩容与备份策略";
-const CODE_MODE = "Code Mode：把重试上限改成 5";
-
-type Probe = {
-  sent: { msg: Record<string, unknown> }[];
-  watchStarts: number;
-  watching: boolean;
-  guiLog: string[];
-  badge: number;
-  analyzerSaves: number;
-  recordsOpened: number;
-  paneHides: { holderId: string; hidden: boolean }[];
-  hideNewPanes: boolean;
-};
-const probe = (page: Page) => page.evaluate(() => window.__cvCcrpc as unknown as Probe);
-const lastSent = async (page: Page, type: string) =>
-  (await probe(page)).sent
-    .map((s) => s.msg)
-    .filter((m) => m.type === type)
-    .pop();
-
-async function open(page: Page, title: string) {
-  await page.getByTestId("session-row").filter({ hasText: title }).click();
-  await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
-}
-
-/** The header's 「···」 menu, opened: Connect, Disconnect and the Pane are in it. */
-async function headerMenu(page: Page) {
-  const menu = page.getByTestId("header-menu");
-  if (!(await menu.isVisible())) await page.getByTestId("header-more").click();
-  return menu;
-}
-/** Clicks an item of the header's 「···」 menu. */
-const pick = async (page: Page, testId: string) => (await headerMenu(page)).getByTestId(testId).click();
-/** Checks an item of the header's 「···」 menu, then closes the menu. */
-async function inMenu(page: Page, testId: string, check: (item: Locator) => Promise<void>) {
-  await check((await headerMenu(page)).getByTestId(testId));
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("header-menu")).toHaveCount(0);
-}
-
-async function connectTo(page: Page, title: string) {
-  await page.goto("/");
-  await open(page, title);
-  await pick(page, "connect-button");
-  await expect(page.getByTestId("connect-panel")).toBeVisible();
-}
 
 const renameItem = (page: Page) => page.getByRole("menuitem", { name: /^重命名/ });
 
@@ -86,14 +40,8 @@ async function send(page: Page, text: string, mod?: "Meta") {
   await input.press(mod ? `${mod}+Enter` : "Enter");
 }
 
-const state = (page: Page) => page.getByTestId("connect-state");
-
 // Connected by hand here (「Connect」 would race 自动 Connect); 自动 Connect has a test of its own.
-test.beforeEach(({ page }) =>
-  page.addInitScript(
-    () => localStorage.getItem("codeck.autoConnect") ?? localStorage.setItem("codeck.autoConnect", '{"on":false}'),
-  ),
-);
+test.beforeEach(({ page }) => disableAutoConnect(page));
 
 /** Pastes a 1×1 PNG into the input box. */
 async function pasteImage(page: Page) {
@@ -484,33 +432,6 @@ test("多选题可以同时勾选项与「其他」，一起发出", async ({ pa
     });
 });
 
-test("Code Mode 里从代码发起的提问在输入区的卡片上作答", async ({ page }) => {
-  await connectTo(page, TOOLS);
-  await expect(state(page)).toContainText("空闲");
-  // `tools.AskUserQuestion` in a REPL script: its call reaches the transcript only after the answer.
-  await page.evaluate(() =>
-    window.__cvCcrpc!.emit({
-      type: "question",
-      request_id: "repl_e2e_code",
-      tool_use_id: "repl_e2e_code",
-      agent_id: null,
-      from_code: true,
-      questions: [
-        { question: "用哪个方案？", header: "方案", multiSelect: false, options: [{ label: "A" }, { label: "B" }] },
-      ],
-    }),
-  );
-  const q = page.getByTestId("question-card");
-  await expect(q).toContainText("用哪个方案？");
-  await expect(q).not.toContainText("Subagent");
-  await expect(page.getByTestId("question-hint")).toHaveCount(0);
-  await q.getByTestId("question-option").filter({ hasText: "B" }).click();
-  await q.getByTestId("submit-answer").click();
-  await expect
-    .poll(() => lastSent(page, "answer_question"))
-    .toMatchObject({ request_id: "repl_e2e_code", answers: [{ options: ["B"] }] });
-});
-
 test("输入区的提问卡片：题目多、窗口矮时题目在卡片里滚动，「提交」一直看得见", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
   await connectTo(page, TOOLS);
@@ -596,96 +517,6 @@ test("后台任务随 tasks 事件更新", async ({ page }) => {
   await expect(page.getByTestId("tasks-shell")).toHaveCount(0);
   // Not asked for: the list comes with the events.
   expect(await lastSent(page, "get_tasks")).toBeUndefined();
-});
-
-test("Code Mode：代码运行期间它调用的工具由 ccrpc 报来，先在对话里各占一行；等待审批写在工具组上，提问答完才出现", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await page.evaluate(() => (window.__cvCcrpc as unknown as { list: (name: string) => void }).list("code-mode"));
-  await open(page, CODE_MODE);
-  await pick(page, "connect-button");
-  await expect(page.getByTestId("connect-panel")).toBeVisible();
-  const transcript = page.getByTestId("transcript");
-  const emit = (msg: Record<string, unknown>) => page.evaluate((m) => window.__cvCcrpc!.emit(m), msg);
-  // The Session's last code (`cm-r4`) still runs: the transcript has none of its calls.
-  const group = transcript.getByTestId("tool-group").last();
-  await expect(group).toContainText("执行 2 段代码");
-  await expect(transcript.getByTestId("group-current")).toHaveCount(0);
-  const bench = { command: "cargo bench --bench retry" };
-  await emit({ type: "code_call", tool_use_id: "repl_e2e_bench", name: "Bash", input: bench, code: "cm-r4" });
-  // The call has a row of its own, grouped with its code: the group says what runs now.
-  const current = transcript.getByTestId("group-current");
-  await expect(current).toContainText("正在运行 cargo bench --bench retry…");
-  // It asks for permission: the group says so (the card is in the input area).
-  await emit({
-    type: "permission_request",
-    request_id: "repl_e2e_bench",
-    tool_use_id: "repl_e2e_bench",
-    tool_name: "Bash",
-    input: bench,
-    agent_id: null,
-    from_code: true,
-    options: [
-      { id: "1", label: "Yes", meaning: "allow" },
-      { id: "2", label: "No", meaning: "deny" },
-    ],
-    layout_source: "builtin",
-  });
-  await expect(current).toContainText("等待审批：运行 cargo bench --bench retry");
-  await expect(page.getByTestId("permission-card")).toBeVisible();
-  // Allowed and done: its output is what the hook reported, before the transcript has the call.
-  await emit({ type: "request_end", request_id: "repl_e2e_bench" });
-  await emit({ type: "state", state: "busy", waiting: null });
-  await expect(page.getByTestId("permission-card")).toHaveCount(0);
-  await emit({
-    type: "code_call_end",
-    tool_use_id: "repl_e2e_bench",
-    is_error: false,
-    response: { stdout: "retry/backoff  1.21 ms", stderr: "" },
-  });
-  await expect(current).toHaveCount(0);
-  await expect(group).toContainText("运行 1 条命令、执行 1 段代码");
-  await group.getByRole("button").first().click();
-  const row = transcript.locator('[data-tool="Bash"]').filter({ hasText: "cargo bench --bench retry" });
-  await row.getByRole("button").first().click();
-  await expect(row.getByTestId("terminal")).toContainText("retry/backoff  1.21 ms");
-
-  // A question from the code: answered on its card in the input area, in the transcript once answered.
-  const question = {
-    question: "再跑一遍吗？",
-    header: "基准",
-    multiSelect: false,
-    options: [{ label: "跑" }, { label: "不跑" }],
-  };
-  await emit({
-    type: "code_call",
-    tool_use_id: "repl_e2e_ask",
-    name: "AskUserQuestion",
-    input: { questions: [question] },
-    code: "cm-r4",
-  });
-  await emit({
-    type: "question",
-    request_id: "repl_e2e_ask",
-    tool_use_id: "repl_e2e_ask",
-    agent_id: null,
-    from_code: true,
-    questions: [question],
-  });
-  await expect(page.getByTestId("question-card")).toContainText("再跑一遍吗？");
-  await expect(transcript.getByTestId("ask").filter({ hasText: "再跑一遍吗？" })).toHaveCount(0);
-  await emit({ type: "request_end", request_id: "repl_e2e_ask" });
-  await emit({ type: "state", state: "busy", waiting: null });
-  await emit({
-    type: "code_call_end",
-    tool_use_id: "repl_e2e_ask",
-    is_error: false,
-    response: { questions: [question], answers: { "再跑一遍吗？": "不跑" } },
-  });
-  const ask = transcript.getByTestId("ask").filter({ hasText: "再跑一遍吗？" });
-  await expect(ask.getByTestId("ask-status")).toContainText("已回答");
-  await expect(ask.locator("[data-chosen]")).toHaveText(/不跑/);
 });
 
 test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点回到输入框；每道题都答了时不能先聊聊", async ({ page }) => {

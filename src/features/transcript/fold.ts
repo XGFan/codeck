@@ -4,7 +4,8 @@
 // grouped again (they still are where nothing folds, as in a Subagent's panel). The running turn is the exception:
 // its process is open while it grows, so its runs of calls stay groups (`live`, saying what runs now).
 
-import { anchorKey, callsOf, type Grouping, type Row } from "./grouping";
+import { callsOf } from "./codeMode";
+import { anchorKey, type Grouping, type Row } from "./grouping";
 
 const rowTime = (r: Row | undefined): number | null => {
   if (!r) return null;

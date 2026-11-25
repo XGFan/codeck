@@ -97,35 +97,6 @@ test.describe("手指点按", () => {
   });
 });
 
-const CODE_MODE_ID = "c0de5e55-0011-4000-8000-000000000011";
-
-test("在 App 里，Code Mode 代码运行期间的调用按 App 给的 codeCalls 并进对话记录", async ({ page }) => {
-  await page.addInitScript(() => {
-    Object.assign(window, { webkit: { messageHandlers: { codeck: { postMessage: () => {} } } } });
-  });
-  await page.goto(`/transcript.html?sessionId=${CODE_MODE_ID}`);
-  const group = page.getByTestId("tool-group").last();
-  await expect(group).toContainText("执行 2 段代码");
-  await expect(page.getByTestId("group-current")).toHaveCount(0);
-  const call = {
-    toolUseId: "repl_e2e_bench",
-    name: "Bash",
-    input: { command: "cargo bench --bench retry" },
-    code: "cm-r4",
-  };
-  await page.evaluate((c) => window.codeckPage!.setConnect({ codeCalls: [{ ...c, end: null }] } as never), call);
-  await expect(page.getByTestId("group-current")).toContainText("正在运行 cargo bench --bench retry…");
-  await page.evaluate(
-    (c) =>
-      window.codeckPage!.setConnect({
-        codeCalls: [{ ...c, end: { isError: false, response: { stdout: "retry/backoff  1.21 ms", stderr: "" } } }],
-      } as never),
-    call,
-  );
-  await expect(page.getByTestId("group-current")).toHaveCount(0);
-  await expect(group).toContainText("运行 1 条命令、执行 1 段代码");
-});
-
 test("在 App 里，Connect 工作时对话记录末尾显示进度，和桌面一样", async ({ page }) => {
   await page.addInitScript(() => {
     Object.assign(window, { webkit: { messageHandlers: { codeck: { postMessage: () => {} } } } });

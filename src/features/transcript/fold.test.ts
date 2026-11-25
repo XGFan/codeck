@@ -1,19 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Node } from "@/ipc/bindings";
 import { asstNode, call, text, userNode } from "@/mocks/data/builders";
 import { foldTurns } from "./fold";
-import { buildRows, type GroupingInput, locate, rowIndexOf } from "./grouping";
+import { buildRows, locate, rowIndexOf } from "./grouping";
+import { input } from "./testHelpers";
 
-const input = (nodes: Node[]): GroupingInput => ({
-  nodes,
-  branchPoints: [],
-  subagents: [],
-  workflows: [],
-  inherited: null,
-  orphanSubagentIds: [],
-  showHidden: false,
-  inheritedExpanded: false,
-});
 const ok = { text: "ok" };
 
 const nodes = [

@@ -112,3 +112,6 @@ export async function reveal(scroller: Locator, target: Locator, from: "bottom" 
   }
   await target.first().scrollIntoViewIfNeeded();
 }
+
+/** Scrolls the transcript down from the top, opening collapsed tool groups, until `target` is rendered. */
+export const revealTranscript = (page: Page, target: Locator) => reveal(page.getByTestId("transcript"), target, "top");

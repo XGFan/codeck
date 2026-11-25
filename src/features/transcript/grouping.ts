@@ -7,6 +7,7 @@ import type {
   ToolCall,
   WorkflowRun,
 } from "@/ipc/bindings";
+import { callsOf, codeFailed, shownBlocks, standaloneCodeRuns } from "./codeMode";
 import { compactKey, foldKey, groupKey, INHERITED_KEY, thinkingKey, toolKey } from "./keys";
 import { parseJson } from "./util";
 
@@ -18,8 +19,6 @@ import { parseJson } from "./util";
 
 export type ToolCallBlock = Extract<AssistantBlock, { kind: "toolCall" }>;
 
-/** The calls a call stands for: itself; Claude's code (Code Mode's `REPL`) none, the calls it made have rows of their own. */
-export const callsOf = (c: ToolCall): ToolCall[] => (c.code ? [] : [c]);
 type Body<K extends Node["body"]["kind"]> = Extract<Node["body"], { kind: K }>;
 
 /** Role line ("Claude · 10:42") shown on the first row of an assistant run. */
@@ -262,7 +261,7 @@ export function buildRows(input: GroupingInput): Grouping {
             callCount: calls.length,
             failedCount:
               calls.filter((call) => call.result?.isError === true).length +
-              g.calls.filter(({ call }) => call.code?.outcome?.isError === true).length,
+              g.calls.filter(({ call }) => codeFailed(call)).length,
             role: takeRole(),
           },
           anchors,
@@ -535,7 +534,7 @@ const SEARCH_TOOLS = new Set(["Grep", "Glob", "WebSearch", "WebFetch", "ToolSear
  */
 export function describeCalls(given: ToolCall[]): { text: string; targets: string[] } {
   // Claude's code by the calls it made (rows of their own); code that called nothing as 「执行 N 段代码」.
-  const runs = given.filter((c) => c.code?.callCount === 0).length;
+  const runs = standaloneCodeRuns(given);
   const calls = given.flatMap(callsOf);
   let read = 0;
   let commands = 0;
@@ -582,27 +581,6 @@ export function describeCalls(given: ToolCall[]): { text: string; targets: strin
 
 const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 const baseName = (p: string | null) => (p ? (p.split("/").pop() ?? p) : null);
-
-/**
- * The blocks of an assistant message that are shown, `i` each one's index in the message. Claude's code (Code Mode's
- * `REPL`) comes with the calls it made right after it (`viaCode`), each a call of its own (its question and Subagent
- * cards, its place in a tool group). Code that only asked questions (and did not throw) is left out: its question
- * cards carry it (`code`).
- */
-function shownBlocks(blocks: AssistantBlock[]): Array<{ b: AssistantBlock; i: number; code?: ToolCallBlock }> {
-  const calls = blocks.filter((b): b is ToolCallBlock => b.kind === "toolCall");
-  const askers = new Map<string, ToolCallBlock>();
-  for (const c of calls) {
-    if (!c.code || c.code.outcome?.isError === true) continue;
-    const made = calls.filter((m) => m.viaCode === c.toolUseId);
-    if (made.length > 0 && made.every((m) => m.name === "AskUserQuestion")) askers.set(c.toolUseId, c);
-  }
-  return blocks.flatMap((b, i): Array<{ b: AssistantBlock; i: number; code?: ToolCallBlock }> => {
-    if (b.kind !== "toolCall") return [{ b, i }];
-    if (askers.has(b.toolUseId)) return [];
-    return [{ b, i, code: b.viaCode ? askers.get(b.viaCode) : undefined }];
-  });
-}
 
 /** Linked Subagent Run of an Agent/Task call (calls without a resolvable run render as plain tool calls). */
 function agentRun(b: AssistantBlock, runs: Map<string, SubagentRun>): SubagentRun | undefined {
