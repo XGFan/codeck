@@ -612,11 +612,16 @@ fn mock_model_edit_queue() {
 
     let t1 = rpc.event("turn_end", Duration::from_secs(30));
     assert_eq!(t1["aborted"], false, "{t1}");
-    // No turn of the steers' own after it.
-    std::thread::sleep(Duration::from_secs(4));
-    while let Some(v) = rpc.recv(Duration::ZERO) {
+    // No turn of the steers' own after it: the Session settles without one.
+    loop {
+        let v = rpc
+            .recv(Duration::from_secs(10))
+            .expect("这一轮之后没有 settled");
         assert_ne!(v["type"], "turn_end", "{v}");
         assert!(!(v["type"] == "block" && v["text"] == "STEER-TURN"), "{v}");
+        if v["type"] == "settled" {
+            break;
+        }
     }
     let st = rpc.call("g2", json!({"type": "get_state"}));
     assert_eq!(st["state"], "idle", "{st}");
@@ -1887,8 +1892,11 @@ fn mock_model_abort_restores_the_prompt() {
     // The next prompt clears the box first.
     rpc.forget();
     rpc.call("p2", json!({"type": "prompt", "text": "MOCK-SLOW kept"}));
-    // MOCK-SLOW streams for ~8 s (its block comes once written): well into it.
-    std::thread::sleep(Duration::from_secs(3));
+    // MOCK-SLOW streams for ~8 s (its block comes once written): the reply has begun (the spinner
+    // counts tokens).
+    rpc.until("streaming", Duration::from_secs(10), |v| {
+        v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
+    });
     rpc.call("a2", json!({"type": "abort"}));
     let t = rpc.event("turn_end", Duration::from_secs(15));
     assert_eq!(t["aborted"], true, "{t}");
@@ -3075,6 +3083,7 @@ fn mock_model_resume_keeps_the_session() {
             Instant::now() < deadline,
             "Pane 仍在运行（PID {pid}）：{ready}"
         );
+        std::thread::sleep(Duration::from_millis(100));
     }
     rpc.shell_pid = None;
 

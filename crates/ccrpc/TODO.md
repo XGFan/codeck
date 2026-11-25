@@ -30,6 +30,16 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 - ToH Client 的结构化操作：Session 状态（忙 / 闲 / 等审批）、审批卡片、发提示词、长任务完成推送（对应 ToH TODO 的「长任务完成通知推送」）
 - 远程调用：经 ToH daemon 暴露，复用它的令牌、配对与 tailnet
 
+## 机器忙时 mock e2e 偶发失败（2026-11-26 记，没查清）
+
+空闲时这套用例是稳的（6 线程连跑 5 次、8 线程连跑 9 次全过）。同时跑整套 Playwright 把机器压满时会偶发失败，每次坏的用例不一样。复现：`cargo test -p ccrpc --test e2e mock_ -- --ignored --test-threads=6` 的同时在仓库根目录 `pnpm test:e2e --repeat-each=3`；失败用例的收发时间线看 cargo 打出的 stdout（或单条加 `--nocapture`）。
+
+- **作答后状态不变**（最要紧，可能是 ccrpc 的问题而不只是用例的）：`answer_question` 回 `timeout`「作答后 10 秒内状态没有变化」，`request_end` 已经发了，之后状态一直是 waiting。见到两次：`ask_before_attach`（重连后 0.7 秒、提问事件刚到就作答 `options: ["Blue"]`）、`ask_chat`（提问出现后 0.1 秒发 `chat: true`，0.9 秒后 `request_end`）。猜测是按键打进去时提问框还没开始收键、被丢了，没有证实；与下面「待确认」里按键间隔那条可能是一回事。3 次满载的整套里出现 2 次；只跑作答类的 6 条（`ask_chat`、`ask_before_attach`、`tools`、`subagent_permission`、`hidden`、`add_dir`）、同样负载下 16 轮没有复现。
+- 没分清的：这种失败是否与 harness 的启动等待变短有关。`start_session` 原先等「连续 3 秒 idle」，现在是「idle、读到模式行、0.5 秒没有新事件」（`tests/e2e/harness.rs`），用例因此早开始约 2.5 秒，claude 自己的启动工作可能还没做完。改之前约 10 次满载的整套里没见过作答超时（坏的是下面几种），改之后 3 次里 2 次，样本太小；上面 16 轮里新旧两种等待各 8 轮，都没复现。要查的话先把 0.5 秒调大（1.5 秒）在满载下多跑几轮对比。
+- `fork`：rewind 选择器报 `unrecognized_screen`（1 次）。可用 `CCRPC_E2E_FORK_LOG` 看是没画完还是画面变了。
+- `follows_the_background_session_of_a_second_pane`：`wait_screen` 的 5 秒期限内屏幕没出现预期内容（1 次）。
+- 状态还没回到 idle 就发 `prompt`，被拒（`not_idle`）：改名之后、切 effort 之后、`turn_end` 之后都出现过，用例里已补 `until_idle`。但 `turn_end` 先到、状态稍后才回到 idle 这点对调用方同样成立（`prompt` 的前置条件是 idle，见 spec），机器忙时这个间隔会拉长。
+
 ## 待确认
 
 - 按键间隔现在常是 50ms（忙时 spinner 也算屏幕有反应），端到端都过；换慢机器或更长菜单时留意

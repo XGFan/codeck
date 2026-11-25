@@ -445,7 +445,7 @@ pub(crate) fn person_resizes(
     s
 }
 
-/// Waits for `ready` and a Session that stays idle (answering the startup dialogs); returns `ready`.
+/// Waits for `ready` and a Session that takes commands (answering the startup dialogs); returns `ready`.
 pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let ready = rpc.event("ready", Duration::from_secs(20));
     assert_eq!(ready["protocol"], 6);
@@ -454,19 +454,28 @@ pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     assert!(rpc.shell_pid.is_some());
     // Startup: Claude Code may offer to make auto mode the default (a `dialog`, possibly right
     // after a first `idle`); keep manual mode through the generic dialog path (send_keys). The
-    // Session is ready once it has been idle for 3 s with no dialog.
+    // Process File says idle before the TUI has drawn its input box (docs/probes.md), so the Session
+    // is ready once it is idle, its mode line has been read off the screen (the input box is there)
+    // and nothing more came for half a second; when the mode line never shows, once it has been
+    // idle for 3 s with no dialog.
     let mut idle_since: Option<Instant> = None;
+    let mut mode_read = false;
+    let mut last = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         assert!(Instant::now() < deadline, "启动后没有稳定在 idle");
-        if idle_since.is_some_and(|t| t.elapsed() > Duration::from_secs(3)) {
+        let quiet = mode_read && last.elapsed() > Duration::from_millis(500);
+        if idle_since.is_some_and(|t| quiet || t.elapsed() > Duration::from_secs(3)) {
             break;
         }
-        let Some(v) = rpc.recv(Duration::from_millis(200)) else {
+        let Some(v) = rpc.recv(Duration::from_millis(100)) else {
             continue;
         };
+        last = Instant::now();
         if v["type"] == "state" {
             idle_since = (v["state"] == "idle").then(Instant::now);
+        } else if v["type"] == "session_info" {
+            mode_read |= !v["mode"].is_null();
         } else if v["type"] == "dialog" {
             let lines: Vec<&str> = v["lines"]
                 .as_array()
@@ -542,7 +551,9 @@ pub(crate) fn wait_screen(
     }
 }
 
-/// Waits until the Session has stayed idle for 3 s (background work may start more turns).
+/// Waits until the Session will not go on by itself (background work may start more turns): ccrpc
+/// says so with `settled` (idle for a second, nothing queued, no turn running), about a second
+/// after a turn; where no turn ended since the last one none comes, and 3 s of idle do.
 pub(crate) fn settle_idle(rpc: &mut Rpc) {
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut idle_since = Some(Instant::now());
@@ -555,10 +566,13 @@ pub(crate) fn settle_idle(rpc: &mut Rpc) {
         if idle_since.is_some_and(|t| t.elapsed() > Duration::from_secs(3)) {
             return;
         }
-        if let Some(v) = rpc.recv(Duration::from_millis(200))
-            && v["type"] == "state"
-        {
+        let Some(v) = rpc.recv(Duration::from_millis(200)) else {
+            continue;
+        };
+        if v["type"] == "state" {
             idle_since = (v["state"] == "idle").then(Instant::now);
+        } else if v["type"] == "settled" && idle_since.is_some() {
+            return;
         }
     }
 }
