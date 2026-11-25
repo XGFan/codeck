@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const root = path.resolve(import.meta.dirname, "..");
+const root = path.resolve(import.meta.dirname, "../../..");
 const port = Number(process.env.E2E_HOST_PORT ?? 38497);
 
 export const SESSION_ID = "86d20d64-9fdd-5e64-aae4-93895b13068d";
@@ -38,7 +38,7 @@ export default async function globalSetup() {
       ...["--port", String(port), "--listen", "127.0.0.1"],
       ...["--state-dir", path.join(tmp, "state")],
       ...["--data-root", dataRoot],
-      ...["--web-dir", path.join(root, "dist-web")],
+      ...["--web-dir", path.join(root, "web/dist-web")],
     ],
     { stdio: "inherit" },
   );

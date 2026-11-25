@@ -84,13 +84,13 @@ fn default_state_dir() -> PathBuf {
     }
 }
 
-/// `<exe dir>/web`; when that is missing, the repository's `dist-web` (a development build).
+/// `<exe dir>/web`; when that is missing, the repository's `web/dist-web` (a development build).
 fn default_web_dir() -> PathBuf {
     let beside = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|d| d.join("web")))
         .unwrap_or_else(|| PathBuf::from("web"));
-    let dev = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dist-web"));
+    let dev = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/dist-web"));
     if !beside.is_dir() && dev.is_dir() {
         return dev;
     }

@@ -1,4 +1,4 @@
-//! Engine facade: the only API src-tauri calls. Blocking; callers run it off the main thread.
+//! Engine facade: the only API desktop calls. Blocking; callers run it off the main thread.
 //!
 //! Index sync ([`sync`]; phase 1: metadata, phase 2 is the full-text backlog): stat-walk the data
 //! root, diff against `files`, light-parse changed files in parallel (rayon), write rows in one

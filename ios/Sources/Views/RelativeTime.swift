@@ -1,6 +1,6 @@
 import Foundation
 
-/// 刚刚 / N 分钟前 / N 小时前 / 昨天 / 周X（一周内）/ M月D日 — same as `formatRelative` in src/lib/format.ts.
+/// 刚刚 / N 分钟前 / N 小时前 / 昨天 / 周X（一周内）/ M月D日 — same as `formatRelative` in web/src/lib/format.ts.
 enum RelativeTime {
     static func format(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
         let mins = Int(now.timeIntervalSince(date) / 60)

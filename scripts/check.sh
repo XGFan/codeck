@@ -41,15 +41,15 @@ done
 # tests build ccrpc alone: its crate, the parsing library it uses, and Cargo's files. The real-backend
 # E2E runs the daemon on a fixture and loads the transcript page it serves: both sides' files.
 tab=$(printf '\t')
-web_only='src/|e2e/|e2e-host/|public/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript|terminal)\.html$|\.env\.|\.prettier'
-rust_only='crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/'
-host_paths='crates/(codeck-host|codeck-core|transcript)/|Cargo\.(toml|lock)$|\.cargo/|src/|e2e-host/|public/|package\.json$|pnpm-lock\.yaml$|(vite|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|transcript\.html$|\.env\.'
+web_only='web/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.prettier'
+rust_only='crates/|desktop/|Cargo\.(toml|lock)$|\.cargo/'
+host_paths='crates/(codeck-host|codeck-core|transcript)/|Cargo\.(toml|lock)$|\.cargo/|web/(src|public|e2e/host)/|web/(vite|playwright\.host)\.config\.ts$|web/tsconfig[^/]*\.json$|web/transcript\.html$|web/\.env\.|package\.json$|pnpm-lock\.yaml$'
 key_of() {
   tree=$(git ls-tree -r "$2" | grep -vE '\.md$')
   only() { echo "$tree" | grep -E "$tab($1)"; }
   without() { echo "$tree" | grep -vE "$tab($1)"; }
   case $1 in
-    rust) { without "$web_only|ios/"; only 'src/ipc/bindings\.ts$|ios/Tests/Fixtures/'; } ;;
+    rust) { without "$web_only|ios/"; only 'web/src/ipc/bindings\.ts$|ios/Tests/Fixtures/'; } ;;
     web) { without "$rust_only|ios/"; only 'crates/ccrpc/docs/protocol\.schema\.json$'; } ;;
     ccrpc) only 'crates/ccrpc/|crates/transcript/|crates/codeck-host/src/ccrpc/|Cargo\.(toml|lock)$|\.cargo/' ;;
     host) only "$host_paths" ;;
@@ -81,8 +81,8 @@ trap 'stop; echo; echo "$me: 已中断。" >&2; exit 130' INT TERM HUP
 
 # Markdown (README, spec, TODO…) never needs a check, wherever it lives.
 has() { echo "$changed" | grep -vE '\.md$' | grep -qE "$1"; }
-rust_re='^(crates/|src-tauri/|Cargo\.(toml|lock)$|\.cargo/)'
-web_re='^(src/|e2e/|e2e-host/|package\.json$|pnpm-lock\.yaml$|(vite|playwright|playwright\.host)\.config\.ts$|tsconfig[^/]*\.json$|eslint\.config\.js$|(index|transcript)\.html$|\.env\.|\.prettier)'
+rust_re='^(crates/|desktop/|Cargo\.(toml|lock)$|\.cargo/)'
+web_re='^(web/|package\.json$|pnpm-lock\.yaml$|\.prettier)'
 rust=false; ccrpc=false; web=false; host=false
 has "$rust_re" && rust=true
 has '^(crates/ccrpc/|crates/codeck-host/src/ccrpc/)' && ccrpc=true

@@ -1,5 +1,5 @@
 //! The application half of the IPC contract (Projects, Session lists, search, stats, diagnostics,
-//! app status, events, errors), exported to `src/ipc/bindings.ts` via specta under the rules of
+//! app status, events, errors), exported to `web/src/ipc/bindings.ts` via specta under the rules of
 //! [`transcript::model`]. The parsing layer's types are re-exported from there, so
 //! `codeck_core::model::…` names every IPC type.
 

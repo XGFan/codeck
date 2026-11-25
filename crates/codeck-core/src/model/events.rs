@@ -1,4 +1,4 @@
-//! Event payloads. src-tauri wraps each one in a `tauri_specta::Event` newtype.
+//! Event payloads. desktop wraps each one in a `tauri_specta::Event` newtype.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

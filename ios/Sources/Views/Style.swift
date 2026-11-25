@@ -23,7 +23,7 @@ enum Palette {
     /// A neutral button fill.
     static let neutral = Color(uiColor: .tertiarySystemFill)
     static let hairline = Color.primary.opacity(0.08)
-    /// The Transcript page's background (`--color-ground` in `src/index.css`), for what must blend into it.
+    /// The Transcript page's background (`--color-ground` in `web/src/index.css`), for what must blend into it.
     static let transcriptGround = Color(light: 0xFFFFFF, dark: 0x1E1E20)
 }
 

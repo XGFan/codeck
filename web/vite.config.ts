@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => ({
   // run time instead, they make Vite re-optimize and reload every open page.
   optimizeDeps: { include: ["shiki/core", "shiki/engine/javascript", "shiki/langs", "shiki/themes"] },
   clearScreen: false,
+  // The one node_modules is at the repository root.
+  cacheDir: path.resolve(import.meta.dirname, "../node_modules/.vite"),
   envPrefix: ["VITE_", "TAURI_"],
   server: { port: 1420, strictPort: true },
   // `--mode host`: the iPhone app'"'"'s transcript page, served by the daemon under /web/.

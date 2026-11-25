@@ -1,7 +1,7 @@
 //! Connect state held by the Host (ADR-0011; with `HostConfig::track_connect`): every connection's ccrpc lines are
 //! folded into a [`ConnState`] that all of the Host's remote clients share, and they send ccrpc commands through the
 //! Host ([`ConnectHub::command`]), which gives them ids `h<n>` and hands back the response. The desktop app's window
-//! keeps doing this in its own store (`src/features/connect`) and adopts the Host's connections (ADR-0012).
+//! keeps doing this in its own store (`web/src/features/connect`) and adopts the Host's connections (ADR-0012).
 
 pub mod state;
 

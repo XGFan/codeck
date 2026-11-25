@@ -6,7 +6,7 @@ members = [
     "crates/ccrpc",
     "crates/codeck-cli",
     "crates/codeck-term",
-    "src-tauri",
+    "desktop",
 ]
 resolver = "3"
 

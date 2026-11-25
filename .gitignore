@@ -3,7 +3,7 @@ node_modules/
 dist/
 test-results/
 playwright-report/
-src-tauri/gen/
+desktop/gen/
 .omc/
 .DS_Store
 dist-web/

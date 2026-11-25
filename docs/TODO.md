@@ -1,6 +1,6 @@
 # TODO
 
-ccrpc 的待办在 [crates/ccrpc/TODO.md](crates/ccrpc/TODO.md)。
+ccrpc 的待办在 [crates/ccrpc/TODO.md](../crates/ccrpc/TODO.md)。
 
 ## 对话记录的消息类型
 

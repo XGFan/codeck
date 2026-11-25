@@ -1,5 +1,5 @@
 //! One connection's Connect state, folded from ccrpc's events: the part of the desktop app's
-//! `src/features/connect/state/conn.ts` that every client of the Host shares. The events' own objects (requests, the
+//! `web/src/features/connect/state/conn.ts` that every client of the Host shares. The events' own objects (requests, the
 //! turn's end, progress, the waiting, tasks, the feedback draft) are kept as ccrpc wrote them.
 
 use std::sync::atomic::{AtomicU64, Ordering};

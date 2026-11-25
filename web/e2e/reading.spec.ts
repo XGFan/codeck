@@ -26,7 +26,7 @@ test("⌘F 命中折叠的工具输出：自动展开并高亮，Enter 步进，
   await input.fill("has been updated");
   await expect(count).toHaveText(/^1 \/ [2-9]\d*$/);
   await expect(hit).toHaveCount(1);
-  await page.screenshot({ path: process.env.SHOT ?? "test-results/m3-reading.png" });
+  await page.screenshot({ path: process.env.SHOT ?? test.info().outputPath("reading.png") });
   const first = await hit.getAttribute("data-anchor");
   await page.keyboard.press("Enter");
   await expect(count).toHaveText(/^2 \//);

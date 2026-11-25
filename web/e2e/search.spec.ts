@@ -35,7 +35,7 @@ test("输入后 Session 段即时出现，对话内容按 Session 分组并高�
   await expect(groups.first().locator("mark").first()).toBeVisible();
   await expect(page.getByTestId("search-summary")).toContainText("个 Session");
   await expect(selected(page)).toHaveAttribute("data-testid", "search-session");
-  await page.screenshot({ path: process.env.SHOT ?? "test-results/m3-search.png" });
+  await page.screenshot({ path: process.env.SHOT ?? test.info().outputPath("search.png") });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("search")).toHaveCount(0);
   await page.keyboard.press("Meta+k");

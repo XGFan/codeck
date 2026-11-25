@@ -1,6 +1,6 @@
 # Bugs
 
-这里记录在 Claude Code 里发现、影响 CoDeck / ccrpc 的问题：现象、证据、复现方法，以及是否已经报给上游。实测细节同步记在 [crates/ccrpc/docs/probes.md](crates/ccrpc/docs/probes.md)。
+这里记录在 Claude Code 里发现、影响 CoDeck / ccrpc 的问题：现象、证据、复现方法，以及是否已经报给上游。实测细节同步记在 [crates/ccrpc/docs/probes.md](../crates/ccrpc/docs/probes.md)。
 
 ## Code Mode 里从代码提问时，模型那条消息直到作答才写进 transcript
 

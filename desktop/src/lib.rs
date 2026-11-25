@@ -193,14 +193,14 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
     })
 }
 
-/// Writes `src/ipc/bindings.ts`. Run with `pnpm bindings`.
+/// Writes `web/src/ipc/bindings.ts`. Run with `pnpm bindings`.
 #[cfg(test)]
 #[test]
 fn export_bindings() {
     specta_builder()
         .export(
             specta_typescript::Typescript::default(),
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../src/ipc/bindings.ts"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../web/src/ipc/bindings.ts"),
         )
         .expect("failed to export typescript bindings");
 }

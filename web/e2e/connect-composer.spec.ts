@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   connectTo,
   disableAutoConnect,
@@ -37,7 +38,7 @@ async function pasteImage(page: Page) {
 
 /** The `uuid` ccrpc answered the n-th `prompt` of a recording with (the prompt's transcript entry). */
 function recordedPromptUuid(name: string, n: number): string {
-  return readFileSync(`src/mocks/data/connect/${name}.jsonl`, "utf8")
+  return readFileSync(path.join(import.meta.dirname, `../src/mocks/data/connect/${name}.jsonl`), "utf8")
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l))
@@ -189,7 +190,7 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件
   // A known command at the start is drawn in color; not inside a sentence, nor an unknown name.
   await input.fill("/compact 只留结论");
   await expect(highlight.locator("span.text-accent")).toHaveText("/compact");
-  await page.screenshot({ path: "test-results/command-highlight.png" });
+  await page.screenshot({ path: test.info().outputPath("command-highlight.png") });
   // Long enough to scroll: the copy wraps and scrolls as the textarea does.
   await input.fill(`/compact ${"只留结论，".repeat(400)}`);
   await input.evaluate((t) => (t.scrollTop = t.scrollHeight));
@@ -247,7 +248,7 @@ test("输入框里的斜杠命令高亮；/add-dir 补全目录、@ 补全文件
   await expect(options).toHaveText(["../"]);
   await input.fill("/add-dir ../in");
   await expect(options).toHaveText(["../infra/", "../infra-modules/"]);
-  await page.screenshot({ path: "test-results/dir-menu.png" });
+  await page.screenshot({ path: test.info().outputPath("dir-menu.png") });
   // Enter takes a pick moved to with ↑↓, otherwise sends what is typed.
   await input.press("ArrowDown");
   await input.press("Enter");

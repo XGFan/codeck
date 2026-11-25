@@ -30,7 +30,7 @@ const noViews = {
 const restrict = (...patterns) => ({ "no-restricted-imports": ["error", { patterns }] });
 
 export default tseslint.config(
-  { ignores: ["dist", "src-tauri", "crates", "target", "src/ipc/bindings.ts"] },
+  { ignores: ["dist", "dist-web", "dist-e2e", "src/ipc/bindings.ts"] },
   {
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: { parser: tseslint.parser },

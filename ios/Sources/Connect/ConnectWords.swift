@@ -1,6 +1,6 @@
 import Foundation
 
-// Words and pure rules shared with the desktop's Connect (src/features/connect: Header.tsx, Model.tsx,
+// Words and pure rules shared with the desktop's Connect (web/src/features/connect: Header.tsx, Model.tsx,
 // requests/answers.ts, Tasks.tsx); kept identical in meaning.
 
 enum ConnectWords {

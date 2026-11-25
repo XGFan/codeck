@@ -1,7 +1,7 @@
 import XCTest
 @testable import CoDeck
 
-/// JSON shaped like src/ipc/bindings.ts (serde camelCase), including fields the app ignores.
+/// JSON shaped like web/src/ipc/bindings.ts (serde camelCase), including fields the app ignores.
 final class DecodingTests: XCTestCase {
     private let sessionJSON = """
     {

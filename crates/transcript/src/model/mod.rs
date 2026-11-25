@@ -1,4 +1,4 @@
-//! The IPC contract. Every type here is exported to `src/ipc/bindings.ts` via specta.
+//! The IPC contract. Every type here is exported to `web/src/ipc/bindings.ts` via specta.
 //!
 //! Rules: camelCase fields; data-carrying enums are tagged with `kind`; counts are `u32`,
 //! timestamps (unix ms), tokens and byte sizes are `f64` (no bigint in TS) and always finite, so

@@ -9,6 +9,10 @@ const dist = `dist-e2e/${port}`;
 
 export default defineConfig({
   testDir: "e2e",
+  // e2e/host is the real-backend E2E (playwright.host.config.ts).
+  testIgnore: "host/**",
+  // Beside this file: the default is beside package.json, at the repository root.
+  outputDir: "test-results",
   // Tests of one file run in parallel too: each has its own page and the mock backend lives in the page.
   fullyParallel: true,
   use: { baseURL: `http://localhost:${port}` },

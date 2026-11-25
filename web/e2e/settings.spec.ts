@@ -114,7 +114,7 @@ test("⌘, 打开设置，格式兼容性渲染 mock 计数", async ({ page }) =
   await expect(dialog.getByTestId("diag-version-row").locator("code")).toHaveText(["2.1.91", "2.1.88"]);
   await expect(dialog.getByTestId("diag-failures")).toContainText("5e1c0b7a-0006");
   await expect(dialog.getByTestId("diag-integrity")).toContainText("2");
-  await page.screenshot({ path: process.env.SHOT ?? "test-results/m4-diag.png" });
+  await page.screenshot({ path: process.env.SHOT ?? test.info().outputPath("diagnostics.png") });
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);

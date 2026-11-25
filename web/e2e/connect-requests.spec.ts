@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   connectTo,
   disableAutoConnect,
@@ -20,7 +21,7 @@ test.beforeEach(({ page }) => disableAutoConnect(page));
 
 /** The `turn_end` prompt ids of a recorded fixture, in order (they change when it is re-recorded). */
 function recordedTurns(name: string): string[] {
-  return readFileSync(`src/mocks/data/connect/${name}.jsonl`, "utf8")
+  return readFileSync(path.join(import.meta.dirname, `../src/mocks/data/connect/${name}.jsonl`), "utf8")
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l))

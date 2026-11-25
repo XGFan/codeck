@@ -150,7 +150,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 ## Connect
 
-经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`crates/codeck-host/src/ccrpc`）只管 ccrpc 子进程、转发 JSONL、写日志；桌面窗口的协议解析与状态在前端（`src/features/connect`），Host（`crates/codeck-host/src/connect`）另有一份供 iPhone 等客户端共用（ADR-0011）。同一 Host 上桌面窗口与 iPhone 共用连接（ADR-0012）：谁先 Connect，另一端都拿到同一个连接，iPhone 发起的 Connect、新建、Resume 与 Fork 也出现在桌面；iPhone Disconnect 或「关闭」时桌面不算连接失败，直接回到未连接。草稿与「已完成」不同步。前端重新载入时从 Host 取回已有的连接。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
+经 ccrpc（[crates/ccrpc](../crates/ccrpc)，协议见其 `docs/spec.md` §5）控制 ToH clay 里运行、装了 ccrpc 插件的 Session（ADR-0007）。**对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制**：不调用 `get_messages`，不用 ccrpc 的内容块、`branch`、`workflow` 事件（内容块只用来知道某次工具调用已执行、对应的请求结束）。Rust 后端（`crates/codeck-host/src/ccrpc`）只管 ccrpc 子进程、转发 JSONL、写日志；桌面窗口的协议解析与状态在前端（`web/src/features/connect`），Host（`crates/codeck-host/src/connect`）另有一份供 iPhone 等客户端共用（ADR-0011）。同一 Host 上桌面窗口与 iPhone 共用连接（ADR-0012）：谁先 Connect，另一端都拿到同一个连接，iPhone 发起的 Connect、新建、Resume 与 Fork 也出现在桌面；iPhone Disconnect 或「关闭」时桌面不算连接失败，直接回到未连接。草稿与「已完成」不同步。前端重新载入时从 Host 取回已有的连接。术语另见 ccrpc 的 [CONTEXT.md](../crates/ccrpc/CONTEXT.md)（受控 Session、请求、选择、轮）。
 
 - **环境**：第一次用到 ccrpc 时读一次登录 shell 的环境（`<shell> -l -c env`，`<shell>` 是账户记录里的登录 shell，不是 CoDeck 继承来的 `$SHELL`），作为所有 ccrpc 子进程的环境，其中 `SHELL` 设为这个 shell：`toh new` 用它起 Pane，CoDeck 不论从 Dock 还是终端启动，Session 都跑在账户的登录 shell 里，带着它的配置设的环境变量。不在启动时读，以免拖慢启动。ccrpc 依次取环境变量 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`。
 - **可 Connect 的 Session**：窗口可见、且至少有一个 Live Session 或连接时，后台常驻一个 `ccrpc ls --json --watch`：开始时给一次全表，之后 Pane 来去、隐藏 / 显示、claude 的状态与报到有变化时再给（由文件与进程事件唤醒，不定时查询）；条件不满足时停掉它（没有 Live Session 也没有连接时丢掉上次的结果），条件恢复时重新开始；停掉之后才到的结果丢弃。Holder 的 `session_id` 就是 Session ID。`ccrpc ls` 启动不了、自己退出了或读取 ccrpc 信息失败时停掉，错误显示在「设置 › ccrpc」，可重试。「局域网访问」打开期间它由 Host 常驻，不随窗口隐藏而停，失败后自动重试。
@@ -249,7 +249,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 - 解析器的回归测试使用 fixture：从真实 Session 精简后脱敏（保留结构，文本替换成占位内容），覆盖 Branch、Fork、compact、Subagent、Workflow、后台 agent、失败的调用、图片等情况。
 - E2E：Playwright 驱动前端并 mock IPC（`tauri-driver` 不支持 macOS）；Rust 后端单独测试。
-- Connect 的 E2E 用 wire 回放的 mock ccrpc：`src/mocks/data/connect/*.jsonl` 是录下（或手写）的 `wire.jsonl`，收到命令回录下的响应，事件按录下的顺序推；`meta` 行里的 `session_id` 把录制对应到 mock 数据里的 Session，`connect_delay_ms` 让连接命令晚于事件返回（复现 ccrpc 秒退时退出事件先到），`on_request` 让它默认不在 `ccrpc ls` 里、测试调用 `__cvCcrpc.list(<名字>)` 后才列出（`rewind.jsonl` 对应的 Session 在别的用例里是不在 clay 里的那个）。
+- Connect 的 E2E 用 wire 回放的 mock ccrpc：`web/src/mocks/data/connect/*.jsonl` 是录下（或手写）的 `wire.jsonl`，收到命令回录下的响应，事件按录下的顺序推；`meta` 行里的 `session_id` 把录制对应到 mock 数据里的 Session，`connect_delay_ms` 让连接命令晚于事件返回（复现 ccrpc 秒退时退出事件先到），`on_request` 让它默认不在 `ccrpc ls` 里、测试调用 `__cvCcrpc.list(<名字>)` 后才列出（`rewind.jsonl` 对应的 Session 在别的用例里是不在 clay 里的那个）。
 - 启动、后台调度、配置类流程必须在真实应用中验证（单测覆盖不到，例如曾出现的全文索引任务互相让位导致永不执行）。
 
 ## 技术栈

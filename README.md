@@ -75,7 +75,7 @@ pnpm dev:mock           # 只启动前端，使用内置 mock 数据（浏览器
 Rust 侧的 IPC 类型是唯一来源，修改 `crates/transcript/src/model/*`（组装用的类型）或 `crates/codeck-core/src/model/*`（应用层类型）后重新生成前端绑定：
 
 ```sh
-pnpm bindings           # 写入 src/ipc/bindings.ts（勿手改）
+pnpm bindings           # 写入 web/src/ipc/bindings.ts（勿手改）
 ```
 
 ## 测试
@@ -91,8 +91,8 @@ pnpm typecheck && pnpm lint && pnpm test                # 前端类型检查、h
 pnpm exec playwright install webkit && pnpm test:e2e    # E2E（mock 模式，WebKit）
 ```
 
-- `pnpm test:e2e:host`：真实后端 E2E，起 `codeck-host` 读一份 fixture 副本，测 `/web/transcript.html`（端口 `E2E_HOST_PORT`，默认 38497）。
-- `E2E_PORT=<端口>`：E2E 的端口（默认 1421），并行跑多份 E2E 时各用一个。E2E 先把 mock 模式的应用构建到 `dist-e2e/<端口>/`，再从那里起静态服务；端口上已有服务（如 `pnpm dev:mock --port <端口>`）时直接用它。
+- `pnpm test:e2e:host`：真实后端 E2E，起 `codeck-host` 读一份 fixture 副本，测 `/web/transcript.html`（用例在 `web/e2e/host/`，端口 `E2E_HOST_PORT`，默认 38497）。
+- `E2E_PORT=<端口>`：E2E 的端口（默认 1421），并行跑多份 E2E 时各用一个。E2E 先把 mock 模式的应用构建到 `dist-e2e/<端口>/`，再从那里起静态服务（`web/dist-e2e/`）；端口上已有服务（如 `pnpm dev:mock --port <端口>`）时直接用它。
 - `CODECK_FIXTURE_DENYLIST="词1,词2"`：fixture 脱敏检查额外拦截的私有词（如公司、客户名），不写进仓库。
 - 真实数据探针（只读，索引写入临时目录），用于检查性能与兼容性：
 
@@ -121,9 +121,9 @@ iPhone App 连到一台 **Host**（打开了「局域网访问」的 CoDeck，�
 Linux 或不想开桌面版时，启动 daemon（与桌面版的索引、设置、日志分开，状态目录默认 macOS `~/Library/Application Support/dev.joy.codeck.host`、Linux `$XDG_STATE_HOME/codeck`）：
 
 ```sh
-pnpm build:web                                   # Transcript 页 → dist-web/
+pnpm build:web                                   # Transcript 页 → web/dist-web/
 cargo build --release -p codeck-host             # → target/release/codeck-host
-target/release/codeck-host --web-dir dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
+target/release/codeck-host --web-dir web/dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
 ```
 
 目前的限制：没有推送通知；回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；daemon 没有连接数与请求频率的限制。
@@ -185,10 +185,9 @@ crates/codeck-core/   索引与查询：扫描、SQLite 索引（FTS5 trigram）
 crates/ccrpc/     ccrpc：以 JSONL 驱动 ToH clay 里的 Claude Code（见其 README）
 crates/codeck-cli/    codeck 命令行（可执行文件 codeck）：给 AI 用，查询 Session，新建 Session（ADR-0013）
 crates/codeck-host/   Host 运行时（不依赖 tauri）：后台 worker、文件监听、Live 轮询、设置、价格、ccrpc 子进程、Connect 状态、局域网 HTTP + WebSocket 服务（命令表的 remote 部分与 Transcript 页）；命令表只定义一次。可执行文件 codeck-host（src/bin/）是 headless daemon 的命令行外壳，一直提供上述服务
-src-tauri/        Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件；局域网访问打开时也提供上述服务
-src/              React 前端：features/* 各功能模块，ipc/ 为 IPC 层（real / remote 两种实现与 ccrpc、haa 的协议类型），mocks/ 为 mock 实现与数据；transcript.html 是给 iPhone 的只读 Transcript 页
+desktop/          Tauri 外壳：把命令表生成为 tauri 命令、把 Host 事件转成 tauri 事件、窗口与插件；局域网访问打开时也提供上述服务
+web/              React 前端：src/features/* 各功能模块，src/ipc/ 为 IPC 层（real / remote 两种实现与 ccrpc、haa 的协议类型），src/mocks/ 为 mock 实现与数据；三个入口 html（transcript.html 是给 iPhone 的只读 Transcript 页）与 Vite、TypeScript、ESLint、Playwright 的配置；e2e/ 是 Playwright 用例（mock），e2e/host/ 是真实后端用例
 ios/              iPhone App（SwiftUI；xcodegen 的 project.yml）
-e2e/              Playwright 用例（mock）；e2e-host/ 为真实后端用例
 ```
 
 **CoDeck、ccrpc 与 ToH 的分工**：ToH 在本机用 Holder 持有 clay Pane 的 PTY，Claude Code 跑在里面，Mac / iPhone / web 的 Client 都能接手同一个 Pane。ccrpc 把一个 Pane 里的交互式 Claude Code 变成 JSONL 接口：经 Holder 收屏幕、写按键，经 ccrpc 插件的 hooks 得知审批、提问与轮次边界并代答审批。CoDeck 每 Connect 一个 Session 起一个 `ccrpc attach` 子进程（Session 同时显示在终端里，两边都能输入）（一个 Session 同时只能连一个 ccrpc），Disconnect 只结束这个 ccrpc，Session 照常运行。对话内容始终来自 CoDeck 自己的索引与实时追随，不经 ccrpc（[ADR-0007](docs/adr/0007-monorepo-parsing-library-and-drive-via-ccrpc.md)）。

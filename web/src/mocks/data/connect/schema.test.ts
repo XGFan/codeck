@@ -1,6 +1,6 @@
 import Ajv2020 from "ajv/dist/2020";
 import { describe, expect, it } from "vitest";
-import schemaText from "../../../../crates/ccrpc/docs/protocol.schema.json?raw";
+import schemaText from "../../../../../crates/ccrpc/docs/protocol.schema.json?raw";
 
 // The recordings the mock ccrpc replays stand for what ccrpc prints and is sent: they must follow ccrpc's schema, or the
 // front end is tested against a protocol that does not exist.
