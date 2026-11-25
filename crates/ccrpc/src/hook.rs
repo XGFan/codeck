@@ -183,6 +183,9 @@ pub struct CheckIn {
     pub source: String,
     #[serde(default)]
     pub cwd: String,
+    /// The model the Session had then, when SessionStart said (Claude Code may leave it out).
+    #[serde(default)]
+    pub model: Option<String>,
     /// Unix seconds.
     pub at: u64,
 }
@@ -322,6 +325,7 @@ pub fn run_hook(args: &[String]) {
             transcript_path: input["transcript_path"].as_str().unwrap_or_default().into(),
             source: input["source"].as_str().unwrap_or_default().into(),
             cwd: input["cwd"].as_str().unwrap_or_default().into(),
+            model: input["model"].as_str().map(str::to_string),
             at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -650,6 +654,7 @@ mod tests {
                 transcript_path: "t".into(),
                 source: "startup".into(),
                 cwd: String::new(),
+                model: None,
                 at: 0,
             };
             write_private(
@@ -773,6 +778,7 @@ mod tests {
             transcript_path: "/t.jsonl".into(),
             source: "startup".into(),
             cwd: "/w".into(),
+            model: None,
             at: 0,
         };
         assert!(checkin_problem(None, None).is_some());

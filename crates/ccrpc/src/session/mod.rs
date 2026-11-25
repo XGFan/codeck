@@ -677,6 +677,7 @@ impl Engine {
         }
         let history = path.exists();
         let cwd = Some(c.cwd).filter(|d| !d.is_empty());
+        self.note_start_model(c.model.as_deref());
         self.switch_to(c.session_id, &path, history, HashSet::new(), cwd);
     }
 

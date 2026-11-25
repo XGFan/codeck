@@ -908,6 +908,7 @@ impl Engine {
         }
         match m.event.as_str() {
             "SessionStart" => {
+                self.note_start_model(i["model"].as_str());
                 if let (Some(sid), Some(path)) = (s("session_id"), s("transcript_path")) {
                     let path = PathBuf::from(path);
                     if locate::is_transcript_path(&self.roots, &path) {
@@ -984,6 +985,15 @@ impl Engine {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// The model a Session has as it starts (SessionStart's, live or from the check-in): all there
+    /// is to say until a reply or `/model` says more. Before the transcript is read, whose replies
+    /// are later than a check-in.
+    pub(super) fn note_start_model(&mut self, model: Option<&str>) {
+        if let Some(m) = model.filter(|m| !m.is_empty()) {
+            self.model = Some(Model::replied(self.model.as_ref(), m));
         }
     }
 

@@ -4,8 +4,8 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct Model {
-    /// The main line's last reply's model id; none while `/model` has set a model that has not
-    /// answered yet.
+    /// The main line's last reply's model id, before any reply the one the Session started with;
+    /// none while `/model` has set a model that has not answered yet.
     pub(super) id: Option<String>,
     /// The display name: what `/model` said, else made from the id.
     pub(super) name: String,
@@ -17,8 +17,9 @@ impl Model {
         Model { id: None, name }
     }
 
-    /// The model a reply was made by. A name `/model` gave stays for the first reply that follows
-    /// it; a reply from another model than the last one (not through `/model`) names its own.
+    /// The model a reply was made by, or the Session started with. A name `/model` gave stays for
+    /// the first reply that follows it; a reply from another model than the last one (not through
+    /// `/model`) names its own.
     pub(super) fn replied(current: Option<&Model>, id: &str) -> Model {
         match current {
             Some(m) if m.id.as_deref() == Some(id) => m.clone(),

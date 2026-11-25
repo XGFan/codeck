@@ -1361,6 +1361,13 @@ fn mock_model_session() {
     );
     // `ready` had no cwd either (no Process File yet).
     assert_eq!(ch["cwd"], fresh.to_str().unwrap(), "{ch}");
+    // Nothing was answered yet: the model is the one SessionStart said the Session starts with.
+    let st = rpc.call("g0", json!({"type": "get_state"}));
+    assert_eq!(
+        st["model"],
+        json!({"id": "claude-sonnet-4-5", "name": "Sonnet 4.5"}),
+        "{st}"
+    );
 
     // A few turns: the status line, then progress while one runs slowly.
     for i in 0..3 {

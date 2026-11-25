@@ -293,7 +293,7 @@
       ]
     },
     "model": {
-      "description": "主线模型。id：最后一条 assistant 消息的模型 id，`/model` 刚换了模型、新模型还没答话时为 null；name：显示名，`/model` 输出里的（如 Sonnet 4.5），没有则由 id 得出（claude-opus-4-7 → Opus 4.7，claude-fable-5-1[1m] → Fable 5.1 (1M)；不合 claude-<家族>-<主版本>[-<次版本>][-<日期>][[1m]] 形状的 id 原样作 name）。从没见过模型时整个 model 为 null。",
+      "description": "主线模型。id：最后一条 assistant 消息的模型 id，还没有回复时是 Session 启动时的模型（插件的 SessionStart 给的），`/model` 刚换了模型、新模型还没答话时为 null；name：显示名，`/model` 输出里的（如 Sonnet 4.5），没有则由 id 得出（claude-opus-4-7 → Opus 4.7，claude-fable-5-1[1m] → Fable 5.1 (1M)；不合 claude-<家族>-<主版本>[-<次版本>][-<日期>][[1m]] 形状的 id 原样作 name）。从没见过模型时整个 model 为 null。",
       "type": [
         "object",
         "null"

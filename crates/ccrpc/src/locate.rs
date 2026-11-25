@@ -319,6 +319,7 @@ mod tests {
                 transcript_path: "/c/projects/-w/new-sid.jsonl".into(),
                 source: source.into(),
                 cwd: "/w".into(),
+                model: None,
                 at: 0,
             })
             .unwrap(),
