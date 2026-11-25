@@ -479,6 +479,7 @@ fn mock_model_rename() {
     rpc.until("session_info", Duration::from_secs(5), |v| {
         v["type"] == "session_info" && v["title"] == "第一个 标题"
     });
+    until_idle(&mut rpc);
     rpc.call("p1", json!({"type": "prompt", "text": "hello"}));
     rpc.event("turn_end", Duration::from_secs(30));
     let r = rpc.call("r2", json!({"type": "rename", "title": " renamed again "}));
@@ -967,8 +968,7 @@ fn mock_model_model_and_effort() {
             v["type"] == "session_info" && v["effort"] == "low"
         });
     }
-    let st = rpc.call("g1", json!({"type": "get_state"}));
-    assert_eq!(st["state"], "idle", "{st}");
+    let st = until_idle(&mut rpc);
     // The reply on Fable named its model by id.
     assert!(
         st["model"]["id"]
@@ -1371,6 +1371,8 @@ fn mock_model_session() {
 
     // A few turns: the status line, then progress while one runs slowly.
     for i in 0..3 {
+        // `turn_end` can come a moment before the state is idle again.
+        until_idle(&mut rpc);
         rpc.call(
             &format!("p{i}"),
             json!({"type": "prompt", "text": format!("hello {i}")}),

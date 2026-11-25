@@ -563,6 +563,22 @@ pub(crate) fn settle_idle(rpc: &mut Rpc) {
     }
 }
 
+/// Polls `get_state` until the Session is idle, and returns that state: a command typed into the TUI
+/// (`/rename`, `/effort`) leaves it busy for a moment after its effect is reported, longer on a busy machine.
+pub(crate) fn until_idle(rpc: &mut Rpc) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut n = 0;
+    loop {
+        n += 1;
+        let st = rpc.call(&format!("idle-{n}"), json!({"type": "get_state"}));
+        if st["state"] == "idle" {
+            return st;
+        }
+        assert!(Instant::now() < deadline, "没有回到 idle：{st}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Prints the screen under a name (layout probing).
 pub(crate) fn dump(rpc: &mut Rpc, name: &str) -> Vec<String> {
     let scr = rpc.call(&format!("dump-{name}"), json!({"type": "get_screen"}));

@@ -21,7 +21,7 @@ cargo test                                             # 单测（fixture 回放
 cargo clippy --all-targets -- -D warnings
 cargo fmt                                              # 默认 rustfmt 配置；仓库的 pre-commit 钩子会检查
 CCRPC_E2E_API_KEY=… cargo test --test e2e -- --ignored --test-threads=1   # 端到端（真实 Claude Code，消耗额度）
-cargo test --test e2e mock_ -- --ignored --test-threads=1                 # 端到端里用本地 mock 模型的用例（不需要 key）
+cargo test --test e2e mock_ -- --ignored --test-threads=6                 # 端到端里用本地 mock 模型的用例（不需要 key；各用各的 ToH 与状态目录，可并行）
 ```
 
 ## 架构

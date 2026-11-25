@@ -183,7 +183,9 @@ for g in $todo; do
       step "cargo test" cargo test --workspace
       ;;
     ccrpc)
-      step "ccrpc mock e2e" cargo test -p ccrpc --test e2e mock_ -- --ignored --test-threads=1
+      # Each test has its own ToH, claude and ccrpc state, so they run side by side: 6 at a time takes about
+      # 80 s where one at a time took 7.5 min. More leaves too little room when the machine is busy.
+      step "ccrpc mock e2e" cargo test -p ccrpc --test e2e mock_ -- --ignored --test-threads=6
       ;;
     web)
       step "Prettier" pnpm format:check
