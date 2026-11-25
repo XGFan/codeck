@@ -1,6 +1,6 @@
 import Foundation
 
-// 新建 Session, Resume and Fork (desktop: resume.ts, fork.ts, the store's newSession / resume / fork).
+// 新建 Session, Resume and Fork (desktop: state/resume.ts, state/fork.ts, the store's newSession / resume / fork).
 
 /// What a Session page offers for Resume or Fork.
 enum StartOffer: Equatable {

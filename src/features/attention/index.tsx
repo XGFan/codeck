@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { api } from "@/ipc";
-import { isLive, useConnect, waitingSessions } from "@/features/connect/store";
+import { isLive, useConnect, waitingSessions } from "@/features/connect/state/store";
 import { useAllSessions, useProjects } from "@/queries";
 import { useUi } from "@/state/ui";
 import { due, markNotified, message, record, step, sweep, type Status } from "./rules";

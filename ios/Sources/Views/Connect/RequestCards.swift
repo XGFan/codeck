@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One thing the Session waits on (Requests.tsx).
+/// One thing the Session waits on (requests/Requests.tsx).
 struct RequestCard: View {
     let request: ConnRequest
     let c: ConnState
@@ -183,7 +183,7 @@ private struct ChoiceCard: View {
     }
 }
 
-/// Going back to before a prompt (Requests.tsx RewindCard): what the terminal's confirm page says, and its restores.
+/// Going back to before a prompt (requests/Requests.tsx RewindCard): what the terminal's confirm page says, and its restores.
 /// None is drawn as the one to pick: nothing that restores code is a default.
 private struct RewindCard: View {
     let r: RewindRequest

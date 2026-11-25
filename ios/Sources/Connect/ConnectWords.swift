@@ -1,7 +1,7 @@
 import Foundation
 
 // Words and pure rules shared with the desktop's Connect (src/features/connect: Header.tsx, Model.tsx,
-// answers.ts, Tasks.tsx); kept identical in meaning.
+// requests/answers.ts, Tasks.tsx); kept identical in meaning.
 
 enum ConnectWords {
     /// The one word for a connection's state (Header.tsx `STATE_WORD`).
@@ -149,7 +149,7 @@ struct InputBlock: Equatable {
     var label: String?
 }
 
-// MARK: Slash commands (slash.ts)
+// MARK: Slash commands (composer/slash.ts)
 
 /// A command from `list_slash_commands`.
 struct SlashCommand: Decodable, Equatable, Sendable {
@@ -206,7 +206,7 @@ enum SlashRules {
     }
 }
 
-// MARK: Answers (answers.ts)
+// MARK: Answers (requests/answers.ts)
 
 enum Answers {
     /// What to say when ccrpc refuses an answer.
@@ -249,7 +249,7 @@ enum Answers {
     }
 }
 
-// MARK: Rewind (rewind.ts)
+// MARK: Rewind (rewind/rewind.ts)
 
 enum RewindWords {
     static func label(_ option: RewindRequest.Option) -> String {

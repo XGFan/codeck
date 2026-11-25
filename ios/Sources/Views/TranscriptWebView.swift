@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-/// What the page's 「回退」 and 「Fork」 buttons show (`window.codeckPage.setConnect`, native.ts): the app holds the
+/// What the page's 「回退」 and 「Fork」 buttons show (`window.codeckPage.setConnect`, state/native.ts): the app holds the
 /// Connect, the page only draws the buttons and hands a tap back.
 struct PageConnect: Encodable, Equatable {
     struct Rewound: Encodable, Equatable {

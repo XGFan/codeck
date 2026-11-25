@@ -2,9 +2,9 @@
 // closing it when its Pane is gone (the Session in it ended, the Pane closed).
 
 import { useEffect } from "react";
-import type { ConnState } from "@/features/connect/conn";
+import type { ConnState } from "@/features/connect/state/conn";
 import type { LsEntry } from "@/ipc/protocol/ccrpc";
-import { useConnect } from "@/features/connect/store";
+import { useConnect } from "@/features/connect/state/store";
 import { termAvailable, termBridge } from "./bridge";
 import { termStatus, type TermStatus } from "./status";
 

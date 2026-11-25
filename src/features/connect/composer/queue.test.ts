@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { token } from "./imageTokens";
+import { token } from "../state/imageTokens";
 import type { QueueItem } from "@/ipc/protocol/ccrpc";
 import { queueText, rememberImages, takenBack } from "./queue";
 

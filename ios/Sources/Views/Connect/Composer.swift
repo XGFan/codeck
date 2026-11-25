@@ -16,7 +16,7 @@ enum ComposerAction: Equatable {
     }
 }
 
-/// The input card (Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call ends);
+/// The input card (composer/Composer.tsx): idle → `prompt`; busy → `steer` (插话, delivered when the current tool call ends);
 /// waiting → nothing (the card comes first). ccrpc runs a slash command itself, so a built-in command goes as a prompt
 /// too. Photos are saved on the Host first and sent as `parts`, the text before the images. With the box empty while
 /// busy, the button stops the turn (`abort`). Its bottom row holds `footer` (the controls) and the button.

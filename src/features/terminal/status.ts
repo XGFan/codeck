@@ -1,8 +1,8 @@
 // What a terminal window shows about its Session, decided in the main window (which keeps the Connect state).
 
-import type { ConnState } from "@/features/connect/conn";
+import type { ConnState } from "@/features/connect/state/conn";
 import type { LsEntry } from "@/ipc/protocol/ccrpc";
-import { isLive } from "@/features/connect/store";
+import { isLive } from "@/features/connect/state/store";
 
 /**
  * - `close`: the Pane is gone — no Session runs in it any more (not in `ccrpc ls`) and no live connection is on it:

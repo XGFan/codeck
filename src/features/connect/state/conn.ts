@@ -38,7 +38,7 @@ export interface Rewound {
 
 /**
  * A tool call the main line's code is making or made (Code Mode), from ccrpc's `code_call`: shown in the transcript
- * until the transcript has it (`codeCalls.ts`).
+ * until the transcript has it (`state/codeCalls.ts`).
  */
 export interface CodeCall {
   toolUseId: string;

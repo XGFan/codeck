@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// An AskUserQuestion (QuestionForm.tsx): each question's options, one or several, and 其他 written in;
+/// An AskUserQuestion (requests/QuestionForm.tsx): each question's options, one or several, and 其他 written in;
 /// 提交 when every question has an answer.
 struct QuestionCard: View {
     let r: QuestionRequest

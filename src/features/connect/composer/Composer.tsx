@@ -6,17 +6,17 @@ import type { SlashCommand, SlashSource } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import { queryKeys, usePathCompletions, useSlashCommands } from "@/queries";
-import type { ConnState } from "./conn";
+import type { ConnState } from "../state/conn";
 import type { FeedbackDraft, QueueItem } from "@/ipc/protocol/ccrpc";
 import { applyPath, commandOf, matchCommands, pathAt, typedCommand, typedName } from "./slash";
-import { ConnectFooter } from "./Header";
-import { EMPTY_DRAFT, isDraft, type Draft } from "./drafts";
-import { draftKey, useConnect } from "./store";
-import { ErrorNotice, NoticeCard } from "./Notice";
-import { markFresh } from "./pending";
+import { ConnectFooter } from "../Header";
+import { EMPTY_DRAFT, isDraft, type Draft } from "../state/drafts";
+import { draftKey, useConnect } from "../state/store";
+import { ErrorNotice, NoticeCard } from "../Notice";
+import { markFresh } from "../state/pending";
 import { scrollToBottom } from "@/features/transcript/nodes/scroll";
-import { RewindPickNotice } from "./RewindViews";
-import { Tasks } from "./Tasks";
+import { RewindPickNotice } from "../rewind/RewindViews";
+import { Tasks } from "../Tasks";
 import { errorText } from "@/lib/errors";
 import { Markdown } from "@/lib/markdown";
 import { caretOnFirstRow } from "./caretRow";
@@ -38,7 +38,7 @@ import {
   toParts,
   widen,
   type Tok,
-} from "./imageTokens";
+} from "../state/imageTokens";
 
 /** Copied tokens carry their images along (pasted back into an input box, they come back). */
 const TOKENS_MIME = "application/x-codeck-images";

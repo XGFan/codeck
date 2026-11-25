@@ -8,13 +8,13 @@ import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import type { Row } from "@/features/transcript/grouping";
 import { MAIN_SCOPE, selectOverlayOpen, useUi } from "@/state/ui";
-import { withCodeCalls } from "./codeCalls";
-import type { CodeCall, ConnState } from "./conn";
-import { askApp, NATIVE_ACTION, type NativeConnect, useNativeConnect } from "./native";
-import { NoticeCard } from "./Notice";
+import { withCodeCalls } from "../state/codeCalls";
+import type { CodeCall, ConnState } from "../state/conn";
+import { askApp, NATIVE_ACTION, type NativeConnect, useNativeConnect } from "../state/native";
+import { NoticeCard } from "../Notice";
 import { mainLinePrompts, rewindable, rewoundLabel } from "./rewind";
-import { hideNodes } from "./withdrawn";
-import { connFor, isLive, useConnect } from "./store";
+import { hideNodes } from "../state/withdrawn";
+import { connFor, isLive, useConnect } from "../state/store";
 
 export interface RewindView {
   /** Prompts offering 「回退」. */
@@ -83,7 +83,7 @@ const NO_CALLS: CodeCall[] = [];
 
 /**
  * The main transcript as shown: the prompts taken back (Esc before any reply, by the uuid ccrpc reported) hidden.
- * And (Code Mode) with the calls the running code made that the transcript does not have yet (`codeCalls.ts`).
+ * And (Code Mode) with the calls the running code made that the transcript does not have yet (`state/codeCalls.ts`).
  */
 export function useShownTranscript(transcript: Transcript, main: boolean): Transcript {
   const sessionId = main ? transcript.sessionId : null;

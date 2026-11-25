@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
 import { otherChosen, questionAnswers, togglePick } from "./answers";
-import type { ConnState } from "./conn";
+import type { ConnState } from "../state/conn";
 import { hasPreview, OptionPreview } from "./OptionPreview";
 import type { AskQuestion, QuestionEvent } from "@/ipc/protocol/ccrpc";
 import { useAnswer } from "./useAnswer";

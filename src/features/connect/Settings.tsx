@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/ipc";
 import type { AnalyzerInfo, AnalyzerRecords, LaunchRule } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
-import { useConnect } from "./store";
+import { useConnect } from "./state/store";
 import { errorText } from "@/lib/errors";
 
 function Row({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {

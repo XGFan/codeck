@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { selectOverlayOpen, useUi } from "@/state/ui";
 import { answerError } from "./answers";
-import type { ConnState } from "./conn";
-import { useConnect } from "./store";
+import type { ConnState } from "../state/conn";
+import { useConnect } from "../state/store";
 
 /** Sends an answer to a request; answered, ccrpc ends it (`request_end`, before the answer's response). */
 export function useAnswer(c: ConnState) {

@@ -6,9 +6,9 @@ import { useCurrentTranscript } from "@/queries";
 import { useUi } from "@/state/ui";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import type { Transcript } from "@/ipc/bindings";
-import type { ConnState } from "./conn";
+import type { ConnState } from "./state/conn";
 import type { Task } from "@/ipc/protocol/ccrpc";
-import { errorKey, useConnect } from "./store";
+import { errorKey, useConnect } from "./state/store";
 
 /** The kinds in the order they are listed; an unknown kind (a newer ccrpc) goes last under its own name. */
 const KINDS: { kind: string; label: string; Icon: LucideIcon }[] = [

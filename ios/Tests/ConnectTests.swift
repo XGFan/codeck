@@ -203,7 +203,7 @@ final class ConnStateDecodingTests: XCTestCase {
     }
 }
 
-/// Mirrors src/features/connect/rewind.test.ts, plus what the Transcript page is told.
+/// Mirrors src/features/connect/rewind/rewind.test.ts, plus what the Transcript page is told.
 @MainActor
 final class RewindTests: XCTestCase {
     func testCodeLineSaysWhatTheConfirmPageSays() {
@@ -495,7 +495,7 @@ final class ConnectStoreTests: XCTestCase {
     }
 }
 
-/// Mirrors src/features/connect/answers.test.ts.
+/// Mirrors src/features/connect/requests/answers.test.ts.
 final class AnswersTests: XCTestCase {
     private func q(_ question: String, multi: Bool = false) -> AskQuestion {
         AskQuestion(question: question, multiSelect: multi)
@@ -581,7 +581,7 @@ final class AnswersTests: XCTestCase {
     }
 }
 
-/// Mirrors src/features/connect/slash.test.ts.
+/// Mirrors src/features/connect/composer/slash.test.ts.
 final class SlashRulesTests: XCTestCase {
     private static func cmd(_ name: String, _ source: String = "builtin", interactive: Bool = false) -> SlashCommand {
         SlashCommand(name: name, source: source, interactive: interactive)

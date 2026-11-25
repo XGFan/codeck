@@ -2,8 +2,8 @@ import { ImageIcon } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/cn";
-import type { DraftImage } from "./drafts";
-import { LEAD, snap, tokensIn, TRAIL, type Tok } from "./imageTokens";
+import type { DraftImage } from "../state/drafts";
+import { LEAD, snap, tokensIn, TRAIL, type Tok } from "../state/imageTokens";
 
 /**
  * The textarea's text drawn under it (the textarea's own text is clear meanwhile): the command named at the start

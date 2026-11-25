@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initial, type ConnState, type Request } from "@/features/connect/conn";
+import { initial, type ConnState, type Request } from "@/features/connect/state/conn";
 import type { LsEntry } from "@/ipc/protocol/ccrpc";
 import { areaFor, BASE_FONT, fontFor } from "./fit";
 import { message, parseMessage, type TermMessage } from "./messages";

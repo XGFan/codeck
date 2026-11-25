@@ -20,7 +20,7 @@ import { openTerminalWindow } from "@/features/terminal/windows";
 import { useCurrentTranscript, useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 import { permissionLabel } from "./answers";
-import type { ConnState, Request } from "./conn";
+import type { ConnState, Request } from "../state/conn";
 import type {
   BtwEvent,
   ChoiceEvent,
@@ -30,10 +30,10 @@ import type {
   RewindOption,
   RewindRequest,
 } from "@/ipc/protocol/ccrpc";
-import { NoticeCard } from "./Notice";
+import { NoticeCard } from "../Notice";
 import { QuestionForm } from "./QuestionForm";
-import { codeLine, REWIND_DESC, REWIND_LABELS, REWIND_ORDER, REWIND_WARNING } from "./rewind";
-import { useConnect } from "./store";
+import { codeLine, REWIND_DESC, REWIND_LABELS, REWIND_ORDER, REWIND_WARNING } from "../rewind/rewind";
+import { useConnect } from "../state/store";
 import { useAnswer, useNumberKeys } from "./useAnswer";
 
 /** Cards for what the Session waits on, main line first. */

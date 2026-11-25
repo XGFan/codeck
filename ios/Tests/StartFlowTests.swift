@@ -1,7 +1,7 @@
 import XCTest
 @testable import CoDeck
 
-/// Mirrors src/features/connect/fork.test.ts and resume.test.ts, plus following a started connection.
+/// Mirrors src/features/connect/state/fork.test.ts and state/resume.test.ts, plus following a started connection.
 final class StartFlowTests: XCTestCase {
     // MARK: forkTitle
 

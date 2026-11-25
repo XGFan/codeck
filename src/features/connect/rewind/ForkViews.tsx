@@ -10,10 +10,10 @@ import {
 import { cn } from "@/lib/cn";
 import { useSession } from "@/queries";
 import { useUi } from "@/state/ui";
-import { forkOffer, type ForkOffer } from "./fork";
-import { pill } from "./Header";
-import { askApp, NATIVE_ACTION, useNativeConnect } from "./native";
-import { useConnect } from "./store";
+import { forkOffer, type ForkOffer } from "../state/fork";
+import { pill } from "../Header";
+import { askApp, NATIVE_ACTION, useNativeConnect } from "../state/native";
+import { useConnect } from "../state/store";
 
 /** Whether the indexed Session `sessionId` can be forked now, and starting it (`at`: the prompt; null: all of it). */
 function useFork(sessionId: string | null) {

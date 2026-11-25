@@ -95,7 +95,7 @@
   animation: shimmer-text 2s linear infinite;
 }
 
-/* A prompt just sent (features/connect/pending.ts): its placeholder comes in, its dots bounce as in a chat app, and
+/* A prompt just sent (features/connect/state/pending.ts): its placeholder comes in, its dots bounce as in a chat app, and
    the bubble that replaces it settles in where the placeholder was. */
 .pending-in {
   transform-origin: bottom right;

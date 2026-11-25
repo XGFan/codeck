@@ -13,9 +13,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
 import { isComposingKey } from "@/lib/hotkeys";
-import type { ConnState } from "./conn";
+import type { ConnState } from "./state/conn";
 import type { ModelInfo } from "@/ipc/protocol/ccrpc";
-import { errorKey, isLive, useConnect } from "./store";
+import { errorKey, isLive, useConnect } from "./state/store";
 
 const FAMILIES = ["opus", "fable", "sonnet", "haiku"] as const;
 

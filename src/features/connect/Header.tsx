@@ -16,11 +16,11 @@ import { cn } from "@/lib/cn";
 import { errorText } from "@/lib/errors";
 import { formatTokens } from "@/lib/format";
 import { useUi } from "@/state/ui";
-import type { ConnState } from "./conn";
+import type { ConnState } from "./state/conn";
 import type { ModelInfo } from "@/ipc/protocol/ccrpc";
 import { ModelPicker } from "./Model";
-import { resumeOffer } from "./resume";
-import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useConnect } from "./store";
+import { resumeOffer } from "./state/resume";
+import { connFor, errorKey, holderConnected, isLive, lsEntryFor, useConnect } from "./state/store";
 
 const MODES: { id: string; label: string }[] = [
   { id: "manual", label: "手动审批" },

@@ -17,25 +17,34 @@ import { useUi } from "@/state/ui";
 import { isKeeping, useAttention, useAttentionStore } from "@/features/attention";
 import { haaAvailable, HaaBar, HaaRoot, useHaa } from "@/features/haa";
 import type { LiveStatus } from "@/ipc/bindings";
-import { Composer } from "./Composer";
-import type { ConnState } from "./conn";
+import { Composer } from "./composer/Composer";
+import type { ConnState } from "./state/conn";
 import type { QuestionEvent, TurnEndEvent } from "@/ipc/protocol/ccrpc";
-import { useNativeConnect } from "./native";
+import { useNativeConnect } from "./state/native";
 import { ErrorNotice, NoticeCard } from "./Notice";
-import { arrived, PENDING_MAX_MS } from "./pending";
-import { ownCard, Requests } from "./Requests";
-import { resumeOffer } from "./resume";
-import { connFor, draftKey, errorKey, isLive, isNewUnprompted, lsEntryFor, useConnect, waitingSessions } from "./store";
+import { arrived, PENDING_MAX_MS } from "./state/pending";
+import { ownCard, Requests } from "./requests/Requests";
+import { resumeOffer } from "./state/resume";
+import {
+  connFor,
+  draftKey,
+  errorKey,
+  isLive,
+  isNewUnprompted,
+  lsEntryFor,
+  useConnect,
+  waitingSessions,
+} from "./state/store";
 
 export { ConnectButton, ConnectMenuItems, STATE_WORD, useConnectDebugInfo } from "./Header";
-export { arrived, isFresh } from "./pending";
-export { hasPreview, OptionPreview } from "./OptionPreview";
-export { QuestionForm } from "./QuestionForm";
-export { RewindButton, RewoundDivider, useRewindView, useShownTranscript, type RewindView } from "./RewindViews";
-export { ForkButton, ForkMenuItem, ForkPending } from "./ForkViews";
-export { installNativeConnect } from "./native";
+export { arrived, isFresh } from "./state/pending";
+export { hasPreview, OptionPreview } from "./requests/OptionPreview";
+export { QuestionForm } from "./requests/QuestionForm";
+export { RewindButton, RewoundDivider, useRewindView, useShownTranscript, type RewindView } from "./rewind/RewindViews";
+export { ForkButton, ForkMenuItem, ForkPending } from "./rewind/ForkViews";
+export { installNativeConnect } from "./state/native";
 export { CcrpcSettings } from "./Settings";
-export { connFor, isLive, lsEntryFor, useConnect } from "./store";
+export { connFor, isLive, lsEntryFor, useConnect } from "./state/store";
 
 /** A Live Session's status from its process file (`unknown` counts as idle). */
 export interface LiveRow {
