@@ -151,11 +151,7 @@ pub fn detect(process_files: &[ProcessFile]) -> BTreeMap<String, LiveState> {
         if !is_alive(pf) {
             continue;
         }
-        let status = match pf.status.as_deref() {
-            Some("busy") => LiveStatus::Busy,
-            Some("waiting") => LiveStatus::Waiting,
-            _ => LiveStatus::Idle,
-        };
+        let status = LiveStatus::from_raw(pf.status.as_deref());
         let state = LiveState {
             status,
             raw_status: pf.status.clone(),

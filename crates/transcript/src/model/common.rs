@@ -66,6 +66,18 @@ pub enum LiveStatus {
     Unknown,
 }
 
+impl LiveStatus {
+    /// A process file's `status`: `busy` and `waiting` as they are, anything else idle (`idle`; `shell`, the input
+    /// box free while a background shell or Monitor runs; none).
+    pub fn from_raw(raw: Option<&str>) -> Self {
+        match raw {
+            Some("busy") => Self::Busy,
+            Some("waiting") => Self::Waiting,
+            _ => Self::Idle,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveState {

@@ -176,19 +176,20 @@ impl Host {
         emit(false, error);
     }
 
-    /// Where to send the `/btw`: None when the Session is not one ccrpc can drive now (not in clay, no plugin,
-    /// not idle).
+    /// Where to send the `/btw`: None when the Session is not one ccrpc can drive now (said in gui.log).
     fn keep_alive_route(&self, app: &App, session_id: &str) -> relay::R<Option<Route>> {
         let ls = app.ls_once()?;
-        let Some(e) = ls.iter().find(|e| e["session_id"] == session_id) else {
-            return Ok(None);
+        let holder = match ls.iter().find(|e| e["session_id"] == session_id) {
+            Some(e) => drivable(e),
+            None => Err("不在 clay 里".to_string()),
         };
-        let Some(holder) = e["holder_id"].as_str() else {
-            return Ok(None);
+        let holder = match holder {
+            Ok(h) => h,
+            Err(why) => {
+                app.gui_line(&format!("keepalive {session_id}: 跳过，{why}"));
+                return Ok(None);
+            }
         };
-        if e["plugin"] != true || e["status"] != "idle" {
-            return Ok(None);
-        }
         if let Some(hub) = &self.connect
             && let Some(conn) = hub.live_conn_for(holder)
         {
@@ -196,6 +197,22 @@ impl Host {
         }
         Ok(Some(Route::Attach(holder.to_string())))
     }
+}
+
+/// The Holder to send the `/btw` to, from the Session's row of `ccrpc ls --json`; Err says why not now.
+fn drivable(e: &Value) -> Result<&str, String> {
+    let holder = e["holder_id"]
+        .as_str()
+        .ok_or_else(|| "ccrpc ls 没有给出 Holder ID".to_string())?;
+    if e["plugin"] != true {
+        return Err("没有 ccrpc 插件".into());
+    }
+    // `status` is the process file's: read as Live status is, so `shell` (a background task running) is idle.
+    let status = e["status"].as_str();
+    if LiveStatus::from_raw(status) != LiveStatus::Idle {
+        return Err(format!("状态是 {}", status.unwrap_or("-")));
+    }
+    Ok(holder)
 }
 
 fn prompt() -> Value {
@@ -353,6 +370,17 @@ mod tests {
         assert!(due(t0 + 45 * MIN, 40 * MIN, &busy, &HashMap::new()).is_empty());
         let unknown = [seen("a", true, None)];
         assert!(due(t0 + 45 * MIN, 40 * MIN, &unknown, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn a_session_running_a_background_task_is_idle_enough() {
+        let row = |status: &str, plugin: bool| json!({ "holder_id": "m1", "session_id": "a", "status": status, "plugin": plugin });
+        // The process file says `shell` while a background shell or Monitor runs; the input box is free.
+        assert_eq!(drivable(&row("shell", true)), Ok("m1"));
+        assert_eq!(drivable(&row("idle", true)), Ok("m1"));
+        assert_eq!(drivable(&row("busy", true)), Err("状态是 busy".into()));
+        assert!(drivable(&row("waiting", true)).is_err());
+        assert_eq!(drivable(&row("idle", false)), Err("没有 ccrpc 插件".into()));
     }
 
     #[test]
