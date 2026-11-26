@@ -372,6 +372,11 @@ impl Engine {
                 if self.waiting_age() < MATCH_GRACE && self.library.choice_title_on(&s.lines) {
                     return;
                 }
+                // The `/btw` panel just closed (`see_btw` holds it open until gone 500 ms): the
+                // Process File says `dialog open` a moment longer (~0.1 s), over the input box.
+                if waiting_for == "dialog open" && self.btw.is_open() {
+                    return;
+                }
                 if self.grow() {
                     return;
                 }

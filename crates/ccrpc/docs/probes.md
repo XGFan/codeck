@@ -20,6 +20,7 @@
 - 审批：`status: waiting, waitingFor: "permission prompt"`，比 transcript 写出对应 `tool_use` 早约 120ms。
 - AskUserQuestion：`status: waiting, waitingFor: "input needed"`，同样早于 `tool_use` 落盘约 120ms。
 - 作答后约 350ms 变回 `busy`。
+- `/btw` 面板：开着时 `status: waiting, waitingFor: "dialog open"`；按 Esc 关掉后，屏幕先回到输入框，进程文件约 70–100ms 后才变回 `idle`（2026-11-26，2.1.332，真实 Session 里关面板 12 次有 7 次读到这个先后；mock 模型下没有出现，fullscreen 与大 transcript 也一样）。
 - `/clear`：约 1.3s 后进程文件的 `sessionId` 换成新的，新 transcript 文件随之出现，开头是 `/clear` 的本地命令记录。
 
 ## transcript
