@@ -46,39 +46,18 @@ impl<'a> Launch<'a> {
 }
 
 /// Puts `"idleCompaction": false` into claude's settings in `args`, merged with what is there rather than in its
-/// place. claude keeps only the last `--settings` (`--settings X` or `--settings=X`; X is JSON when it starts with
-/// `{`, else a file relative to `cwd`), so the key goes into that one: a file is read now and its JSON passed
-/// instead. One that sets `idleCompaction` itself, or is not a JSON object, is left as it is. With no `--settings`,
+/// place: into the `--settings` claude keeps ([`settings_flag`]), a file read now and its JSON passed instead. One
+/// that sets `idleCompaction` itself, or is not a JSON object, is left as it is. With no `--settings`,
 /// [`KEEP_ALIVE_SETTINGS`] goes in front.
 fn idle_compaction_off(args: &mut Vec<String>, cwd: &Path) {
-    let last = (0..args.len()).rev().find_map(|i| {
-        if args[i] == "--settings" {
-            (i + 1 < args.len()).then_some((i + 1, ""))
-        } else {
-            args[i]
-                .starts_with("--settings=")
-                .then_some((i, "--settings="))
-        }
-    });
-    let Some((i, prefix)) = last else {
+    let Some((i, prefix)) = settings_flag(args) else {
         args.splice(
             0..0,
             ["--settings".to_string(), KEEP_ALIVE_SETTINGS.to_string()],
         );
         return;
     };
-    let value = &args[i][prefix.len()..];
-    let text = if value.trim_start().starts_with('{') {
-        value.to_string()
-    } else {
-        match std::fs::read_to_string(cwd.join(value)) {
-            Ok(t) => t,
-            Err(_) => return,
-        }
-    };
-    let Ok(mut settings) =
-        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
-    else {
+    let Some(mut settings) = settings_object(&args[i][prefix.len()..], cwd) else {
         return;
     };
     if settings.contains_key("idleCompaction") {
@@ -86,6 +65,34 @@ fn idle_compaction_off(args: &mut Vec<String>, cwd: &Path) {
     }
     settings.insert("idleCompaction".into(), false.into());
     args[i] = format!("{prefix}{}", serde_json::Value::Object(settings));
+}
+
+/// The `--settings` claude keeps among its arguments `args`, the last one (`--settings X` or `--settings=X`): the
+/// index of the argument holding its value, and what comes before the value there.
+pub(crate) fn settings_flag(args: &[String]) -> Option<(usize, &'static str)> {
+    (0..args.len()).rev().find_map(|i| {
+        if args[i] == "--settings" {
+            (i + 1 < args.len()).then_some((i + 1, ""))
+        } else {
+            args[i]
+                .starts_with("--settings=")
+                .then_some((i, "--settings="))
+        }
+    })
+}
+
+/// A `--settings` value as claude reads it: JSON when it starts with `{`, else a file relative to `cwd`; None when it
+/// is not a JSON object.
+pub(crate) fn settings_object(
+    value: &str,
+    cwd: &Path,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let text = if value.trim_start().starts_with('{') {
+        value.to_string()
+    } else {
+        std::fs::read_to_string(cwd.join(value)).ok()?
+    };
+    serde_json::from_str(&text).ok()
 }
 
 /// The arguments of the most specific rule whose directory is `cwd` or one of its ancestors (whole path

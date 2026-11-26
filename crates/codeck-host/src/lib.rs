@@ -149,6 +149,7 @@ impl Host {
             }
             hub
         });
+        let keep_alive = keepalive::KeepAliveState::load(config.cache_dir.join("keepalive.json"));
         let host = Arc::new_cyclic(|me| Host {
             me: me.clone(),
             state,
@@ -159,7 +160,7 @@ impl Host {
             lan: lan::LanService::default(),
             events,
             config,
-            keep_alive: Default::default(),
+            keep_alive,
         });
         keepalive::spawn(Arc::downgrade(&host));
         Ok(host)
