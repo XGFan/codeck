@@ -203,6 +203,10 @@ export interface Snapshot extends SessionInfo {
   code_calls: OpenCodeCall[];
   /** A feedback draft card on screen. */
   feedback_draft: FeedbackDraft | null;
+  /** The input box is on screen (no dialog or panel has it); absent from an older ccrpc. */
+  input_ready?: boolean;
+  /** Nothing runs by itself now (idle, nothing queued, no turn, the last `settled` out); absent from an older ccrpc. */
+  settled?: boolean;
 }
 
 export interface ReadyEvent extends Snapshot {

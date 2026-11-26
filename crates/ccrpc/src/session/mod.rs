@@ -1434,7 +1434,23 @@ impl Engine {
             tasks: self.tasks(),
             code_calls: self.code_calls.open(),
             feedback_draft: self.feedback.as_ref().map_or(Value::Null, public_draft),
+            input_ready: self.state != State::Exited
+                && self
+                    .screen()
+                    .ok()
+                    .is_some_and(|s| recognize::input_text(&s).is_some()),
+            settled: self.settled_now(),
         }
+    }
+
+    /// `get_state.settled`: nothing runs by itself now. What [`Self::check_settled`] waits for, with
+    /// the `settled` of the last turn out (or no turn ended since connecting).
+    fn settled_now(&self) -> bool {
+        !self.settle_armed
+            && self.state == State::Idle
+            && !self.turns.active()
+            && self.queue.is_empty()
+            && self.deferred.is_empty()
     }
 
     fn get_state(&self) -> Value {
@@ -1951,6 +1967,10 @@ struct Snapshot<'a> {
     /// Code Mode: the calls reported with `code_call` and not ended.
     code_calls: Vec<Value>,
     feedback_draft: Value,
+    /// The prompt input box is on the screen (no dialog or panel has it).
+    input_ready: bool,
+    /// Nothing runs by itself now ([`Engine::settled_now`]).
+    settled: bool,
 }
 
 impl Snapshot<'_> {
@@ -1968,6 +1988,8 @@ impl Snapshot<'_> {
         v["tasks"] = json!(self.tasks);
         v["code_calls"] = json!(self.code_calls);
         v["feedback_draft"] = self.feedback_draft.clone();
+        v["input_ready"] = json!(self.input_ready);
+        v["settled"] = json!(self.settled);
         v
     }
 }
@@ -2048,6 +2070,8 @@ mod tests {
         "tasks",
         "code_calls",
         "feedback_draft",
+        "input_ready",
+        "settled",
     ];
 
     #[test]
@@ -2096,6 +2120,8 @@ mod tests {
             tasks: Vec::new(),
             code_calls: Vec::new(),
             feedback_draft: Value::Null,
+            input_ready: false,
+            settled: true,
         };
         let keys =
             |v: &Value| -> HashSet<String> { v.as_object().unwrap().keys().cloned().collect() };

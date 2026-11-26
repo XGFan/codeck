@@ -511,6 +511,14 @@
         },
         "feedback_draft": {
           "$ref": "#/$defs/feedback_draft"
+        },
+        "input_ready": {
+          "type": "boolean",
+          "description": "此刻屏幕上认得出输入框（没有对话框、面板盖着它）。旧版 ccrpc 没有这个字段。"
+        },
+        "settled": {
+          "type": "boolean",
+          "description": "此刻 Session 不会再自己接着跑：idle、没有进行中的轮、queue 空，且上一轮结束后的 settled 已经发过。旧版 ccrpc 没有这个字段。"
         }
       },
       "required": [

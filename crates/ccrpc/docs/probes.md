@@ -14,6 +14,7 @@
 ## 进程文件
 
 - 首次启动的 onboarding（主题、安全提示）与目录信任对话框期间**没有**进程文件，`sessions/` 下只有 `<pid>.<hash>.key`。进程文件在进入主界面后才出现，初始 `status: idle`。
+- 启动后的 auto mode 提议（2026-11-26，2.1.332，Opus 4.7）：模式行画出后约 0.7–1s 才弹出 `Make auto mode your default permission mode?`（进程文件 `waiting` / `dialog open`），可能晚于第一条提示词；配置目录的 `.claude.json` 里有 `hasSeenAutoDefaultNudge: true` 时不弹（端到端测试的配置这样写）。
 - 回车提交后约 0.8–1s `status` 才变 `busy`（写入有节流）；用户消息约在同一时刻进 transcript。
 - **`idle` 比本轮最后的 assistant 内容落盘早约 60–120ms**；transcript 里的 `{"type":"system","subtype":"turn_duration"}` 紧跟在最后一条 assistant 之后，是本轮结束的确切标记。
 - 后台 Subagent：主线先写一条 `turn_duration`（此时仍 `busy`），Subagent 结束后以 `<task-notification>` 用户消息回到主线，再写一条 `turn_duration`，然后才 `idle`。→ `turn_end` 规则：进程文件变 `idle` 后，等到下一条 `turn_duration`（超时 2s）再发。

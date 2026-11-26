@@ -120,7 +120,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `compact {instructions?}` | `/compact`，等压缩完成再返回压缩前后的上下文 token 数 |
 | `set_model {model}` / `set_effort {level}` / `clear` | 分别等于对应的 slash 命令（`/model`、`/effort` 也会改新 Session 的默认；中途切换的确认以 `choice` 出现） |
 | `send_keys {keys}` | 依次写命名按键、`{"text":…}` 或 `{"bytes":…}` |
-| `get_state` | 立即返回完整快照：状态、挂起的请求（`requests`）、队列、后台任务、模型与上下文等（`ready` 带同样的字段） |
+| `get_state` | 立即返回完整快照：状态、挂起的请求（`requests`）、队列、后台任务、模型与上下文、输入框是否已画好（`input_ready`）、是否已不会再自己接着跑（`settled`）等（`ready` 带同样的字段） |
 | `get_messages {since?, before?, limit?, subagents?}` | 返回 Main Line 上的内容块与游标，可从最新往回分页、可带 Subagent Run 的块（后台线程增量读取） |
 | `get_screen` | 立即返回屏幕文本与光标 |
 | `get_tool_result {tool_use_id}` | 立即返回工具结果全文（落盘过的读文件） |
@@ -137,7 +137,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 
 | 事件 | 说明 |
 |---|---|
-| `ready` | 连接后的第一条：`protocol`（5）、claude 版本、警告，加 `get_state` 的全部字段（完整快照） |
+| `ready` | 连接后的第一条：`protocol`（6）、claude 版本、警告，加 `get_state` 的全部字段（完整快照） |
 | `started` | `ready` 时还没有 sessionId（`new`、attach 到还停在启动界面的 claude）的，之后得知时发一次，带 `session_id`、`cwd` |
 | `start_failed` | `new`（不带 `--fork`）的 claude 没能启动（`--resume` 找不到 Session、目录信任框答了否、`command not found` 等），带 `code`（`untrusted` / `exited` / `no_claude`）与 `message`；ccrpc 随后结束这个 Pane，以退出码 1 结束 |
 | `fatal` | `attach` / `new` 自己没法继续（参数不对、找不到目标、插件未启用……），带 `message`；stdout 的最后一行，退出码 1，同样的文字写到 stderr |

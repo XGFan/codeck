@@ -108,6 +108,7 @@ pub(crate) fn setup_with(key: &str, base: &str, model: &str) -> Env {
     }
     let claude_json = json!({
         "hasCompletedOnboarding": true,
+        "hasSeenAutoDefaultNudge": true,
         "projects": { work_dir.display().to_string(): { "hasTrustDialogAccepted": true } },
     });
     std::fs::write(cc_dir.join(".claude.json"), claude_json.to_string()).unwrap();
@@ -452,50 +453,27 @@ pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     rpc.shell_pid = shell_pid(env, &holder);
     assert!(rpc.shell_pid.is_some());
-    // Startup: Claude Code may offer to make auto mode the default (a `dialog`, possibly right
-    // after a first `idle`); keep manual mode through the generic dialog path (send_keys). The
-    // Process File says idle before the TUI has drawn its input box (docs/probes.md), so the Session
-    // is ready once it is idle, its mode line has been read off the screen (the input box is there)
-    // and nothing more came for half a second; when the mode line never shows, once it has been
-    // idle for 3 s with no dialog.
-    let mut last = Instant::now();
-    // A fast startup may already be idle in `ready`, with no later state event.
-    let mut idle_since = (ready["state"] == "idle").then_some(last);
-    let mut mode_read = !ready["mode"].is_null();
-    let deadline = last + Duration::from_secs(60);
-    loop {
-        assert!(Instant::now() < deadline, "启动后没有稳定在 idle");
-        let quiet = mode_read && last.elapsed() > Duration::from_millis(500);
-        if idle_since.is_some_and(|t| quiet || t.elapsed() > Duration::from_secs(3)) {
+    // The Process File says idle before the TUI has drawn its input box (docs/probes.md): ready
+    // once ccrpc reads the input box (`input_ready`) and the mode line under it, with the Session's
+    // id from the plugin's check-in. While Claude Code starts, ccrpc may report the launching
+    // shell's screen as the startup `dialog` (updated in place); any other dialog is unexpected
+    // (the offer of auto mode as the default is turned off in `setup_with`).
+    let deadline = Instant::now() + Duration::from_secs(60);
+    for n in 1.. {
+        let st = state_consuming(rpc, &format!("start-{n}"), |v| {
+            if v["type"] == "dialog" && v["waiting_for"] != "startup" {
+                panic!("未预期的对话框：{:#?}", v["lines"]);
+            }
+        });
+        let ok = st["state"] == "idle"
+            && st["input_ready"] == true
+            && st["session_id"].is_string()
+            && !st["mode"].is_null();
+        if ok {
             break;
         }
-        let Some(v) = rpc.recv(Duration::from_millis(100)) else {
-            continue;
-        };
-        last = Instant::now();
-        if v["type"] == "state" {
-            idle_since = (v["state"] == "idle").then(Instant::now);
-        } else if v["type"] == "session_info" {
-            mode_read |= !v["mode"].is_null();
-        } else if v["type"] == "dialog" {
-            let lines: Vec<&str> = v["lines"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(Value::as_str)
-                .collect();
-            // While Claude Code starts, this can be a transient frame of the launching shell.
-            // Only the known auto-mode dialog needs keys. Unrecognized startup frames can
-            // update until the Process File appears or the startup deadline expires.
-            if lines.iter().any(|l| l.contains("No, keep manual mode")) {
-                rpc.call(
-                    "d1",
-                    json!({"type": "send_keys", "keys": ["down", "enter"]}),
-                );
-            } else if v["waiting_for"] != "startup" {
-                panic!("未预期的对话框：{lines:#?}");
-            }
-        }
+        assert!(Instant::now() < deadline, "启动后没有稳定在 idle：{st}");
+        std::thread::sleep(Duration::from_millis(100));
     }
     ready
 }
@@ -557,29 +535,34 @@ pub(crate) fn wait_screen(
     }
 }
 
-/// Waits until the Session will not go on by itself (background work may start more turns): ccrpc
-/// says so with `settled` (idle for a second, nothing queued, no turn running), about a second
-/// after a turn; where no turn ended since the last one none comes, and 3 s of idle do.
+/// Waits until the Session will not go on by itself (background work may start more turns):
+/// `get_state.settled` (idle, nothing queued, no turn running, and the `settled` of the last turn
+/// out).
 pub(crate) fn settle_idle(rpc: &mut Rpc) {
     let deadline = Instant::now() + Duration::from_secs(120);
-    let mut idle_since = Some(Instant::now());
-    let st = rpc.call("settle", json!({"type": "get_state"}));
-    if st["state"] != "idle" {
-        idle_since = None;
+    for n in 1.. {
+        let st = state_consuming(rpc, &format!("settle-{n}"), |_| {});
+        if st["settled"] == true {
+            return;
+        }
+        assert!(Instant::now() < deadline, "没有稳定下来：{st}");
+        std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// `get_state`, with every line before its response taken off (handed to `each`, not kept in
+/// `seen`), as a loop waiting on events would.
+fn state_consuming(rpc: &mut Rpc, id: &str, mut each: impl FnMut(&Value)) -> Value {
+    rpc.send(json!({"id": id, "type": "get_state"}));
     loop {
-        assert!(Instant::now() < deadline, "没有稳定在 idle");
-        if idle_since.is_some_and(|t| t.elapsed() > Duration::from_secs(3)) {
-            return;
+        let v = rpc
+            .recv(Duration::from_secs(20))
+            .unwrap_or_else(|| panic!("等响应 {id} 超时"));
+        if v["type"] == "response" && v["id"] == id {
+            assert_eq!(v["success"], true, "命令 {id} 失败：{v}");
+            return v["data"].clone();
         }
-        let Some(v) = rpc.recv(Duration::from_millis(200)) else {
-            continue;
-        };
-        if v["type"] == "state" {
-            idle_since = (v["state"] == "idle").then(Instant::now);
-        } else if v["type"] == "settled" && idle_since.is_some() {
-            return;
-        }
+        each(&v);
     }
 }
 

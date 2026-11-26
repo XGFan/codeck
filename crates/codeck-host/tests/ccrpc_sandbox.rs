@@ -182,21 +182,21 @@ fn relays_a_real_session_and_logs_it() {
         app.send(&conn, &v.to_string()).unwrap();
         id
     };
-    // Idle (a startup notice offering auto mode is declined, as in ccrpc's e2e).
+    // Ready for a prompt: idle with the input box drawn (the Process File says idle before it is;
+    // env.sh turns off the offer of auto mode as the default, as ccrpc's e2e does).
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        let v = next(&rx, "idle", 60, |v| {
-            (v["type"] == "state" && v["state"] == "idle") || v["type"] == "dialog"
+        let id = send(&app, json!({"type": "get_state"}));
+        let r = next(&rx, "get_state", 20, |v| {
+            v["type"] == "response" && v["id"] == id.as_str()
         });
-        if v["type"] == "dialog" {
-            send(
-                &app,
-                json!({"type": "send_keys", "keys": ["down", "enter"]}),
-            );
-            continue;
+        let st = &r["data"];
+        if st["state"] == "idle" && st["input_ready"] == true {
+            break;
         }
-        break;
+        assert!(Instant::now() < deadline, "启动后没有稳定在 idle：{st}");
+        std::thread::sleep(Duration::from_millis(100));
     }
-    std::thread::sleep(Duration::from_secs(2));
 
     let p = send(&app, json!({"type": "prompt", "text": "MOCK-TOOL please"}));
     let pr = next(&rx, "permission_request", 60, |v| {

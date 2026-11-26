@@ -22,7 +22,7 @@ mdns = false
 env = { CLAUDE_CONFIG_DIR = "$B/cc", CCRPC_STATE_DIR = "$B/st", ANTHROPIC_BASE_URL = "http://127.0.0.1:$PORT", ANTHROPIC_AUTH_TOKEN = "mock", ANTHROPIC_MODEL = "claude-sonnet-4-5", ANTHROPIC_DEFAULT_HAIKU_MODEL = "claude-sonnet-4-5", DISABLE_AUTOUPDATER = "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1" }
 C
 chmod 600 "$B/toh/config.toml"
-printf '{"hasCompletedOnboarding":true,"projects":{"%s":{"hasTrustDialogAccepted":true}}}' "$W" > "$B/cc/.claude.json"
+printf '{"hasCompletedOnboarding":true,"hasSeenAutoDefaultNudge":true,"projects":{"%s":{"hasTrustDialogAccepted":true}}}' "$W" > "$B/cc/.claude.json"
 printf '{"permissions":{"defaultMode":"default"}}' > "$B/cc/settings.json"
 echo hello > "$B/work/a.txt"
 "$REAL" plugin generate "$B/plugin" >/dev/null
