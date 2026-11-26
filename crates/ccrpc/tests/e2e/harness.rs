@@ -514,7 +514,7 @@ pub(crate) fn wait_screen(
     id: &str,
     pred: impl Fn(&[String]) -> bool,
 ) -> Vec<String> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut n = 0;
     loop {
         n += 1;
@@ -569,7 +569,7 @@ fn state_consuming(rpc: &mut Rpc, id: &str, mut each: impl FnMut(&Value)) -> Val
 /// Polls `get_state` until the Session is idle, and returns that state: a command typed into the TUI
 /// (`/rename`, `/effort`) leaves it busy for a moment after its effect is reported, longer on a busy machine.
 pub(crate) fn until_idle(rpc: &mut Rpc) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut n = 0;
     loop {
         n += 1;

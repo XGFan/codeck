@@ -108,8 +108,8 @@ test("对话记录里的图片块离顶端太近时，预览出现在下方，�
     await page.mouse.move(0, 0);
     await place(20);
     await chip.hover();
-    await expect(preview).toHaveAttribute("data-below", "true", { timeout: 1000 });
-    await expect(preview.locator("img")).toBeVisible({ timeout: 1000 });
+    await expect(preview).toHaveAttribute("data-below", "true");
+    await expect(preview.locator("img")).toBeVisible();
     // Measured and hit-tested in one step, with the preview taking the pointer for a moment (it lets the pointer
     // through).
     const at = await preview.evaluate((p) => {

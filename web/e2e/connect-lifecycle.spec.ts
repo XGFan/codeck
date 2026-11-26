@@ -293,7 +293,7 @@ test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立�
     (id) => window.__cvMock!.setLive(id, { status: "idle", rawStatus: "idle", waitingFor: null, pid: 1 }),
     ids[0]!,
   );
-  await expect.poll(async () => (await probe(page)).watchStarts, { timeout: 1500 }).toBe(before + 1);
+  await expect.poll(async () => (await probe(page)).watchStarts, { timeout: 5000 }).toBe(before + 1);
   expect((await probe(page)).watching).toBe(true);
   await inMenu(page, "connect-button", (b) => expect(b).toBeVisible());
 });

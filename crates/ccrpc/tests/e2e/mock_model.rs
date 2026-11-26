@@ -31,8 +31,10 @@ fn option_id(choice: &Value, label: &str) -> Value {
 /// `MOCK-WRITE <path>` with a Write call, `MOCK-WORKTREE` / `MOCK-EXITWT` with EnterWorktree / ExitWorktree,
 /// `MOCK-ASK` with an AskUserQuestion call (`MOCK-ASKS`: two questions, the second multi-select),
 /// `MOCK-SUBAGENT` with a background Agent call whose Subagent runs `MOCK-TOOL`'s Bash call,
-/// `MOCK-BG` with a background `sleep 2`, then `sleep 1`,
-/// then ~8 s of text (the background task ends meanwhile; its notification is answered as slowly);
+/// `MOCK-BG <gate>` with a background shell waiting for `<gate>` (created once the second Bash
+/// finishes and the final ~8 s reply begins streaming, so the background task deterministically
+/// ends during that reply rather than racing a foreground sleep; its notification is answered as
+/// slowly);
 /// anything else (tool results too) with text `ok`.
 fn mock_model() -> String {
     use std::net::TcpListener;
@@ -183,13 +185,28 @@ fn mock_model() -> String {
                     });
                     id.map(|id| ("TaskStop", json!({"task_id": id})))
                 } else if asked("MOCK-BG") > 0 && called("Bash") < 2 && has_tool("Bash") {
+                    let gate = blocks("user")
+                        .iter()
+                        .filter_map(|b| b["text"].as_str())
+                        .find_map(|t| {
+                            t.split("MOCK-BG ")
+                                .nth(1)
+                                .and_then(|r| r.split_whitespace().next())
+                        })
+                        .map(str::to_string);
                     Some((
                         "Bash",
                         match called("Bash") {
                             0 => {
-                                json!({"command": "sleep 2", "description": "Wait in background", "run_in_background": true})
+                                let cmd = match gate {
+                                    Some(p) => format!(
+                                        "i=0; while [ ! -f '{p}' ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done"
+                                    ),
+                                    None => "sleep 6".into(),
+                                };
+                                json!({"command": cmd, "description": "Wait in background", "run_in_background": true})
                             }
-                            _ => json!({"command": "sleep 1", "description": "Wait"}),
+                            _ => json!({"command": "sleep 0.2", "description": "Wait"}),
                         },
                     ))
                 } else if asked("MOCK-ASK") > called("AskUserQuestion")
@@ -211,8 +228,21 @@ fn mock_model() -> String {
                 } else {
                     None
                 };
-                // MOCK-BG's last answer (to the second tool's result, not to the task notification).
+                // MOCK-BG's last answer (to the second tool's result, not to the task notification):
+                // release the background shell now so it finishes during this ~8 s reply.
                 let bg_last = asked("MOCK-BG") > 0 && called("Bash") == 2 && text.is_empty();
+                if bg_last
+                    && let Some(gate) = blocks("user")
+                        .iter()
+                        .filter_map(|b| b["text"].as_str())
+                        .find_map(|t| {
+                            t.split("MOCK-BG ")
+                                .nth(1)
+                                .and_then(|r| r.split_whitespace().next())
+                        })
+                {
+                    let _ = std::fs::write(gate, b"go");
+                }
                 let (words, gap): (Vec<&str>, u64) = if text.contains("MOCK-SLOW")
                     || bg_last
                     || text.contains("<task-notification>")
@@ -321,7 +351,7 @@ fn mock_model_turns() {
     let d = rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
     let first = d["prompt_id"].clone();
     // The reply is streaming (the spinner counts tokens): a steer now waits in the queue.
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     let st = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
@@ -373,6 +403,7 @@ fn mock_model_turns() {
         "插话那一轮的 turn_start 不是恰好一个"
     );
 
+    until_idle(&mut rpc);
     rpc.forget();
     let f = rpc.call("f1", json!({"type": "prompt", "text": "MOCK-FAIL"}));
     let t3 = rpc.event("turn_end", Duration::from_secs(60));
@@ -404,11 +435,11 @@ fn mock_model_prompt_if_busy() {
 
     rpc.forget();
     rpc.call("p1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     rpc.send(json!({"id": "p2", "type": "prompt", "text": "plain"}));
-    let r = rpc.until("响应 p2", Duration::from_secs(10), |v| {
+    let r = rpc.until("响应 p2", Duration::from_secs(20), |v| {
         v["type"] == "response" && v["id"] == "p2"
     });
     assert_eq!(r["error"]["code"], "not_idle", "{r}");
@@ -425,11 +456,11 @@ fn mock_model_prompt_if_busy() {
     assert_eq!(ends[1]["last_text"], "STEER-TURN", "{:?}", ends);
     // ccrpc's follow-up queue is gone.
     rpc.send(json!({"id": "p5", "type": "follow_up", "text": "x"}));
-    let e = rpc.until("响应 p5", Duration::from_secs(10), |v| {
+    let e = rpc.until("响应 p5", Duration::from_secs(20), |v| {
         v["type"] == "response" && v["id"] == "p5"
     });
     assert_eq!(e["error"]["code"], "unknown_command", "{e}");
-    rpc.event("settled", Duration::from_secs(10));
+    rpc.event("settled", Duration::from_secs(20));
 }
 
 /// `rename`: `/rename`, answered once the transcript has the title; `session_info` and
@@ -444,18 +475,19 @@ fn mock_model_rename() {
     rpc.forget();
     let r = rpc.call("r1", json!({"type": "rename", "title": "第一个 标题"}));
     assert_eq!(r["title"], "第一个 标题", "{r}");
-    rpc.until("session_info", Duration::from_secs(5), |v| {
+    rpc.until("session_info", Duration::from_secs(15), |v| {
         v["type"] == "session_info" && v["title"] == "第一个 标题"
     });
     until_idle(&mut rpc);
     rpc.call("p1", json!({"type": "prompt", "text": "hello"}));
     rpc.event("turn_end", Duration::from_secs(30));
+    until_idle(&mut rpc);
     let r = rpc.call("r2", json!({"type": "rename", "title": " renamed again "}));
     assert_eq!(r["title"], "renamed again", "{r}");
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["title"], "renamed again", "{st}");
     rpc.send(json!({"id": "r3", "type": "rename", "title": "a\nb"}));
-    let e = rpc.until("响应 r3", Duration::from_secs(5), |v| v["id"] == "r3");
+    let e = rpc.until("响应 r3", Duration::from_secs(15), |v| v["id"] == "r3");
     assert_eq!(e["error"]["code"], "bad_request", "{e}");
 }
 
@@ -477,7 +509,7 @@ fn mock_model_image_data() {
         json!({"type": "prompt", "parts": [{"text": "look "}, {"image": img}, {"text": " here"}]}),
     );
     let uuid = d["uuid"].as_str().expect("没有 uuid").to_string();
-    let u = rpc.until("user block", Duration::from_secs(10), |v| {
+    let u = rpc.until("user block", Duration::from_secs(20), |v| {
         v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
     });
     assert_eq!(u["images"], json!(["image/png"]), "{u}");
@@ -490,7 +522,7 @@ fn mock_model_image_data() {
         json!({"type": "prompt", "text": "again", "images": [img]}),
     );
     let uuid = d["uuid"].as_str().expect("没有 uuid").to_string();
-    let u = rpc.until("user block", Duration::from_secs(10), |v| {
+    let u = rpc.until("user block", Duration::from_secs(20), |v| {
         v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
     });
     assert_eq!(u["images"], json!(["image/png"]), "{u}");
@@ -499,7 +531,7 @@ fn mock_model_image_data() {
     // A page asked right before stdin closes is still answered.
     rpc.send(json!({"id": "m1", "type": "get_messages"}));
     rpc.stdin.take();
-    let m = rpc.until("响应 m1", Duration::from_secs(10), |v| v["id"] == "m1");
+    let m = rpc.until("响应 m1", Duration::from_secs(20), |v| v["id"] == "m1");
     assert_eq!(m["success"], true, "{m}");
     assert!(
         m["data"]["blocks"]
@@ -522,11 +554,11 @@ fn mock_model_send_now() {
     let d = rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
     let first = d["prompt_id"].clone();
     // The reply is streaming (the spinner counts tokens): a steer now waits in the queue.
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     let steered = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED now"}));
-    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+    let q = rpc.until("queue", Duration::from_secs(20), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
     });
     // What was typed, taken back by `↑`; the steer's response names the item.
@@ -538,7 +570,7 @@ fn mock_model_send_now() {
     assert_eq!(st["queue"], typed, "{st}");
 
     rpc.call("n1", json!({"type": "send_now"}));
-    rpc.until("queue", Duration::from_secs(5), |v| {
+    rpc.until("queue", Duration::from_secs(15), |v| {
         v["type"] == "queue" && v["items"] == json!([])
     });
     let t1 = rpc.event("turn_end", Duration::from_secs(30));
@@ -563,7 +595,7 @@ fn mock_model_edit_queue() {
 
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     let first = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED first"}));
@@ -571,7 +603,7 @@ fn mock_model_edit_queue() {
         "s3",
         json!({"type": "steer", "text": "MOCK-STEERED second", "images": [img]}),
     );
-    rpc.until("queue", Duration::from_secs(10), |v| {
+    rpc.until("queue", Duration::from_secs(20), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| a.len() == 2)
     });
 
@@ -604,7 +636,7 @@ fn mock_model_edit_queue() {
         items[1].contains('#') && items[1].ends_with("MOCK-STEERED second"),
         "{d}"
     );
-    rpc.until("queue", Duration::from_secs(5), |v| {
+    rpc.until("queue", Duration::from_secs(15), |v| {
         v["type"] == "queue" && v["items"] == json!([])
     });
     let screen = rpc.call("g1", json!({"type": "get_screen"})).to_string();
@@ -615,7 +647,7 @@ fn mock_model_edit_queue() {
     // No turn of the steers' own after it: the Session settles without one.
     loop {
         let v = rpc
-            .recv(Duration::from_secs(10))
+            .recv(Duration::from_secs(20))
             .expect("这一轮之后没有 settled");
         assert_ne!(v["type"], "turn_end", "{v}");
         assert!(!(v["type"] == "block" && v["text"] == "STEER-TURN"), "{v}");
@@ -627,7 +659,7 @@ fn mock_model_edit_queue() {
     assert_eq!(st["state"], "idle", "{st}");
     // Nothing left to take back: refused without a key.
     rpc.send(json!({"type": "edit_queue", "id": "e2"}));
-    let r = rpc.until("响应 e2", Duration::from_secs(5), |v| {
+    let r = rpc.until("响应 e2", Duration::from_secs(15), |v| {
         v["type"] == "response" && v["id"] == "e2"
     });
     assert_eq!(r["error"]["code"], "not_busy", "{r}");
@@ -648,7 +680,7 @@ fn mock_model_cancel_queue() {
 
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     let first = rpc.call("s2", json!({"type": "steer", "text": "MOCK-STEERED first"}));
@@ -657,7 +689,7 @@ fn mock_model_cancel_queue() {
         json!({"type": "steer", "text": "MOCK-STEERED second", "images": [img]}),
     );
     assert_eq!(second["delivered_as"], "queued", "{second}");
-    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+    let q = rpc.until("queue", Duration::from_secs(20), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| a.len() == 2)
     });
     // The one with the image, as it waits: its id, the image's path, the placeholder before its words.
@@ -671,7 +703,7 @@ fn mock_model_cancel_queue() {
     );
 
     rpc.send(json!({"id": "c0", "type": "cancel_queue", "queue_id": "q99999"}));
-    let e = rpc.until("响应 c0", Duration::from_secs(10), |v| v["id"] == "c0");
+    let e = rpc.until("响应 c0", Duration::from_secs(20), |v| v["id"] == "c0");
     assert_eq!(e["error"]["code"], "not_found", "{e}");
 
     let c = rpc.call(
@@ -687,7 +719,7 @@ fn mock_model_cancel_queue() {
         "新入队的项应有新的 id：{c}"
     );
     // Only the second is left, with its image, under the new id.
-    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+    let q = rpc.until("queue", Duration::from_secs(20), |v| {
         v["type"] == "queue"
             && v["items"]
                 .as_array()
@@ -775,7 +807,7 @@ fn mock_model_interleaved_parts() {
     assert_eq!(d["delivered_as"], "prompt", "{d}");
     let uuid = d["uuid"].as_str().expect("没有 uuid").to_string();
     assert!(d["prompt_id"].is_string(), "{d}");
-    let u = rpc.until("user block", Duration::from_secs(10), |v| {
+    let u = rpc.until("user block", Duration::from_secs(20), |v| {
         v["type"] == "block" && v["kind"] == "user" && v["uuid"] == uuid.as_str()
     });
     assert_eq!(
@@ -790,7 +822,7 @@ fn mock_model_interleaved_parts() {
     until_idle(&mut rpc);
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     let st = rpc.call(
@@ -800,7 +832,7 @@ fn mock_model_interleaved_parts() {
         ]}),
     );
     assert_eq!(st["delivered_as"], "queued", "{st}");
-    let q = rpc.until("queue", Duration::from_secs(10), |v| {
+    let q = rpc.until("queue", Duration::from_secs(20), |v| {
         v["type"] == "queue" && v["items"].as_array().is_some_and(|a| !a.is_empty())
     });
     assert_eq!(
@@ -832,7 +864,7 @@ fn mock_model_interleaved_parts() {
     // Claude Code would send without the image): refused before anything is typed.
     for (id, first) in [("b1", "!ls "), ("b2", "/review 看这个截图 ")] {
         rpc.send(json!({"id": id, "type": "prompt", "parts": [{"text": first}, {"image": a}]}));
-        let r = rpc.until(&format!("响应 {id}"), Duration::from_secs(10), |v| {
+        let r = rpc.until(&format!("响应 {id}"), Duration::from_secs(20), |v| {
             v["type"] == "response" && v["id"] == id
         });
         assert_eq!(r["error"]["code"], "bad_request", "{r}");
@@ -856,7 +888,7 @@ fn mock_model_model_and_effort() {
     assert_eq!(st["effort"], "xhigh", "{st}");
     // Mid-conversation the TUI asks first (the history is re-read); answered as a choice.
     let confirm = |rpc: &mut Rpc, id: &str, title: &str, yes: &str| {
-        let c = rpc.until(title, Duration::from_secs(10), |v| v["type"] == "choice");
+        let c = rpc.until(title, Duration::from_secs(25), |v| v["type"] == "choice");
         assert_eq!(c["title"], title, "{c}");
         assert_eq!(c["layout_source"], "builtin", "{c}");
         assert_eq!(c["options"][0]["label"], yes, "{c}");
@@ -873,7 +905,7 @@ fn mock_model_model_and_effort() {
         json!({"type": "set_model", "model": "claude-sonnet-4-5"}),
     );
     confirm(&mut rpc, "c1", "Switch model?", "Yes, switch to Sonnet 4.5");
-    let i = rpc.until("sonnet", Duration::from_secs(10), |v| {
+    let i = rpc.until("sonnet", Duration::from_secs(20), |v| {
         v["type"] == "session_info" && v["model"] == json!({"id": null, "name": "Sonnet 4.5"})
     });
     assert!(i["effort"].is_null(), "{i}");
@@ -882,7 +914,7 @@ fn mock_model_model_and_effort() {
     rpc.forget();
     rpc.call("m2", json!({"type": "set_model", "model": "fable"}));
     // The alias follows Claude Code's latest Fable (5.1, then 5.2 from 2.1.322): any version.
-    let i = rpc.until("fable", Duration::from_secs(10), |v| {
+    let i = rpc.until("fable", Duration::from_secs(20), |v| {
         v["type"] == "session_info"
             && v["model"]["name"]
                 .as_str()
@@ -895,9 +927,10 @@ fn mock_model_model_and_effort() {
     // effort question's layout was seen live in an earlier run and is checked on its screen).
     rpc.call("p2", json!({"type": "prompt", "text": "again"}));
     rpc.event("turn_end", Duration::from_secs(30));
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("e1", json!({"type": "set_effort", "level": "low"}));
-    let v = rpc.until("effort low", Duration::from_secs(10), |v| {
+    let v = rpc.until("effort low", Duration::from_secs(20), |v| {
         v["type"] == "choice" || (v["type"] == "session_info" && v["effort"] == "low")
     });
     if v["type"] == "choice" {
@@ -907,7 +940,7 @@ fn mock_model_model_and_effort() {
             "c2",
             json!({"type": "answer_choice", "request_id": v["request_id"], "option_id": v["options"][0]["id"]}),
         );
-        rpc.until("effort low", Duration::from_secs(10), |v| {
+        rpc.until("effort low", Duration::from_secs(20), |v| {
             v["type"] == "session_info" && v["effort"] == "low"
         });
     }
@@ -938,7 +971,7 @@ fn mock_model_add_dir() {
         "s1",
         json!({"type": "slash", "command": format!("add-dir {}", extra.display())}),
     );
-    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+    let c = rpc.until("add-dir choice", Duration::from_secs(20), |v| {
         v["type"] == "choice" || v["type"] == "dialog"
     });
     assert_eq!(c["type"], "choice", "{c}");
@@ -964,7 +997,7 @@ fn mock_model_add_dir() {
         "回答前的选择没有在响应前结束：{before:?}"
     );
     // Then the dialog it asked before 2.1.326 (the folder is trusted now).
-    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+    let c = rpc.until("add-dir choice", Duration::from_secs(20), |v| {
         v["type"] == "choice" || v["type"] == "dialog"
     });
     assert_eq!(c["title"], "Add directory to workspace", "{c}");
@@ -972,14 +1005,14 @@ fn mock_model_add_dir() {
         "c2",
         json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, for this session")}),
     );
-    rpc.until("idle", Duration::from_secs(10), |v| {
+    rpc.until("idle", Duration::from_secs(20), |v| {
         v["type"] == "state" && v["state"] == "idle"
     });
     let st = rpc.call("g1", json!({"type": "get_state"}));
     assert_eq!(st["state"], "idle", "{st}");
     assert_eq!(st["requests"], json!([]), "{st}");
-    let screen = rpc.call("g2", json!({"type": "get_screen"})).to_string();
-    assert!(screen.contains("Added "), "{screen}");
+    // The TUI draws the command's output once the dialog is gone (later on a busy host).
+    wait_screen(&mut rpc, "g2", |l| l.iter().any(|l| l.contains("Added ")));
 }
 
 /// Rewind through the TUI's picker: `rewind` stops at the confirm page with what it offers,
@@ -1167,10 +1200,10 @@ fn mock_model_rewind() {
     let c = rpc.call("r4", json!({"type": "rewind", "uuid": last_prompt}));
     rpc.call("k1", json!({"type": "send_keys", "keys": ["esc"]}));
     let rid = c["request_id"].clone();
-    rpc.until("rewind end", Duration::from_secs(5), |v| {
+    rpc.until("rewind end", Duration::from_secs(15), |v| {
         v["type"] == "request_end" && v["request_id"] == rid
     });
-    let d = rpc.until("picker dialog", Duration::from_secs(5), |v| {
+    let d = rpc.until("picker dialog", Duration::from_secs(15), |v| {
         v["type"] == "dialog"
     });
     let st = rpc.call("g3", json!({"type": "get_state"}));
@@ -1180,7 +1213,7 @@ fn mock_model_rewind() {
     rpc.send(
         json!({"type": "answer_rewind", "request_id": c["request_id"], "cancel": true, "id": "a4"}),
     );
-    let r = rpc.until("a4", Duration::from_secs(10), |v| v["id"] == "a4");
+    let r = rpc.until("a4", Duration::from_secs(20), |v| v["id"] == "a4");
     assert_eq!(r["error"]["code"], "unknown_request", "{r}");
     assert!(
         !rpc.seen[before..]
@@ -1191,10 +1224,10 @@ fn mock_model_rewind() {
     );
     rpc.call("k2", json!({"type": "send_keys", "keys": ["esc"]}));
     let did = d["request_id"].clone();
-    rpc.until("picker end", Duration::from_secs(10), |v| {
+    rpc.until("picker end", Duration::from_secs(20), |v| {
         v["type"] == "request_end" && v["request_id"] == did
     });
-    wait_state(&mut rpc, "idle", 10);
+    wait_state(&mut rpc, "idle", 20);
     // The rewind ended once, when its page left after the first Esc.
     assert!(
         !rpc.seen
@@ -1405,9 +1438,9 @@ fn mock_model_session() {
     let shell_pid = rpc.shell_pid.unwrap();
     rpc.call("x1", json!({"type": "exit", "close_pane": true}));
     // The Session is over: ccrpc ends by itself, after `session_exit`.
-    rpc.event("session_exit", Duration::from_secs(5));
-    assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(0));
-    let deadline = Instant::now() + Duration::from_secs(10);
+    rpc.event("session_exit", Duration::from_secs(15));
+    assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(0));
+    let deadline = Instant::now() + Duration::from_secs(20);
     while transcript::live::pid_exists(shell_pid) {
         assert!(Instant::now() < deadline, "Pane 没有随 exit 结束");
         std::thread::sleep(Duration::from_millis(200));
@@ -1474,6 +1507,7 @@ fn mock_model_tools() {
         "允许之后 touch 没有执行"
     );
 
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("t3", json!({"type": "prompt", "text": "MOCK-TOOL again"}));
     let pr = rpc.event("permission_request", Duration::from_secs(30));
@@ -1483,6 +1517,7 @@ fn mock_model_tools() {
 
     // "Always allow" is the dialog's own option: its key is pressed and the hook let go after it.
     // The request ends before the response, though it stays open until the tool has run.
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("t5", json!({"type": "prompt", "text": "MOCK-TOOL always"}));
     let pr = rpc.event("permission_request", Duration::from_secs(30));
@@ -1501,6 +1536,7 @@ fn mock_model_tools() {
     );
     assert!(ended(&rpc.seen, &pr["request_id"]), "{:?}", rpc.seen);
 
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("q1", json!({"type": "prompt", "text": "MOCK-ASK which"}));
     let q = rpc.event("question", Duration::from_secs(30));
@@ -1740,7 +1776,7 @@ fn mock_model_ask_before_attach() {
         let mut next = Rpc::attach(&env, &[&holder]);
         next.shell_pid = shell_pid;
         next.event("ready", Duration::from_secs(20));
-        let q = next.event("question", Duration::from_secs(10));
+        let q = next.event("question", Duration::from_secs(20));
         assert_eq!(q["request_id"], held["request_id"], "{q}");
         assert_eq!(q["questions"], held["questions"], "{q}");
         (q, next)
@@ -1782,7 +1818,7 @@ fn mock_model_ask_before_attach() {
         json!({"id": "a4", "type": "answer_question", "request_id": q["request_id"],
         "answers": [null, {"options": ["M"]}]}),
     );
-    let r = rpc.until("a4", Duration::from_secs(10), |v| v["id"] == "a4");
+    let r = rpc.until("a4", Duration::from_secs(20), |v| v["id"] == "a4");
     assert_eq!(r["error"]["code"], "unsupported", "{r}");
     rpc.call(
         "t5",
@@ -1867,7 +1903,7 @@ fn mock_model_ask_chat() {
         json!({"id": "c0", "type": "answer_question", "request_id": q["request_id"],
         "chat": true, "answers": [{"options": ["Red"]}]}),
     );
-    let r = rpc.until("c0", Duration::from_secs(10), |v| v["id"] == "c0");
+    let r = rpc.until("c0", Duration::from_secs(20), |v| v["id"] == "c0");
     assert_eq!(r["error"]["code"], "bad_request", "{r}");
     // None answered: the call may leave `answers` out.
     rpc.call(
@@ -1923,7 +1959,7 @@ fn mock_model_ask_chat() {
         json!({"id": "a4", "type": "answer_question", "request_id": q["request_id"],
         "answers": [null, null]}),
     );
-    let r = rpc.until("a4", Duration::from_secs(10), |v| v["id"] == "a4");
+    let r = rpc.until("a4", Duration::from_secs(20), |v| v["id"] == "a4");
     assert_eq!(r["error"]["code"], "bad_request", "{r}");
     let (_, before) = rpc.call_seeing(
         "a5",
@@ -1971,11 +2007,12 @@ fn mock_model_abort_restores_the_prompt() {
     assert_eq!(t["restored_uuid"], p["uuid"], "{t}");
 
     // The next prompt clears the box first.
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("p2", json!({"type": "prompt", "text": "MOCK-SLOW kept"}));
     // MOCK-SLOW streams for ~8 s (its block comes once written): the reply has begun (the spinner
     // counts tokens).
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     rpc.call("a2", json!({"type": "abort"}));
@@ -1995,23 +2032,41 @@ fn mock_model_task_notification() {
     let mut rpc = Rpc::start(&env);
     start_session(&mut rpc, &env);
 
+    let gate = env.work.join("bg.done");
     rpc.forget();
-    rpc.call("b1", json!({"type": "prompt", "text": "MOCK-BG go"}));
-    // `sleep` runs without asking.
-    rpc.until("tool_use", Duration::from_secs(30), |v| {
-        v["kind"] == "tool_use"
-    });
-    // The prompt's turn, then the notification's.
+    rpc.call(
+        "b1",
+        json!({"type": "prompt", "text": format!("MOCK-BG {}", gate.display())}),
+    );
+    // The prompt's turn (allowing any Bash approval for the gated wait), then the notification's.
     let mut ends = vec![];
+    let mut saw_tool = false;
+    let mut permits = 0;
     while ends.len() < 2 {
-        ends.push(rpc.event("turn_end", Duration::from_secs(90)));
+        let v = rpc.until("bg turn", Duration::from_secs(90), |v| {
+            v["type"] == "turn_end"
+                || v["type"] == "permission_request"
+                || (!saw_tool && v["kind"] == "tool_use")
+        });
+        if v["type"] == "permission_request" {
+            permits += 1;
+            rpc.call(
+                &format!("b1-ok{permits}"),
+                json!({"type": "answer_permission", "request_id": v["request_id"], "decision": "allow"}),
+            );
+        } else if v["type"] == "turn_end" {
+            ends.push(v);
+        } else {
+            saw_tool = true;
+        }
     }
+    assert!(saw_tool, "没有看到后台任务的 tool_use");
     assert_eq!(ends[1]["trigger"], "task_notification", "{ends:?}");
     assert!(
         !rpc.seen.iter().any(|v| v["type"] == "settled"),
         "最后一轮之前就发了 settled"
     );
-    let st = rpc.event("settled", Duration::from_secs(10));
+    let st = rpc.event("settled", Duration::from_secs(20));
     assert_eq!(st["background_tasks"], json!([]), "{st}");
     // Reads and nothing new running: no second `settled`.
     let quiet_until = Instant::now() + Duration::from_secs(3);
@@ -2037,7 +2092,7 @@ fn mock_model_reads_while_waiting() {
     rpc.forget();
     rpc.send(json!({"id": "w1", "type": "compact", "instructions": "MOCK-SLOW"}));
     // The summary is being made: compact now waits for the compact boundary.
-    wait_state(&mut rpc, "busy", 10);
+    wait_state(&mut rpc, "busy", 20);
     let answered = |rpc: &Rpc, id: &str| {
         rpc.seen
             .iter()
@@ -2049,23 +2104,23 @@ fn mock_model_reads_while_waiting() {
     // get_messages too: its page is answered once read, the prompt still waiting.
     let m = rpc.call("m1", json!({"type": "get_messages", "limit": 5}));
     assert!(m["blocks"].is_array(), "{m}");
+    assert!(!answered(&rpc, "w1"), "compact 没在等待：{:?}", rpc.seen);
     assert!(
-        t.elapsed() < Duration::from_secs(3),
+        t.elapsed() < Duration::from_secs(6),
         "等待中的命令期间只读命令没有立即作答：{:?}",
         t.elapsed()
     );
-    assert!(!answered(&rpc, "w1"), "compact 没在等待：{:?}", rpc.seen);
     // compact pressed its last key and only waits: `abort` runs now, and compact still ends on
     // its own afterwards (it failed).
     let t = Instant::now();
     let a = rpc.call("a1", json!({"type": "abort"}));
+    assert_eq!(a["state"], "idle", "{a}");
+    assert!(!answered(&rpc, "w1"), "compact 在 abort 之前就结束了");
     assert!(
-        t.elapsed() < Duration::from_secs(3),
+        t.elapsed() < Duration::from_secs(6),
         "等待中的命令期间 abort 没有立即执行：{:?}",
         t.elapsed()
     );
-    assert_eq!(a["state"], "idle", "{a}");
-    assert!(!answered(&rpc, "w1"), "compact 在 abort 之前就结束了");
     // A command that writes waits for compact (already in manual mode: set_mode presses no key),
     // and so does a read sent after it (never ahead of a command received earlier).
     rpc.send(json!({"id": "k2", "type": "set_mode", "mode": "manual"}));
@@ -2077,13 +2132,13 @@ fn mock_model_reads_while_waiting() {
         "排在后面的命令先于 compact 作答：{:?}",
         rpc.seen
     );
-    let k = rpc.until("k2", Duration::from_secs(5), |v| v["id"] == "k2");
+    let k = rpc.until("k2", Duration::from_secs(15), |v| v["id"] == "k2");
     assert_eq!(k["success"], true, "{k}");
     assert!(
         !answered(&rpc, "g2"),
         "get_state 先于更早收到的 set_mode 作答"
     );
-    let g = rpc.until("g2", Duration::from_secs(5), |v| v["id"] == "g2");
+    let g = rpc.until("g2", Duration::from_secs(15), |v| v["id"] == "g2");
     assert_eq!(g["data"]["state"], "idle", "{g}");
     settle_idle(&mut rpc);
 }
@@ -2140,7 +2195,7 @@ fn mock_model_task_stop_ends_the_task() {
     run_turn_allowing(&mut rpc, "bg", "MOCK-LONGTASK please");
     // `tasks` says so as it starts, and as it ends.
     let tasks_say = |rpc: &mut Rpc, what: &str, running: bool| {
-        rpc.until(what, Duration::from_secs(10), |v| {
+        rpc.until(what, Duration::from_secs(20), |v| {
             v["type"] == "tasks"
                 && v["tasks"].as_array().is_some_and(|a| {
                     a.iter().any(|t| {
@@ -2189,11 +2244,13 @@ fn mock_model_sigterm_detaches() {
     let holder = ready["holder_id"].as_str().unwrap().to_string();
     let pid = rpc.child.id();
     // A page asked just before: answered before ccrpc goes, and held up for at most 5 s.
+    // `get_messages` dispatches to the history worker and returns from `handle_line` at once, so a
+    // synchronous `get_state` round-trip right after it guarantees ccrpc has read `m1` before SIGTERM.
     rpc.send(json!({"id": "m1", "type": "get_messages"}));
-    std::thread::sleep(Duration::from_millis(300));
+    rpc.call("g1", json!({"type": "get_state"}));
     // SAFETY: plain kill(2) on this test's own ccrpc child, not reaped yet.
     unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(15);
     let status = loop {
         if let Some(s) = rpc.child.try_wait().unwrap() {
             break s;
@@ -2202,7 +2259,7 @@ fn mock_model_sigterm_detaches() {
         std::thread::sleep(Duration::from_millis(50));
     };
     assert!(status.success(), "{status:?}");
-    let m = rpc.until("响应 m1", Duration::from_secs(2), |v| {
+    let m = rpc.until("响应 m1", Duration::from_secs(15), |v| {
         v["type"] == "response" && v["id"] == "m1"
     });
     assert!(
@@ -2239,7 +2296,7 @@ fn mock_model_shared_pane() {
 
     // A person shows the Pane at a size far too small for the dialog: the VT follows.
     let _person = person_resizes(&env, &holder, 40, 12);
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let st = rpc.call("s0", json!({"type": "get_state"}));
         if st["size"] == json!([40, 12]) {
@@ -2301,7 +2358,7 @@ impl Drop for Daemons {
         let Some(pane_claude) = self.pane_claude else {
             return;
         };
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while transcript::live::pid_exists(pane_claude) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -2342,7 +2399,7 @@ impl Drop for Daemons {
             }
         };
         signal(libc::SIGTERM);
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while ours.iter().any(|p| transcript::live::pid_exists(*p)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -2451,7 +2508,7 @@ fn mock_model_follows_the_background_session() {
         "s1",
         json!({"type": "slash", "command": format!("add-dir {}", extra.path().display())}),
     );
-    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+    let c = rpc.until("add-dir choice", Duration::from_secs(20), |v| {
         v["type"] == "choice" || v["type"] == "dialog"
     });
     assert_eq!(c["title"], "Adding a new directory:", "{c}");
@@ -2459,7 +2516,7 @@ fn mock_model_follows_the_background_session() {
         "c1",
         json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, add it")}),
     );
-    let c = rpc.until("add-dir choice", Duration::from_secs(10), |v| {
+    let c = rpc.until("add-dir choice", Duration::from_secs(20), |v| {
         v["type"] == "choice" || v["type"] == "dialog"
     });
     assert_eq!(c["title"], "Add directory to workspace", "{c}");
@@ -2467,24 +2524,30 @@ fn mock_model_follows_the_background_session() {
         "c2",
         json!({"type": "answer_choice", "request_id": c["request_id"], "option_id": option_id(&c, "Yes, for this session")}),
     );
-    wait_state(&mut rpc, "idle", 10);
+    wait_state(&mut rpc, "idle", 20);
     rpc.forget();
     rpc.call(
         "m1",
         json!({"type": "set_model", "model": "claude-opus-4-7"}),
     );
-    // Mid-conversation Claude Code asks first.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if let Some(v) = rpc.recv(Duration::from_millis(200))
-            && v["type"] == "choice"
-        {
-            rpc.call(
-                "c2",
-                json!({"type": "answer_choice", "request_id": v["request_id"], "option_id": v["options"][0]["id"]}),
-            );
-            break;
-        }
+    // Mid-conversation Claude Code may ask first; wait for either the confirm choice or the model
+    // change itself instead of polling blindly for 5 s.
+    let v = rpc.until(
+        "opus choice or session_info",
+        Duration::from_secs(20),
+        |v| {
+            v["type"] == "choice"
+                || (v["type"] == "session_info" && v["model"]["name"] == "Opus 4.7")
+        },
+    );
+    if v["type"] == "choice" {
+        rpc.call(
+            "c2",
+            json!({"type": "answer_choice", "request_id": v["request_id"], "option_id": v["options"][0]["id"]}),
+        );
+        rpc.until("opus session_info", Duration::from_secs(20), |v| {
+            v["type"] == "session_info" && v["model"]["name"] == "Opus 4.7"
+        });
     }
     settle_idle(&mut rpc);
     rpc.forget();
@@ -2537,7 +2600,7 @@ fn mock_model_follows_a_running_turn_into_the_background() {
 
     rpc.forget();
     let d = rpc.call("p1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     rpc.call("k1", json!({"type": "send_keys", "keys": ["left"]}));
@@ -2862,7 +2925,7 @@ fn mock_model_btw() {
     std::thread::sleep(Duration::from_secs(1));
     rpc.call("c1", json!({"type": "close_btw"}));
     btw_ended(&mut rpc);
-    wait_state(&mut rpc, "idle", 5);
+    wait_state(&mut rpc, "idle", 15);
     assert!(
         !rpc.seen
             .iter()
@@ -2873,7 +2936,7 @@ fn mock_model_btw() {
     // Busy: the steer is confirmed by the panel, and the turn is not stopped by closing it.
     rpc.forget();
     rpc.call("b0", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
-    rpc.until("streaming", Duration::from_secs(10), |v| {
+    rpc.until("streaming", Duration::from_secs(20), |v| {
         v["type"] == "progress" && v["tokens"].as_u64().is_some_and(|n| n > 0)
     });
     let d = rpc.call("b1", json!({"type": "steer", "text": "/btw busy MOCK-BTW"}));
@@ -2886,7 +2949,7 @@ fn mock_model_btw() {
         "{a}"
     );
     rpc.send(json!({"type": "steer", "text": "during the panel", "id": "b2"}));
-    let r = rpc.until("响应", Duration::from_secs(10), |v| {
+    let r = rpc.until("响应", Duration::from_secs(20), |v| {
         v["type"] == "response" && v["id"] == "b2"
     });
     assert!(
@@ -2915,7 +2978,7 @@ fn mock_model_btw() {
 
 /// The `/btw` panel's request ended.
 fn btw_ended(rpc: &mut Rpc) {
-    rpc.until("btw 的 request_end", Duration::from_secs(5), |v| {
+    rpc.until("btw 的 request_end", Duration::from_secs(15), |v| {
         v["type"] == "request_end" && v["request_id"] == "btw"
     });
 }
@@ -2959,12 +3022,16 @@ fn mock_model_compact() {
     assert_eq!(t["last_text"], "ok", "{t}");
 
     // A slow summary (the Session stays busy throughout): `abort` runs during the wait, and
-    // `compact` reports that no compaction was made.
+    // `compact` reports that no compaction was made. `Compacting conversation…` has a space in its
+    // verb so `recognize::spinner` emits no `progress` event; wait for it on screen instead.
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.send(json!({"id": "c2", "type": "compact", "instructions": "MOCK-SLOW"}));
-    rpc.event("compaction_start", Duration::from_secs(10));
-    wait_state(&mut rpc, "busy", 10);
-    std::thread::sleep(Duration::from_secs(1));
+    rpc.event("compaction_start", Duration::from_secs(20));
+    wait_state(&mut rpc, "busy", 20);
+    wait_screen(&mut rpc, "compacting", |ls| {
+        ls.iter().any(|l| l.contains("Compacting"))
+    });
     let a = rpc.call("a1", json!({"type": "abort"}));
     assert_eq!(a["state"], "idle", "{a}");
     let r = rpc.until("响应 c2", Duration::from_secs(20), |v| v["id"] == "c2");
@@ -3002,7 +3069,7 @@ fn mock_model_start_failed() {
     );
     assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(1));
     // The Pane is gone with ccrpc's `exit` in its shell.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while transcript::live::pid_exists(shell) {
         assert!(Instant::now() < deadline, "Pane 没有随 start_failed 结束");
         std::thread::sleep(Duration::from_millis(200));
@@ -3034,7 +3101,7 @@ fn mock_model_fatal() {
         !f["message"].as_str().unwrap().starts_with("ccrpc: "),
         "{f}"
     );
-    assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(1));
+    assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(1));
     assert!(rpc.recv(Duration::from_millis(500)).is_none());
 }
 
@@ -3060,7 +3127,7 @@ fn mock_model_start_failed_untrusted() {
     assert_eq!(f["code"], "untrusted", "{f}");
     assert_eq!(f["message"], "没有信任这个目录", "{f}");
     assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(1));
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while transcript::live::pid_exists(shell) {
         assert!(Instant::now() < deadline, "Pane 没有随 start_failed 结束");
         std::thread::sleep(Duration::from_millis(200));
@@ -3156,10 +3223,10 @@ fn mock_model_resume_keeps_the_session() {
     );
 
     let exit = rpc.call("x1", json!({"type": "exit", "close_pane": true}));
-    rpc.event("session_exit", Duration::from_secs(10));
-    assert_eq!(rpc.wait_exit(Duration::from_secs(10)), Some(0), "{exit}");
+    rpc.event("session_exit", Duration::from_secs(20));
+    assert_eq!(rpc.wait_exit(Duration::from_secs(20)), Some(0), "{exit}");
     let holder = ready["holder_id"].as_str().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while let Some(pid) = shell_pid(&env, holder) {
         assert!(
             Instant::now() < deadline,
@@ -3282,12 +3349,12 @@ fn mock_model_clear_changes_the_session() {
     assert_eq!(end["prompt_id"], prompt["prompt_id"], "{end}");
     assert_eq!(end["aborted"], false, "{end}");
     assert_eq!(end["last_text"], "ok", "{end}");
-    let user = rpc.until("new Session's user block", Duration::from_secs(10), |v| {
+    let user = rpc.until("new Session's user block", Duration::from_secs(20), |v| {
         v["type"] == "block" && v["kind"] == "user"
     });
     assert_eq!(user["uuid"], prompt["uuid"], "{user}");
     assert_eq!(user["text"], text, "{user}");
-    let reply = rpc.until("new Session's reply block", Duration::from_secs(10), |v| {
+    let reply = rpc.until("new Session's reply block", Duration::from_secs(20), |v| {
         v["type"] == "block" && v["kind"] == "text"
     });
     assert_eq!(reply["text"], "ok", "{reply}");

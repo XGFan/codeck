@@ -39,12 +39,11 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 - 已在用例里处理：启动时 ccrpc 报出的 `dialog(waiting_for: startup)`（进程文件出现前的 shell 回显，按 spec 会原地更新）不再当成错误；`ready` 时已经 idle 也算启动完；发 `prompt` / `exit` / `compact` 前先等 idle，按 `prompt_id` 认本轮的 `turn_end`。
 - 和启动等待 0.5s / 1.5s 无关：两边交替对比，作答类全部成功。
 - 已改：`start_session` 与 `settle_idle` 不再按时间推断，改为轮询 `get_state` 新增的 `input_ready`（输入框已画好）与 `settled`；测试配置写上 `hasSeenAutoDefaultNudge`，Opus 启动后不再晚弹 auto mode 提议（它曾挡住第一个 `prompt`）。
-- 还没做（用例里的固定等待，2026-11-26 盘点过）：
-  - `task_notification`：满载下前台的 `sleep 1` 比后台的 `sleep 2` 晚结束，通知并进同一轮（见过 4 次），后台改长或改成等标记文件。
-  - `follows_the_background_session*`：`/model` 后固定看 5 秒有没有 `choice`，改成同时等 `choice` 或 `session_info`。
-  - `harness.rs` 的 `wait_screen` 5 秒、`until_idle` 10 秒与 `mock_model.rs` 里 2–10 秒的期限在满载下偏紧（`follows_the_background_session_of_a_second_pane` 见过 1 次），期限只是上限，放宽不拖慢。
+- 已改（用例里的固定等待，2026-11-26 盘点过）：`task_notification` 的后台任务改为等门控文件、确定在本轮回复期间结束；`follows_the_background_session` 的 `/model` 同时等 `choice` 或 `session_info`；`compact` 等屏幕上出现 Compacting 再中止；`sigterm_detaches` 用 `get_state` 往返代替 300ms；`add_dir` 等屏幕上出现命令输出；只是上限的期限放宽（`wait_screen` 5s→20s、`until_idle` 10s→20s、`mock_model.rs` 里 2–10s 的放到 15–25s）；`turn_end` 后紧接着发要求 idle 的命令的 8 处先等 idle。
+- 还没做：
   - `follows_the_background_session`：空闲的整套里见过 1 次第一轮 `turn_end` 的 `usage` 全为 0（第二轮正常），像是 `turn_end` 先于 transcript 里带用量的条目被读到；单跑 5 次没复现。
-  - `turn_end` 先于状态回到 idle，调用方紧接着发 `prompt` 会被拒（`not_idle`），机器忙时间隔更长；按 spec 是调用方要等 idle，要不要在 ccrpc 里给短宽限没定。
+  - `turn_end` 先于状态回到 idle，调用方紧接着发 `prompt` 会被拒（`not_idle`），机器忙时间隔更长；用例里已在命令前等 idle，按 spec 是调用方要等，要不要在 ccrpc 里给短宽限没定。
+  - 负向等待（「N ms 内不发生」）与 `real.rs` 里的固定 sleep 没动。
 
 ## 待确认
 

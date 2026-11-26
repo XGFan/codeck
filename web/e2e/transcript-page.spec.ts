@@ -87,8 +87,18 @@ test.describe("手指点按", () => {
     const t = page.getByTestId("transcript");
     await expect(t.locator("[data-row]").first()).toBeVisible();
     await t.evaluate((e) => (e.scrollTop = e.scrollHeight / 2));
-    await page.waitForTimeout(300);
-    const before = await t.evaluate((e) => e.scrollTop);
+    let last = -1;
+    await expect
+      .poll(async () => {
+        const cur = await t.evaluate(
+          (e) => new Promise<number>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(e.scrollTop)))),
+        );
+        const stable = cur > 0 && cur === last;
+        last = cur;
+        return stable;
+      })
+      .toBe(true);
+    const before = last;
     // Off the scrollbar's thumb (halfway down, as the list is): where a click would page up.
     const box = (await t.boundingBox())!;
     await page.touchscreen.tap(box.x + box.width - 3, box.y + 80);
