@@ -3,6 +3,31 @@
 
 use super::*;
 
+/// How long [`Engine::press_ask_key`] waits for a key to change the dialog.
+const ASK_KEY_WAIT: Duration = Duration::from_secs(10);
+
+/// The AskUserQuestion dialog on the screen as a key changes it: all but where its cursor is.
+fn ask_state(s: &Screen) -> Option<recognize::AskScreen> {
+    let mut a = recognize::ask(&s.lines)?;
+    if let recognize::AskScreen::Question(q) = &mut a {
+        q.cursor_row = None;
+        for o in &mut q.options {
+            o.cursor = false;
+        }
+    }
+    Some(a)
+}
+
+/// The row the cursor of the AskUserQuestion page on the screen is on, and its first option's.
+fn ask_cursor(s: &Screen) -> Option<(usize, Option<usize>)> {
+    match recognize::ask(&s.lines)? {
+        recognize::AskScreen::Question(q) => {
+            Some((q.cursor_row?, q.options.first().map(|o| o.row)))
+        }
+        recognize::AskScreen::Review { .. } => None,
+    }
+}
+
 /// A main-line AskUserQuestion call as the plugin recorded it ([`hook::read_asks`]).
 pub(super) struct RecordedAsk {
     pub(super) call: tail::PendingTool,
@@ -862,10 +887,10 @@ impl Engine {
         let skipped: Vec<bool> = (0..questions.len()).map(|i| answer(i).is_none()).collect();
         self.refuse_answered_skips(&questions, &skipped)?;
         // While the hook runs the dialog takes no number keys: let it go (no decision, so the
-        // dialog stays), then give the dialog a moment.
+        // dialog stays). It drops them a while longer (see `press_ask_key`): give it a moment.
         if let Some(stream) = held.and_then(|i| self.requests[i].reply.take()) {
             let _ = hook::send_reply(stream, None);
-            std::thread::sleep(Duration::from_millis(800));
+            self.wait_until(DIALOG_SETTLE, |_| false);
         }
         let tabbed = questions.len() > 1;
         for &(q, a) in &plan {
@@ -881,7 +906,7 @@ impl Engine {
                 }
                 None if tabbed => {
                     self.ask_screen_of(q)?;
-                    self.keys(key::RIGHT)?;
+                    self.press_ask_key(key::RIGHT)?;
                 }
                 None => {}
             }
@@ -899,7 +924,7 @@ impl Engine {
             }
             // Back one tab at a time, each seen before the next key.
             for &(q, _) in plan[target..].iter().rev() {
-                self.keys(key::LEFT)?;
+                self.press_ask_key(key::LEFT)?;
                 self.ask_screen_of(q)?;
             }
         }
@@ -907,9 +932,77 @@ impl Engine {
         let Some(n) = page.chat else {
             return Err(self.unrecognized("answer_question", None));
         };
-        self.keys(n.to_string().as_bytes())?;
-        self.answered(request_id);
-        self.wait_leave_request(request_id)
+        self.press_ask_key(n.to_string().as_bytes())?;
+        self.answered_on_screen(request_id)
+    }
+
+    /// Presses `bytes` on the AskUserQuestion dialog and waits until the dialog has changed (other
+    /// than where its cursor is). Just after its hook is let go the dialog drops number keys for a
+    /// while (a few hundred ms, longer on a busy host; arrow keys it takes), and a dropped key
+    /// leaves it as it was. A key with no effect yet is not pressed again on that alone (on a busy
+    /// host it may only be slow to show): an arrow goes after it, and only once the arrow has
+    /// moved the cursor with the rest of the dialog unchanged (keys are read in order, so the key
+    /// was read and dropped) does the key go again.
+    fn press_ask_key(&mut self, bytes: &[u8]) -> std::result::Result<(), CmdErr> {
+        let Some((before, _)) = self.wait_screen(Duration::from_secs(3), |_, s| ask_state(s))
+        else {
+            return Err(self.unrecognized("answer_question", None));
+        };
+        let changed = |s: &Screen| ask_state(s).as_ref() != Some(&before);
+        let deadline = Instant::now() + ASK_KEY_WAIT;
+        self.keys(bytes)?;
+        loop {
+            if self
+                .wait_screen(Duration::from_secs(1), |_, s| changed(s).then_some(()))
+                .is_some()
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return err("timeout", "提问框 10 秒内没有响应按键");
+            }
+            // The Review tab shows no cursor: wait on.
+            let Some((row, first)) = self.screen().ok().as_ref().and_then(ask_cursor) else {
+                continue;
+            };
+            // Down off the first row, else up: neither wraps around.
+            self.keys(if Some(row) == first {
+                key::DOWN
+            } else {
+                key::UP
+            })?;
+            let seen = self.wait_screen(Duration::from_secs(2), |_, s| {
+                if changed(s) {
+                    Some(true)
+                } else {
+                    ask_cursor(s).filter(|&(r, _)| r != row).map(|_| false)
+                }
+            });
+            match seen {
+                Some((true, _)) => return Ok(()),
+                Some((false, _)) => {
+                    crate::clog!(
+                        "answer_question: {:?} dropped, pressed again",
+                        String::from_utf8_lossy(bytes)
+                    );
+                    self.keys(bytes)?;
+                }
+                // Neither key read yet: wait on.
+                None => {}
+            }
+        }
+    }
+
+    /// After the last key of an answer given on the dialog: the request is over once the dialog
+    /// has moved on. Still waiting after 10 s, nothing is ended: the request stays up, to be
+    /// answered again.
+    fn answered_on_screen(&mut self, request_id: &str) -> CmdResult {
+        let res = self.wait_leave_request(request_id)?;
+        self.reported.answered(request_id);
+        self.resolve(request_id);
+        // Its `request_end` before the response.
+        self.sync_requests();
+        Ok(res)
     }
 
     /// The dialog's page of `question` (one entry of the call's `questions`; its title, options
@@ -1002,6 +1095,7 @@ impl Engine {
         }
         let skipped: Vec<bool> = answers.iter().map(Option::is_none).collect();
         self.refuse_answered_skips(&questions, &skipped)?;
+        self.settle_dialog();
         let mut tabbed = false;
         for (q, a) in plan {
             if !self.request_is(&WaitKind::Question, request_id) {
@@ -1016,7 +1110,7 @@ impl Engine {
                 // not answered.
                 None => {
                     tabbed |= self.ask_screen_of(q)?.tabbed;
-                    self.keys(key::RIGHT)?;
+                    self.press_ask_key(key::RIGHT)?;
                 }
             }
         }
@@ -1030,10 +1124,9 @@ impl Engine {
             let Some((submit, _)) = review else {
                 return Err(self.unrecognized("answer_question", None));
             };
-            self.keys(submit.to_string().as_bytes())?;
+            self.press_ask_key(submit.to_string().as_bytes())?;
         }
-        self.answered(request_id);
-        self.wait_leave_request(request_id)
+        self.answered_on_screen(request_id)
     }
 
     /// One question of [`Self::answer_question_on_screen`], on its own page (see
@@ -1061,7 +1154,7 @@ impl Engine {
                 let Some(n) = q.other else {
                     return Err(self.unrecognized("answer_question", Some(&s)));
                 };
-                self.keys(n.to_string().as_bytes())?;
+                self.press_ask_key(n.to_string().as_bytes())?;
                 // Type only once the free-text field is active (digits would pick options).
                 let editing =
                     self.wait_screen(Duration::from_secs(2), |_, s| {
@@ -1087,7 +1180,7 @@ impl Engine {
                 let Some(o) = q.options.iter().find(|o| o.label == chosen[0]) else {
                     return Err(self.unrecognized("answer_question", Some(&s)));
                 };
-                self.keys(o.number.to_string().as_bytes())?;
+                self.press_ask_key(o.number.to_string().as_bytes())?;
             }
             Answer::Options(chosen) => {
                 if q.options.len() != q.options.iter().filter(|o| o.checked.is_some()).count() {
@@ -1095,14 +1188,16 @@ impl Engine {
                 }
                 for o in &q.options {
                     if o.checked != Some(chosen.contains(&o.label)) {
-                        self.keys(o.number.to_string().as_bytes())?;
+                        self.press_ask_key(o.number.to_string().as_bytes())?;
                     }
                 }
                 if q.tabbed {
-                    self.keys(key::RIGHT)?;
+                    self.press_ask_key(key::RIGHT)?;
                 } else {
-                    // A single multi-select question: move the cursor onto the Submit row, Enter.
-                    let (Some(sub), Some(cur)) = (q.submit_row, q.cursor_row) else {
+                    // A single multi-select question: move the cursor onto the Submit row, Enter
+                    // (from where it is now: a key pressed again moved it).
+                    let now = self.ask_screen_of(question)?;
+                    let (Some(sub), Some(cur)) = (now.submit_row, now.cursor_row) else {
                         return Err(self.unrecognized("answer_question", Some(&s)));
                     };
                     let rows_between = q

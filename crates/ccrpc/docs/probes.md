@@ -153,7 +153,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - Other：按 `Type something.` 的编号进入输入状态（提示行出现 `ctrl+g to edit in Vim`），写入文字后回车。多选题里是 `[ ] Type something`。
 - 结果记录为 tool_result：`Your questions have been answered: "Q1"="A1", "Q2"="a, b". …`，多选答案以 `, ` 连接。
 - 2.1.318：题目画在 `│ ` 引用条里（每行开头），中文折行处不加空格；按键与上面相同（`mock_model_ask_before_attach` 实测单题与两题）。提问出现时没有 ccrpc 连着，插件的 hook 无输出返回，对话框照常等人作答。
-- Chat about this（2.1.318，`mock_model_ask_chat`）：每题的选项下有分隔线和编号的 `Chat about this`（单选在 `Type something.` 之后，多选在 `Submit` 行之后），按编号即生效；结果记为拒绝的 tool_result（`The user doesn't want to proceed with this tool use. … The user wants to clarify these questions. … Questions asked:`，每题 `- "题目"` 下一行 `  Answer: …` 或 `  (No answer provided)`），屏幕显示 `User declined to answer questions`，模型接着回复，本轮继续。多题时 `right` / `left` 在题目与 Review 之间切换，没答的题可跳过；多选题勾上就算答了（不必到 Submit）。主线的 PermissionRequest hook 还在运行时，对话框不接数字键与方向键（Enter 照常选中光标所在项）；hook 无输出返回后约几百毫秒才接，紧接着按的键会丢。
+- Chat about this（2.1.318，`mock_model_ask_chat`）：每题的选项下有分隔线和编号的 `Chat about this`（单选在 `Type something.` 之后，多选在 `Submit` 行之后），按编号即生效；结果记为拒绝的 tool_result（`The user doesn't want to proceed with this tool use. … The user wants to clarify these questions. … Questions asked:`，每题 `- "题目"` 下一行 `  Answer: …` 或 `  (No answer provided)`），屏幕显示 `User declined to answer questions`，模型接着回复，本轮继续。多题时 `right` / `left` 在题目与 Review 之间切换，没答的题可跳过；多选题勾上就算答了（不必到 Submit）。主线的 PermissionRequest hook 还在运行时，对话框不接数字键（Enter 照常选中光标所在项）。2.1.332（`mock_model_ask_chat`）：hook 运行期间 `up` / `down` 照常移动光标；hook 无输出返回后，数字键与 `left` / `right` 还要过一会儿才接，放行后立即按的必丢（空闲时 111ms 按的丢、307ms 的生效，机器忙时更久），与 hook 进程是否已退出无关（把它的退出推迟 1.6s，0.8s 时按的键照样生效）。键按顺序读：没生效的键后面补一个 `down`，光标动了而对话框别处没变，就说明前一个键已被读到并丢掉，可以安全地再按。
 
 ## hooks 与插件（2.1.317）
 

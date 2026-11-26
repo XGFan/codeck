@@ -258,6 +258,34 @@ impl Engine {
         r
     }
 
+    /// `Esc Esc` on the empty input box, until the picker shows. On a busy host the pair may not
+    /// open it (the box stays as it was): pressed again, at most twice, while the Session is still
+    /// idle with the box empty 3 s on.
+    fn open_picker(&mut self) -> std::result::Result<Option<recognize::RewindPicker>, CmdErr> {
+        for attempt in 0..3 {
+            if attempt > 0 {
+                self.require(self.state == State::Idle, "not_idle")?;
+                let empty = self
+                    .screen()
+                    .ok()
+                    .and_then(|s| recognize::input_text(&s))
+                    .is_some_and(|t| t.is_empty());
+                if !empty {
+                    return Ok(None);
+                }
+                crate::clog!("rewind: Esc Esc did not open the picker, pressed again");
+            }
+            self.keys(key::ESC)?;
+            self.keys(key::ESC)?;
+            if let Some((p, _)) =
+                self.wait_screen(Duration::from_secs(3), |_, s| rewind_picker(&s.lines))
+            {
+                return Ok(Some(p));
+            }
+        }
+        Ok(None)
+    }
+
     /// Waits for the picker with its cursor on row `pos` (from the top).
     fn picker_at(&mut self, pos: usize, timeout: Duration) -> Option<recognize::RewindPicker> {
         self.wait_screen(timeout, |_, s| {
@@ -271,11 +299,7 @@ impl Engine {
         self.clear_input()?;
         // A turn may have started meanwhile: Esc would interrupt it.
         self.require(self.state == State::Idle, "not_idle")?;
-        self.keys(key::ESC)?;
-        self.keys(key::ESC)?;
-        let Some((picker, _)) =
-            self.wait_screen(Duration::from_secs(3), |_, s| rewind_picker(&s.lines))
-        else {
+        let Some(picker) = self.open_picker()? else {
             return Err(self.unrecognized("rewind 的选择器", None));
         };
         if picker.cursor() != Some(recognize::REWIND_CURRENT) {
@@ -286,10 +310,27 @@ impl Engine {
         };
         // Pages met so far per group of prompts quoted alike.
         let mut met: HashMap<Vec<usize>, usize> = HashMap::new();
+        let mut first = true;
         while pos > 0 {
             self.keys(key::UP)?;
             pos -= 1;
-            let Some(picker) = self.picker_at(pos, Duration::from_secs(1)) else {
+            let mut picker = self.picker_at(pos, Duration::from_secs(3));
+            // Its first key, just after the picker shows, may be dropped (or slow to show on a
+            // busy host): the cursor still on `(current)`, press once more.
+            if std::mem::replace(&mut first, false)
+                && picker.is_none()
+                && self
+                    .screen()
+                    .ok()
+                    .and_then(|s| rewind_picker(&s.lines))
+                    .and_then(|p| p.position())
+                    == Some(pos + 1)
+            {
+                crate::clog!("rewind: the first up did not move the cursor, pressed again");
+                self.keys(key::UP)?;
+                picker = self.picker_at(pos, Duration::from_secs(3));
+            }
+            let Some(picker) = picker else {
                 return Err(self.unrecognized("rewind 的选择器（光标没有上移一行）", None));
             };
             let row = picker.cursor().unwrap_or_default().to_string();

@@ -30,15 +30,21 @@ GUI 原是另起的 Tauri 应用 cc-gui，已并入 CoDeck 的 Connect 功能（
 - ToH Client 的结构化操作：Session 状态（忙 / 闲 / 等审批）、审批卡片、发提示词、长任务完成推送（对应 ToH TODO 的「长任务完成通知推送」）
 - 远程调用：经 ToH daemon 暴露，复用它的令牌、配对与 tailnet
 
-## 机器忙时 mock e2e 偶发失败（2026-11-26 记，没查清）
+## 机器忙时 mock e2e 偶发失败（2026-11-26 查过，作答与 Fork 已修）
 
-空闲时这套用例是稳的（6 线程连跑 5 次、8 线程连跑 9 次全过）。同时跑整套 Playwright 把机器压满时会偶发失败，每次坏的用例不一样。复现：`cargo test -p ccrpc --test e2e mock_ -- --ignored --test-threads=6` 的同时在仓库根目录 `pnpm test:e2e --repeat-each=3`；失败用例的收发时间线看 cargo 打出的 stdout（或单条加 `--nocapture`）。
+复现：`cargo test -p ccrpc --test e2e mock_ -- --ignored --test-threads=6` 的同时在仓库根目录 `pnpm test:e2e --repeat-each=3`；失败用例的收发时间线看 cargo 打出的 stdout（或单条加 `--nocapture`）。
 
-- **作答后状态不变**（最要紧，可能是 ccrpc 的问题而不只是用例的）：`answer_question` 回 `timeout`「作答后 10 秒内状态没有变化」，`request_end` 已经发了，之后状态一直是 waiting。见到两次：`ask_before_attach`（重连后 0.7 秒、提问事件刚到就作答 `options: ["Blue"]`）、`ask_chat`（提问出现后 0.1 秒发 `chat: true`，0.9 秒后 `request_end`）。猜测是按键打进去时提问框还没开始收键、被丢了，没有证实；与下面「待确认」里按键间隔那条可能是一回事。3 次满载的整套里出现 2 次；只跑作答类的 6 条（`ask_chat`、`ask_before_attach`、`tools`、`subagent_permission`、`hidden`、`add_dir`）、同样负载下 16 轮没有复现。
-- 没分清的：这种失败是否与 harness 的启动等待变短有关。`start_session` 原先等「连续 3 秒 idle」，现在是「idle、读到模式行、0.5 秒没有新事件」（`tests/e2e/harness.rs`），用例因此早开始约 2.5 秒，claude 自己的启动工作可能还没做完。改之前约 10 次满载的整套里没见过作答超时（坏的是下面几种），改之后 3 次里 2 次，样本太小；上面 16 轮里新旧两种等待各 8 轮，都没复现。要查的话先把 0.5 秒调大（1.5 秒）在满载下多跑几轮对比。
-- `fork`：rewind 选择器报 `unrecognized_screen`（1 次）。可用 `CCRPC_E2E_FORK_LOG` 看是没画完还是画面变了。
-- `follows_the_background_session_of_a_second_pane`：`wait_screen` 的 5 秒期限内屏幕没出现预期内容（1 次）。
-- 状态还没回到 idle 就发 `prompt`，被拒（`not_idle`）：改名之后、切 effort 之后、`turn_end` 之后都出现过，用例里已补 `until_idle`。但 `turn_end` 先到、状态稍后才回到 idle 这点对调用方同样成立（`prompt` 的前置条件是 idle，见 spec），机器忙时这个间隔会拉长。
+- 已修：**作答后状态不变**是 ccrpc 的问题，真实使用也会遇到。hook 放行后，提问框有一会儿会丢数字键与 `left` / `right`（见 probes.md），原先只靠固定睡 0.8s，键丢了也照样报 `request_end`，调用方的卡片没了、对话框还在等。现在每个键按下后等对话框变化，没变化时补一个 `down` 判断前一个键是不是被读到又丢了，确认丢了才重按；看到对话框离开才结束请求，超时请求留着。放行后不等直接按时这条路每次都会走到（`mock_model_ask_chat` 3/3 通过）。
+- 已修：`fork` / `rewind` 按两次 `Esc` 后选择器没出现（满载下见过 2 次），现在 3 秒后仍是空闲的空输入框就再按，最多再按两次；选择器出现后的第一下 `↑` 没动同样再按一次。
+- 已在用例里处理：启动时 ccrpc 报出的 `dialog(waiting_for: startup)`（进程文件出现前的 shell 回显，按 spec 会原地更新）不再当成错误；`ready` 时已经 idle 也算启动完；发 `prompt` / `exit` / `compact` 前先等 idle，按 `prompt_id` 认本轮的 `turn_end`。
+- 和启动等待 0.5s / 1.5s 无关：两边交替对比，作答类全部成功。
+- 还没做（用例里的固定等待，2026-11-26 盘点过）：
+  - `task_notification`：满载下前台的 `sleep 1` 比后台的 `sleep 2` 晚结束，通知并进同一轮（见过 4 次），后台改长或改成等标记文件。
+  - `follows_the_background_session*`：`/model` 后固定看 5 秒有没有 `choice`，改成同时等 `choice` 或 `session_info`。
+  - `harness.rs` 的 `wait_screen` 5 秒、`until_idle` 10 秒与 `mock_model.rs` 里 2–10 秒的期限在满载下偏紧（`follows_the_background_session_of_a_second_pane` 见过 1 次），期限只是上限，放宽不拖慢。
+  - `start_session` 的「读到模式行后 0.5 秒没有新事件」与 `settle_idle` 的「3 秒 idle」仍是按时间推断；Opus 的 auto mode 弹窗见过在 ready 后 2.75 秒才出现、挡住第一个 `prompt`。可以让 ccrpc 在 `get_state` 里给出 `input_ready`（输入框已画好）与 `settled`，调用方（含 CoDeck）也能用。
+  - `follows_the_background_session`：空闲的整套里见过 1 次第一轮 `turn_end` 的 `usage` 全为 0（第二轮正常），像是 `turn_end` 先于 transcript 里带用量的条目被读到；单跑 5 次没复现。
+  - `turn_end` 先于状态回到 idle，调用方紧接着发 `prompt` 会被拒（`not_idle`），机器忙时间隔更长；按 spec 是调用方要等 idle，要不要在 ccrpc 里给短宽限没定。
 
 ## 待确认
 
