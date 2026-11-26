@@ -28,7 +28,10 @@ echo hello > "$B/work/a.txt"
 "$REAL" plugin generate "$B/plugin" >/dev/null
 cat > "$B/ccrpc-wrap" <<C
 #!/bin/sh
-if [ "\$1" = new ]; then exec "$REAL" "\$@" -- --plugin-dir "$B/plugin/ccrpc"; else exec "$REAL" "\$@"; fi
+# For new: the plugin goes among claude's arguments, after ccrpc's -- (one is added when there is none).
+if [ "\$1" != new ]; then exec "$REAL" "\$@"; fi
+for a in "\$@"; do [ "\$a" = -- ] && exec "$REAL" "\$@" --plugin-dir "$B/plugin/ccrpc"; done
+exec "$REAL" "\$@" -- --plugin-dir "$B/plugin/ccrpc"
 C
 chmod +x "$B/ccrpc-wrap"
 echo "$W"

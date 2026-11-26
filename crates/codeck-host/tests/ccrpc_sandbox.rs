@@ -13,6 +13,7 @@ use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+use codeck_host::ccrpc::launch::Launch;
 use codeck_host::ccrpc::relay::{App, LsOut, LsSink, Out};
 use serde_json::{Value, json};
 
@@ -122,7 +123,12 @@ fn relays_a_real_session_and_logs_it() {
     });
 
     // 「新开的 Pane：隐藏」 (ToH ADR-0050): the Pane opens in the hidden window, at ccrpc's work size.
-    let conn = app.new_session(sink, &work, &[], true).unwrap();
+    let launch = Launch {
+        rules: &[],
+        hidden: true,
+        keep_alive: false,
+    };
+    let conn = app.new_session(sink, &work, &launch).unwrap();
     let mut holder = Holder {
         env: (s("toh"), path),
         id: None,

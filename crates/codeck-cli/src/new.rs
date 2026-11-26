@@ -14,8 +14,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use codeck_host::ccrpc::{env, launch};
-use codeck_host::settings::{self, LaunchRule};
+use codeck_host::ccrpc::env;
+pub use codeck_host::ccrpc::launch::Launch;
+use codeck_host::settings;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -44,11 +45,6 @@ pub struct Started {
     pub cwd: String,
     /// Opens the Session in the desktop app.
     pub url: String,
-}
-
-pub struct Launch<'a> {
-    pub rules: &'a [LaunchRule],
-    pub hidden: bool,
 }
 
 pub fn run(a: &Parsed) -> Result<Started, CliError> {
@@ -88,16 +84,7 @@ pub fn run(a: &Parsed) -> Result<Started, CliError> {
     }
     let s = settings::load();
     let env = env::with_analyzer(&env::login_env(), &s.analyzer);
-    start(
-        &env,
-        &Launch {
-            rules: &s.launch_rules,
-            hidden: s.hide_new_panes,
-        },
-        &cwd,
-        prompt,
-        STEP_TIMEOUT,
-    )
+    start(&env, &Launch::new(&s), &cwd, prompt, STEP_TIMEOUT)
 }
 
 /// `env` is the environment ccrpc runs in, and where `CODECK_CCRPC` is looked up.
@@ -113,7 +100,8 @@ pub fn start(
         args.push("--hidden".into());
     }
     args.extend(["--cwd".to_string(), cwd.display().to_string()]);
-    let extra = launch::args_for(launch.rules, cwd, env)
+    let extra = launch
+        .claude_args(cwd, env)
         .map_err(|e| CliError::new("invalid_launch_rule", e))?;
     if !extra.is_empty() {
         args.push("--".into());

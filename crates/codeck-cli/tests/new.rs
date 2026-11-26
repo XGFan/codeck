@@ -43,6 +43,7 @@ fn sent(dir: &Path) -> Vec<Value> {
 const NO_LAUNCH: Launch<'static> = Launch {
     rules: &[],
     hidden: false,
+    keep_alive: false,
 };
 
 fn cwd() -> PathBuf {
@@ -70,6 +71,7 @@ fn sends_the_prompt_once_the_session_is_known_then_lets_go() {
         &Launch {
             rules: &rules,
             hidden: true,
+            keep_alive: false,
         },
         &cwd(),
         "第一行\n第二行",

@@ -451,7 +451,7 @@ impl Host {
         let conn = self
             .with_ccrpc(move |app| {
                 let s = crate::settings::load();
-                app.new_session(sink, &cwd, &s.launch_rules, s.hide_new_panes)
+                app.new_session(sink, &cwd, &launch::Launch::new(&s))
             })
             .await?;
         self.registered(&conn, None);
@@ -468,7 +468,7 @@ impl Host {
         let conn = self
             .with_ccrpc(move |app| {
                 let s = crate::settings::load();
-                app.resume_session(sink, &session_id, &cwd, &s.launch_rules, s.hide_new_panes)
+                app.resume_session(sink, &session_id, &cwd, &launch::Launch::new(&s))
             })
             .await?;
         self.registered(&conn, None);
@@ -496,7 +496,7 @@ impl Host {
         let conn = self
             .with_ccrpc(move |app| {
                 let s = crate::settings::load();
-                app.fork_session(sink, &f, &s.launch_rules, s.hide_new_panes)
+                app.fork_session(sink, &f, &launch::Launch::new(&s))
             })
             .await?;
         self.registered(&conn, None);

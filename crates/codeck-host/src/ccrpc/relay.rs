@@ -13,8 +13,8 @@ use codeck_core::model::{AppError, ErrorCode};
 use parking_lot::Mutex;
 use serde::Serialize;
 
+use super::launch::Launch;
 use super::logs::{self, Wire};
-use crate::settings::LaunchRule;
 
 pub type R<T> = Result<T, AppError>;
 
@@ -432,20 +432,16 @@ impl App {
         self.spawn(sink, "attach", &[holder_id.to_string()], holder_id)
     }
 
-    /// `ccrpc new [--hidden] --cwd <cwd> [-- <launch rule's claude arguments>]`.
-    pub fn new_session(
-        &self,
-        sink: Sink,
-        cwd: &str,
-        rules: &[LaunchRule],
-        hidden: bool,
-    ) -> R<String> {
+    /// `ccrpc new [--hidden] --cwd <cwd> [-- <claude arguments (`Launch::claude_args`)>]`.
+    pub fn new_session(&self, sink: Sink, cwd: &str, launch: &Launch) -> R<String> {
         if !Path::new(cwd).is_dir() {
             return Err(invalid(format!("{cwd} 不是目录")));
         }
-        let mut args = hidden_arg(hidden);
+        let mut args = hidden_arg(launch.hidden);
         args.extend(["--cwd".to_string(), cwd.to_string()]);
-        let extra = super::launch::args_for(rules, Path::new(cwd), &self.env).map_err(invalid)?;
+        let extra = launch
+            .claude_args(Path::new(cwd), &self.env)
+            .map_err(invalid)?;
         if !extra.is_empty() {
             args.push("--".into());
             args.extend(extra);
@@ -453,15 +449,13 @@ impl App {
         self.spawn(sink, "new", &args, "new")
     }
 
-    /// Resume: `ccrpc new [--hidden] --cwd <cwd> -- [launch rule's arguments] --resume <session_id>`, in a
-    /// new Pane.
+    /// Resume: `ccrpc new [--hidden] --cwd <cwd> -- [claude arguments] --resume <session_id>`, in a new Pane.
     pub fn resume_session(
         &self,
         sink: Sink,
         session_id: &str,
         cwd: &str,
-        rules: &[LaunchRule],
-        hidden: bool,
+        launch: &Launch,
     ) -> R<String> {
         // toh types the command into the Pane's shell: only a Session ID goes through.
         if !is_session_id(session_id) {
@@ -470,24 +464,22 @@ impl App {
         if !Path::new(cwd).is_dir() {
             return Err(invalid(format!("{cwd} 不是目录")));
         }
-        let mut args = hidden_arg(hidden);
+        let mut args = hidden_arg(launch.hidden);
         args.extend(["--cwd".to_string(), cwd.to_string(), "--".into()]);
-        args.extend(super::launch::args_for(rules, Path::new(cwd), &self.env).map_err(invalid)?);
+        args.extend(
+            launch
+                .claude_args(Path::new(cwd), &self.env)
+                .map_err(invalid)?,
+        );
         args.extend(["--resume".to_string(), session_id.to_string()]);
         // Named like a new Session's (`new` → its Holder ID once `ready` says it); gui.log has the arguments.
         self.spawn(sink, "new", &args, "new")
     }
 
     /// Fork (ADR-0009): `ccrpc new [--hidden] --cwd <cwd> --fork <session_id> [--fork-at <uuid>]
-    /// [--fork-restore conversation|both] --fork-title <title> -- [launch rule's arguments]`, in a new Pane;
-    /// ccrpc adds `--resume <session_id> --fork-session` itself.
-    pub fn fork_session(
-        &self,
-        sink: Sink,
-        f: &ForkArgs,
-        rules: &[LaunchRule],
-        hidden: bool,
-    ) -> R<String> {
+    /// [--fork-restore conversation|both] --fork-title <title> -- [claude arguments]`, in a new Pane; ccrpc adds
+    /// `--resume <session_id> --fork-session` itself.
+    pub fn fork_session(&self, sink: Sink, f: &ForkArgs, launch: &Launch) -> R<String> {
         // toh types the command into the Pane's shell: only ids, a known restore and one line of title go through.
         if !is_session_id(&f.session_id) {
             return Err(invalid("Session ID 不对"));
@@ -507,7 +499,7 @@ impl App {
         if !Path::new(&f.cwd).is_dir() {
             return Err(invalid(format!("{} 不是目录", f.cwd)));
         }
-        let mut args = hidden_arg(hidden);
+        let mut args = hidden_arg(launch.hidden);
         args.extend([
             "--cwd".to_string(),
             f.cwd.clone(),
@@ -521,7 +513,11 @@ impl App {
             args.extend(["--fork-restore".to_string(), restore.clone()]);
         }
         args.extend(["--fork-title".to_string(), f.title.clone(), "--".into()]);
-        args.extend(super::launch::args_for(rules, Path::new(&f.cwd), &self.env).map_err(invalid)?);
+        args.extend(
+            launch
+                .claude_args(Path::new(&f.cwd), &self.env)
+                .map_err(invalid)?,
+        );
         self.spawn(sink, "new", &args, "new")
     }
 
@@ -975,6 +971,16 @@ fn parse_records(out: &[u8]) -> serde_json::Result<AnalyzerRecords> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ccrpc::launch::KEEP_ALIVE_SETTINGS;
+    use crate::settings::LaunchRule;
+
+    fn launch(rules: &[LaunchRule], hidden: bool, keep_alive: bool) -> Launch<'_> {
+        Launch {
+            rules,
+            hidden,
+            keep_alive,
+        }
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
 
@@ -1009,8 +1015,8 @@ mod tests {
                 let _ = tx.send(());
             }
         });
-        let run = |rules: &[LaunchRule]| {
-            app.new_session(sink.clone(), cwd.to_str().unwrap(), rules, false)
+        let run = |l: &Launch| {
+            app.new_session(sink.clone(), cwd.to_str().unwrap(), l)
                 .unwrap();
             rx.recv_timeout(Duration::from_secs(10)).unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -1025,11 +1031,31 @@ mod tests {
             }
         };
         let cwd_s = cwd.display().to_string();
-        assert_eq!(run(&rules), ["--cwd", &cwd_s, "--", "--add-dir", "/x y"]);
-        assert_eq!(run(&[]), ["--cwd", &cwd_s]);
+        assert_eq!(
+            run(&launch(&rules, false, false)),
+            ["--cwd", &cwd_s, "--", "--add-dir", "/x y"]
+        );
+        assert_eq!(run(&launch(&[], false, false)), ["--cwd", &cwd_s]);
+        // 缓存保活 on: claude's idle compaction off, before the rule's arguments.
+        assert_eq!(
+            run(&launch(&rules, false, true)),
+            [
+                "--cwd",
+                &cwd_s,
+                "--",
+                "--settings",
+                KEEP_ALIVE_SETTINGS,
+                "--add-dir",
+                "/x y"
+            ]
+        );
         // 「新开的 Pane：隐藏」: `--hidden` before the rest.
-        app.new_session(sink.clone(), cwd.to_str().unwrap(), &[], true)
-            .unwrap();
+        app.new_session(
+            sink.clone(),
+            cwd.to_str().unwrap(),
+            &launch(&[], true, false),
+        )
+        .unwrap();
         rx.recv_timeout(Duration::from_secs(10)).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let args = loop {
@@ -1044,8 +1070,13 @@ mod tests {
 
         // Resume: the rule's arguments, then `--resume <id>`; only a Session ID gets through.
         let id = "d30b178c-94da-426f-a80a-2f1ce4b4b40f";
-        app.resume_session(sink.clone(), id, cwd.to_str().unwrap(), &rules, true)
-            .unwrap();
+        app.resume_session(
+            sink.clone(),
+            id,
+            cwd.to_str().unwrap(),
+            &launch(&rules, true, false),
+        )
+        .unwrap();
         rx.recv_timeout(Duration::from_secs(10)).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let args = loop {
@@ -1074,8 +1105,13 @@ mod tests {
             "d30b178c 94da-426f-a80a-2f1ce4b4b40f",
         ] {
             assert!(
-                app.resume_session(sink.clone(), bad, cwd.to_str().unwrap(), &[], false)
-                    .is_err()
+                app.resume_session(
+                    sink.clone(),
+                    bad,
+                    cwd.to_str().unwrap(),
+                    &launch(&[], false, false)
+                )
+                .is_err()
             );
         }
     }
@@ -1113,7 +1149,8 @@ mod tests {
             title: title.into(),
         };
         let run = |f: &ForkArgs, rules: &[LaunchRule], hidden: bool| {
-            app.fork_session(sink.clone(), f, rules, hidden).unwrap();
+            app.fork_session(sink.clone(), f, &launch(rules, hidden, false))
+                .unwrap();
             rx.recv_timeout(Duration::from_secs(10)).unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
@@ -1176,7 +1213,10 @@ mod tests {
                 ..fork(None, None, "t")
             },
         ] {
-            assert!(app.fork_session(sink.clone(), &bad, &[], false).is_err());
+            assert!(
+                app.fork_session(sink.clone(), &bad, &launch(&[], false, false))
+                    .is_err()
+            );
         }
     }
 

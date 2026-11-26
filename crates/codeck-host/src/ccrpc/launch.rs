@@ -1,10 +1,92 @@
-//! Launch rules (「设置 › ccrpc › 启动参数」): extra claude arguments for Sessions CoDeck starts in a directory
-//! or below it, like a shell wrapper that adds `--add-dir` by working directory.
+//! How CoDeck starts claude (new Session, Resume, Fork, `codeck new`): launch rules (「设置 › ccrpc › 启动参数」),
+//! extra claude arguments for Sessions in a directory or below it, like a shell wrapper that adds `--add-dir` by
+//! working directory; and while 缓存保活 is on, claude's idle compaction off.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::settings::LaunchRule;
+use crate::settings::{LaunchRule, Settings};
+
+/// claude's settings CoDeck adds while 缓存保活 is on: claude's idle compaction (on by default since 2.1.332)
+/// compacts a Session of 200k tokens or more about 54 minutes after its last request, and the keep-alive's
+/// `/btw` does not put that off.
+pub const KEEP_ALIVE_SETTINGS: &str = r#"{"idleCompaction":false}"#;
+
+/// What starting claude takes from the settings.
+pub struct Launch<'a> {
+    pub rules: &'a [LaunchRule],
+    /// 「新开的 Pane：隐藏」.
+    pub hidden: bool,
+    /// 缓存保活 is on.
+    pub keep_alive: bool,
+}
+
+impl<'a> Launch<'a> {
+    pub fn new(s: &'a Settings) -> Self {
+        Self {
+            rules: &s.launch_rules,
+            hidden: s.hide_new_panes,
+            keep_alive: s.keep_alive_minutes() > 0,
+        }
+    }
+
+    /// claude's arguments for a Session in `cwd`: the launch rule's, and while 缓存保活 is on
+    /// `"idleCompaction": false` among claude's settings ([`idle_compaction_off`]).
+    pub fn claude_args(
+        &self,
+        cwd: &Path,
+        env: &HashMap<String, String>,
+    ) -> Result<Vec<String>, String> {
+        let mut args = args_for(self.rules, cwd, env)?;
+        if self.keep_alive {
+            idle_compaction_off(&mut args, cwd);
+        }
+        Ok(args)
+    }
+}
+
+/// Puts `"idleCompaction": false` into claude's settings in `args`, merged with what is there rather than in its
+/// place. claude keeps only the last `--settings` (`--settings X` or `--settings=X`; X is JSON when it starts with
+/// `{`, else a file relative to `cwd`), so the key goes into that one: a file is read now and its JSON passed
+/// instead. One that sets `idleCompaction` itself, or is not a JSON object, is left as it is. With no `--settings`,
+/// [`KEEP_ALIVE_SETTINGS`] goes in front.
+fn idle_compaction_off(args: &mut Vec<String>, cwd: &Path) {
+    let last = (0..args.len()).rev().find_map(|i| {
+        if args[i] == "--settings" {
+            (i + 1 < args.len()).then_some((i + 1, ""))
+        } else {
+            args[i]
+                .starts_with("--settings=")
+                .then_some((i, "--settings="))
+        }
+    });
+    let Some((i, prefix)) = last else {
+        args.splice(
+            0..0,
+            ["--settings".to_string(), KEEP_ALIVE_SETTINGS.to_string()],
+        );
+        return;
+    };
+    let value = &args[i][prefix.len()..];
+    let text = if value.trim_start().starts_with('{') {
+        value.to_string()
+    } else {
+        match std::fs::read_to_string(cwd.join(value)) {
+            Ok(t) => t,
+            Err(_) => return,
+        }
+    };
+    let Ok(mut settings) =
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
+    else {
+        return;
+    };
+    if settings.contains_key("idleCompaction") {
+        return;
+    }
+    settings.insert("idleCompaction".into(), false.into());
+    args[i] = format!("{prefix}{}", serde_json::Value::Object(settings));
+}
 
 /// The arguments of the most specific rule whose directory is `cwd` or one of its ancestors (whole path
 /// components: `/a/b` does not cover `/a/bc`), expanded with `env`; none when no rule covers it.
@@ -207,6 +289,73 @@ mod tests {
         // Whole components only, and nothing outside every rule.
         assert!(at("/Users/me/Developer2").is_empty());
         assert!(at("/Users/me").is_empty());
+    }
+
+    #[test]
+    fn keep_alive_turns_idle_compaction_off_before_the_rules_arguments() {
+        let rules = [rule("/w", "--add-dir /x")];
+        let launch = |keep_alive| Launch {
+            rules: &rules,
+            hidden: false,
+            keep_alive,
+        };
+        let at = |l: Launch, p: &str| l.claude_args(Path::new(p), &env()).unwrap();
+        assert_eq!(
+            at(launch(true), "/w/a"),
+            [
+                "--settings",
+                r#"{"idleCompaction":false}"#,
+                "--add-dir",
+                "/x"
+            ]
+        );
+        assert_eq!(at(launch(false), "/w/a"), ["--add-dir", "/x"]);
+        assert_eq!(
+            at(launch(true), "/elsewhere"),
+            ["--settings", r#"{"idleCompaction":false}"#]
+        );
+        // On unless 缓存保活 is off.
+        let off = Settings {
+            keep_alive_minutes: Some(0),
+            ..Settings::default()
+        };
+        assert!(!Launch::new(&off).keep_alive);
+        assert!(Launch::new(&Settings::default()).keep_alive);
+    }
+
+    #[test]
+    fn keep_alive_merges_into_the_settings_claude_keeps() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("s.json"), r#"{"model":"opus"}"#).unwrap();
+        let off = |args: &[&str]| {
+            let mut a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            idle_compaction_off(&mut a, d.path());
+            a
+        };
+        let json = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        let merged = serde_json::json!({ "model": "opus", "idleCompaction": false });
+        // JSON, in either form, or a file relative to the Session's directory (passed as JSON): merged.
+        let a = off(&["--add-dir", "/x", "--settings", r#"{"model":"opus"}"#]);
+        assert_eq!(a[..3], ["--add-dir", "/x", "--settings"]);
+        assert_eq!(json(&a[3]), merged);
+        let a = off(&[r#"--settings={"model":"opus"}"#]);
+        assert_eq!(json(a[0].strip_prefix("--settings=").unwrap()), merged);
+        assert_eq!(json(&off(&["--settings", "s.json"])[1]), merged);
+        // claude keeps the last one: it goes there, the earlier one untouched.
+        let a = off(&["--settings", r#"{"a":1}"#, "--settings", r#"{"b":2}"#]);
+        assert_eq!(a[1], r#"{"a":1}"#);
+        assert_eq!(
+            json(&a[3]),
+            serde_json::json!({ "b": 2, "idleCompaction": false })
+        );
+        // Its own idleCompaction, a file not there, or not a JSON object: as it is.
+        for kept in [
+            &["--settings", r#"{"idleCompaction":true}"#][..],
+            &["--settings", "missing.json"],
+            &["--settings", "{oops"],
+        ] {
+            assert_eq!(off(kept), kept);
+        }
     }
 
     #[test]
