@@ -787,6 +787,7 @@ fn mock_model_interleaved_parts() {
     rpc.event("turn_end", Duration::from_secs(30));
 
     // While busy: Claude Code's queue shows the text with the images in place.
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
     rpc.until("streaming", Duration::from_secs(10), |v| {
@@ -1329,6 +1330,7 @@ fn mock_model_session() {
         "{st}"
     );
     assert!(st["context_tokens"].as_u64().unwrap_or(0) > 0, "{st}");
+    until_idle(&mut rpc);
     rpc.forget();
     rpc.call("s1", json!({"type": "prompt", "text": "MOCK-SLOW please"}));
     let p = rpc.event("progress", Duration::from_secs(15));
@@ -1399,6 +1401,7 @@ fn mock_model_session() {
     assert_eq!(older["more"], false);
 
     // Exit, with the Pane.
+    until_idle(&mut rpc);
     let shell_pid = rpc.shell_pid.unwrap();
     rpc.call("x1", json!({"type": "exit", "close_pane": true}));
     // The Session is over: ccrpc ends by itself, after `session_exit`.
@@ -2437,9 +2440,8 @@ fn mock_model_follows_the_background_session() {
     assert_eq!(texts, 1, "{blocks:#?}");
     assert_eq!(t["usage"], t1["usage"], "{t} / {t1}");
     assert_eq!(t["api_cost"], t1["api_cost"], "{t} / {t1}");
-    let st = rpc.call("g2", json!({"type": "get_state"}));
+    let st = until_idle(&mut rpc);
     assert_eq!(st["session_id"], new, "{st}");
-    assert_eq!(st["state"], "idle", "{st}");
 
     // Slash commands in the background Session (while one is typed its suggestions show above
     // the box; the mode line stays under it), then a prompt: none of them is left in the box.
@@ -2671,7 +2673,7 @@ fn mock_model_fork() {
         let ready = f.event("ready", Duration::from_secs(20));
         f.shell_pid = shell_pid(&env, ready["holder_id"].as_str().unwrap());
         let done = f.until("fork", Duration::from_secs(90), |v| {
-            if v["type"] == "dialog" {
+            if v["type"] == "dialog" && v["waiting_for"] != "startup" {
                 panic!("Fork 启动时出现了认不出的界面：{v}");
             }
             v["type"] == "fork" || v["type"] == "rewind"
@@ -2716,6 +2718,7 @@ fn mock_model_fork() {
         std::fs::metadata(transcript_of(&origin)).unwrap().len(),
         origin_len
     );
+    until_idle(&mut f1);
     f1.forget();
     f1.call("f1p", json!({"type": "prompt", "text": "after fork"}));
     let t = f1.event("turn_end", Duration::from_secs(30));
@@ -2929,6 +2932,7 @@ fn mock_model_compact() {
     rpc.call("p1", json!({"type": "prompt", "text": "hello"}));
     rpc.event("turn_end", Duration::from_secs(30));
 
+    until_idle(&mut rpc);
     rpc.forget();
     let c = rpc.call(
         "c1",

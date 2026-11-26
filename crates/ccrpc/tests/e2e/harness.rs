@@ -458,10 +458,11 @@ pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
     // is ready once it is idle, its mode line has been read off the screen (the input box is there)
     // and nothing more came for half a second; when the mode line never shows, once it has been
     // idle for 3 s with no dialog.
-    let mut idle_since: Option<Instant> = None;
-    let mut mode_read = false;
     let mut last = Instant::now();
-    let deadline = Instant::now() + Duration::from_secs(60);
+    // A fast startup may already be idle in `ready`, with no later state event.
+    let mut idle_since = (ready["state"] == "idle").then_some(last);
+    let mut mode_read = !ready["mode"].is_null();
+    let deadline = last + Duration::from_secs(60);
     loop {
         assert!(Instant::now() < deadline, "启动后没有稳定在 idle");
         let quiet = mode_read && last.elapsed() > Duration::from_millis(500);
@@ -483,14 +484,17 @@ pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
                 .iter()
                 .filter_map(Value::as_str)
                 .collect();
-            assert!(
-                lines.iter().any(|l| l.contains("No, keep manual mode")),
-                "未预期的对话框：{lines:#?}"
-            );
-            rpc.call(
-                "d1",
-                json!({"type": "send_keys", "keys": ["down", "enter"]}),
-            );
+            // While Claude Code starts, this can be a transient frame of the launching shell.
+            // Only the known auto-mode dialog needs keys. Unrecognized startup frames can
+            // update until the Process File appears or the startup deadline expires.
+            if lines.iter().any(|l| l.contains("No, keep manual mode")) {
+                rpc.call(
+                    "d1",
+                    json!({"type": "send_keys", "keys": ["down", "enter"]}),
+                );
+            } else if v["waiting_for"] != "startup" {
+                panic!("未预期的对话框：{lines:#?}");
+            }
         }
     }
     ready
@@ -498,13 +502,15 @@ pub(crate) fn start_session(rpc: &mut Rpc, env: &Env) -> Value {
 
 /// Runs a turn to its end, allowing every permission request on the way; returns all lines seen.
 pub(crate) fn run_turn_allowing(rpc: &mut Rpc, id: &str, text: &str) -> Vec<Value> {
+    until_idle(rpc);
     rpc.forget();
-    rpc.call(id, json!({"type": "prompt", "text": text}));
+    let prompt = rpc.call(id, json!({"type": "prompt", "text": text}));
     let mut seen = Vec::new();
     let mut n = 0;
     loop {
         let v = rpc.until("turn", Duration::from_secs(180), |v| {
-            v["type"] == "turn_end"
+            (v["type"] == "turn_end"
+                && (prompt["prompt_id"].is_null() || v["prompt_id"] == prompt["prompt_id"]))
                 || v["type"] == "permission_request"
                 || v["type"] == "block"
                 || v["type"] == "workflow"
