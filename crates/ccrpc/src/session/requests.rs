@@ -99,10 +99,11 @@ fn pick_pending<'a>(
 }
 
 /// AskUserQuestion's `answers` (question text → answer) for the caller's `answers`, one per
-/// question: option labels (several joined by `, ` for a multi-select), or free text.
+/// question: [`question_answer`]; `None` (not answered) is left out, as the dialog's Review tab
+/// submits it. At least one question is answered.
 fn question_answers(
     questions: &[Value],
-    answers: &[Answer],
+    answers: &[Option<Answer>],
 ) -> std::result::Result<serde_json::Map<String, Value>, String> {
     if questions.len() != answers.len() {
         return Err(format!(
@@ -113,57 +114,66 @@ fn question_answers(
     }
     let mut out = serde_json::Map::new();
     for (i, (q, a)) in questions.iter().zip(answers).enumerate() {
+        let Some(a) = a else { continue };
         let title = q
             .get("question")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let multi = q
-            .get("multiSelect")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let labels: Vec<&str> = q
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|o| o.get("label").and_then(Value::as_str))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let picked = |chosen: &[String]| {
-            if let Some(bad) = chosen.iter().find(|c| !labels.contains(&c.as_str())) {
-                return Err(format!("第 {} 题没有选项 {bad}", i + 1));
-            }
-            if !multi && chosen.len() != 1 {
-                return Err(format!("第 {} 题是单选", i + 1));
-            }
-            if chosen.is_empty() {
-                return Err(format!("第 {} 题至少要选一项", i + 1));
-            }
-            Ok(chosen.join(", "))
-        };
-        let written = |t: &str| {
-            let t = pty::sanitize(t).replace(['\n', '\t'], " ");
-            if t.trim().is_empty() {
-                return Err(format!("第 {} 题的 other 为空", i + 1));
-            }
-            Ok(t)
-        };
-        let text = match a {
-            Answer::Options(chosen) => picked(chosen)?,
-            Answer::Other(t) => written(t)?,
-            // As the dialog joins them: the options picked, then the text typed.
-            Answer::Both(chosen, t) if multi => format!("{}, {}", picked(chosen)?, written(t)?),
-            Answer::Both(..) => {
-                return Err(format!(
-                    "第 {} 题是单选，不能同时给 options 与 other",
-                    i + 1
-                ));
-            }
-        };
-        out.insert(title.to_string(), json!(text));
+        out.insert(title.to_string(), json!(question_answer(i, q, a)?));
+    }
+    if out.is_empty() {
+        return Err("至少要答一题".into());
     }
     Ok(out)
+}
+
+/// The answer to question `i` (`q`, one entry of the call's `questions`) as the tool takes it:
+/// option labels (several joined by `, ` for a multi-select), or free text.
+fn question_answer(i: usize, q: &Value, a: &Answer) -> std::result::Result<String, String> {
+    let multi = q
+        .get("multiSelect")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let labels: Vec<&str> = q
+        .get("options")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|o| o.get("label").and_then(Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default();
+    let picked = |chosen: &[String]| {
+        if let Some(bad) = chosen.iter().find(|c| !labels.contains(&c.as_str())) {
+            return Err(format!("第 {} 题没有选项 {bad}", i + 1));
+        }
+        if !multi && chosen.len() != 1 {
+            return Err(format!("第 {} 题是单选", i + 1));
+        }
+        if chosen.is_empty() {
+            return Err(format!("第 {} 题至少要选一项", i + 1));
+        }
+        Ok(chosen.join(", "))
+    };
+    let written = |t: &str| {
+        let t = pty::sanitize(t).replace(['\n', '\t'], " ");
+        if t.trim().is_empty() {
+            return Err(format!("第 {} 题的 other 为空", i + 1));
+        }
+        Ok(t)
+    };
+    Ok(match a {
+        Answer::Options(chosen) => picked(chosen)?,
+        Answer::Other(t) => written(t)?,
+        // As the dialog joins them: the options picked, then the text typed.
+        Answer::Both(chosen, t) if multi => format!("{}, {}", picked(chosen)?, written(t)?),
+        Answer::Both(..) => {
+            return Err(format!(
+                "第 {} 题是单选，不能同时给 options 与 other",
+                i + 1
+            ));
+        }
+    })
 }
 
 /// A tool call the plugin reported at PreToolUse (PermissionRequest has no tool_use id).
@@ -746,8 +756,12 @@ impl Engine {
     }
 
     /// Answers an AskUserQuestion through its waiting hook (the answers go to the tool as its
-    /// input, as if picked in the dialog).
-    pub(super) fn answer_question(&mut self, request_id: &str, answers: &[Answer]) -> CmdResult {
+    /// input, as if picked in the dialog; `None`: not answered, see [`question_answers`]).
+    pub(super) fn answer_question(
+        &mut self,
+        request_id: &str,
+        answers: &[Option<Answer>],
+    ) -> CmdResult {
         self.check_request(WaitKind::Question, request_id)?;
         let held = self.requests.iter().position(|r| r.id == request_id);
         let Some(idx) = held.filter(|&i| {
@@ -835,14 +849,7 @@ impl Engine {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             if let Some(a) = answer(i) {
-                question_answers(std::slice::from_ref(q), std::slice::from_ref(a)).map_err(
-                    |m| {
-                        (
-                            "bad_request",
-                            m.replace("第 1 题", &format!("第 {} 题", i + 1)),
-                        )
-                    },
-                )?;
+                question_answer(i, q, a).map_err(|m| ("bad_request", m))?;
                 if multi && matches!(a, Answer::Other(_) | Answer::Both(..)) {
                     return err(
                         "unsupported",
@@ -852,6 +859,8 @@ impl Engine {
             }
             plan.push((q, answer(i)));
         }
+        let skipped: Vec<bool> = (0..questions.len()).map(|i| answer(i).is_none()).collect();
+        self.refuse_answered_skips(&questions, &skipped)?;
         // While the hook runs the dialog takes no number keys: let it go (no decision, so the
         // dialog stays), then give the dialog a moment.
         if let Some(stream) = held.and_then(|i| self.requests[i].reply.take()) {
@@ -923,14 +932,52 @@ impl Engine {
         }
     }
 
+    /// Refuses, before any key, to pass over (`right`) a question the dialog already has an answer
+    /// for (picked in the terminal): the dialog would submit it along. Read off the tab row of
+    /// whichever page of the call is shown; a tab row that does not list every question is not
+    /// checked.
+    fn refuse_answered_skips(
+        &mut self,
+        questions: &[Value],
+        skipped: &[bool],
+    ) -> std::result::Result<(), CmdErr> {
+        if !skipped.contains(&true) {
+            return Ok(());
+        }
+        let found = self.wait_screen(Duration::from_secs(3), |_, s| {
+            match recognize::ask(&s.lines) {
+                Some(recognize::AskScreen::Question(q))
+                    if questions.iter().any(|x| recognize::ask_page_is(&q, x)) =>
+                {
+                    Some(q.answered)
+                }
+                _ => None,
+            }
+        });
+        let Some((answered, _)) = found else {
+            return Err(self.unrecognized("answer_question", None));
+        };
+        if answered.len() != questions.len() {
+            return Ok(());
+        }
+        match (0..questions.len()).find(|&i| skipped[i] && answered[i]) {
+            Some(i) => err(
+                "unsupported",
+                format!("第 {} 题在终端里已有答案，按屏幕作答时不能当作没答", i + 1),
+            ),
+            None => Ok(()),
+        }
+    }
+
     /// Answers an AskUserQuestion with keys on its dialog (no hook waits for it): each question's
     /// option number (a multi-select one toggles to the wanted set, then Submit), or `Type
-    /// something.` then the text; several questions end on the Review tab.
+    /// something.` then the text, or (not answered) `right` past it; several questions end on
+    /// the Review tab.
     pub(super) fn answer_question_on_screen(
         &mut self,
         request_id: &str,
         input: &Value,
-        answers: &[Answer],
+        answers: &[Option<Answer>],
     ) -> CmdResult {
         let questions = input
             .get("questions")
@@ -945,14 +992,16 @@ impl Engine {
                 .get("multiSelect")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            if multi && matches!(a, Answer::Other(_) | Answer::Both(..)) {
+            if multi && matches!(a, Some(Answer::Other(_) | Answer::Both(..))) {
                 return err(
                     "unsupported",
                     format!("第 {} 题是多选，按屏幕作答时不支持 other", i + 1),
                 );
             }
-            plan.push((q, a));
+            plan.push((q, a.as_ref()));
         }
+        let skipped: Vec<bool> = answers.iter().map(Option::is_none).collect();
+        self.refuse_answered_skips(&questions, &skipped)?;
         let mut tabbed = false;
         for (q, a) in plan {
             if !self.request_is(&WaitKind::Question, request_id) {
@@ -961,7 +1010,15 @@ impl Engine {
                     format!("作答中请求已经变了，不再是 {request_id}"),
                 );
             }
-            tabbed |= self.answer_one_on_screen(q, a)?;
+            match a {
+                Some(a) => tabbed |= self.answer_one_on_screen(q, a)?,
+                // Only with several questions (one is answered): the Review tab submits it as
+                // not answered.
+                None => {
+                    tabbed |= self.ask_screen_of(q)?.tabbed;
+                    self.keys(key::RIGHT)?;
+                }
+            }
         }
         if tabbed {
             let review = self.wait_screen(Duration::from_secs(3), |_, s| {
@@ -1215,8 +1272,8 @@ mod tests {
         let a = question_answers(
             &qs,
             &[
-                Answer::Options(vec!["eslint".into(), "clippy".into()]),
-                Answer::Other("two\nspaces".into()),
+                Some(Answer::Options(vec!["eslint".into(), "clippy".into()])),
+                Some(Answer::Other("two\nspaces".into())),
             ],
         )
         .unwrap();
@@ -1227,8 +1284,8 @@ mod tests {
             question_answers(
                 &qs,
                 &[
-                    Answer::Other("all".into()),
-                    Answer::Options(vec!["Tabs".into()])
+                    Some(Answer::Other("all".into())),
+                    Some(Answer::Options(vec!["Tabs".into()]))
                 ]
             )
             .is_ok()
@@ -1237,8 +1294,8 @@ mod tests {
             question_answers(
                 &qs,
                 &[
-                    Answer::Options(vec!["nope".into()]),
-                    Answer::Options(vec!["Tabs".into()])
+                    Some(Answer::Options(vec!["nope".into()])),
+                    Some(Answer::Options(vec!["Tabs".into()]))
                 ]
             )
             .is_err()
@@ -1247,8 +1304,8 @@ mod tests {
             question_answers(
                 &qs,
                 &[
-                    Answer::Options(vec![]),
-                    Answer::Options(vec!["Tabs".into()])
+                    Some(Answer::Options(vec![])),
+                    Some(Answer::Options(vec!["Tabs".into()]))
                 ]
             )
             .is_err()
@@ -1257,8 +1314,8 @@ mod tests {
             question_answers(
                 &qs,
                 &[
-                    Answer::Options(vec!["ruff".into()]),
-                    Answer::Options(vec!["Tabs".into(), "Spaces".into()])
+                    Some(Answer::Options(vec!["ruff".into()])),
+                    Some(Answer::Options(vec!["Tabs".into(), "Spaces".into()]))
                 ]
             )
             .is_err(),
@@ -1272,8 +1329,11 @@ mod tests {
         let a = question_answers(
             &qs,
             &[
-                Answer::Both(vec!["ruff".into(), "eslint".into()], "biome\nalso".into()),
-                Answer::Options(vec!["Tabs".into()]),
+                Some(Answer::Both(
+                    vec!["ruff".into(), "eslint".into()],
+                    "biome\nalso".into(),
+                )),
+                Some(Answer::Options(vec!["Tabs".into()])),
             ],
         )
         .unwrap();
@@ -1282,12 +1342,25 @@ mod tests {
             question_answers(
                 &qs,
                 &[
-                    Answer::Options(vec!["ruff".into()]),
-                    Answer::Both(vec!["Tabs".into()], "x".into())
+                    Some(Answer::Options(vec!["ruff".into()])),
+                    Some(Answer::Both(vec!["Tabs".into()], "x".into()))
                 ]
             )
             .is_err(),
             "both on a single choice"
         );
+        // Not answered: left out, as the Review tab submits it; at least one is answered.
+        let a =
+            question_answers(&qs, &[None, Some(Answer::Options(vec!["Spaces".into()]))]).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a["Indent style?"], "Spaces");
+        assert!(
+            question_answers(&qs, &[None, None]).is_err(),
+            "none answered"
+        );
+        // Numbered as the call's questions.
+        let e =
+            question_answers(&qs, &[None, Some(Answer::Options(vec!["nope".into()]))]).unwrap_err();
+        assert!(e.contains("第 2 题"), "{e}");
     }
 }

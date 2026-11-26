@@ -237,12 +237,12 @@ enum Answers {
 
     /// The `answers` of `answer_question`, one per question: on a single-select question the written answer
     /// when 其他 is chosen and not blank, otherwise the option picked; on a multi-select one the options picked
-    /// and the written answer, either or both.
+    /// and the written answer, either or both; null when not answered.
     static func questionAnswers(_ qs: [AskQuestion], picked: [[String]], other: [String], useOther: [Bool]) -> [JSONValue] {
         qs.indices.map { i in
             let options = i < picked.count ? picked[i] : []
             let optionsValue = JSONValue.array(options.map(JSONValue.string))
-            guard otherChosen(other, useOther, i) else { return ["options": optionsValue] }
+            guard otherChosen(other, useOther, i) else { return options.isEmpty ? .null : ["options": optionsValue] }
             let written = JSONValue.string(other[i].trimmingCharacters(in: .whitespacesAndNewlines))
             return qs[i].multiSelect && !options.isEmpty ? ["options": optionsValue, "other": written] : ["other": written]
         }

@@ -309,6 +309,43 @@ test("先聊聊：带上已答的题（没答的为 null）发出 chat，焦点�
   await expect(page.getByTestId("connect-input")).toBeFocused();
 });
 
+test("有题没答也能提交：没答的为 null，按钮旁写「N 题未作答」；一题都没答时不能提交", async ({ page }) => {
+  await connectTo(page, TOOLS);
+  await expect(state(page)).toContainText("空闲");
+  await page.evaluate(() =>
+    window.__cvCcrpc!.emit({
+      type: "question",
+      request_id: "toolu_e2e_partial",
+      tool_use_id: "toolu_e2e_partial",
+      agent_id: "a1b2c3d4e5f6",
+      from_code: false,
+      questions: [
+        { question: "用哪个颜色？", header: "颜色", multiSelect: false, options: [{ label: "红" }, { label: "蓝" }] },
+        {
+          question: "要哪些尺寸？",
+          header: "尺寸",
+          multiSelect: true,
+          options: [{ label: "S" }, { label: "M" }, { label: "L" }],
+        },
+      ],
+    }),
+  );
+  const q = page.getByTestId("question-card");
+  const submit = q.getByTestId("submit-answer");
+  await expect(submit).toBeDisabled();
+  await expect(q.getByTestId("question-unanswered")).toHaveCount(0);
+  await q.getByTestId("question-option").filter({ hasText: "M" }).click();
+  await expect(q.getByTestId("question-unanswered")).toHaveText("1 题未作答");
+  // Enter in 其他 submits only every question answered: leaving some unanswered is the button's.
+  await q.getByTestId("question-other").first().press("Enter");
+  expect(await lastSent(page, "answer_question")).toBeUndefined();
+  await submit.click();
+  await expect
+    .poll(() => lastSent(page, "answer_question"))
+    .toEqual(expect.objectContaining({ request_id: "toolu_e2e_partial", answers: [null, { options: ["M"] }] }));
+  await expect(q).toHaveCount(0);
+});
+
 test("作答时选项旁显示 preview：先是第一项的，悬停、键盘焦点所在或选中的那项的", async ({ page }) => {
   await connectTo(page, TOOLS);
   await expect(state(page)).toContainText("空闲");

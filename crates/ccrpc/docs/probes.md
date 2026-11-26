@@ -147,7 +147,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 - 单选：按选项数字立即选中并跳到下一题（标签变 `☒`）。
 - 多选：选项带 `[ ]` / `[✔]`，数字键切换勾选；题内另有一行不带编号的 `Submit`；用 `right` 进下一个标签。
-- 最后的 Submit 标签显示 `Review your answers` 与 `1. Submit answers` / `2. Cancel`，按 `1` 提交。
+- 最后的 Submit 标签显示 `Review your answers` 与 `1. Submit answers` / `2. Cancel`，按 `1` 提交。有题没答（用 `right` 跳过）时多一行 `Some questions are unanswered`，照样能提交，结果只列答了的题（2.1.332，`mock_model_ask_before_attach`）。
 - 只有一题时没有 `←`/`→` 和 Submit 标签（只有 ` ☐ Header`），选中即提交。
 - Other：按 `Type something.` 的编号进入输入状态（提示行出现 `ctrl+g to edit in Vim`），写入文字后回车。多选题里是 `[ ] Type something`。
 - 结果记录为 tool_result：`Your questions have been answered: "Q1"="A1", "Q2"="a, b". …`，多选答案以 `, ` 连接。
@@ -173,7 +173,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 - PreToolUse 阻塞期间不显示提问界面，进程文件是 `busy`，spinner 行显示 `running PreToolUse hook`。
 - PreToolUse 回 `permissionDecision: "allow"` 与 `updatedInput`（原样的 `questions` 加 `answers`）即作答，界面不出现。
 - PreToolUse 不给决定时接着触发 PermissionRequest，这时提问界面与 hook 同时出现；PermissionRequest 回 `behavior: "allow"` 与同样的 `updatedInput` 也能作答，屏幕显示 `User answered Claude's questions:` 与 `Allowed by PermissionRequest hook`。
-- `answers` 以题目文字为键。单选写 label；多选写 `"eslint, clippy"` 或 `["eslint","ruff"]`（数组在结果里以 `, ` 连接）；Other 直接写自由文本。
+- `answers` 以题目文字为键，没答的题不写（2.1.332，`mock_model_ask_chat`：结果同在 Review 页跳过它提交，只列答了的题）。单选写 label；多选写 `"eslint, clippy"` 或 `["eslint","ruff"]`（数组在结果里以 `, ` 连接）；Other 直接写自由文本。
 - tool_result：答案都是选项时为 `Your questions have been answered: "Q"="A". You can now continue with these answers in mind.`（与在界面里作答相同）；有选项之外的答案时为 `The user answered: "Q"="A", …. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`
 
 ### 中止与轮次结束

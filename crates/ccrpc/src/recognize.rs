@@ -329,6 +329,9 @@ pub struct AskQuestion {
     pub title: String,
     /// More than one question: a tab row with `←` / `→` and a Submit tab.
     pub tabbed: bool,
+    /// Each question's tab, in order: `☒` (has an answer: picked, or ticked on a multi-select
+    /// page) or `☐`.
+    pub answered: Vec<bool>,
     /// Answer options, without the trailing `Type something` / `Chat about this` rows.
     pub options: Vec<MenuOption>,
     /// Number of the `Type something` row.
@@ -368,6 +371,14 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
         .iter()
         .rposition(|l| l.contains('☐') || l.contains('☒') || l.contains("✔ Submit"))?;
     let tabbed = lines[header].trim_start().starts_with('←');
+    let answered = lines[header]
+        .chars()
+        .filter_map(|c| match c {
+            '☒' => Some(true),
+            '☐' => Some(false),
+            _ => None,
+        })
+        .collect();
     let title_row = (header + 1..footer).find(|&i| !lines[i].trim().is_empty())?;
     // A long question wraps: the title is every line up to the first blank one.
     let title_end = (title_row..footer)
@@ -421,6 +432,7 @@ pub fn ask(lines: &[String]) -> Option<AskScreen> {
     Some(AskScreen::Question(AskQuestion {
         title,
         tabbed,
+        answered,
         options,
         other,
         chat,
@@ -1346,6 +1358,7 @@ mod tests {
         };
         assert_eq!(q.title, "Indent style?");
         assert!(q.tabbed && !q.multi && !q.editing);
+        assert_eq!(q.answered, [false, false]);
         let labels: Vec<_> = q
             .options
             .iter()
@@ -1368,9 +1381,12 @@ mod tests {
         assert_eq!(q.other, Some(4));
         assert_eq!(q.chat, Some(5));
         assert!(q.submit_row.is_some());
+        assert_eq!(q.answered, [true, false]);
+        // Ticked is answered, before Submit.
         let Some(AskScreen::Question(q)) = ask(&screen("ask_multi_q2_checked.txt")) else {
             panic!()
         };
+        assert_eq!(q.answered, [true, true]);
         let checked: Vec<_> = q
             .options
             .iter()

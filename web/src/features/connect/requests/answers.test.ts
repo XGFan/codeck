@@ -67,6 +67,15 @@ describe("questionAnswers", () => {
     ]);
   });
 
+  it("a question with nothing picked or written is null (not answered)", () => {
+    const qs = [q("a"), { ...q("b"), multiSelect: true }, q("c")];
+    expect(questionAnswers(qs, [[], [], ["X"]], ["   ", "划掉的", ""], [true, false, false])).toEqual([
+      null,
+      null,
+      { options: ["X"] },
+    ]);
+  });
+
   it("text written but set aside (an option picked since) does not count", () => {
     expect(otherChosen(["写的"], [false], 0)).toBe(false);
     expect(otherChosen(["写的"], [true], 0)).toBe(true);

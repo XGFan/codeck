@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// An AskUserQuestion (requests/QuestionForm.tsx): each question's options, one or several, and 其他 written in;
-/// 提交 when every question has an answer.
+/// 提交 once a question has an answer (as on Claude Code's Review tab, the others go as not answered).
 struct QuestionCard: View {
     let r: QuestionRequest
     let c: ConnState
@@ -28,6 +28,9 @@ struct QuestionCard: View {
             ForEach(Array(r.questions.enumerated()), id: \.offset) { i, q in
                 question(i, q)
             }
+            if ready, unanswered > 0 {
+                Text("\(unanswered) 题未作答").font(.footnote).foregroundStyle(.secondary)
+            }
             if let error { Text(error).font(.footnote).foregroundStyle(Palette.error) }
             Button("提交", action: submit)
                 .buttonStyle(PillButtonStyle())
@@ -37,9 +40,11 @@ struct QuestionCard: View {
         .sensoryFeedback(.selection, trigger: picked)
     }
 
-    private var ready: Bool {
-        r.questions.indices.allSatisfy { !picked[$0].isEmpty || Answers.otherChosen(other, useOther, $0) }
+    private var unanswered: Int {
+        r.questions.indices.filter { picked[$0].isEmpty && !Answers.otherChosen(other, useOther, $0) }.count
     }
+
+    private var ready: Bool { unanswered < r.questions.count }
 
     @ViewBuilder
     private func question(_ i: Int, _ q: AskQuestion) -> some View {

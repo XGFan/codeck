@@ -29,7 +29,9 @@ export function QuestionForm({ r, c, fit = false }: { r: QuestionEvent; c: ConnS
   const [focus, setFocus] = useState<[number, number] | null>(null);
   const otherOn = (i: number) => otherChosen(other, useOther, i);
   const answeredAt = (i: number) => !!picked[i]?.length || otherOn(i);
-  const ready = qs.every((_, i) => answeredAt(i));
+  const unanswered = qs.filter((_, i) => !answeredAt(i)).length;
+  // As on the dialog's Review tab: submitted with some not answered (null), at least one answered.
+  const ready = unanswered < qs.length;
   const submit = () =>
     void send({
       type: "answer_question",
@@ -39,7 +41,7 @@ export function QuestionForm({ r, c, fit = false }: { r: QuestionEvent; c: ConnS
   // Claude Code's 「Chat about this」: the answers given so far go along (null: not answered), the model asks what to
   // clarify; the reply is written in the input box.
   const chat = async () => {
-    const answers = questionAnswers(qs, picked, other, useOther).map((a, i) => (answeredAt(i) ? a : null));
+    const answers = questionAnswers(qs, picked, other, useOther);
     if (await send({ type: "answer_question", request_id: r.request_id, chat: true, answers }))
       document.querySelector<HTMLElement>("[data-testid=connect-input]")?.focus();
   };
@@ -147,8 +149,9 @@ export function QuestionForm({ r, c, fit = false }: { r: QuestionEvent; c: ConnS
                     }}
                     // Back to the written answer by clicking into it.
                     onFocus={() => other[i]?.trim() && chooseOther(i, q)}
+                    // Enter submits only every question answered: leaving some unanswered is the button's.
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && ready && !busy) submit();
+                      if (e.key === "Enter" && !isComposingKey(e.nativeEvent) && !unanswered && !busy) submit();
                     }}
                     placeholder="自己写答案"
                     className={cn(
@@ -172,13 +175,18 @@ export function QuestionForm({ r, c, fit = false }: { r: QuestionEvent; c: ConnS
           size="sm"
           variant="outline"
           // As in Claude Code: from a question not answered (a single question's pick is its answer at once).
-          disabled={busy || ready}
-          title={ready ? "每道题都已作答" : "先不作答，和 Claude 聊聊这些问题"}
+          disabled={busy || !unanswered}
+          title={unanswered ? "先不作答，和 Claude 聊聊这些问题" : "每道题都已作答"}
           onClick={() => void chat()}
           data-testid="chat-about-question"
         >
           先聊聊
         </Button>
+        {ready && unanswered > 0 && (
+          <span className="text-[12px] text-secondary" data-testid="question-unanswered">
+            {unanswered} 题未作答
+          </span>
+        )}
         {error && <span className="text-[12px] text-error">{error}</span>}
       </div>
     </div>

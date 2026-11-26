@@ -114,7 +114,7 @@ Claude Code 配置目录缺省取 `CLAUDE_CONFIG_DIR`（再缺省为 `~/.claude`
 | `edit_queue` | `busy` 且 `queue` 里有 `editable` 的项时，同终端里在空输入框按 `↑`：把 Claude Code 队列里人输入的内容取回、清空输入框，返回取回的各条，供编辑后重发 |
 | `cancel_queue {queue_id}` | `busy` 时撤回 Claude Code 队列里的一条（须 `editable`）：取回全部、其余各条按原先后重新插话，返回被拿掉的那一项与重新入队的新 `queue_id` |
 | `answer_permission {request_id, decision, message?}` | 作答审批（经插件；后台 Subagent 的审批按屏幕选项键），`message` 只能配 `deny`，作为反馈交给模型 |
-| `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项、自由文本，多选题可两者一起）；带 `chat: true` 时是对话框的 Chat about this（先聊聊），已答的题一并带上 |
+| `answer_question {request_id, answers}` | 经插件作答 AskUserQuestion（选项、自由文本，多选题可两者一起；没答的题写 null，至少答一题）；带 `chat: true` 时是对话框的 Chat about this（先聊聊），已答的题一并带上 |
 | `slash {command}` | 输入 `/<command>` 后回车 |
 | `rename {title}` | `/rename <title>`，等 transcript 记下新标题再返回 |
 | `compact {instructions?}` | `/compact`，等压缩完成再返回压缩前后的上下文 token 数 |

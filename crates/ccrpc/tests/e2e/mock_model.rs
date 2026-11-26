@@ -1717,7 +1717,8 @@ fn mock_model_hidden() {
 
 /// An AskUserQuestion asked while no ccrpc holds its hook (the ccrpc that sent the prompt left):
 /// the next ccrpc reads it from the transcript and answers it with keys on the dialog, for one
-/// question and for two (tabbed, the second multi-select, submitted on the Review tab).
+/// question and for two (tabbed, the second multi-select, submitted on the Review tab), also with
+/// the first not answered (passed with `right`), but not when the terminal has an answer for it.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_ask_before_attach() {
@@ -1758,6 +1759,38 @@ fn mock_model_ask_before_attach() {
     );
     rpc.event("turn_end", Duration::from_secs(30));
 
+    // A question not answered is passed with `right`: the Review tab submits the other alone.
+    let (q, mut rpc) = ask_and_leave(rpc, "q3", "MOCK-ASKS both");
+    rpc.call(
+        "a3",
+        json!({"type": "answer_question", "request_id": q["request_id"],
+        "answers": [null, {"options": ["M"]}]}),
+    );
+    rpc.event("turn_end", Duration::from_secs(30));
+
+    // Answered in the terminal, a question is not passed over as not answered (the dialog would
+    // submit it): refused before any key, the dialog as it was for the person to finish.
+    let (q, mut rpc) = ask_and_leave(rpc, "q4", "MOCK-ASKS both");
+    rpc.call("t4", json!({"type": "send_keys", "keys": [{"text": "1"}]}));
+    wait_screen(&mut rpc, "第一题已答", |l| {
+        l.iter().any(|r| r.contains('☒'))
+    });
+    rpc.send(
+        json!({"id": "a4", "type": "answer_question", "request_id": q["request_id"],
+        "answers": [null, {"options": ["M"]}]}),
+    );
+    let r = rpc.until("a4", Duration::from_secs(10), |v| v["id"] == "a4");
+    assert_eq!(r["error"]["code"], "unsupported", "{r}");
+    rpc.call(
+        "t5",
+        json!({"type": "send_keys", "keys": [{"text": "2"}, "right"]}),
+    );
+    wait_screen(&mut rpc, "Review", |l| {
+        l.iter().any(|r| r.trim() == "Review your answers")
+    });
+    rpc.call("t6", json!({"type": "send_keys", "keys": [{"text": "1"}]}));
+    rpc.event("turn_end", Duration::from_secs(30));
+
     let m = rpc.call("m1", json!({"type": "get_messages"}));
     let results: Vec<&str> = m["blocks"]
         .as_array()
@@ -1777,12 +1810,25 @@ fn mock_model_ask_before_attach() {
             && !c.contains("\"M\"")),
         "两题的结果里没有答案：{results:?}"
     );
+    assert!(
+        results
+            .iter()
+            .any(|c| c.contains(r#""Which sizes?"="M""#) && !c.contains("Which color?")),
+        "跳过一题的结果不对：{results:?}"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|c| c.contains(r#""Which color?"="Red", "Which sizes?"="M""#)),
+        "拒绝之后对话框不是原样：{results:?}"
+    );
 }
 
 /// `Chat about this` (`answer_question` with `chat`): the hook is let go and the dialog answered
 /// with keys, the answers given so far kept; Claude Code records the call as rejected, listing
 /// them, and the turn goes on to the model's reply. Two questions with only the second answered
-/// (the first passed with `right`), with only the first answered, and a single question.
+/// (the first passed with `right`), with only the first answered, and a single question. Then
+/// submitted (no chat) with one not answered, through the hook.
 #[test]
 #[ignore = "real Claude Code against a local mock model; needs toh and claude"]
 fn mock_model_ask_chat() {
@@ -1862,6 +1908,38 @@ fn mock_model_ask_chat() {
     );
     assert!(
         r.contains("- \"Which color?\"\n  (No answer provided)"),
+        "{r}"
+    );
+
+    // Submitted (no chat) with a question not answered, through the hook: left out of the
+    // answers, as the Review tab submits it. None answered: refused before anything is sent.
+    rpc.forget();
+    rpc.call("p4", json!({"type": "prompt", "text": "MOCK-ASKS both"}));
+    let q = rpc.event("question", Duration::from_secs(30));
+    rpc.send(
+        json!({"id": "a4", "type": "answer_question", "request_id": q["request_id"],
+        "answers": [null, null]}),
+    );
+    let r = rpc.until("a4", Duration::from_secs(10), |v| v["id"] == "a4");
+    assert_eq!(r["error"]["code"], "bad_request", "{r}");
+    let (_, before) = rpc.call_seeing(
+        "a5",
+        json!({"type": "answer_question", "request_id": q["request_id"],
+        "answers": [null, {"options": ["M"]}]}),
+    );
+    assert!(ended(&before, &q["request_id"]), "{before:?}");
+    let t = rpc.event("turn_end", Duration::from_secs(30));
+    assert_eq!(t["aborted"], false, "{t}");
+    let m = rpc.call("m4", json!({"type": "get_messages"}));
+    let r = m["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|b| b["kind"] == "tool_result")
+        .and_then(|b| b["content"].as_str())
+        .unwrap_or_default();
+    assert!(
+        r.contains(r#""Which sizes?"="M""#) && !r.contains("Which color?"),
         "{r}"
     );
 }

@@ -119,9 +119,10 @@ pub enum Command {
         decision: Decision,
         message: Option<String>,
     },
+    /// `answer_question`: one answer per question (`None`: not answered; at least one is).
     AnswerQuestion {
         request_id: String,
-        answers: Vec<Answer>,
+        answers: Vec<Option<Answer>>,
     },
     /// `answer_question` with `chat`: the dialog's `Chat about this`, with the answers given so far
     /// (`None`: not answered; at least one is not).
@@ -705,7 +706,10 @@ fn parse_command(kind: &str, obj: &Map<String, Value>) -> Result<Command, String
             }
             let mut answers = Vec::with_capacity(items.len());
             for (index, item) in items.iter().enumerate() {
-                answers.push(parse_answer(item, kind, index)?);
+                answers.push(match item {
+                    Value::Null => None,
+                    item => Some(parse_answer(item, kind, index)?),
+                });
             }
             Ok(Command::AnswerQuestion {
                 request_id,
@@ -1143,16 +1147,17 @@ mod tests {
         );
         assert_eq!(
             parse(
-                r#"{"type":"answer_question","request_id":"q1","answers":[{"options":["a","b"]},{"other":"x"},{"options":["c"],"other":"y"}]}"#
+                r#"{"type":"answer_question","request_id":"q1","answers":[{"options":["a","b"]},{"other":"x"},{"options":["c"],"other":"y"},null]}"#
             ),
             Request {
                 id: None,
                 command: Command::AnswerQuestion {
                     request_id: "q1".into(),
                     answers: vec![
-                        Answer::Options(vec!["a".into(), "b".into()]),
-                        Answer::Other("x".into()),
-                        Answer::Both(vec!["c".into()], "y".into()),
+                        Some(Answer::Options(vec!["a".into(), "b".into()])),
+                        Some(Answer::Other("x".into())),
+                        Some(Answer::Both(vec!["c".into()], "y".into())),
+                        None,
                     ],
                 },
             }

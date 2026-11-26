@@ -1172,18 +1172,48 @@
           },
           "answers": {
             "type": "array",
-            "minItems": 1,
             "items": {
-              "$ref": "#/$defs/answer"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/answer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
-            "description": "与题目一一对应的作答。"
+            "description": "与题目一一对应的作答，没答的题写 null。"
+          },
+          "chat": {
+            "const": true,
+            "description": "对话框的 Chat about this（先聊聊）：不提交，带上已答的题；至少一题没答，可省略 answers（即都没答）。"
           }
         },
         "required": [
           "type",
-          "request_id",
-          "answers"
+          "request_id"
         ],
+        "if": {
+          "not": {
+            "required": [
+              "chat"
+            ]
+          }
+        },
+        "then": {
+          "required": [
+            "answers"
+          ],
+          "properties": {
+            "answers": {
+              "minItems": 1,
+              "contains": {
+                "$ref": "#/$defs/answer"
+              },
+              "description": "至少答一题。"
+            }
+          }
+        },
         "additionalProperties": false
       },
       "slash": {

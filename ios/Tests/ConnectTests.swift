@@ -547,6 +547,14 @@ final class AnswersTests: XCTestCase {
         XCTAssertEqual(answers, [["options": ["X", "Y"], "other": "写的"], ["other": "只有字"], ["options": ["Z"]]])
     }
 
+    func testNotAnsweredIsNull() {
+        let answers = Answers.questionAnswers(
+            [q("a"), q("b", multi: true), q("c")],
+            picked: [[], [], ["X"]], other: ["   ", "划掉的", ""], useOther: [true, false, false]
+        )
+        XCTAssertEqual(answers, [.null, .null, ["options": ["X"]]])
+    }
+
     func testTextSetAsideDoesNotCount() {
         XCTAssertFalse(Answers.otherChosen(["写的"], [false], 0))
         XCTAssertTrue(Answers.otherChosen(["写的"], [true], 0))
