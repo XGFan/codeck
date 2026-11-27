@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
+use transcript::agy;
 use transcript::assemble::{self, SessionAggregates};
 
 use super::plan::{Ingest, SessionPlan};
@@ -11,9 +12,9 @@ use crate::engine::session_cache::{
 };
 use crate::index::schema::HEAD_LEN;
 use crate::index::writer::{self, AgentRow, FileRows, ProjectRow};
-use crate::model::FileRole;
+use crate::model::{Agent, FileRole, TitleSource};
 use crate::project;
-use crate::scan::{ScannedFile, SidecarKind};
+use crate::scan::{FileSource, ScannedFile, SidecarKind};
 
 // -------------------------------------------------------------------- per-session compute
 
@@ -32,6 +33,9 @@ pub(super) struct SessionSummaryOut {
     pub(super) project: ProjectRow,
     /// Newest main-file mtime (ms), used when no entry has a timestamp.
     pub(super) mtime_ms: f64,
+    pub(super) agent: Agent,
+    pub(super) haa_worker: bool,
+    pub(super) agy_meta: Option<i64>,
 }
 
 pub(super) struct SessionWork {
@@ -55,6 +59,9 @@ pub(super) fn compute_session(
     cached: Option<CachedSession>,
     keep: bool,
     need_main_set: bool,
+    agy_meta: Option<&agy::Meta>,
+    agy_root: &Path,
+    haa_home: &Path,
 ) -> SessionWork {
     let mut work = SessionWork {
         bytes: plan.ingest_bytes(),
@@ -102,9 +109,21 @@ pub(super) fn compute_session(
         if let Some(ing) = ingest.get(f.path.as_path())
             && let Ok(head) = read_head(&f.path, HEAD_LEN)
         {
+            let rows = match f.source {
+                FileSource::Claude => {
+                    writer::extract_rows(lf.records.iter().filter(|r| r.offset >= ing.from))
+                }
+                FileSource::Agy => {
+                    let unknown = st.agy.as_ref().map_or(&[][..], |a| a.unknown.as_slice());
+                    writer::extract_agy_rows(
+                        lf.records.iter().filter(|r| r.offset >= ing.from),
+                        unknown,
+                    )
+                }
+            };
             work.files.push(FileOut {
                 file: f.clone(),
-                rows: writer::extract_rows(lf.records.iter().filter(|r| r.offset >= ing.from)),
+                rows,
                 head,
                 parsed_offset: st.consumed,
                 line_count: lf.records.len() as u64 + u64::from(st.failed),
@@ -170,21 +189,55 @@ pub(super) fn compute_session(
 
     if !loaded.is_empty() {
         let skeleton = assemble::build_skeleton(&loaded);
-        let agg = assemble::summarize(&skeleton);
+        let mut agg = assemble::summarize(&skeleton);
         if need_main_set {
             work.main_set = Some(assemble::tree::main_set(&skeleton));
         }
-        let cwd = agg.cwd.clone().or_else(|| {
-            loaded
-                .iter()
-                .flat_map(|f| &f.records)
-                .find_map(|r| r.entry.cwd.clone())
-        });
+        let is_agy = main.first().is_some_and(|f| f.source == FileSource::Agy);
         let mtime_ms = main.iter().map(|f| f.mtime_ns).max().unwrap_or(0) as f64 / 1e6;
+        let (agent, haa_worker, agy_meta_fp, project) = if is_agy {
+            if let Some(title) = agy_meta.and_then(|m| m.title.as_deref()) {
+                agg.title = assemble::prompt::truncate_chars(title, assemble::prompt::TITLE_CHARS);
+                agg.title_source = TitleSource::Ai;
+            }
+            let cwd = agy_meta
+                .and_then(|m| m.workspaces.first())
+                .map(|p| p.to_string_lossy().into_owned());
+            let mut resolver = project::Resolver::default();
+            let project = if cwd.is_some() {
+                resolver.start_project(cwd.as_deref(), &main[0].path)
+            } else {
+                // No workspace: fall back to the agy data root itself (not `<root>/brain/.../logs`).
+                let root =
+                    std::fs::canonicalize(agy_root).unwrap_or_else(|_| agy_root.to_path_buf());
+                resolver.start_project(None, &root.join("_"))
+            };
+            agg.cwd = cwd;
+            let uses_haa_tools = states
+                .iter()
+                .any(|st| st.agy.as_ref().is_some_and(|a| a.uses_haa_tools));
+            let haa_worker =
+                agy_meta.is_some_and(|m| agy::is_haa_workspace(m, haa_home)) || uses_haa_tools;
+            let fp = agy_meta.map(|m| m.fingerprint as i64);
+            (Agent::Agy, haa_worker, fp, project)
+        } else {
+            let cwd = agg.cwd.clone().or_else(|| {
+                loaded
+                    .iter()
+                    .flat_map(|f| &f.records)
+                    .find_map(|r| r.entry.cwd.clone())
+            });
+            let project = project::Resolver::default().start_project(cwd.as_deref(), &main[0].path);
+            agg.cwd = cwd;
+            (Agent::Claude, false, None, project)
+        };
         work.summary = Some(SessionSummaryOut {
-            project: project::Resolver::default().start_project(cwd.as_deref(), &main[0].path),
-            agg: SessionAggregates { cwd, ..agg },
+            project,
+            agg,
             mtime_ms,
+            agent,
+            haa_worker,
+            agy_meta: agy_meta_fp,
         });
     }
     if keep && !loaded.is_empty() {

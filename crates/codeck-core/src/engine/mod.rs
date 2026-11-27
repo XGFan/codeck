@@ -32,7 +32,7 @@ use crate::index::schema::SCHEMA_VERSION;
 use crate::index::writer;
 use crate::index::{Index, text};
 use crate::model::{
-    AppInfo, DataRootSource, Diagnostics, FileRole, FindRequest, FindResult, ImageData,
+    Agent, AppInfo, DataRootSource, Diagnostics, FileRole, FindRequest, FindResult, ImageData,
     ImageRequest, IndexPhase, IndexStatus, JumpRequest, JumpTarget, LiveChanged, LiveEntry,
     LiveState, ProjectSummary, SearchRequest, SearchResponse, SessionDetail, SessionQuery,
     SessionSummary, SourceFile, Stats, StatsRequest, TokenTotals, ToolDetail, ToolDetailRequest,
@@ -41,6 +41,7 @@ use crate::model::{
 use crate::paths::{index_db_path, prices_cache_path, projects_dir, sessions_dir};
 use crate::{diag, search, stats};
 use session_cache::{CachedSession, FileState, Lru};
+use sync::SyncScope;
 
 /// Assembled Sessions kept for display.
 const SESSION_CACHE_CAP: usize = 4;
@@ -94,39 +95,74 @@ pub struct Engine {
 /// Sidecar path → (size, mtime, session id).
 type SidecarState = HashMap<PathBuf, (u64, i64, String)>;
 
-/// Session ids the changed `paths` name (`projects/<dir>/<sid>.jsonl` or anything under
-/// `projects/<dir>/<sid>/`, also via the realpath of `projects`), ignoring `<root>/sessions`;
-/// `None` when a path names no session (a project dir itself, a `<sid>/` dir moved in, anything
-/// else), or names none at all: then the whole root is scanned.
+/// Derives the [`SyncScope`] of a filesystem batch:
+/// - Claude Code `projects/<dir>/<sid>.jsonl` or `projects/<dir>/<sid>/…` (ignoring `<root>/sessions`)
+///   names `<sid>`.
+/// - agy `brain/<id>/.system_generated/logs/transcript_full.jsonl` names `<id>`.
+/// - agy `cache/conversation_metadata.json` widens the agy side to a full agy-root diff
+///   (stat-unchanged files are not re-read; only metadata fingerprints are compared).
+/// - Any other path (or no recognized paths) falls back to [`SyncScope::Full`].
 ///
 /// Changes no batch reports are caught by the next full scan: after a failed sync, after a
 /// watcher error (the worker queues a Rescan), and at the latest by the periodic Rescan, the
 /// last resort.
-fn changed_sessions(root: &Path, paths: &[PathBuf]) -> Option<BTreeSet<String>> {
+fn changed_sessions(root: &Path, agy_root: &Path, paths: &[PathBuf]) -> SyncScope {
     let projects = projects_dir(root);
     let real_projects = projects.canonicalize().ok();
     let sessions = sessions_dir(root);
+    let real_agy = agy_root.canonicalize().ok();
+    let meta_path = transcript::agy::metadata_path(agy_root);
+    let real_meta_path = real_agy.as_deref().map(transcript::agy::metadata_path);
     let mut out = BTreeSet::new();
+    let mut agy_all = false;
     for p in paths.iter().filter(|p| !p.starts_with(&sessions)) {
-        let rel = p
+        if *p == meta_path || real_meta_path.as_deref() == Some(p.as_path()) {
+            agy_all = true;
+            continue;
+        }
+        if let Some(sid) = transcript::agy::session_of_transcript(agy_root, p).or_else(|| {
+            real_agy
+                .as_deref()
+                .and_then(|r| transcript::agy::session_of_transcript(r, p))
+        }) {
+            out.insert(sid);
+            continue;
+        }
+        let Some(rel) = p
             .strip_prefix(&projects)
             .ok()
-            .or_else(|| p.strip_prefix(real_projects.as_ref()?).ok())?;
-        let comps = rel
+            .or_else(|| p.strip_prefix(real_projects.as_ref()?).ok())
+        else {
+            return SyncScope::Full;
+        };
+        let Some(comps) = rel
             .components()
             .map(|c| match c {
                 Component::Normal(s) => s.to_str(),
                 _ => None,
             })
-            .collect::<Option<Vec<&str>>>()?;
+            .collect::<Option<Vec<&str>>>()
+        else {
+            return SyncScope::Full;
+        };
         let sid = match comps.as_slice() {
-            [_, name] => name.strip_suffix(".jsonl")?,
+            [_, name] => match name.strip_suffix(".jsonl") {
+                Some(s) => s,
+                None => return SyncScope::Full,
+            },
             [_, sid, _, ..] => sid,
-            _ => return None,
+            _ => return SyncScope::Full,
         };
         out.insert(sid.to_owned());
     }
-    (!out.is_empty()).then_some(out)
+    if out.is_empty() && !agy_all {
+        SyncScope::Full
+    } else {
+        SyncScope::Scoped {
+            sessions: out,
+            agy_all,
+        }
+    }
 }
 
 impl fmt::Debug for Engine {
@@ -222,7 +258,7 @@ impl Engine {
 
     /// Phase 1: stat walk + metadata parse of changed files.
     pub fn scan_all(&self, p: &dyn Fn(&IndexStatus)) -> CoreResult<ChangeSet> {
-        self.sync(Some(p), false, None)
+        self.sync(Some(p), false, SyncScope::Full)
     }
 
     /// Phase 2: full-text backlog (`index::text`). `on_main_line` is set at insert time from
@@ -287,8 +323,8 @@ impl Engine {
         if !paths.is_empty() && paths.iter().all(|p| p.starts_with(&sessions)) {
             return Ok(ChangeSet::default());
         }
-        let scope = changed_sessions(&self.cfg.data_root, paths);
-        self.sync(None, true, scope.as_ref())
+        let scope = changed_sessions(&self.cfg.data_root, &self.cfg.agy_root, paths);
+        self.sync(None, true, scope)
     }
 
     /// Returns the new Live Session snapshot when it changed since the last poll.
@@ -399,6 +435,10 @@ impl Engine {
             cache_read: summary.tokens.cache_read - row.tokens_main.cache_read,
             cache_creation: summary.tokens.cache_creation - row.tokens_main.cache_creation,
         };
+        let resume_command = match summary.agent {
+            Agent::Claude => format!("claude --resume {}", shell_quote(id)),
+            Agent::Agy => format!("agy --conversation {}", shell_quote(id)),
+        };
         Ok(SessionDetail {
             summary,
             cwd_missing: row.cwd.as_deref().is_some_and(|c| !Path::new(c).is_dir()),
@@ -422,7 +462,7 @@ impl Engine {
             forks,
             superseded_by,
             failed_lines: failed as u32,
-            resume_command: format!("claude --resume {}", shell_quote(id)),
+            resume_command,
         })
     }
 

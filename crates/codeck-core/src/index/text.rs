@@ -232,10 +232,11 @@ pub fn index_pending(
     batch_bytes: u64,
 ) -> CoreResult<()> {
     let pending = {
-        let mut st = conn.prepare(
+        let mut st = conn.prepare(&format!(
             "SELECT id, path, session_id, agent_id, role, text_offset, parsed_offset FROM files
-             WHERE text_offset < parsed_offset ORDER BY session_id, role, id",
-        )?;
+             WHERE source = '{}' AND text_offset < parsed_offset ORDER BY session_id, role, id",
+            super::schema::SOURCE_CLAUDE
+        ))?;
         let rows = st.query_map([], |r| {
             Ok(Pending {
                 id: r.get(0)?,

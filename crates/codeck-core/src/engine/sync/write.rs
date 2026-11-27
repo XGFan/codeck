@@ -12,11 +12,13 @@ use crate::project;
 
 // -------------------------------------------------------------------- write
 
-/// `is_empty` of an existing session row.
-pub(super) fn session_exists(conn: &Connection, sid: &str) -> CoreResult<Option<bool>> {
+/// `(is_empty, project_id)` of an existing session row.
+pub(super) fn session_exists(conn: &Connection, sid: &str) -> CoreResult<Option<(bool, String)>> {
     Ok(conn
-        .prepare_cached("SELECT is_empty FROM sessions WHERE id=?1")?
-        .query_row([sid], |r| r.get::<_, bool>(0))
+        .prepare_cached("SELECT is_empty, project_id FROM sessions WHERE id=?1")?
+        .query_row([sid], |r| {
+            Ok((r.get::<_, bool>(0)?, r.get::<_, String>(1)?))
+        })
         .optional()?)
 }
 
@@ -113,12 +115,14 @@ pub(super) fn write_work(
             },
         )?;
         // Phase 2: text docs for `[text_offset, parsed_offset)` are extracted by
-        // `index::text::index_pending`; `text_offset` is deliberately left untouched here.
+        // `index::text::index_pending`; Claude Code `text_offset` stays untouched here while agy
+        // files are written with `text_offset = parsed_offset` (never entering FTS).
         writer::write_rows(
             conn,
             id,
             &w.sid,
             f.file.agent_id.as_deref().unwrap_or(""),
+            f.file.source,
             &f.rows,
         )?;
     }
@@ -165,9 +169,14 @@ pub(super) fn write_work(
         continued_in_id: a.continued_in_id.clone(),
         is_empty: a.is_empty,
         dup_uuids: a.duplicate_uuids,
+        agent: s.agent,
+        haa_worker: s.haa_worker,
+        agy_meta: s.agy_meta,
     };
     writer::write_session(conn, &row)?;
-    if writer::write_project(conn, &s.project)? || before != Some(a.is_empty) {
+    if writer::write_project(conn, &s.project)?
+        || before != Some((a.is_empty, s.project.id.clone()))
+    {
         cs.projects_changed = true;
     }
     if write_edited_projects(conn, &w.sid, &s.project, resolver)? {

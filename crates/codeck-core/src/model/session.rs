@@ -57,10 +57,20 @@ pub struct SessionQuery {
     pub drill: Option<Drill>,
 }
 
+/// Which coding agent produced a Session.
+#[derive(Serialize, Deserialize, Type, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Agent {
+    #[default]
+    Claude,
+    Agy,
+}
+
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
     pub id: SessionId,
+    pub agent: Agent,
     pub project_id: ProjectId,
     pub title: String,
     pub title_source: TitleSource,
@@ -131,7 +141,7 @@ pub struct SessionDetail {
     /// conversation copied there): the app opens that one instead. `None` for a listed Session.
     pub superseded_by: Option<String>,
     pub failed_lines: u32,
-    /// `claude --resume <id>`.
+    /// `claude --resume <id>` or `agy --conversation <id>`.
     pub resume_command: String,
 }
 

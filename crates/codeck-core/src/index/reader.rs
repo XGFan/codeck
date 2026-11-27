@@ -6,8 +6,10 @@ use chrono::{Local, NaiveDate, TimeZone};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
-use super::schema::MSG_PROMPT;
-use super::writer::{role_from_db, source_from_db, title_source_from_db};
+use super::schema::{MSG_PROMPT, SOURCE_AGY, SOURCE_CLAUDE};
+use super::writer::{
+    agent_from_db, role_from_db, source_from_db, source_to_db, title_source_from_db,
+};
 use crate::error::CoreResult;
 use crate::model::{
     Drill, FileRole, ForkChild, ForkOrigin, ModelCost, ProjectSummary, SessionQuery, SessionSort,
@@ -67,6 +69,49 @@ pub fn all_files(conn: &Connection) -> CoreResult<Vec<FileRecord>> {
     let mut st = conn.prepare(&format!("SELECT {FILE_COLS} FROM files"))?;
     let rows = st.query_map([], file_from_row)?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Every `files` row of `source`.
+pub fn files_of_source(conn: &Connection, source: FileSource) -> CoreResult<Vec<FileRecord>> {
+    let mut st = conn.prepare_cached(&format!("SELECT {FILE_COLS} FROM files WHERE source=?1"))?;
+    let rows = st.query_map([source_to_db(source)], file_from_row)?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Stored `agy_meta` fingerprints of agy sessions (`id -> agy_meta`).
+/// When `sids` is `Some`, only those sessions are queried; otherwise every agy session.
+pub fn agy_meta_fingerprints(
+    conn: &Connection,
+    sids: Option<&BTreeSet<String>>,
+) -> CoreResult<HashMap<String, Option<i64>>> {
+    let mut out = HashMap::new();
+    match sids {
+        None => {
+            let mut st = conn.prepare_cached(&format!(
+                "SELECT id, agy_meta FROM sessions WHERE agent = '{SOURCE_AGY}'"
+            ))?;
+            for r in st.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+            })? {
+                let (id, fp) = r?;
+                out.insert(id, fp);
+            }
+        }
+        Some(ids) => {
+            let mut st = conn.prepare_cached(&format!(
+                "SELECT agy_meta FROM sessions WHERE id = ?1 AND agent = '{SOURCE_AGY}'"
+            ))?;
+            for id in ids {
+                if let Some(fp) = st
+                    .query_row([id], |r| r.get::<_, Option<i64>>(0))
+                    .optional()?
+                {
+                    out.insert(id.clone(), fp);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `files` rows of the sessions `sids`.
@@ -141,7 +186,8 @@ fn summary_select(where_sql: &str) -> String {
             CASE WHEN b.origin = b.fork_origin_id THEN b.fork_point_uuid END, b.cost, b.unpriced,
             (SELECT json_group_array(sp.project_id) FROM session_projects sp WHERE sp.session_id = b.id),
             (SELECT max(m.ts_ms) FROM messages m
-                WHERE m.session_id = b.id AND m.agent_id = '' AND m.role = {MSG_PROMPT})
+                WHERE m.session_id = b.id AND m.agent_id = '' AND m.role = {MSG_PROMPT}),
+            b.agent
          FROM b LEFT JOIN sessions o ON o.id = b.origin",
         origin = origin_expr("s")
     )
@@ -153,8 +199,10 @@ fn summary_from_row(r: &Row) -> rusqlite::Result<SessionSummary> {
     let created_ms = r
         .get::<_, Option<i64>>(4)?
         .map_or(last_active, |v| v as f64);
+    let agent: String = r.get(22)?;
     Ok(SessionSummary {
         id: r.get(0)?,
+        agent: agent_from_db(&agent),
         project_id: r.get(1)?,
         title: r.get(2)?,
         title_source: title_source_from_db(r.get(3)?),
@@ -302,9 +350,9 @@ pub fn list_sessions(conn: &Connection, q: &SessionQuery) -> CoreResult<Vec<Sess
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// SQL predicate matching listed sessions that either directly own a message satisfying
-/// `where_sql` (over `messages m`) or carry on a superseded session (through any `continued_in_id`
-/// chain) that does.
+/// SQL predicate matching listed Claude Code sessions that either directly own a message
+/// satisfying `where_sql` (over `messages m`) or carry on a superseded session (through any
+/// `continued_in_id` chain) that does.
 fn drill_in_sessions_sql(where_sql: &str) -> String {
     format!(
         "s.id IN (
@@ -312,7 +360,7 @@ fn drill_in_sessions_sql(where_sql: &str) -> String {
                 SELECT DISTINCT m.session_id
                 FROM messages m
                 WHERE {where_sql}
-                  AND m.session_id IN (SELECT id FROM sessions WHERE is_empty = 0)
+                  AND m.session_id IN (SELECT id FROM sessions WHERE is_empty = 0 AND agent = '{SOURCE_CLAUDE}')
                 UNION
                 SELECT cur.continued_in_id
                 FROM climb c
@@ -397,11 +445,14 @@ pub fn session_detail(conn: &Connection, id: &str) -> CoreResult<Option<SessionD
     Ok(Some(row))
 }
 
-/// Cost per model of a session (main + subagents), most expensive first.
+/// Cost per model of a Claude Code session (main + subagents), most expensive first; empty for agy.
 pub fn model_costs(conn: &Connection, session_id: &str) -> CoreResult<Vec<ModelCost>> {
     let mut st = conn.prepare_cached(&format!(
         "SELECT coalesce(model, ?2), coalesce(sum(cost), 0), count(*) FILTER (WHERE cost IS NULL)
-         FROM messages WHERE session_id = ?1 AND {billed}
+         FROM messages
+         WHERE session_id = ?1
+           AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = messages.session_id AND s.agent = '{SOURCE_CLAUDE}')
+           AND {billed}
          GROUP BY 1 ORDER BY 2 DESC, 1",
         billed = billed_tokens_sql()
     ))?;
