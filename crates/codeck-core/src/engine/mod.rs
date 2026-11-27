@@ -461,6 +461,11 @@ impl Engine {
             Agent::Claude => format!("claude --resume {}", shell_quote(id)),
             Agent::Agy => format!("agy --conversation {}", shell_quote(id)),
         };
+        let haa_tasks = if summary.agent == Agent::Claude {
+            self.haa.lock().tasks_for(&self.cfg.haa_home, id).to_vec()
+        } else {
+            Vec::new()
+        };
         Ok(SessionDetail {
             summary,
             cwd_missing: row.cwd.as_deref().is_some_and(|c| !Path::new(c).is_dir()),
@@ -485,6 +490,7 @@ impl Engine {
             superseded_by,
             failed_lines: failed as u32,
             resume_command,
+            haa_tasks,
         })
     }
 

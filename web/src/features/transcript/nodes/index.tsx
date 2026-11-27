@@ -9,6 +9,7 @@ import { Anchor } from "./Anchor";
 import { AskRow } from "./Ask";
 import { AssistantRow, AssistantSegment } from "./Assistant";
 import { InheritedBanner, InheritedDivider } from "./Fork";
+import { HaaTaskCard } from "./HaaTask";
 import {
   ApiRetryRow,
   AttachmentLine,
@@ -89,6 +90,8 @@ export function RowView({ row }: { row: Row }) {
       return <FinalResultCard text={row.text} />;
     case "fold":
       return <FoldRow row={row} />;
+    case "haaTask":
+      return <HaaTaskCard task={row.task} />;
   }
 }
 

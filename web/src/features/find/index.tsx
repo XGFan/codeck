@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FindMatch, FindRequest, TranscriptScope } from "@/ipc/bindings";
 import { isComposingKey, useHotkey } from "@/lib/hotkeys";
 import { useFind } from "@/queries";
-import { MAIN_SCOPE, useUi } from "@/state/ui";
+import { MAIN_SCOPE, parseWorkerPanelId, useUi } from "@/state/ui";
 import { scrollToNode } from "../transcript/Transcript";
 import { requestFullOutput } from "../transcript/tools";
 import { errorText } from "@/lib/errors";
@@ -25,7 +25,11 @@ export function FindBar() {
   const index = useUi((s) => s.findIndex);
   const showHidden = useUi((s) => s.showHidden);
   const branchChoices = useUi((s) => s.branchChoices);
-  const panelOpen = useUi((s) => s.panelStack.length > 0);
+  // A haa Worker panel is not a Subagent scope; ⌘F keeps searching the main conversation while it is open.
+  const subagentPanelOpen = useUi((s) => {
+    const top = s.panelStack[s.panelStack.length - 1];
+    return top != null && parseWorkerPanelId(top) == null;
+  });
   // IME composition (e.g. pinyin) puts unconfirmed text in the input; find only confirmed text.
   const [composing, setComposing] = useState(false);
   const [settledQuery, setSettledQuery] = useState(query);
@@ -51,7 +55,9 @@ export function FindBar() {
     () => {
       if (!canFind) return;
       const st = useUi.getState();
-      if (!st.findOpen) setScope(st.panelStack.length ? lastScope.current : MAIN_SCOPE);
+      const top = st.panelStack[st.panelStack.length - 1];
+      const hasSubagentPanel = top != null && parseWorkerPanelId(top) == null;
+      if (!st.findOpen) setScope(hasSubagentPanel ? lastScope.current : MAIN_SCOPE);
       st.setFindOpen(true);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
@@ -62,7 +68,7 @@ export function FindBar() {
   );
 
   const show = open && canFind;
-  const activeScope = panelOpen ? scope : MAIN_SCOPE;
+  const activeScope = subagentPanelOpen ? scope : MAIN_SCOPE;
 
   const go = useCallback(
     (list: FindMatch[], i: number) => {

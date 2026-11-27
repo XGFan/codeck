@@ -75,6 +75,30 @@ pub struct HaaWorker {
     pub task_title: Option<String>,
 }
 
+/// One completed haa Worker Task dispatched by a Main Session (`<haa_home>/usage.jsonl`).
+#[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HaaTask {
+    /// Worker name in haa.
+    pub worker: Option<String>,
+    /// Worker's agy conversation id, when recorded.
+    pub session_id: Option<SessionId>,
+    /// Short task title, when provided.
+    pub title: Option<String>,
+    /// Opening excerpt of the task prompt sent to the Worker.
+    pub task: Option<String>,
+    /// Terminal task status (`done`, `failed`, `aborted`, etc.).
+    pub status: Option<String>,
+    /// Full model identifier used by the Worker.
+    pub model: Option<String>,
+    /// Task completion time in unix-epoch milliseconds (parsed from `ts`).
+    #[specta(type = Number)]
+    pub ended_ms: f64,
+    /// Task duration in milliseconds, when recorded.
+    #[specta(type = Option<Number>)]
+    pub duration_ms: Option<f64>,
+}
+
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -154,6 +178,8 @@ pub struct SessionDetail {
     pub failed_lines: u32,
     /// `claude --resume <id>` or `agy --conversation <id>`.
     pub resume_command: String,
+    /// haa Worker Tasks owned by this Session, ordered by `ended_ms` ascending.
+    pub haa_tasks: Vec<HaaTask>,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]

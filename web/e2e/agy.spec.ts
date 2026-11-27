@@ -183,3 +183,44 @@ test("设置 › 数据显示 agy 数据目录", async ({ page }) => {
   await expect(dialog.getByTestId("set-agy-root")).toContainText("agy 数据目录");
   await expect(dialog.getByTestId("set-agy-root-path")).toHaveText("/Users/dev/.gemini/antigravity-cli");
 });
+
+test("派活 Session 显示 haa Worker Task 卡片，右侧面板查看完整过程并可单独打开", async ({ page }) => {
+  await openSession(page, FORK_ORIGIN_TITLE, { folded: true });
+
+  const cards = page.getByTestId("haa-task-card");
+  await expect(cards).toHaveCount(3);
+
+  const webCard = cards.filter({ hasText: "agy-web" });
+  const oldCard = cards.filter({ hasText: "agy-old" });
+  const liveCard = cards.filter({ hasText: "agy-live" });
+
+  await expect(webCard.getByTestId("haa-task-open")).toHaveText("查看完整过程 →");
+  await expect(liveCard.getByTestId("haa-task-open")).toHaveText("查看完整过程 →");
+  await expect(oldCard.getByTestId("haa-task-open")).toHaveCount(0);
+  await expect(oldCard).toContainText("对话未关联");
+  await expect(oldCard).toContainText("失败");
+
+  // Click agy-web's open button -> right-hand Worker panel opens with agy-web's conversation.
+  await webCard.getByTestId("haa-task-open").click();
+  await expect(webCard).toContainText("正在右侧查看");
+  const panel = page.getByTestId("worker-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("panel-breadcrumb")).toContainText("主对话");
+  await expect(panel.getByTestId("panel-breadcrumb")).toContainText("agy-web");
+  await expect(panel.getByTestId("panel-meta")).toContainText("agy · gemini-4-neon-high");
+  await expect(panel.getByTestId("panel-meta")).toContainText("Cost 未记录");
+  await expect(panel.getByTestId("panel-transcript")).toContainText(
+    "已完成侧栏分组、头部返回行与 E2E 用例，所有测试通过。",
+  );
+
+  // Click 「单独打开」 -> switches to Worker's full-page view with worker-crumb, then crumb navigates back.
+  await panel.getByTestId("worker-panel-open").click();
+  await expect(panel).toHaveCount(0);
+  const header = page.getByTestId("header");
+  await expect(header.getByRole("heading", { name: WORKER_WEB_TITLE })).toBeVisible();
+  const crumb = header.getByTestId("worker-crumb");
+  await expect(crumb).toBeVisible();
+  await crumb.getByRole("button", { name: FORK_ORIGIN_TITLE }).click();
+  await expect(header.getByRole("heading", { name: FORK_ORIGIN_TITLE })).toBeVisible();
+  await expect(header.getByTestId("worker-crumb")).toHaveCount(0);
+});

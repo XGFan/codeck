@@ -1,24 +1,132 @@
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { Fragment, useMemo } from "react";
 import type { SubagentRun, TranscriptScope } from "@/ipc/bindings";
-import { formatTokens } from "@/lib/format";
+import { formatDuration, formatTokens } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
-import { useCurrentTranscript, useTranscript } from "@/queries";
-import { selectOverlayOpen, useUi } from "@/state/ui";
+import { useAllSessions, useCurrentTranscript, useSession, useTranscript } from "@/queries";
+import { MAIN_SCOPE, parseWorkerPanelId, selectOverlayOpen, useUi } from "@/state/ui";
 import { TranscriptList } from "@/features/transcript/Transcript";
-import { formatDuration } from "@/lib/format";
 import { RunStatus, useSessionLive } from "@/features/transcript/nodes/Agents";
 import { runState } from "@/features/transcript/runState";
 
 const crumbLabel = (run: SubagentRun | undefined, id: string) =>
   run ? [run.agentType ?? run.name, run.description].filter(Boolean).join(" · ") || id : id;
 
-/** Right-side panel showing the innermost Subagent Run of `panelStack`, with a breadcrumb back to the main transcript. */
+/** Right-side panel showing either the innermost Subagent Run or a haa Worker Session from `panelStack`. */
 export function SubagentPanel() {
   const stack = useUi((s) => s.panelStack);
   const sessionId = useUi((s) => s.sessionId);
   if (!sessionId || stack.length === 0) return null;
+  const workerSessionId = parseWorkerPanelId(stack[stack.length - 1]);
+  if (workerSessionId) return <WorkerPanel ownerSessionId={sessionId} workerSessionId={workerSessionId} />;
   return <Panel sessionId={sessionId} stack={stack} />;
+}
+
+function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: string; workerSessionId: string }) {
+  const setPanelStack = useUi((s) => s.setPanelStack);
+  const selectSession = useUi((s) => s.selectSession);
+  const includeHidden = useUi((s) => s.showHidden);
+  const { data: ownerDetail } = useSession(ownerSessionId);
+  const { data: detail } = useSession(workerSessionId);
+  const { data: allSessions } = useAllSessions();
+  const req = useMemo(
+    () => ({ sessionId: workerSessionId, scope: MAIN_SCOPE, branchChoices: [], includeHidden }),
+    [workerSessionId, includeHidden],
+  );
+  const { data, isPlaceholderData, error } = useTranscript(req);
+
+  const summary = detail?.summary ?? allSessions?.find((s) => s.id === workerSessionId) ?? null;
+  const workerName =
+    summary?.haaWorker?.name ??
+    ownerDetail?.haaTasks.find((t) => t.sessionId === workerSessionId)?.worker ??
+    summary?.title ??
+    null;
+
+  const close = () => setPanelStack([]);
+  const openStandalone = () => {
+    setPanelStack([]);
+    selectSession(workerSessionId);
+  };
+
+  useHotkey("Escape", () => {
+    const s = useUi.getState();
+    if (selectOverlayOpen(s) || s.findOpen) return;
+    close();
+  });
+
+  const loaded = data && data.sessionId === workerSessionId && data.scope.kind === "main";
+  const dur = detail ? detail.durationMs : summary ? summary.lastActiveMs - summary.createdMs : null;
+  const meta = [
+    summary ? `${summary.messageCount} 条消息` : null,
+    formatDuration(dur, "detail"),
+    summary ? `输出 ${formatTokens(summary.tokens.output)}` : null,
+    "Cost 未记录",
+  ].filter(Boolean);
+
+  return (
+    <aside
+      data-testid="worker-panel"
+      aria-label="haa Worker 完整过程"
+      className="flex w-[min(560px,50%)] min-w-[360px] shrink-0 flex-col border-l border-border bg-list shadow-[-8px_0_24px_rgba(0,0,0,0.04)]"
+    >
+      <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-4 py-2.5">
+        <nav
+          aria-label="面包屑"
+          data-testid="panel-breadcrumb"
+          className="flex flex-wrap items-center gap-1.5 text-[12px]"
+        >
+          <button type="button" onClick={close} className="text-accent hover:underline">
+            主对话
+          </button>
+          <span className="text-secondary/70">›</span>
+          <span data-testid="crumb" aria-current="page" className="font-semibold">
+            {workerName ? `haa Worker · ${workerName}` : "haa Worker"}
+          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            data-testid="worker-panel-open"
+            onClick={openStandalone}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-accent hover:bg-selection"
+          >
+            <ExternalLink size={12} strokeWidth={1.8} aria-hidden />
+            单独打开
+          </button>
+          <button
+            type="button"
+            aria-label="关闭面板"
+            data-testid="panel-close"
+            onClick={close}
+            className="flex size-[26px] items-center justify-center rounded-md text-text/80 hover:bg-selection"
+          >
+            <X size={12} strokeWidth={1.8} aria-hidden />
+          </button>
+        </nav>
+        <div data-testid="panel-meta" className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-secondary">
+          <span className="text-agy">{summary?.primaryModel ? `agy · ${summary.primaryModel}` : "agy"}</span>
+          {meta.map((m) => (
+            <span key={m}>{m}</span>
+          ))}
+        </div>
+      </div>
+      {error && !loaded ? (
+        <div className="flex flex-1 items-center justify-center px-6 text-[12px] text-secondary">
+          无法读取该 haa Worker 的记录
+        </div>
+      ) : loaded ? (
+        <TranscriptList
+          key={workerSessionId}
+          transcript={data}
+          ready={!isPlaceholderData}
+          scope={MAIN_SCOPE}
+          inPanel
+          testId="panel-transcript"
+        />
+      ) : (
+        <div className="flex-1" />
+      )}
+    </aside>
+  );
 }
 
 function Panel({ sessionId, stack }: { sessionId: string; stack: string[] }) {

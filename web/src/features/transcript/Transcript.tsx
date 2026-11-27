@@ -1,12 +1,12 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
-import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
+import type { HaaTask, SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
 import { OverlayScrollbar } from "@/components/OverlayScrollbar";
 import { ConnectTail, RewoundDivider, useRewindView, useShownTranscript, useUnindexed } from "@/features/connect";
 import { cn } from "@/lib/cn";
-import { useCurrentTranscript, useIndexStatus } from "@/queries";
-import { MAIN_SCOPE, useUi } from "@/state/ui";
+import { useCurrentTranscript, useIndexStatus, useSession } from "@/queries";
+import { MAIN_SCOPE, parseWorkerPanelId, useUi, workerPanelId } from "@/state/ui";
 import { useFollowBottom, usePublishTurns, useRows, useScrollRequestConsumer } from "./listHooks";
 import { isContinuation, RowView } from "./nodes";
 import { scrollToNode, TranscriptContext, type TranscriptCtx } from "./nodes/scroll";
@@ -42,6 +42,7 @@ if (import.meta.env.DEV || import.meta.env.VITE_IPC === "mock") window.__cvStore
 export function TranscriptView() {
   const sessionId = useUi((s) => s.sessionId);
   const { data, isPlaceholderData, error } = useCurrentTranscript();
+  const { data: detail } = useSession(sessionId);
   // A Connected or `ccrpc ls` Session not in the index yet: its transcript file appears with the first prompt.
   const unindexed = useUnindexed(error);
   // A link may name a Session the scan has not reached yet (just started, or the app launched by the link).
@@ -102,6 +103,7 @@ export function TranscriptView() {
       ready={!isPlaceholderData}
       scope={MAIN_SCOPE}
       follow
+      haaTasks={detail?.summary.id === sessionId ? detail.haaTasks : undefined}
       testId="transcript"
     />
   );
@@ -135,6 +137,10 @@ export interface TranscriptListProps {
   scope: TranscriptScope;
   /** Start at the bottom and stay pinned while content grows (main transcript). */
   follow?: boolean;
+  /** True when rendered inside the right-hand panel (e.g. a haa Worker's main conversation). */
+  inPanel?: boolean;
+  /** Completed haa Worker Tasks owned by this Session; inserted at top level in the primary main conversation only. */
+  haaTasks?: readonly HaaTask[];
   /** Subagent scope: the run being shown (task card + final result). */
   agent?: SubagentRun | null;
   /** Runs known from elsewhere (the main transcript) for card / breadcrumb lookups. */
@@ -144,23 +150,26 @@ export interface TranscriptListProps {
 
 const NO_PROMPTS: ReadonlySet<string> = new Set();
 
-/** Virtualized row list shared by the main transcript and the Subagent panel. */
+/** Virtualized row list shared by the main transcript and the Subagent / Worker panel. */
 export function TranscriptList({
   transcript: fetched,
   ready,
   scope,
   follow = false,
+  inPanel = false,
+  haaTasks,
   agent = null,
   extraRuns,
   testId,
 }: TranscriptListProps) {
-  const transcript = useShownTranscript(fetched, scope.kind === "main");
+  const isMain = scope.kind === "main" && !inPanel;
+  const transcript = useShownTranscript(fetched, isMain);
   const sessionId = transcript.sessionId;
   const panelStack = useUi((s) => s.panelStack);
   const setPanelStack = useUi((s) => s.setPanelStack);
-  const { input, grouping, inheritedExpanded } = useRows(transcript, agent);
+  const { input, grouping, inheritedExpanded } = useRows(transcript, agent, isMain ? haaTasks : undefined);
   const rows = grouping.rows;
-  const rewind = useRewindView(scope.kind === "main" ? transcript : null, rows);
+  const rewind = useRewindView(isMain ? transcript : null, rows);
   const rewindable = rewind?.rewindable ?? NO_PROMPTS;
   const forkable = rewind?.forkable ?? NO_PROMPTS;
   // The prompts shown: a prompt just sent stays a placeholder at the end until it is among them.
@@ -171,12 +180,15 @@ export function TranscriptList({
     const runs = new Map<string, SubagentRun>();
     for (const r of extraRuns ?? []) runs.set(r.agentId, r);
     for (const r of transcript.subagents) runs.set(r.agentId, r);
+    const topPanel = panelStack[panelStack.length - 1] ?? null;
+    const activeWorkerId = parseWorkerPanelId(topPanel);
     return {
       sessionId,
       scope,
       runs,
       toolNode: grouping.toolNode,
-      activeAgentId: panelStack[panelStack.length - 1] ?? null,
+      activeAgentId: activeWorkerId ? null : topPanel,
+      activeWorkerId,
       rewindable,
       forkable,
       peerNames: names,
@@ -188,6 +200,7 @@ export function TranscriptList({
           setPanelStack([...(at >= 0 ? stack.slice(0, at + 1) : stack), agentId]);
         }
       },
+      openWorker: (workerSessionId) => setPanelStack([workerPanelId(workerSessionId)]),
     };
   }, [
     sessionId,
@@ -211,7 +224,6 @@ export function TranscriptList({
     getItemKey: (i) => rows[i]!.key,
   });
 
-  const isMain = scope.kind === "main";
   const { publishTurn, unlockTurn, onKeyDown } = usePublishTurns(isMain, rows, virtualizer, scrollRef);
   const { pinned, unread, onScroll, tailRef, total, jumpToBottom } = useFollowBottom(
     follow,
@@ -223,6 +235,7 @@ export function TranscriptList({
   useScrollRequestConsumer({
     scope,
     ready,
+    enabled: !(inPanel && scope.kind === "main"),
     grouping,
     input,
     inheritedExpanded,
@@ -243,7 +256,7 @@ export function TranscriptList({
           onTouchStart={unlockTurn}
           onKeyDown={onKeyDown}
           data-testid={testId}
-          data-scope={scope.kind === "main" ? "main" : scope.agentId}
+          data-scope={inPanel && scope.kind === "main" ? undefined : scope.kind === "main" ? "main" : scope.agentId}
           className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-6"
         >
           <div className="relative mx-auto max-w-(--conv-w)" style={{ height: total + 40 }}>

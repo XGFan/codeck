@@ -1,10 +1,11 @@
 // The hooks behind `TranscriptList`: rows, turn publishing (outline / j-k), staying at the bottom, scroll requests.
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
+import type { HaaTask, SubagentRun, Transcript, TranscriptScope } from "@/ipc/bindings";
 import { useUi } from "@/state/ui";
 import { foldTurns } from "./fold";
 import { anchorKey, buildRows, type Grouping, type GroupingInput, type Row, rowIndexOf } from "./grouping";
+import { insertHaaTasks } from "./haaTasks";
 import { INHERITED_KEY, isFoldKey } from "./keys";
 import { clearScroll, onScrollToBottom, type PendingScroll, usePendingScroll } from "./nodes/scroll";
 import { resetReading, setCurrentTurn, setTurns, useReading } from "./reading";
@@ -24,8 +25,8 @@ const foldState = (expanded: Record<string, boolean>) =>
     .map((k) => `${k}=${expanded[k] ? 1 : 0}`)
     .join(",");
 
-/** The transcript's rows: grouped (`buildRows`), then folded by turn with the fold keys' state. */
-export function useRows(transcript: Transcript, agent: SubagentRun | null) {
+/** The transcript's rows: grouped (`buildRows`), folded by turn, then top-level haa Worker Task cards inserted. */
+export function useRows(transcript: Transcript, agent: SubagentRun | null, haaTasks?: readonly HaaTask[]) {
   const showHidden = useUi((s) => s.showHidden);
   const inheritedExpanded = useUi((s) => s.expanded[INHERITED_KEY] ?? false);
   const input = useMemo<GroupingInput>(
@@ -47,7 +48,11 @@ export function useRows(transcript: Transcript, agent: SubagentRun | null) {
   const folds = useUi((s) => foldState(s.expanded));
   // `folds` is the trigger; the fold keys are read from the store when it changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const grouping = useMemo(() => foldTurns(built, useUi.getState().expanded), [built, folds]);
+  const folded = useMemo(() => foldTurns(built, useUi.getState().expanded), [built, folds]);
+  const grouping = useMemo(
+    () => (haaTasks?.length ? insertHaaTasks(folded, transcript.nodes, haaTasks) : folded),
+    [folded, transcript.nodes, haaTasks],
+  );
   return { input, grouping, inheritedExpanded };
 }
 
@@ -184,6 +189,7 @@ export function useFollowBottom(
 export function useScrollRequestConsumer({
   scope,
   ready,
+  enabled = true,
   grouping,
   input,
   inheritedExpanded,
@@ -194,6 +200,7 @@ export function useScrollRequestConsumer({
 }: {
   scope: TranscriptScope;
   ready: boolean;
+  enabled?: boolean;
   grouping: Grouping;
   input: GroupingInput;
   inheritedExpanded: boolean;
@@ -202,7 +209,7 @@ export function useScrollRequestConsumer({
   scrollRef: RefObject<HTMLDivElement | null>;
   pinned: RefObject<boolean>;
 }) {
-  const pending = usePendingScroll(scope);
+  const pending = usePendingScroll(enabled ? scope : null);
   const [target, setTarget] = useState<PendingScroll | null>(null);
   const miss = useRef<ScrollMiss | null>(null);
   const flash = useRef<{ timer: ReturnType<typeof setTimeout>; clear: () => void } | null>(null);

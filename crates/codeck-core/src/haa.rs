@@ -12,13 +12,15 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::model::HaaWorker;
+use crate::model::{HaaTask, HaaWorker};
 
 type FileStamp = Option<(SystemTime, u64)>;
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct UsageRow {
+    #[serde(default)]
+    ts: Option<String>,
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
@@ -27,6 +29,14 @@ struct UsageRow {
     worker: Option<String>,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    task: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    duration_ms: Option<f64>,
     #[serde(default)]
     session_id: Option<String>,
     #[serde(default)]
@@ -60,12 +70,11 @@ pub struct HaaCache {
     usage_stamp: FileStamp,
     workers_stamp: FileStamp,
     entries: HashMap<String, HaaWorker>,
+    tasks: HashMap<String, Vec<HaaTask>>,
 }
 
 impl HaaCache {
-    /// Returns the cached `session_id -> HaaWorker` map for `haa_home`, reloading whenever the
-    /// directory changes or either source file's mtime/size changes.
-    pub fn entries(&mut self, haa_home: &Path) -> &HashMap<String, HaaWorker> {
+    fn refresh(&mut self, haa_home: &Path) {
         let usage_path = haa_home.join("usage.jsonl");
         let workers_path = haa_home.join("workers.json");
         let usage_stamp = file_stamp(&usage_path);
@@ -75,14 +84,28 @@ impl HaaCache {
             && self.usage_stamp == usage_stamp
             && self.workers_stamp == workers_stamp
         {
-            return &self.entries;
+            return;
         }
 
-        self.entries = load_files(&usage_path, &workers_path);
+        let (entries, tasks) = load_files(&usage_path, &workers_path);
+        self.entries = entries;
+        self.tasks = tasks;
         self.haa_home = Some(haa_home.to_path_buf());
         self.usage_stamp = usage_stamp;
         self.workers_stamp = workers_stamp;
+    }
+
+    /// Returns the cached `session_id -> HaaWorker` map for `haa_home`, reloading whenever the
+    /// directory changes or either source file's mtime/size changes.
+    pub fn entries(&mut self, haa_home: &Path) -> &HashMap<String, HaaWorker> {
+        self.refresh(haa_home);
         &self.entries
+    }
+
+    /// Returns cached haa Worker Tasks owned by `owner`, ordered by `ended_ms` ascending.
+    pub fn tasks_for(&mut self, haa_home: &Path, owner: &str) -> &[HaaTask] {
+        self.refresh(haa_home);
+        self.tasks.get(owner).map(Vec::as_slice).unwrap_or(&[])
     }
 }
 
@@ -92,6 +115,7 @@ pub fn load(haa_home: &Path) -> HashMap<String, HaaWorker> {
         &haa_home.join("usage.jsonl"),
         &haa_home.join("workers.json"),
     )
+    .0
 }
 
 /// `worktree directory -> repo root` from haa's `kind = "worktree"` records in `<haa_home>/usage.jsonl`
@@ -130,14 +154,29 @@ fn non_empty(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.is_empty())
 }
 
-fn load_files(usage_path: &Path, workers_path: &Path) -> HashMap<String, HaaWorker> {
-    let mut out = HashMap::new();
-    read_usage(usage_path, &mut out);
-    read_workers(workers_path, &mut out);
-    out
+fn parse_ts_ms(ts: Option<&str>) -> Option<f64> {
+    let raw = ts.filter(|s| !s.is_empty())?;
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|dt| dt.timestamp_millis() as f64)
 }
 
-fn read_usage(path: &Path, out: &mut HashMap<String, HaaWorker>) {
+fn load_files(
+    usage_path: &Path,
+    workers_path: &Path,
+) -> (HashMap<String, HaaWorker>, HashMap<String, Vec<HaaTask>>) {
+    let mut entries = HashMap::new();
+    let mut tasks = HashMap::new();
+    read_usage(usage_path, &mut entries, &mut tasks);
+    read_workers(workers_path, &mut entries);
+    (entries, tasks)
+}
+
+fn read_usage(
+    path: &Path,
+    entries: &mut HashMap<String, HaaWorker>,
+    tasks: &mut HashMap<String, Vec<HaaTask>>,
+) {
     let Ok(file) = File::open(path) else {
         return;
     };
@@ -155,18 +194,38 @@ fn read_usage(path: &Path, out: &mut HashMap<String, HaaWorker>) {
         if row.kind.as_deref() != Some("task") {
             continue;
         }
-        let Some(sid) = non_empty(row.session_id) else {
-            continue;
-        };
-        // Last task record wins for a given sessionId.
-        out.insert(
-            sid,
-            HaaWorker {
-                owner_session_id: non_empty(row.owner),
-                name: non_empty(row.worker),
-                task_title: non_empty(row.title),
-            },
-        );
+        let owner = non_empty(row.owner);
+        let worker = non_empty(row.worker);
+        let title = non_empty(row.title);
+        let session_id = non_empty(row.session_id);
+
+        if let Some(sid) = session_id.clone() {
+            // Last task record wins for a given sessionId.
+            entries.insert(
+                sid,
+                HaaWorker {
+                    owner_session_id: owner.clone(),
+                    name: worker.clone(),
+                    task_title: title.clone(),
+                },
+            );
+        }
+
+        if let (Some(owner_id), Some(ended_ms)) = (owner, parse_ts_ms(row.ts.as_deref())) {
+            tasks.entry(owner_id).or_default().push(HaaTask {
+                worker,
+                session_id,
+                title,
+                task: non_empty(row.task),
+                status: non_empty(row.status),
+                model: non_empty(row.model),
+                ended_ms,
+                duration_ms: row.duration_ms.filter(|v| v.is_finite()),
+            });
+        }
+    }
+    for list in tasks.values_mut() {
+        list.sort_by(|a, b| a.ended_ms.total_cmp(&b.ended_ms));
     }
 }
 
@@ -309,5 +368,74 @@ mod tests {
 
         // Switching to another directory invalidates even when empty/missing.
         assert!(cache.entries(dir_b.path()).is_empty());
+    }
+
+    #[test]
+    fn tasks_group_by_owner_sort_by_ended_ms_and_skip_invalid_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("usage.jsonl"),
+            [
+                "not json",
+                // Non-task kind ignored.
+                r#"{"ts":"2026-11-27T01:00:00Z","kind":"spawn","owner":"m1","worker":"w0"}"#,
+                // Missing / invalid ts skipped for tasks.
+                r#"{"kind":"task","owner":"m1","worker":"no-ts"}"#,
+                r#"{"ts":"not-a-timestamp","kind":"task","owner":"m1","worker":"bad-ts"}"#,
+                // Missing / empty owner skipped.
+                r#"{"ts":"2026-11-27T01:00:00Z","kind":"task","worker":"no-owner"}"#,
+                r#"{"ts":"2026-11-27T01:00:00Z","kind":"task","owner":"","worker":"empty-owner"}"#,
+                // Later task written earlier in the file -> sorted after earlier task.
+                r#"{"ts":"2026-11-27T01:05:00.500Z","kind":"task","owner":"m1","worker":"w2","title":"second","task":"do 2","status":"done","model":"google/gemini-4-neon-high","durationMs":120000,"sessionId":"s2"}"#,
+                // Earlier task without sessionId, with empty strings normalized to None.
+                r#"{"ts":"2026-11-27T01:02:00Z","kind":"task","owner":"m1","worker":"w1","title":"","task":"do 1","status":"failed","model":"","sessionId":""}"#,
+                // Different owner.
+                r#"{"ts":"2026-11-27T01:03:00Z","kind":"task","owner":"m2","worker":"w3","title":"other","status":"aborted","durationMs":5000}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let mut cache = HaaCache::default();
+        let m1 = cache.tasks_for(dir.path(), "m1");
+        assert_eq!(m1.len(), 2);
+        assert_eq!(
+            m1[0],
+            HaaTask {
+                worker: Some("w1".into()),
+                session_id: None,
+                title: None,
+                task: Some("do 1".into()),
+                status: Some("failed".into()),
+                model: None,
+                ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-27T01:02:00Z")
+                    .unwrap()
+                    .timestamp_millis() as f64,
+                duration_ms: None,
+            }
+        );
+        assert_eq!(
+            m1[1],
+            HaaTask {
+                worker: Some("w2".into()),
+                session_id: Some("s2".into()),
+                title: Some("second".into()),
+                task: Some("do 2".into()),
+                status: Some("done".into()),
+                model: Some("google/gemini-4-neon-high".into()),
+                ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-27T01:05:00.500Z")
+                    .unwrap()
+                    .timestamp_millis() as f64,
+                duration_ms: Some(120_000.0),
+            }
+        );
+
+        let m2 = cache.tasks_for(dir.path(), "m2");
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2[0].worker.as_deref(), Some("w3"));
+        assert_eq!(m2[0].status.as_deref(), Some("aborted"));
+        assert_eq!(m2[0].duration_ms, Some(5_000.0));
+
+        assert!(cache.tasks_for(dir.path(), "unknown").is_empty());
     }
 }

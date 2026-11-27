@@ -1,6 +1,7 @@
 import type {
   AssistantBlock,
   BranchPoint,
+  HaaTask,
   InheritedRange,
   Node,
   SubagentRun,
@@ -100,6 +101,7 @@ export type Row = RowBase &
     | { kind: "fold"; open: boolean; ms: number | null; texts: number; calls: number }
     | { kind: "orphan"; run: SubagentRun }
     | { kind: "finalResult"; run: SubagentRun; text: string }
+    | { kind: "haaTask"; task: HaaTask }
   );
 
 export interface GroupingInput {

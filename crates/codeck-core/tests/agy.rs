@@ -1079,3 +1079,113 @@ fn haa_worker_ownership_from_fixture_attaches_to_list_and_detail() {
         None
     );
 }
+
+#[test]
+fn get_session_attaches_sorted_haa_tasks_only_for_claude_sessions() {
+    use codeck_core::model::HaaTask;
+
+    let claude = fixture_root("basic");
+    let agy = fixture_root("agy");
+    let haa_dir = tempfile::tempdir().unwrap();
+    fs::write(
+        haa_dir.path().join("usage.jsonl"),
+        [
+            // Out-of-order tasks owned by the Claude session ids::BASIC.
+            json!({
+                "ts": "2026-11-06T03:05:00Z",
+                "owner": ids::BASIC,
+                "kind": "task",
+                "worker": "agy-web",
+                "title": "second task",
+                "task": "implement frontend cards",
+                "status": "done",
+                "model": "gemini-4-neon-high",
+                "durationMs": 180000,
+                "sessionId": AGY_HAA_WORKER
+            })
+            .to_string(),
+            json!({
+                "ts": "2026-11-06T03:01:00Z",
+                "owner": ids::BASIC,
+                "kind": "task",
+                "worker": "agy-old",
+                "title": "first task",
+                "task": "check legacy cache",
+                "status": "failed",
+                "model": "gemini-4-neon-high",
+                "durationMs": 45000
+            })
+            .to_string(),
+            // Task owned by an agy session id: agy get_session must still return empty haa_tasks.
+            json!({
+                "ts": "2026-11-06T03:02:00Z",
+                "owner": AGY_HAA_WORKER,
+                "kind": "task",
+                "worker": "agy-nested",
+                "status": "done"
+            })
+            .to_string(),
+            // Bad timestamp skipped.
+            json!({
+                "ts": "invalid",
+                "owner": ids::BASIC,
+                "kind": "task",
+                "worker": "agy-bad"
+            })
+            .to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let cache = tempfile::tempdir().unwrap();
+    let engine = Engine::open(EngineConfig {
+        data_root: claude.path().to_path_buf(),
+        data_root_source: DataRootSource::Settings,
+        agy_root: agy.path().to_path_buf(),
+        haa_home: haa_dir.path().to_path_buf(),
+        cache_dir: cache.path().to_path_buf(),
+    })
+    .unwrap();
+    engine.scan_all(&|_| {}).unwrap();
+
+    let detail = engine.get_session(ids::BASIC).unwrap();
+    assert_eq!(
+        detail.haa_tasks,
+        vec![
+            HaaTask {
+                worker: Some("agy-old".into()),
+                session_id: None,
+                title: Some("first task".into()),
+                task: Some("check legacy cache".into()),
+                status: Some("failed".into()),
+                model: Some("gemini-4-neon-high".into()),
+                ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-06T03:01:00Z")
+                    .unwrap()
+                    .timestamp_millis() as f64,
+                duration_ms: Some(45_000.0),
+            },
+            HaaTask {
+                worker: Some("agy-web".into()),
+                session_id: Some(AGY_HAA_WORKER.into()),
+                title: Some("second task".into()),
+                task: Some("implement frontend cards".into()),
+                status: Some("done".into()),
+                model: Some("gemini-4-neon-high".into()),
+                ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-06T03:05:00Z")
+                    .unwrap()
+                    .timestamp_millis() as f64,
+                duration_ms: Some(180_000.0),
+            },
+        ]
+    );
+
+    assert!(
+        engine
+            .get_session(AGY_HAA_WORKER)
+            .unwrap()
+            .haa_tasks
+            .is_empty()
+    );
+    assert!(engine.get_session(AGY_SHORT).unwrap().haa_tasks.is_empty());
+}

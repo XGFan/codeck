@@ -540,6 +540,7 @@ function sessionDetail(sessionId: string): SessionDetail {
     supersededBy: supersededBy.get(sessionId) ?? null,
     failedLines: 0,
     resumeCommand: isAgy ? `agy --conversation ${sessionId}` : `claude --resume ${sessionId}`,
+    haaTasks: findData(sessionId).haaTasks,
   };
 }
 

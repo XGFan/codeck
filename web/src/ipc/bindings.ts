@@ -408,6 +408,26 @@ export type ForkOrigin = {
 	forkPointId: string | null,
 };
 
+/**  One completed haa Worker Task dispatched by a Main Session (`<haa_home>/usage.jsonl`). */
+export type HaaTask = {
+	/**  Worker name in haa. */
+	worker: string | null,
+	/**  Worker's agy conversation id, when recorded. */
+	sessionId: string | null,
+	/**  Short task title, when provided. */
+	title: string | null,
+	/**  Opening excerpt of the task prompt sent to the Worker. */
+	task: string | null,
+	/**  Terminal task status (`done`, `failed`, `aborted`, etc.). */
+	status: string | null,
+	/**  Full model identifier used by the Worker. */
+	model: string | null,
+	/**  Task completion time in unix-epoch milliseconds (parsed from `ts`). */
+	endedMs: number,
+	/**  Task duration in milliseconds, when recorded. */
+	durationMs: number | null,
+};
+
 /**  `haa ls --all --json --watch` (instance `id`) ended by itself; `message` is why. */
 export type HaaWatchEndedEvent = {
 	id: number,
@@ -845,6 +865,8 @@ export type SessionDetail = {
 	failedLines: number,
 	/**  `claude --resume <id>` or `agy --conversation <id>`. */
 	resumeCommand: string,
+	/**  haa Worker Tasks owned by this Session, ordered by `ended_ms` ascending. */
+	haaTasks: HaaTask[],
 };
 
 export type SessionQuery = {

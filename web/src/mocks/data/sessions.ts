@@ -1,4 +1,13 @@
-import type { Agent, HaaWorker, LiveState, Node, SessionSummary, TitleSource, TokenTotals } from "@/ipc/bindings";
+import type {
+  Agent,
+  HaaTask,
+  HaaWorker,
+  LiveState,
+  Node,
+  SessionSummary,
+  TitleSource,
+  TokenTotals,
+} from "@/ipc/bindings";
 import { asstNode, call, costOf, DAY, HOUR, MIN, NOW, sumTok, tok, userNode } from "./builders";
 import {
   AGY_ENDED_ID,
@@ -461,6 +470,7 @@ export interface MockSessionData {
   /** Main path nodes; Rich session overrides this with `richMain`. */
   nodes: Node[];
   forkOf?: { id: string; count: number; lastInheritedId: string };
+  haaTasks: HaaTask[];
 }
 
 const originDef = defs.find((d) => d.id === IDS.forkOrigin)!;
@@ -540,5 +550,40 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     primaryModel: d.model,
     editedProjectIds: d.editedProjectIds ?? [],
   };
-  return { summary, nodes, forkOf };
+  const haaTasks: HaaTask[] =
+    d.id === IDS.forkOrigin
+      ? [
+          {
+            worker: "agy-web",
+            sessionId: IDS.agyWorkerWeb,
+            title: "补齐侧栏与 E2E",
+            task: "把侧栏的 Worker 收进派活的 Session，补上单测与 E2E。",
+            status: "done",
+            model: "gemini-4-neon-high",
+            endedMs: created + 2 * MIN,
+            durationMs: 3 * MIN + 12_000,
+          },
+          {
+            worker: "agy-old",
+            sessionId: null,
+            title: "迁移旧版令牌缓存",
+            task: "检查旧版 token 缓存结构并补充兼容层单元测试。",
+            status: "failed",
+            model: "gemini-4-neon-high",
+            endedMs: created + 5 * MIN,
+            durationMs: 1 * MIN + 45_000,
+          },
+          {
+            worker: "agy-live",
+            sessionId: IDS.agyWorkerLive,
+            title: "联调 Live 与 haa 集成",
+            task: "核对 Live 面板和 haa Worker 关联逻辑的边界情况。",
+            status: "done",
+            model: "gemini-4-neon-high",
+            endedMs: created + 8 * MIN,
+            durationMs: 2 * MIN + 30_000,
+          },
+        ]
+      : [];
+  return { summary, nodes, forkOf, haaTasks };
 });

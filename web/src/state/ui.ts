@@ -54,11 +54,20 @@ export interface Highlight {
 /** The main conversation (the transcript list); a Subagent Run is shown in its panel with its own scope. */
 export const MAIN_SCOPE: TranscriptScope = { kind: "main" };
 
+const WORKER_PANEL_PREFIX = "haa:";
+
+/** Builds a `panelStack` entry for viewing a haa Worker's agy Session in the right panel. */
+export const workerPanelId = (sessionId: string) => `${WORKER_PANEL_PREFIX}${sessionId}`;
+
+/** Extracts the Worker Session id from a `panelStack` entry, or `null` when it is a Subagent Run id. */
+export const parseWorkerPanelId = (entry: string | null | undefined): string | null =>
+  entry != null && entry.startsWith(WORKER_PANEL_PREFIX) ? entry.slice(WORKER_PANEL_PREFIX.length) : null;
+
 /** Per-session state; reset whenever `sessionId` changes. */
 const sessionDefaults = {
   branchChoices: [] as BranchChoice[],
   showHidden: false,
-  /** Subagent Run ids, outermost first. */
+  /** Right-panel stack: Subagent Run ids (outermost first), or `haa:<sessionId>` for a haa Worker. */
   panelStack: [] as string[],
   findOpen: false,
   findQuery: "",

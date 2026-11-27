@@ -35,7 +35,8 @@ export function scrollToNode(req: ScrollRequest): void {
   useScrollRequests.setState((s) => ({ byScope: { ...s.byScope, [scopeKey(req.scope)]: p } }));
 }
 
-export const usePendingScroll = (scope: TranscriptScope) => useScrollRequests((s) => s.byScope[scopeKey(scope)]);
+export const usePendingScroll = (scope: TranscriptScope | null) =>
+  useScrollRequests((s) => (scope ? s.byScope[scopeKey(scope)] : undefined));
 
 export function clearScroll(scope: TranscriptScope, seqNo: number) {
   useScrollRequests.setState((s) => {
@@ -69,8 +70,12 @@ export interface TranscriptCtx {
   toolNode: Map<string, string>;
   /** Opens a Subagent Run in the right panel (replaces the stack from main, pushes from inside the panel). */
   openAgent: (agentId: string) => void;
-  /** Innermost Subagent Run shown in the panel. */
+  /** Innermost Subagent Run shown in the panel (`null` when the panel is closed or showing a haa Worker). */
   activeAgentId: string | null;
+  /** Opens a haa Worker's agy Session in the right panel. */
+  openWorker: (workerSessionId: string) => void;
+  /** Worker Session id currently shown in the right panel (`null` otherwise). */
+  activeWorkerId: string | null;
   /** Prompts offering 「回退」 (the Main Line's in a Connected Session's main transcript). */
   rewindable: ReadonlySet<string>;
   /** Prompts offering 「Fork」 (the Main Line's but the first, in the main transcript). */
