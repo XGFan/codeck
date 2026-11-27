@@ -117,67 +117,15 @@ pub fn settings_path() -> PathBuf {
     PATH.get().cloned().unwrap_or_else(default_settings_path)
 }
 
-/// Verifies that an existing settings file is a regular file (not a symlink), owned by the
-/// current effective UID, and not writable by group or others. A missing file is allowed.
-pub fn verify_file_trust(path: &Path) -> Result<(), String> {
-    open_trusted(path).map(|_| ())
-}
-
-fn open_trusted(path: &Path) -> Result<Option<std::fs::File>, String> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-    let file = match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-    {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
-            return Err(format!("配置文件不能是符号链接（{}）", path.display()));
-        }
-        Err(e) => return Err(format!("读取配置文件失败（{}）：{e}", path.display())),
-    };
-    let meta = file
-        .metadata()
-        .map_err(|e| format!("检查配置文件失败（{}）：{e}", path.display()))?;
-    if !meta.is_file() {
-        return Err(format!("配置文件不是普通文件（{}）", path.display()));
-    }
-    // SAFETY: `geteuid` has no preconditions.
-    let euid = unsafe { libc::geteuid() };
-    if meta.uid() != euid {
-        return Err(format!("配置文件的属主不是当前用户（{}）", path.display()));
-    }
-    let mode = meta.permissions().mode() & 0o777;
-    if (mode & 0o022) != 0 {
-        return Err(format!(
-            "配置文件可被组或其他用户写入（当前 {:04o}）：{}",
-            mode,
-            path.display()
-        ));
-    }
-    Ok(Some(file))
-}
-
-/// Missing, untrusted, or unreadable settings fall back to defaults.
+/// Missing or unreadable settings fall back to defaults.
 pub fn load() -> Settings {
     load_from(&settings_path())
 }
 
 pub fn load_from(path: &Path) -> Settings {
-    use std::io::Read;
-    let mut file = match open_trusted(path) {
-        Ok(Some(f)) => f,
-        Ok(None) => return Settings::default(),
-        Err(why) => {
-            tracing::warn!("ignoring untrusted settings file: {why}");
-            return Settings::default();
-        }
-    };
-    let mut bytes = Vec::new();
-    if file.read_to_end(&mut bytes).is_err() {
+    let Ok(bytes) = std::fs::read(path) else {
         return Settings::default();
-    }
+    };
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
@@ -309,43 +257,6 @@ mod tests {
         let path = dir.path().join(SETTINGS_FILE);
         assert_eq!(load_from(&path), Settings::default());
         std::fs::write(&path, b"{not json").unwrap();
-        assert_eq!(load_from(&path), Settings::default());
-    }
-
-    #[test]
-    fn verify_file_trust_and_load_reject_writable_and_symlink_settings() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(SETTINGS_FILE);
-        verify_file_trust(&path).unwrap();
-
-        let custom = Settings {
-            launch_rules: vec![LaunchRule {
-                dir: "/repo".into(),
-                args: "--model opus".into(),
-            }],
-            ..Settings::default()
-        };
-        save_to(&path, &custom).unwrap();
-        verify_file_trust(&path).unwrap();
-        assert_eq!(load_from(&path), custom);
-
-        // Group-writable or world-writable settings.json must be rejected and ignored by load_from.
-        for bad_mode in [0o660, 0o602] {
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(bad_mode)).unwrap();
-            let err = verify_file_trust(&path).unwrap_err();
-            assert!(err.contains("组或其他用户写入"), "{bad_mode:04o}: {err}");
-            assert_eq!(load_from(&path), Settings::default());
-        }
-
-        // Symlinked settings.json must also be rejected.
-        let real = dir.path().join("real-settings.json");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        std::fs::rename(&path, &real).unwrap();
-        std::os::unix::fs::symlink(&real, &path).unwrap();
-        let err = verify_file_trust(&path).unwrap_err();
-        assert!(err.contains("符号链接"), "{err}");
         assert_eq!(load_from(&path), Settings::default());
     }
 }

@@ -1,9 +1,7 @@
 //! Daemon control socket (`<state-dir>/control.sock`), single-instance lock (`daemon.lock`), and
 //! CLI formatting helpers for `codeck-host pair / devices / unpair`.
 
-use std::collections::VecDeque;
-use std::ffi::OsString;
-use std::fs::{DirBuilder, File, Metadata, OpenOptions, Permissions};
+use std::fs::{DirBuilder, File, OpenOptions, Permissions};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
@@ -73,172 +71,6 @@ pub fn normalize_state_dir(raw: &Path) -> Result<PathBuf, String> {
     Ok(normalized)
 }
 
-fn check_trusted_ancestor_dir(path: &Path, meta: &Metadata) -> Result<(), String> {
-    let uid = meta.uid();
-    let euid = current_euid();
-    if uid != 0 && uid != euid {
-        return Err(format!(
-            "状态目录的上级目录属主不是 root 或当前用户（{}）",
-            path.display()
-        ));
-    }
-    let mode = meta.permissions().mode();
-    let group_or_other_writable = (mode & 0o022) != 0;
-    let sticky = (mode & 0o1000) != 0;
-    if group_or_other_writable && !sticky {
-        return Err(format!(
-            "状态目录的上级目录可被其他用户写入且未设置 sticky 位（{}，权限 {:04o}）",
-            path.display(),
-            mode & 0o7777
-        ));
-    }
-    Ok(())
-}
-
-const MAX_SYMLINK_HOPS: usize = 32;
-
-#[derive(Clone)]
-enum PathStep {
-    Parent,
-    Normal(OsString),
-}
-
-fn push_target_front(queue: &mut VecDeque<PathStep>, target: &Path) {
-    let mut steps = Vec::new();
-    for comp in target.components() {
-        match comp {
-            Component::RootDir | Component::CurDir => {}
-            Component::ParentDir => steps.push(PathStep::Parent),
-            Component::Normal(seg) => steps.push(PathStep::Normal(seg.to_os_string())),
-            Component::Prefix(p) => steps.push(PathStep::Normal(p.as_os_str().to_os_string())),
-        }
-    }
-    for step in steps.into_iter().rev() {
-        queue.push_front(step);
-    }
-}
-
-/// Resolves `parent` component-by-component using `lstat` and `readlink` (never `metadata` or
-/// `canonicalize`), verifying every traversed directory and symlink hop:
-/// - Every directory must be owned by root or `euid`, and if group/other-writable must have the
-///   sticky bit set.
-/// - Every symlink must be owned by root or `euid` and live inside an already-verified directory.
-/// - At most [`MAX_SYMLINK_HOPS`] symlink expansions are allowed to prevent loops.
-///
-/// Returns the symlink-free absolute path for `parent` (including any not-yet-created suffix).
-fn resolve_trusted_parent(parent: &Path) -> Result<PathBuf, String> {
-    let root = PathBuf::from("/");
-    let root_meta = std::fs::symlink_metadata(&root)
-        .map_err(|e| format!("检查状态目录的上级目录失败（/）：{e}"))?;
-    if !root_meta.is_dir() {
-        return Err("状态目录的上级路径不是目录（/）".to_string());
-    }
-    check_trusted_ancestor_dir(&root, &root_meta)?;
-
-    let euid = current_euid();
-    let mut cur = root;
-    let mut queue = VecDeque::new();
-    for comp in parent.components() {
-        if let Component::Normal(seg) = comp {
-            queue.push_back(PathStep::Normal(seg.to_os_string()));
-        }
-    }
-    let mut hops = 0usize;
-
-    while let Some(step) = queue.pop_front() {
-        match step {
-            PathStep::Parent => {
-                // `cur` is already symlink-free and every prefix of `cur` was verified.
-                if cur.parent().is_some() {
-                    cur.pop();
-                }
-            }
-            PathStep::Normal(seg) => {
-                let next = cur.join(&seg);
-                match std::fs::symlink_metadata(&next) {
-                    Ok(lmeta) => {
-                        if lmeta.file_type().is_symlink() {
-                            let uid = lmeta.uid();
-                            if uid != 0 && uid != euid {
-                                return Err(format!(
-                                    "状态目录的上级符号链接属主不是 root 或当前用户（{}）",
-                                    next.display()
-                                ));
-                            }
-                            hops += 1;
-                            if hops > MAX_SYMLINK_HOPS {
-                                return Err(format!(
-                                    "状态目录的上级符号链接层级超过 {MAX_SYMLINK_HOPS} 层（{}）",
-                                    next.display()
-                                ));
-                            }
-                            let target = std::fs::read_link(&next).map_err(|e| {
-                                format!("读取状态目录的上级符号链接失败（{}）：{e}", next.display())
-                            })?;
-                            if target.is_absolute() {
-                                cur = PathBuf::from("/");
-                            }
-                            push_target_front(&mut queue, &target);
-                        } else if lmeta.is_dir() {
-                            check_trusted_ancestor_dir(&next, &lmeta)?;
-                            cur = next;
-                        } else {
-                            return Err(format!(
-                                "状态目录的上级路径不是目录（{}）",
-                                next.display()
-                            ));
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                        cur = next;
-                        while let Some(rem) = queue.pop_front() {
-                            match rem {
-                                PathStep::Normal(s) => cur.push(s),
-                                PathStep::Parent => {
-                                    return Err(format!(
-                                        "状态目录的上级目录不存在（{}）",
-                                        cur.display()
-                                    ));
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "检查状态目录的上级目录失败（{}）：{e}",
-                            next.display()
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(cur)
-}
-
-/// Validates every ancestor (expanding symlink chains hop-by-hop) and returns the verified
-/// symlink-free canonical absolute path for `state_dir`. The final `state_dir` component itself is
-/// not expanded (so callers can reject a symlinked `state_dir` with `lstat`).
-pub fn resolve_trusted_state_dir(state_dir: &Path) -> Result<PathBuf, String> {
-    let normalized = normalize_state_dir(state_dir)?;
-    let (Some(parent), Some(leaf)) = (normalized.parent(), normalized.file_name()) else {
-        return Err("状态目录不能是空路径或根目录".to_string());
-    };
-    let canonical_parent = resolve_trusted_parent(parent)?;
-    let resolved = canonical_parent.join(leaf);
-    if resolved.as_os_str().is_empty() || resolved == Path::new("/") {
-        return Err("状态目录不能是空路径或根目录".to_string());
-    }
-    Ok(resolved)
-}
-
-/// Validates every ancestor along the hop-by-hop expanded path of `state_dir`.
-pub fn verify_state_dir_ancestors(state_dir: &Path) -> Result<(), String> {
-    resolve_trusted_state_dir(state_dir).map(|_| ())
-}
-
 /// Validates that `<state_dir>/control.sock` fits within the platform's Unix socket path limit.
 pub fn check_socket_path_len(state_dir: &Path) -> Result<PathBuf, String> {
     let dir = normalize_state_dir(state_dir)?;
@@ -301,76 +133,22 @@ fn peer_uid_raw(fd: std::os::fd::RawFd) -> io::Result<u32> {
     Ok(cred.uid)
 }
 
-fn verify_state_dir_meta(dir: &Path, meta: &Metadata) -> Result<(), String> {
-    if meta.file_type().is_symlink() {
-        return Err(format!("状态目录不能是符号链接（{}）", dir.display()));
-    }
-    if !meta.is_dir() {
-        return Err(format!("状态路径不是目录（{}）", dir.display()));
-    }
-    if meta.uid() != current_euid() {
-        return Err(format!("状态目录的属主不是当前用户（{}）", dir.display()));
-    }
-    Ok(())
-}
-
-/// Holds an exclusive `flock` on `<state-dir>/daemon.lock` for the lifetime of the owner, along
-/// with the verified symlink-free canonical path of `<state-dir>`.
+/// Holds an exclusive `flock` on `<state-dir>/daemon.lock` for the lifetime of the owner.
 pub struct DaemonLock {
     _file: File,
-    dir: PathBuf,
 }
 
-impl DaemonLock {
-    /// Returns the verified symlink-free canonical state directory path.
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-}
-
-/// Ensures `state_dir` resolves hop-by-hop through trusted ancestors (root/euid-owned, sticky if
-/// group/other-writable), is a non-root directory owned by the current user with mode `0700` (not
-/// a symlink, re-checked after `chmod`), and acquires a non-blocking exclusive `flock` on
-/// `<canonical-state-dir>/daemon.lock`.
+/// Ensures `state_dir` is a non-root directory with mode `0700` and acquires a non-blocking
+/// exclusive `flock` on `<state-dir>/daemon.lock`.
 pub fn lock_state_dir(state_dir: &Path) -> Result<DaemonLock, String> {
-    let display_dir = normalize_state_dir(state_dir)?;
-    let dir = resolve_trusted_state_dir(&display_dir)?;
-    let meta_before = match std::fs::symlink_metadata(&dir) {
-        Ok(meta) => {
-            verify_state_dir_meta(&dir, &meta)?;
-            meta
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(&dir)
-                .map_err(|e| format!("创建状态目录失败（{}）：{e}", dir.display()))?;
-            let meta = std::fs::symlink_metadata(&dir)
-                .map_err(|e| format!("检查状态目录失败（{}）：{e}", dir.display()))?;
-            verify_state_dir_meta(&dir, &meta)?;
-            meta
-        }
-        Err(e) => return Err(format!("检查状态目录失败（{}）：{e}", dir.display())),
-    };
-
+    let dir = normalize_state_dir(state_dir)?;
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|e| format!("创建状态目录失败（{}）：{e}", dir.display()))?;
     std::fs::set_permissions(&dir, Permissions::from_mode(0o700))
         .map_err(|e| format!("设置状态目录权限失败（{}）：{e}", dir.display()))?;
-
-    // Re-check the canonical path and directory identity after chmod so a concurrent swap cannot slip past.
-    let dir_after = resolve_trusted_state_dir(&dir)?;
-    if dir_after != dir {
-        return Err(format!("状态目录在检查期间发生变化（{}）", dir.display()));
-    }
-    let meta_after = std::fs::symlink_metadata(&dir)
-        .map_err(|e| format!("检查状态目录失败（{}）：{e}", dir.display()))?;
-    verify_state_dir_meta(&dir, &meta_after)?;
-    if meta_after.dev() != meta_before.dev() || meta_after.ino() != meta_before.ino() {
-        return Err(format!("状态目录在检查期间发生变化（{}）", dir.display()));
-    }
-    if (meta_after.permissions().mode() & 0o777) != 0o700 {
-        return Err(format!("状态目录权限不是 0700（{}）", dir.display()));
-    }
 
     let lock_path = dir.join(LOCK_FILE);
     let file = OpenOptions::new()
@@ -379,49 +157,19 @@ pub fn lock_state_dir(state_dir: &Path) -> Result<DaemonLock, String> {
         .read(true)
         .write(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
         .open(&lock_path)
-        .map_err(|e| {
-            if e.raw_os_error() == Some(libc::ELOOP) {
-                format!("锁文件不能是符号链接（{}）", lock_path.display())
-            } else {
-                format!("打开锁文件失败（{}）：{e}", lock_path.display())
-            }
-        })?;
-    let lock_meta = file
-        .metadata()
-        .map_err(|e| format!("检查锁文件失败（{}）：{e}", lock_path.display()))?;
-    if !lock_meta.is_file() {
-        return Err(format!("锁文件不是普通文件（{}）", lock_path.display()));
-    }
-    if lock_meta.uid() != current_euid() {
-        return Err(format!(
-            "锁文件的属主不是当前用户（{}）",
-            lock_path.display()
-        ));
-    }
-    let lock_mode = lock_meta.permissions().mode() & 0o777;
-    if (lock_mode & 0o022) != 0 {
-        return Err(format!(
-            "锁文件可被组或其他用户写入（当前 {:04o}）：{}",
-            lock_mode,
-            lock_path.display()
-        ));
-    }
+        .map_err(|e| format!("打开锁文件失败（{}）：{e}", lock_path.display()))?;
 
     // SAFETY: `file.as_raw_fd()` is a valid open file descriptor owned by `file`.
     let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if rc != 0 {
         let err = io::Error::last_os_error();
         if err.kind() == io::ErrorKind::WouldBlock {
-            return Err(format!(
-                "另一个 codeck-host 正在使用 {}",
-                display_dir.display()
-            ));
+            return Err(format!("另一个 codeck-host 正在使用 {}", dir.display()));
         }
         return Err(format!("锁定状态目录失败（{}）：{err}", dir.display()));
     }
-    Ok(DaemonLock { _file: file, dir })
+    Ok(DaemonLock { _file: file })
 }
 
 /// Bound `<state-dir>/control.sock`; removes only the socket bound by this instance when dropped.
@@ -436,8 +184,7 @@ impl ControlSocket {
     /// Removes a stale socket file if present (refusing non-socket files or foreign-owned sockets),
     /// binds `control.sock`, and restricts its permissions to `0600`. Call only after holding [`DaemonLock`].
     pub fn bind(state_dir: &Path) -> Result<Self, String> {
-        let dir = resolve_trusted_state_dir(state_dir)?;
-        let path = check_socket_path_len(&dir)?;
+        let path = check_socket_path_len(state_dir)?;
         match std::fs::symlink_metadata(&path) {
             Ok(meta) => {
                 if !meta.file_type().is_socket() {
@@ -993,20 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_symlink_state_dir_and_overlong_socket_path() {
-        let parent = tempfile::tempdir().unwrap();
-        let real = parent.path().join("real");
-        std::fs::create_dir(&real).unwrap();
-        let link = parent.path().join("link");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-
-        let err = lock_state_dir(&link).err().unwrap();
-        assert!(err.contains("符号链接"), "{err}");
-        // Trailing slash must not bypass the symlink check.
-        let with_slash = PathBuf::from(format!("{}/", link.display()));
-        let err = lock_state_dir(&with_slash).err().unwrap();
-        assert!(err.contains("符号链接"), "{err}");
-
+    fn rejects_overlong_socket_path() {
         // Socket path length check: exact limit passes, one byte over fails with expected message.
         let suffix_len = SOCKET_FILE.len() + 1; // "/control.sock"
         let exact_dir = PathBuf::from(format!(
@@ -1053,111 +787,6 @@ mod tests {
             normalize_state_dir(Path::new("rel/sub/")).unwrap(),
             cwd.join("rel/sub")
         );
-    }
-
-    #[test]
-    fn ancestor_dir_0777_without_sticky_rejected_and_with_sticky_accepted() {
-        let base = tempfile::tempdir().unwrap();
-        let shared = base.path().join("shared");
-        std::fs::create_dir(&shared).unwrap();
-
-        // 0777 without sticky bit must be rejected, naming the offending ancestor, without creating state dir.
-        std::fs::set_permissions(&shared, Permissions::from_mode(0o777)).unwrap();
-        let state = shared.join("state");
-        let err = lock_state_dir(&state).err().unwrap();
-        assert!(err.contains("sticky"), "{err}");
-        assert!(err.contains(&shared.display().to_string()), "{err}");
-        assert!(!state.exists());
-
-        // Nested under a 0777 ancestor (even when immediate parent is 0700) must still be rejected.
-        let nested_parent = shared.join("sub");
-        std::fs::create_dir(&nested_parent).unwrap();
-        std::fs::set_permissions(&nested_parent, Permissions::from_mode(0o700)).unwrap();
-        let err = lock_state_dir(&nested_parent.join("state")).err().unwrap();
-        assert!(err.contains("sticky"), "{err}");
-        assert!(err.contains(&shared.display().to_string()), "{err}");
-
-        // A symlink inside a trusted dir pointing under a 0777 ancestor must also be rejected.
-        let link_parent = base.path().join("trusted-link");
-        std::os::unix::fs::symlink(&nested_parent, &link_parent).unwrap();
-        let err = lock_state_dir(&link_parent.join("state")).err().unwrap();
-        assert!(err.contains("sticky"), "{err}");
-
-        // Group-writable (0775) without sticky must be rejected too.
-        std::fs::set_permissions(&shared, Permissions::from_mode(0o775)).unwrap();
-        let err = lock_state_dir(&state).err().unwrap();
-        assert!(err.contains("sticky"), "{err}");
-
-        // With sticky bit (1777, like /tmp), locking succeeds and sets state dir to 0700.
-        std::fs::set_permissions(&shared, Permissions::from_mode(0o1777)).unwrap();
-        let _lock = lock_state_dir(&state).unwrap();
-        assert_eq!(
-            std::fs::metadata(&state).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-    }
-
-    #[test]
-    fn symlink_chain_rejects_untrusted_intermediate_and_loops_accepts_tmp_sticky_link() {
-        let base = tempfile::tempdir().unwrap();
-        let trusted_target = base.path().join("trusted-target");
-        std::fs::create_dir(&trusted_target).unwrap();
-        std::fs::set_permissions(&trusted_target, Permissions::from_mode(0o700)).unwrap();
-
-        // Trusted link -> link inside 0777 (non-sticky) shared dir -> trusted dir: must be rejected.
-        let shared = base.path().join("shared-no-sticky");
-        std::fs::create_dir(&shared).unwrap();
-        std::fs::set_permissions(&shared, Permissions::from_mode(0o777)).unwrap();
-        let mid_link = shared.join("mid");
-        std::os::unix::fs::symlink(&trusted_target, &mid_link).unwrap();
-        let entry_link = base.path().join("entry");
-        std::os::unix::fs::symlink(&mid_link, &entry_link).unwrap();
-
-        let state_via_untrusted_hop = entry_link.join("state");
-        let err = lock_state_dir(&state_via_untrusted_hop).err().unwrap();
-        assert!(err.contains("sticky"), "{err}");
-        assert!(!trusted_target.join("state").exists());
-
-        // Symlink loop (> 32 hops) must be rejected cleanly.
-        let loop_a = base.path().join("loop-a");
-        let loop_b = base.path().join("loop-b");
-        std::os::unix::fs::symlink(&loop_b, &loop_a).unwrap();
-        std::os::unix::fs::symlink(&loop_a, &loop_b).unwrap();
-        let err = lock_state_dir(&loop_a.join("state")).err().unwrap();
-        assert!(err.contains("32"), "{err}");
-
-        // User-owned symlink inside `/tmp` (sticky, and on macOS `/tmp` itself is a root symlink to
-        // `private/tmp`) pointing to a trusted directory must succeed and return a symlink-free path.
-        let tmp_link = PathBuf::from(format!(
-            "/tmp/codeck-host-test-link-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::os::unix::fs::symlink(&trusted_target, &tmp_link).unwrap();
-        let lock_res = lock_state_dir(&tmp_link.join("state"));
-        let _ = std::fs::remove_file(&tmp_link);
-        let lock = lock_res.unwrap();
-        assert!(
-            lock.dir().ends_with("trusted-target/state"),
-            "unexpected canonical dir: {}",
-            lock.dir().display()
-        );
-        // Verified canonical path contains no symlinks in any ancestor component.
-        let mut prefix = PathBuf::new();
-        for comp in lock.dir().components() {
-            prefix.push(comp.as_os_str());
-            assert!(
-                !std::fs::symlink_metadata(&prefix)
-                    .unwrap()
-                    .file_type()
-                    .is_symlink(),
-                "symlink remained in canonical dir: {}",
-                prefix.display()
-            );
-        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

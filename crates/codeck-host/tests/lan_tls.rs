@@ -4,9 +4,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::body::Bytes;
 use axum::extract::ConnectInfo;
-use axum::routing::{get, post};
+use axum::routing::get;
+use axum::serve::ListenerExt;
 use codeck_host::lan::LanConfig;
 use codeck_host::lan::net::Subnet;
 use codeck_host::lan::pairing::PairOutcome;
@@ -14,7 +14,7 @@ use codeck_host::lan::security::LanSecurity;
 use codeck_host::lan::server::{Ctx, Gate, event_channel, router, router_with_pair_timeout};
 use codeck_host::lan::tls::{
     ConnLimits, IDLE_READ_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, TlsListener,
-    cert_fingerprint, into_make_service,
+    cert_fingerprint,
 };
 use codeck_host::{Host, HostConfig, HostEvent};
 use futures_util::StreamExt;
@@ -249,11 +249,13 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
     };
     let tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = tcp.local_addr().unwrap();
-    let listener = TlsListener::new(tcp, cert.server_config());
-    let app = into_make_service(router(ctx, subnet).route(
-        "/test-peer",
-        get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() }),
-    ));
+    let listener = TlsListener::new(tcp, cert.server_config()).tap_io(|_| ());
+    let app = router(ctx, subnet)
+        .route(
+            "/test-peer",
+            get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() }),
+        )
+        .into_make_service_with_connect_info::<SocketAddr>();
     let server_task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -829,12 +831,9 @@ async fn tls_per_ip_connection_limit_and_slow_pair_body_timeout() {
     };
     let tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let pair_addr = tcp.local_addr().unwrap();
-    let listener = TlsListener::new(tcp, cert.server_config());
-    let pair_app = into_make_service(router_with_pair_timeout(
-        ctx,
-        subnet,
-        Duration::from_millis(250),
-    ));
+    let listener = TlsListener::new(tcp, cert.server_config()).tap_io(|_| ());
+    let pair_app = router_with_pair_timeout(ctx, subnet, Duration::from_millis(250))
+        .into_make_service_with_connect_info::<SocketAddr>();
     let pair_srv = tokio::spawn(async move {
         let _ = axum::serve(listener, pair_app).await;
     });
@@ -934,9 +933,7 @@ async fn tls_shared_quota_across_two_listeners_and_idle_read_timeout() {
     let _ = srv1.await;
     let _ = srv2.await;
 
-    // 2. Idle read timeout (short injectable 250ms): silent connection is closed, stalled request
-    //    body is closed, active reads reset it, and slow in-flight handlers (> 250ms) still return
-    //    200 without being disconnected.
+    // 2. Idle read timeout (short injectable 250ms): silent connection is closed and active reads reset it.
     let idle_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let idle_addr = idle_tcp.local_addr().unwrap();
     let idle_listener = TlsListener::with_shared_limits(
@@ -946,23 +943,8 @@ async fn tls_shared_quota_across_two_listeners_and_idle_read_timeout() {
         Duration::from_millis(250),
     );
     let idle_srv = tokio::spawn(async move {
-        let app = axum::Router::new()
-            .route("/ping", get(|| async { "ok" }))
-            .route(
-                "/slow",
-                get(|| async {
-                    tokio::time::sleep(Duration::from_millis(600)).await;
-                    "slow-ok"
-                }),
-            )
-            .route(
-                "/slow-rpc",
-                post(|body: Bytes| async move {
-                    tokio::time::sleep(Duration::from_millis(600)).await;
-                    format!("len={}", body.len())
-                }),
-            );
-        let _ = axum::serve(idle_listener, into_make_service(app)).await;
+        let app = axum::Router::new().route("/ping", get(|| async { "ok" }));
+        let _ = axum::serve(idle_listener, app).await;
     });
 
     // Case A: connection sends nothing after TLS handshake -> closed by server after idle timeout.
@@ -1000,81 +982,12 @@ async fn tls_shared_quota_across_two_listeners_and_idle_read_timeout() {
         "expected EOF or error after going idle, got {n:?}"
     );
 
-    // Case C: in-flight GET and POST handlers slower than the 250ms idle timeout still return 200,
-    // and going idle afterward on keep-alive still closes the connection.
-    let mut slow_get = connect_tls(idle_addr, &fp).await.unwrap();
-    slow_get
-        .write_all(
-            format!("GET /slow HTTP/1.1\r\nHost: {idle_addr}\r\nConnection: keep-alive\r\n\r\n")
-                .as_bytes(),
-        )
-        .await
-        .unwrap();
-    slow_get.flush().await.unwrap();
-    let mut resp = [0u8; 256];
-    let n = tokio::time::timeout(Duration::from_secs(3), slow_get.read(&mut resp))
-        .await
-        .expect("slow GET handler was prematurely disconnected")
-        .unwrap();
-    let text = String::from_utf8_lossy(&resp[..n]);
-    assert!(
-        text.starts_with("HTTP/1.1 200") && text.contains("slow-ok"),
-        "{text}"
-    );
-    let n = tokio::time::timeout(Duration::from_secs(2), slow_get.read(&mut buf))
-        .await
-        .expect("keep-alive connection was not closed after slow handler finished");
-    assert!(
-        matches!(n, Ok(0) | Err(_)),
-        "expected EOF or error after slow handler went idle, got {n:?}"
-    );
-
-    let (status, _, body) = tokio::time::timeout(
-        Duration::from_secs(3),
-        https_req(
-            idle_addr,
-            &fp,
-            "POST /slow-rpc HTTP/1.1\r\nContent-Type: application/json",
-            r#"{"method":"connect_command"}"#,
-        ),
-    )
-    .await
-    .expect("slow POST handler was prematurely disconnected");
-    assert_eq!((status, body.as_str()), (200, "len=28"));
-
-    // Case D: stalled incomplete POST request body is NOT paused and still times out and closes
-    // (axum may emit a 400/408 error response when body read fails, then closes the connection).
-    let mut stalled_body = connect_tls(idle_addr, &fp).await.unwrap();
-    stalled_body
-        .write_all(
-            format!(
-                "POST /slow-rpc HTTP/1.1\r\nHost: {idle_addr}\r\nContent-Length: 64\r\n\r\n{{\"a\":"
-            )
-            .as_bytes(),
-        )
-        .await
-        .unwrap();
-    stalled_body.flush().await.unwrap();
-    let mut stalled_out = Vec::new();
-    let res = tokio::time::timeout(
-        Duration::from_secs(2),
-        stalled_body.read_to_end(&mut stalled_out),
-    )
-    .await
-    .expect("stalled request body was not closed by idle timeout");
-    let text = String::from_utf8_lossy(&stalled_out);
-    assert!(
-        !text.starts_with("HTTP/1.1 200"),
-        "stalled body unexpectedly succeeded: {res:?} {text}"
-    );
-
     idle_srv.abort();
     let _ = idle_srv.await;
 }
 
 #[test]
-fn cli_rejects_empty_root_and_untrusted_state_dir() {
-    use std::os::unix::fs::PermissionsExt;
+fn cli_rejects_empty_and_root_state_dir() {
     use std::process::Command;
 
     let bin = env!("CARGO_BIN_EXE_codeck-host");
@@ -1097,36 +1010,4 @@ fn cli_rejects_empty_root_and_untrusted_state_dir() {
             "args={args:?}, stderr={stderr}"
         );
     }
-
-    // 0777 ancestor without sticky bit must be rejected with exit code 1 naming that ancestor.
-    let dir = tempfile::tempdir().unwrap();
-    let shared = dir.path().join("world");
-    std::fs::create_dir(&shared).unwrap();
-    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
-    let bad_state = shared.join("state");
-    let out = Command::new(bin)
-        .args(["--listen", "127.0.0.1", "--state-dir"])
-        .arg(&bad_state)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("sticky"), "{stderr}");
-    assert!(stderr.contains(&shared.display().to_string()), "{stderr}");
-    assert!(!bad_state.exists());
-
-    // Group-writable settings.json in daemon state dir must be rejected with exit code 1.
-    let ok_state = dir.path().join("daemon-state");
-    std::fs::create_dir(&ok_state).unwrap();
-    let settings = ok_state.join("settings.json");
-    std::fs::write(&settings, "{}").unwrap();
-    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o660)).unwrap();
-    let out = Command::new(bin)
-        .args(["--listen", "127.0.0.1", "--state-dir"])
-        .arg(&ok_state)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("组或其他用户写入"), "{stderr}");
 }
