@@ -81,7 +81,7 @@ pub struct HaaWorker {
 pub struct HaaTask {
     /// Worker name in haa.
     pub worker: Option<String>,
-    /// Worker's agy conversation id, when recorded.
+    /// Worker's session id in its backend (agy conversation, codex thread, pi session), when recorded.
     pub session_id: Option<SessionId>,
     /// Short task title, when provided.
     pub title: Option<String>,
@@ -91,6 +91,9 @@ pub struct HaaTask {
     pub status: Option<String>,
     /// Full model identifier used by the Worker.
     pub model: Option<String>,
+    /// Backend that ran the Task: `agy`, `codex` or `pi` (a codex or pi Worker's conversation is
+    /// read by `session_id` from the backend's own records, ADR-0020).
+    pub backend: String,
     /// Task completion time in unix-epoch milliseconds (parsed from `ts`).
     #[specta(type = Number)]
     pub ended_ms: f64,

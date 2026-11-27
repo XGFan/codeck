@@ -52,7 +52,7 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
   const summary = detail?.summary ?? listed;
   const workerName = summary?.haaWorker?.name ?? tasks[0]?.worker ?? haaWorker?.name ?? summary?.title ?? null;
   const haaModel = haaWorker?.model ?? tasks[tasks.length - 1]?.model ?? undefined;
-  const agent = summary?.agent ?? workerBackend(haaModel) ?? "agy";
+  const agent = summary?.agent ?? workerBackend(haaWorker?.model) ?? tasks[tasks.length - 1]?.backend ?? "agy";
   const model = summary?.primaryModel ?? shortModelName(haaModel);
 
   const close = () => setPanelStack([]);

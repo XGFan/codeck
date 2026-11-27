@@ -175,15 +175,18 @@ test("Recent 不列 Worker，末尾可展开未关联的 haa Worker；非 Worker
   await expect(crumb.getByRole("button")).toHaveCount(0);
 });
 
-test("codex Worker 的 Task 卡片也能在右侧面板看完整过程（从 codex 的记录读，没有单独打开）", async ({ page }) => {
+test("codex Worker 的 Task 卡片（旧记录，模型名不带后端）也能在右侧面板看完整过程：从 codex 的记录读，没有单独打开", async ({
+  page,
+}) => {
   await openSession(page, FORK_ORIGIN_TITLE, { folded: true });
   const card = page.getByTestId("haa-task-card").filter({ hasText: "codex-review" });
-  await expect(card).toContainText("gpt-6.2-sol:high");
+  await expect(card).toContainText("gpt-6.2-sol");
   await card.getByTestId("haa-task-open").click();
   await expect(card).toContainText("正在右侧查看");
   const panel = page.getByTestId("worker-panel");
   await expect(panel.getByTestId("panel-breadcrumb")).toContainText("codex-review");
-  await expect(panel.getByTestId("panel-meta")).toContainText("codex · gpt-6.2-sol:high");
+  // An old record: its model has no backend, the backend comes from the version field.
+  await expect(panel.getByTestId("panel-meta")).toContainText("codex · gpt-6.2-sol");
   await expect(panel.getByTestId("panel-meta")).toContainText("1 个 Task");
   await expect(panel.getByTestId("worker-panel-open")).toHaveCount(0);
   const transcript = panel.getByTestId("panel-transcript");

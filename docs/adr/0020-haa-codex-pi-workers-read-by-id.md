@@ -15,5 +15,5 @@
 
 - codex、pi 的 Worker 对话按内容搜不到，只能从派活的 Session 打开；面板里没有「单独打开」，指标取 haa 的数据（Task 个数与时长）。
 - 正在干活的 Worker 不经文件监听：面板每 2 秒重读一次，每次整份重读、重新组装（codex 一次评审的 rollout 有几 MB）。
-- haa 写下 `sessionId` 之前的旧 Task 记录打不开（codex 的在 2026-11-27 之前，pi 的全部）。
+- haa 写下 `sessionId` 之前的旧 Task 记录（codex 的在 2026-11-27 之前，pi 的全部）由 haa 的迁移脚本 `scripts/backfill-codex-pi-session-ids.ts` 按 Task 内容补上；这些记录的模型名还不带后端，Task 的后端由 `haa.rs` 从模型名前缀、版本字段推出（`HaaTask.backend`）。
 - codex 把一个 thread 接着写进另一个文件（`…-<thread id>_<id>.jsonl`）时只读第一个文件；本机只有 3 个，都早于 haa。

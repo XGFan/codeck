@@ -77,8 +77,12 @@ export function workerBackend(model: string | null | undefined): string | null {
  * is not in the Session list (an agy Worker's opens once its Session is listed).
  */
 export function readsWorkerById(model: string | null | undefined): boolean {
-  const b = workerBackend(model);
-  return b === "codex" || b === "pi";
+  return isReadById(workerBackend(model));
+}
+
+/** A backend whose Workers' conversations CoDeck reads by Session id from the backend's own records. */
+export function isReadById(backend: string | null | undefined): boolean {
+  return backend === "codex" || backend === "pi";
 }
 
 /** Returns the part after the last `/` in a model identifier. */

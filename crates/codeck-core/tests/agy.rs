@@ -1108,6 +1108,7 @@ fn get_session_attaches_sorted_haa_tasks_only_for_claude_sessions() {
                 "task": "implement frontend cards",
                 "status": "done",
                 "model": "gemini-4-neon-high",
+                "agy": "1.5.18",
                 "durationMs": 180000,
                 "sessionId": AGY_HAA_WORKER
             })
@@ -1121,6 +1122,7 @@ fn get_session_attaches_sorted_haa_tasks_only_for_claude_sessions() {
                 "task": "check legacy cache",
                 "status": "failed",
                 "model": "gemini-4-neon-high",
+                "agy": "1.5.18",
                 "durationMs": 45000
             })
             .to_string(),
@@ -1170,6 +1172,7 @@ fn get_session_attaches_sorted_haa_tasks_only_for_claude_sessions() {
                 task: Some("check legacy cache".into()),
                 status: Some("failed".into()),
                 model: Some("gemini-4-neon-high".into()),
+                backend: "agy".into(),
                 ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-06T03:01:00Z")
                     .unwrap()
                     .timestamp_millis() as f64,
@@ -1182,6 +1185,7 @@ fn get_session_attaches_sorted_haa_tasks_only_for_claude_sessions() {
                 task: Some("implement frontend cards".into()),
                 status: Some("done".into()),
                 model: Some("gemini-4-neon-high".into()),
+                backend: "agy".into(),
                 ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-06T03:05:00Z")
                     .unwrap()
                     .timestamp_millis() as f64,

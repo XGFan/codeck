@@ -13,6 +13,7 @@ const task = (endedMs: number, overrides: Partial<HaaTask> = {}): HaaTask => ({
   task: "do work",
   status: "done",
   model: "gemini-4-neon-high",
+  backend: "agy",
   endedMs,
   durationMs: 60_000,
   ...overrides,

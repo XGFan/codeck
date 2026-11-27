@@ -43,6 +43,30 @@ struct UsageRow {
     cwd: Option<String>,
     #[serde(default)]
     repo: Option<String>,
+    /// The backend's version, recorded under the backend's name: which backend ran the Task.
+    #[serde(default)]
+    agy: Option<serde_json::Value>,
+    #[serde(default)]
+    codex: Option<serde_json::Value>,
+}
+
+/// Which backend ran a Task: the model's `<backend>/` prefix, else the version field haa records
+/// under the backend's name. A record with neither is from before haa recorded versions
+/// (2026-11-04), when pi was its only backend.
+fn task_backend(row: &UsageRow) -> &'static str {
+    match row
+        .model
+        .as_deref()
+        .and_then(|m| m.split_once('/'))
+        .map(|(p, _)| p)
+    {
+        Some("agy") => "agy",
+        Some("codex") => "codex",
+        Some("pi") => "pi",
+        _ if row.agy.is_some() => "agy",
+        _ if row.codex.is_some() => "codex",
+        _ => "pi",
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -194,6 +218,7 @@ fn read_usage(
         if row.kind.as_deref() != Some("task") {
             continue;
         }
+        let backend = task_backend(&row).to_owned();
         let owner = non_empty(row.owner);
         let worker = non_empty(row.worker);
         let title = non_empty(row.title);
@@ -219,6 +244,7 @@ fn read_usage(
                 task: non_empty(row.task),
                 status: non_empty(row.status),
                 model: non_empty(row.model),
+                backend,
                 ended_ms,
                 duration_ms: row.duration_ms.filter(|v| v.is_finite()),
             });
@@ -386,7 +412,7 @@ mod tests {
                 r#"{"ts":"2026-11-27T01:00:00Z","kind":"task","worker":"no-owner"}"#,
                 r#"{"ts":"2026-11-27T01:00:00Z","kind":"task","owner":"","worker":"empty-owner"}"#,
                 // Later task written earlier in the file -> sorted after earlier task.
-                r#"{"ts":"2026-11-27T01:05:00.500Z","kind":"task","owner":"m1","worker":"w2","title":"second","task":"do 2","status":"done","model":"google/gemini-4-neon-high","durationMs":120000,"sessionId":"s2"}"#,
+                r#"{"ts":"2026-11-27T01:05:00.500Z","kind":"task","owner":"m1","worker":"w2","title":"second","task":"do 2","status":"done","model":"google/gemini-4-neon-high","durationMs":120000,"sessionId":"s2","agy":"1.5.18"}"#,
                 // Earlier task without sessionId, with empty strings normalized to None.
                 r#"{"ts":"2026-11-27T01:02:00Z","kind":"task","owner":"m1","worker":"w1","title":"","task":"do 1","status":"failed","model":"","sessionId":""}"#,
                 // Different owner.
@@ -408,6 +434,7 @@ mod tests {
                 task: Some("do 1".into()),
                 status: Some("failed".into()),
                 model: None,
+                backend: "pi".into(),
                 ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-27T01:02:00Z")
                     .unwrap()
                     .timestamp_millis() as f64,
@@ -423,6 +450,7 @@ mod tests {
                 task: Some("do 2".into()),
                 status: Some("done".into()),
                 model: Some("google/gemini-4-neon-high".into()),
+                backend: "agy".into(),
                 ended_ms: chrono::DateTime::parse_from_rfc3339("2026-11-27T01:05:00.500Z")
                     .unwrap()
                     .timestamp_millis() as f64,
@@ -437,5 +465,42 @@ mod tests {
         assert_eq!(m2[0].duration_ms, Some(5_000.0));
 
         assert!(cache.tasks_for(dir.path(), "unknown").is_empty());
+    }
+
+    #[test]
+    fn task_backend_from_model_prefix_then_version_field() {
+        let row = |s: &str| serde_json::from_str::<UsageRow>(s).unwrap();
+        assert_eq!(
+            task_backend(&row(r#"{"model":"codex/gpt-6.2-sol:high"}"#)),
+            "codex"
+        );
+        assert_eq!(
+            task_backend(&row(r#"{"model":"pi/agent-gateway/deepseek-v4.1-flash"}"#)),
+            "pi"
+        );
+        assert_eq!(
+            task_backend(&row(r#"{"model":"agy/gemini-4-neon-high","codex":"x"}"#)),
+            "agy"
+        );
+        // Before the Agent / Model split the model had no backend; the version field tells.
+        assert_eq!(
+            task_backend(&row(r#"{"model":"gpt-6.2-sol","codex":"0.171.0"}"#)),
+            "codex"
+        );
+        assert_eq!(
+            task_backend(&row(r#"{"model":"gemini-4-neon-high","agy":"1.5.18"}"#)),
+            "agy"
+        );
+        assert_eq!(
+            task_backend(&row(
+                r#"{"model":"agent-gateway/deepseek-v4.1-flash","pi":"1.5.0"}"#
+            )),
+            "pi"
+        );
+        // Before haa recorded versions, pi was its only backend.
+        assert_eq!(
+            task_backend(&row(r#"{"model":"agent-gateway/deepseek-v4.1-flash"}"#)),
+            "pi"
+        );
     }
 }

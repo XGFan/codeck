@@ -5,6 +5,7 @@ import {
   formatTaskText,
   formatTaskTooltip,
   formatWorkerDuration,
+  isReadById,
   readsWorkerById,
   shortModelName,
   sortWorkers,
@@ -92,6 +93,12 @@ describe("workerBackend and readsWorkerById", () => {
     expect(readsWorkerById("agy/gemini-4-neon-high")).toBe(false);
     // Older haa wrote the model without its backend.
     expect(readsWorkerById("agent-gateway/deepseek-v4.1-flash")).toBe(false);
+    expect([isReadById("codex"), isReadById("pi"), isReadById("agy"), isReadById(null)]).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
 });
 

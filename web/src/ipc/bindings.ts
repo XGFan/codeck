@@ -412,7 +412,7 @@ export type ForkOrigin = {
 export type HaaTask = {
 	/**  Worker name in haa. */
 	worker: string | null,
-	/**  Worker's agy conversation id, when recorded. */
+	/**  Worker's session id in its backend (agy conversation, codex thread, pi session), when recorded. */
 	sessionId: string | null,
 	/**  Short task title, when provided. */
 	title: string | null,
@@ -422,6 +422,11 @@ export type HaaTask = {
 	status: string | null,
 	/**  Full model identifier used by the Worker. */
 	model: string | null,
+	/**
+	 *  Backend that ran the Task: `agy`, `codex` or `pi` (a codex or pi Worker's conversation is
+	 *  read by `session_id` from the backend's own records, ADR-0020).
+	 */
+	backend: string,
 	/**  Task completion time in unix-epoch milliseconds (parsed from `ts`). */
 	endedMs: number,
 	/**  Task duration in milliseconds, when recorded. */
