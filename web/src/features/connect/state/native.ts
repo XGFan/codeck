@@ -26,12 +26,6 @@ export interface NativeConnect {
   progress: string | null;
 }
 
-declare global {
-  interface Window {
-    codeckPage?: { setConnect(c: Partial<NativeConnect>): void };
-  }
-}
-
 // No `window` where the unit tests load this module.
 const app = () => (typeof window === "undefined" ? undefined : window.webkit?.messageHandlers?.codeck);
 
@@ -53,7 +47,8 @@ export const useNativeConnect = create<{ c: NativeConnect | null }>(() => ({ c: 
 /** Before the page tells the app it is ready. */
 export function installNativeConnect() {
   if (!app()) return;
-  window.codeckPage = { setConnect: (c) => useNativeConnect.setState({ c: { ...NONE, ...c } }) };
+  const page = (window.codeckPage ??= {} as NonNullable<Window["codeckPage"]>);
+  page.setConnect = (c) => useNativeConnect.setState({ c: { ...NONE, ...(c as Partial<NativeConnect>) } });
 }
 
 /** 「回退」 or 「Fork」 was tapped under the prompt `nodeId`. */

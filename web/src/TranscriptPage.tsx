@@ -10,14 +10,15 @@ import { useUi } from "@/state/ui";
 export default function TranscriptPage() {
   const qc = useQueryClient();
 
+  // The event socket does not replay: whatever is shown is refetched after every (re)connect.
+  useEffect(() => (api as Partial<RemoteApi>).onResync?.(() => void qc.invalidateQueries()), [qc]);
+
   useEffect(() => {
     useUi.getState().selectSession(new URLSearchParams(window.location.search).get("sessionId"));
     installNativeConnect();
+    // Signal ready only after subscriptions (including onResync) and setConnect are installed.
     window.webkit?.messageHandlers?.codeck?.postMessage({ type: "ready" });
   }, []);
-
-  // The event socket does not replay: whatever is shown is refetched after every (re)connect.
-  useEffect(() => (api as Partial<RemoteApi>).onResync?.(() => void qc.invalidateQueries()), [qc]);
 
   return (
     <div data-testid="transcript-page" className="transcript-page flex h-full min-h-0 flex-col bg-ground">

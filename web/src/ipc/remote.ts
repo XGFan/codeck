@@ -3,7 +3,16 @@ import type { Api, Unlisten } from "./api";
 
 declare global {
   interface Window {
-    webkit?: { messageHandlers?: { codeck?: { postMessage(msg: unknown): void } } };
+    codeckPage?: {
+      event?: (text: string) => void;
+      setConnect(c: unknown): void;
+    };
+    webkit?: {
+      messageHandlers?: {
+        codeck?: { postMessage(msg: unknown): void };
+        codeckRpc?: { postMessage(msg: unknown): Promise<unknown> };
+      };
+    };
   }
 }
 
@@ -12,94 +21,193 @@ export type RemoteApi = Api & {
   onResync(cb: () => void): Unlisten;
 };
 
+export type RpcReply = { result?: unknown; error?: unknown };
+export type RpcSender = (method: string, args: Record<string, unknown>) => Promise<RpcReply>;
+
+export interface RawEventSource {
+  subscribe(onMessage: (text: string) => void): Unlisten;
+}
+
+export interface RemoteTransport {
+  rpc: RpcSender;
+  events: RawEventSource;
+}
+
 const BACKOFF_MAX_MS = 15_000;
 const desktopOnly = (what: string) => Promise.reject({ code: "unsupported", message: `${what}仅桌面端支持` });
+const unreachableReply = (): RpcReply => ({ error: { code: "http", message: "连不上 Host" } });
 
-/** The daemon's command table over HTTP (`POST /v1/rpc`) and events over one WebSocket (`/v1/events`). */
-export function createRemoteApi(base: string): RemoteApi {
+/** Direct HTTP (`POST /v1/rpc`) and one shared WebSocket (`/v1/events`), closed while the page is hidden. */
+export function httpTransport(base: string): RemoteTransport {
   const root = base.replace(/\/+$/, "");
 
-  async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
+  async function rpc(method: string, args: Record<string, unknown>): Promise<RpcReply> {
     const res = await fetch(`${root}/v1/rpc`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method, args }),
     });
-    let body = null as { result?: T; error?: unknown } | null;
+    let body: RpcReply | null = null;
     try {
-      body = (await res.json()) as typeof body;
+      body = (await res.json()) as RpcReply | null;
     } catch {
       // Not JSON: reported below by status.
     }
-    if (!res.ok || (body && "error" in body && body.error != null)) {
-      throw body?.error ?? { code: "http", message: `请求失败（${res.status}）` };
+    if (!res.ok && !(body && "error" in body && body.error != null)) {
+      return { error: { code: "http", message: `请求失败（${res.status}）` } };
     }
+    return body ?? {};
+  }
+
+  const wsUrl = () => `${root.replace(/^http/, "ws")}/v1/events`;
+
+  const events: RawEventSource = {
+    subscribe(onMessage) {
+      let active = true;
+      let ws: WebSocket | null = null;
+      let retry: ReturnType<typeof setTimeout> | null = null;
+      let attempts = 0;
+
+      function close() {
+        if (retry) clearTimeout(retry);
+        retry = null;
+        const s = ws;
+        ws = null;
+        if (s) {
+          s.onclose = null;
+          s.close();
+        }
+      }
+
+      function open() {
+        if (!active || ws || document.visibilityState === "hidden") return;
+        const s = new WebSocket(wsUrl());
+        ws = s;
+        s.onmessage = (e) => {
+          const text = String(e.data);
+          // Reset backoff once the daemon's handshake frame arrives.
+          try {
+            const frame = JSON.parse(text) as { event?: string } | null;
+            if (frame && typeof frame === "object" && frame.event === "hello") attempts = 0;
+          } catch {
+            // Non-JSON frames are dropped by the consumer too.
+          }
+          onMessage(text);
+        };
+        s.onclose = () => {
+          if (ws !== s) return;
+          ws = null;
+          if (!active || document.visibilityState === "hidden") return;
+          const wait = Math.min(BACKOFF_MAX_MS, 500 * 2 ** attempts++);
+          retry = setTimeout(open, wait);
+        };
+      }
+
+      const onVisibility = () => {
+        if (document.visibilityState === "hidden") close();
+        else open();
+      };
+
+      document.addEventListener("visibilitychange", onVisibility);
+      open();
+
+      return () => {
+        active = false;
+        document.removeEventListener?.("visibilitychange", onVisibility);
+        close();
+      };
+    },
+  };
+
+  return { rpc, events };
+}
+
+/** Relayed through the iOS app: RPC via `codeckRpc`, events pushed into `window.codeckPage.event`. */
+export function nativeTransport(): RemoteTransport {
+  const listeners = new Set<(text: string) => void>();
+
+  // Attach on creation (module init in `ipc/index.ts`) without replacing `window.codeckPage`,
+  // so `event` and `installNativeConnect`'s `setConnect` coexist regardless of order.
+  if (typeof window !== "undefined") {
+    const page = (window.codeckPage ??= {} as NonNullable<Window["codeckPage"]>);
+    page.event = (text: string) => {
+      listeners.forEach((cb) => cb(text));
+    };
+  }
+
+  async function rpc(method: string, args: Record<string, unknown>): Promise<RpcReply> {
+    const bridge = typeof window === "undefined" ? undefined : window.webkit?.messageHandlers?.codeckRpc;
+    if (!bridge) return unreachableReply();
+    try {
+      const reply = await bridge.postMessage({ method, args });
+      return reply && typeof reply === "object" ? (reply as RpcReply) : unreachableReply();
+    } catch {
+      return unreachableReply();
+    }
+  }
+
+  const events: RawEventSource = {
+    subscribe(onMessage) {
+      listeners.add(onMessage);
+      return () => {
+        listeners.delete(onMessage);
+      };
+    },
+  };
+
+  return { rpc, events };
+}
+
+/** The daemon's command table over a remote transport (HTTP + WebSocket by default, or the iOS app bridge). */
+export function createRemoteApi(target: string | RemoteTransport): RemoteApi {
+  const transport = typeof target === "string" ? httpTransport(target) : target;
+
+  async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
+    const body = await transport.rpc(method, args);
+    if (body && "error" in body && body.error != null) throw body.error;
     return body?.result as T;
   }
 
-  // --- events: one shared socket, closed while the page is hidden ---
   const handlers = new Map<string, Set<(payload: unknown) => void>>();
   const resyncs = new Set<() => void>();
-  let ws: WebSocket | null = null;
-  let retry: ReturnType<typeof setTimeout> | null = null;
-  let attempts = 0;
+  let unsub: Unlisten | null = null;
 
-  const wsUrl = () => `${root.replace(/^http/, "ws")}/v1/events`;
   const wanted = () => handlers.size > 0 || resyncs.size > 0;
 
-  function close() {
-    if (retry) clearTimeout(retry);
-    retry = null;
-    const s = ws;
-    ws = null;
-    if (s) {
-      s.onclose = null;
-      s.close();
+  function onMessage(text: string) {
+    let msg: { event?: string; payload?: unknown } | null;
+    try {
+      msg = JSON.parse(text) as typeof msg;
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+    if (msg.event === "hello") {
+      resyncs.forEach((cb) => cb());
+      return;
+    }
+    if (msg.event) handlers.get(msg.event)?.forEach((cb) => cb(msg.payload));
+  }
+
+  function sync() {
+    if (wanted() && !unsub) {
+      unsub = transport.events.subscribe(onMessage);
+    } else if (!wanted() && unsub) {
+      unsub();
+      unsub = null;
     }
   }
-
-  function open() {
-    if (ws || !wanted() || document.visibilityState === "hidden") return;
-    const s = new WebSocket(wsUrl());
-    ws = s;
-    s.onmessage = (e) => {
-      let msg: { event?: string; payload?: unknown };
-      try {
-        msg = JSON.parse(String(e.data)) as typeof msg;
-      } catch {
-        return;
-      }
-      if (msg.event === "hello") {
-        attempts = 0;
-        resyncs.forEach((cb) => cb());
-        return;
-      }
-      if (msg.event) handlers.get(msg.event)?.forEach((cb) => cb(msg.payload));
-    };
-    s.onclose = () => {
-      if (ws !== s) return;
-      ws = null;
-      if (!wanted() || document.visibilityState === "hidden") return;
-      const wait = Math.min(BACKOFF_MAX_MS, 500 * 2 ** attempts++);
-      retry = setTimeout(open, wait);
-    };
-  }
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") close();
-    else open();
-  });
 
   function listen<P>(event: string, cb: (payload: P) => void): Promise<Unlisten> {
     let set = handlers.get(event);
     if (!set) handlers.set(event, (set = new Set()));
     const h = cb as (payload: unknown) => void;
     set.add(h);
-    open();
+    sync();
     return Promise.resolve(() => {
       set.delete(h);
       if (!set.size) handlers.delete(event);
-      if (!wanted()) close();
+      sync();
     });
   }
 
@@ -195,11 +303,16 @@ export function createRemoteApi(base: string): RemoteApi {
     getPlanUsage: () => desktopOnly("订阅额度"),
     onResync(cb) {
       resyncs.add(cb);
-      open();
+      sync();
       return () => {
         resyncs.delete(cb);
-        if (!wanted()) close();
+        sync();
       };
     },
   };
+}
+
+/** Remote API relayed through the iOS app (`codeckRpc` + `window.codeckPage.event`). */
+export function createNativeRemoteApi(): RemoteApi {
+  return createRemoteApi(nativeTransport());
 }
