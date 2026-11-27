@@ -152,8 +152,21 @@ pub fn monitor_notice(text: &str) -> Option<String> {
     .flatten()
 }
 
-/// A `<task-notification>` that ended a task: `(task id, status)`.
+/// A `<task-notification>` that ended a task: `(task id, status)`. A Monitor that reached its
+/// timeout ends with one more of its events and no status ([`monitor_expired`]): `completed`.
 pub fn task_notification(text: &str) -> Option<(String, String)> {
     let n = prompt::task_notification(text)?;
-    Some((n.task_id?, n.status?))
+    let status = n
+        .status
+        .or_else(|| monitor_expired(text).then(|| "completed".to_string()))?;
+    Some((n.task_id?, status))
+}
+
+/// A Monitor's event that says its watch reached its timeout and stopped (claude 2.1.332:
+/// `[Monitor expired after 30m with … delivered. …]`, or `[Monitor timed out …]`).
+fn monitor_expired(text: &str) -> bool {
+    monitor_notice(text).is_some()
+        && prompt::tag(text, "event").is_some_and(|e| {
+            e.starts_with("[Monitor expired after ") || e.starts_with("[Monitor timed out")
+        })
 }

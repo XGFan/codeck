@@ -970,6 +970,35 @@ fn a_monitor_runs_until_its_stream_ends() {
     assert_eq!(t.tasks()[0].status, "completed");
 }
 
+/// A Monitor that reached its timeout ends with one more event and no status: the watch stopped.
+#[test]
+fn a_monitor_ends_when_it_expires() {
+    let note = |id: &str, event: &str| {
+        format!(
+            "<task-notification>\n<task-id>{id}</task-id>\n<summary>Monitor event: \"haa Worker events\"</summary>\n<event>{event}</event>\n</task-notification>"
+        )
+    };
+    for event in [
+        "[Monitor expired after 30m with no events delivered. Re-arm it if you still need the watch — and widen the filter if silence was unexpected.]",
+        "[Monitor expired after 30m with 2 events delivered. Re-arm it if you still need the watch.]",
+        "[Monitor timed out — re-arm if needed.]",
+    ] {
+        assert_eq!(
+            task_notification(&note("bm1", event)),
+            Some(("bm1".into(), "completed".into())),
+            "{event}"
+        );
+    }
+    assert_eq!(task_notification(&note("bm1", "w1 DONE done")), None);
+    // A shell's output that happens to read so is not a Monitor's.
+    assert_eq!(
+        task_notification(
+            "<task-notification>\n<task-id>b2</task-id>\n<summary>Background command \"x\" is still running</summary>\n<event>[Monitor expired after 30m]</event>\n</task-notification>"
+        ),
+        None
+    );
+}
+
 /// A plugin's monitor has no tool call: its notifications (an event, queued while busy or
 /// sent as a prompt, or the end of its stream) name it a Monitor; a shell's do not.
 #[test]
