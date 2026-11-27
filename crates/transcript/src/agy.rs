@@ -76,6 +76,12 @@ pub fn brain_dir(root: &Path) -> PathBuf {
     root.join("brain")
 }
 
+/// Whether `id` can be a conversation id: one plain path component (no separator, not `.` or
+/// `..`). Ids from file names and command lines go through it before they are joined into a path.
+pub fn is_conversation_id(id: &str) -> bool {
+    !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0'])
+}
+
 /// `<root>/brain/<id>/.system_generated/logs/transcript_full.jsonl`.
 pub fn transcript_path(root: &Path, id: &str) -> PathBuf {
     brain_dir(root)
@@ -93,7 +99,7 @@ pub fn session_of_transcript(root: &Path, path: &Path) -> Option<String> {
         Component::Normal(s) => s.to_str()?,
         _ => return None,
     };
-    if id.is_empty() {
+    if !is_conversation_id(id) {
         return None;
     }
     let expected = [".system_generated", "logs", "transcript_full.jsonl"];
@@ -128,7 +134,7 @@ pub fn session_of_presence(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
     let id = name.strip_suffix(".lock")?;
-    (!id.is_empty()).then(|| id.to_owned())
+    is_conversation_id(id).then(|| id.to_owned())
 }
 
 // ---- transcript parsing ----

@@ -780,3 +780,27 @@ fn real_agy_data_probe() {
         "expected 0 failed complete lines across real agy transcripts"
     );
 }
+
+#[test]
+fn ids_from_lock_names_and_paths_must_be_one_plain_component() {
+    use std::path::Path;
+    let root = Path::new("/r");
+    assert!(transcript::agy::is_conversation_id(
+        "8c54e127-d8c4-55e2-9034-566dac2ca233"
+    ));
+    for bad in ["", ".", "..", "a/b", "a\\b"] {
+        assert!(!transcript::agy::is_conversation_id(bad), "{bad:?}");
+    }
+    assert_eq!(
+        transcript::agy::session_of_presence(root, Path::new("/r/presence/..lock")),
+        None
+    );
+    assert_eq!(
+        transcript::agy::session_of_presence(root, Path::new("/r/presence/...lock")),
+        None
+    );
+    assert_eq!(
+        transcript::agy::session_of_presence(root, Path::new("/r/presence/abc.lock")).as_deref(),
+        Some("abc")
+    );
+}

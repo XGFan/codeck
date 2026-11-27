@@ -774,6 +774,22 @@ fn run_agy(mut args: impl Iterator<Item = String>) {
     let source = source.expect("missing --source <agy_root>");
     let out_dir = out_dir.expect("missing --out <dir>");
     assert!(!ids.is_empty(), "missing --ids <id1,id2,...>");
+    for id in &ids {
+        assert!(
+            transcript::agy::is_conversation_id(id),
+            "not a conversation id: {id}"
+        );
+    }
+    // Never write into the data root being read.
+    let resolved = |p: &std::path::Path| {
+        p.canonicalize()
+            .or_else(|_| std::path::absolute(p))
+            .unwrap_or_else(|_| p.to_path_buf())
+    };
+    assert!(
+        !resolved(&out_dir).starts_with(resolved(&source)),
+        "--out must be outside --source"
+    );
 
     let id_map: HashMap<String, String> = ids
         .iter()
