@@ -48,6 +48,8 @@ async fn connect_replaces_a_connection_whose_session_ended() {
             images: Some(dir.path().join("images")),
             data_root: Some(dir.path().join("root")),
             agy_root: dir.path().join("__agy"),
+            codex_root: dir.path().join("__haa").join("__codex"),
+            pi_root: dir.path().join("__haa").join("__pi"),
             haa_home: dir.path().join("__haa"),
             refresh_prices: false,
             track_connect: true,

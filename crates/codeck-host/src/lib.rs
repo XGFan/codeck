@@ -60,6 +60,11 @@ pub struct HostConfig {
     pub agy_root: PathBuf,
     /// Read-only haa home directory; defaults to `$CODECK_HAA_HOME` > `~/.haa`.
     pub haa_home: PathBuf,
+    /// Read-only codex data root, for the conversations of haa Workers that ran on codex; defaults to
+    /// `$CODECK_CODEX_ROOT` > `~/.codex`.
+    pub codex_root: PathBuf,
+    /// Read-only pi agent directory, likewise for pi; defaults to `$CODECK_PI_ROOT` > `~/.pi/agent`.
+    pub pi_root: PathBuf,
     /// `reveal_session_file`; `None` = not available on this Host.
     pub reveal_path: Option<PathAction>,
     /// `ccrpc_open_analyzer_records`; `None` = not available on this Host.
@@ -91,6 +96,8 @@ impl HostConfig {
             data_root: None,
             agy_root: paths::resolve_agy_root(),
             haa_home: paths::resolve_haa_home(),
+            codex_root: paths::resolve_codex_root(),
+            pi_root: paths::resolve_pi_root(),
             reveal_path: None,
             open_path: None,
             track_connect: false,
@@ -149,6 +156,7 @@ impl Host {
             data_root.as_deref(),
             config.agy_root.clone(),
             config.haa_home.clone(),
+            [config.codex_root.clone(), config.pi_root.clone()],
             config.cache_dir.clone(),
             probe_cwd.clone(),
         )?;
@@ -160,6 +168,8 @@ impl Host {
             worker::WorkerPaths {
                 agy_root: config.agy_root.clone(),
                 haa_home: config.haa_home.clone(),
+                codex_root: config.codex_root.clone(),
+                pi_root: config.pi_root.clone(),
                 cache_dir: config.cache_dir.clone(),
                 ignore_live_cwd: probe_cwd.clone(),
             },

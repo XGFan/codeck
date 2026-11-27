@@ -44,6 +44,8 @@ fn read_only(claude_root: &Path, agy_root: &Path, cache: &Path) -> Result<Engine
         data_root: claude_root.to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: agy_root.to_path_buf(),
+        codex_root: test_haa_home(cache).join("__codex"),
+        pi_root: test_haa_home(cache).join("__pi"),
         haa_home: test_haa_home(cache),
         cache_dir: cache.to_path_buf(),
     })
@@ -402,6 +404,8 @@ fn agy_title_project_and_haa_workspace_resolution() {
         data_root: claude.path().to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: agy.path().to_path_buf(),
+        codex_root: haa_home.join("__codex"),
+        pi_root: haa_home.join("__pi"),
         haa_home: haa_home.clone(),
         cache_dir: cache.path().to_path_buf(),
     })
@@ -461,6 +465,8 @@ fn haa_worktree_record_puts_a_worker_under_its_repo_on_the_next_sync() {
         data_root: claude.path().to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: agy.path().to_path_buf(),
+        codex_root: haa_home.join("__codex"),
+        pi_root: haa_home.join("__pi"),
         haa_home: haa_home.clone(),
         cache_dir: cache.path().to_path_buf(),
     })
@@ -1031,6 +1037,8 @@ fn haa_worker_ownership_from_fixture_attaches_to_list_and_detail() {
         data_root: claude.path().to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: agy.path().to_path_buf(),
+        codex_root: haa_fixture.join("__codex"),
+        pi_root: haa_fixture.join("__pi"),
         haa_home: haa_fixture,
         cache_dir: cache.path().to_path_buf(),
     })
@@ -1143,6 +1151,8 @@ fn get_session_attaches_sorted_haa_tasks_only_for_claude_sessions() {
         data_root: claude.path().to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: agy.path().to_path_buf(),
+        codex_root: haa_dir.path().to_path_buf().join("__codex"),
+        pi_root: haa_dir.path().to_path_buf().join("__pi"),
         haa_home: haa_dir.path().to_path_buf(),
         cache_dir: cache.path().to_path_buf(),
     })

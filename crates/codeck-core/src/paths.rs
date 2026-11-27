@@ -13,6 +13,8 @@ pub const BUNDLE_ID: &str = "dev.joy.codeck";
 pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 pub const AGY_ROOT_ENV: &str = "CODECK_AGY_ROOT";
 pub const HAA_HOME_ENV: &str = "CODECK_HAA_HOME";
+pub const CODEX_ROOT_ENV: &str = "CODECK_CODEX_ROOT";
+pub const PI_ROOT_ENV: &str = "CODECK_PI_ROOT";
 pub const INDEX_FILE_NAME: &str = "index.sqlite";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,6 +85,38 @@ pub fn resolve_haa_home_with(env: Option<OsString>, home: Option<PathBuf>) -> Pa
         return expand_tilde(Path::new(&v), home.as_deref());
     }
     home.unwrap_or_else(|| PathBuf::from("/")).join(".haa")
+}
+
+/// Resolves codex's data root: `$CODECK_CODEX_ROOT`, else `~/.codex`.
+pub fn resolve_codex_root() -> PathBuf {
+    resolve_root_with(
+        std::env::var_os(CODEX_ROOT_ENV),
+        dirs::home_dir(),
+        &[".codex"],
+    )
+}
+
+/// Resolves pi's agent directory: `$CODECK_PI_ROOT`, else `~/.pi/agent`.
+pub fn resolve_pi_root() -> PathBuf {
+    resolve_root_with(
+        std::env::var_os(PI_ROOT_ENV),
+        dirs::home_dir(),
+        &[".pi", "agent"],
+    )
+}
+
+/// Pure resolution of a read-only root: non-empty `env` (expanding `~/`), else `<home>/<default…>`.
+pub fn resolve_root_with(
+    env: Option<OsString>,
+    home: Option<PathBuf>,
+    default: &[&str],
+) -> PathBuf {
+    if let Some(v) = env.filter(|v| !v.is_empty()) {
+        return expand_tilde(Path::new(&v), home.as_deref());
+    }
+    default
+        .iter()
+        .fold(home.unwrap_or_else(|| PathBuf::from("/")), |p, c| p.join(c))
 }
 
 fn expand_tilde(p: &Path, home: Option<&Path>) -> PathBuf {
@@ -161,6 +195,23 @@ mod tests {
                 path: "/Users/dev/.claude".into(),
                 source: DataRootSource::Default
             }
+        );
+    }
+
+    #[test]
+    fn codex_and_pi_root_resolution() {
+        let home = Some(PathBuf::from("/Users/dev"));
+        assert_eq!(
+            resolve_root_with(None, home.clone(), &[".pi", "agent"]),
+            PathBuf::from("/Users/dev/.pi/agent")
+        );
+        assert_eq!(
+            resolve_root_with(Some("".into()), home.clone(), &[".codex"]),
+            PathBuf::from("/Users/dev/.codex")
+        );
+        assert_eq!(
+            resolve_root_with(Some("~/c".into()), home, &[".codex"]),
+            PathBuf::from("/Users/dev/c")
         );
     }
 

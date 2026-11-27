@@ -66,6 +66,21 @@ export function sortWorkers(workers: readonly HaaWorker[], now: number): HaaWork
   });
 }
 
+/** The backend of a haa model name (`<backend>/<id>[:thinking]`); null for a name without one (older haa). */
+export function workerBackend(model: string | null | undefined): string | null {
+  const i = model ? model.indexOf("/") : -1;
+  return i > 0 ? model!.slice(0, i) : null;
+}
+
+/**
+ * A codex or pi Worker: CoDeck reads its conversation from the agent's own file by Session id, so it opens although it
+ * is not in the Session list (an agy Worker's opens once its Session is listed).
+ */
+export function readsWorkerById(model: string | null | undefined): boolean {
+  const b = workerBackend(model);
+  return b === "codex" || b === "pi";
+}
+
 /** Returns the part after the last `/` in a model identifier. */
 export function shortModelName(model: string | undefined): string {
   if (!model) return "";

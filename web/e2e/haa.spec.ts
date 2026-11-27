@@ -7,6 +7,8 @@ const REDIS_TITLE = "排查 Redis 连接池泄漏";
 const REDIS_ID = "91d5be38-0004-4000-8000-000000000004";
 const RICH_ID = "7f3a9c10-0001-4000-8000-000000000001";
 const AGY_WORKER_WEB_ID = "a6a10003-0014-4000-8000-000000000014";
+const CODEX_WORKER_ID = "01a21cbf-0000-7000-8000-0000000000c1";
+const PI_WORKER_ID = "haa-0000a001-0000-4000-8000-0000000000p1";
 
 const haaProbe = (page: Page) =>
   page.evaluate(() => {
@@ -331,7 +333,9 @@ test("已 Connect：状态条在请求与输入框之上，焦点在状态条上
     .toEqual(["allow"]);
 });
 
-test("agy Worker 的行点开右侧面板看它的对话、再点收起；对话不在列表里的行不能点", async ({ page }) => {
+test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 pi 的从文件读，agy 的对话不在列表里、或没有 sessionId 的行不能点", async ({
+  page,
+}) => {
   await page.goto("/");
   await open(page, RICH_TITLE);
   await expect.poll(() => haaProbe(page)).toMatchObject({ watching: true, watchStarts: 1 });
@@ -355,14 +359,40 @@ test("agy Worker 的行点开右侧面板看它的对话、再点收起；对话
       model: "codex/gpt-6.2-sol:high",
       tokens: 0,
       tasks: 1,
-      sessionId: "thr-1",
+      sessionId: CODEX_WORKER_ID,
     },
+    {
+      id: "w-3",
+      owner: RICH_ID,
+      name: "pi-research",
+      state: "dormant",
+      model: "pi/agent-gateway/deepseek-v4.1-flash",
+      tokens: 0,
+      tasks: 2,
+      sessionId: PI_WORKER_ID,
+    },
+    {
+      id: "w-4",
+      owner: RICH_ID,
+      name: "agy-gone",
+      state: "dormant",
+      model: "agy/gemini-4-neon-high",
+      tokens: 0,
+      tasks: 1,
+      sessionId: "conv-not-listed",
+    },
+    { id: "w-5", owner: RICH_ID, name: "codex-old", state: "dead", model: "codex/gpt-6.2-sol", tokens: 0, tasks: 1 },
   ]);
+  await page.getByTestId("haa-toggle").click();
 
-  const agyRow = page.getByTestId("haa-worker").filter({ hasText: "agy-web" });
-  const codexRow = page.getByTestId("haa-worker").filter({ hasText: "codex-review" });
+  const row = (name: string) => page.getByTestId("haa-worker").filter({ hasText: name });
+  const agyRow = row("agy-web");
+  const codexRow = row("codex-review");
   await expect(agyRow).toHaveAttribute("role", "button");
-  await expect(codexRow).not.toHaveAttribute("role", "button");
+  await expect(codexRow).toHaveAttribute("role", "button");
+  await expect(row("pi-research")).toHaveAttribute("role", "button");
+  await expect(row("agy-gone")).not.toHaveAttribute("role", "button");
+  await expect(row("codex-old")).not.toHaveAttribute("role", "button");
 
   await agyRow.click();
   const panel = page.getByTestId("worker-panel");
@@ -375,12 +405,29 @@ test("agy Worker 的行点开右侧面板看它的对话、再点收起；对话
   await expect(agyRow).toHaveAttribute("aria-pressed", "true");
   await assertAlignedNoOverflow(page);
 
-  // A row whose conversation is not listed does nothing; the open row closes the panel again.
-  await codexRow.click();
-  await expect(panel).toBeVisible();
+  // A row whose conversation is not readable does nothing; the open row closes the panel again.
+  await row("agy-gone").click();
+  await expect(panel.getByTestId("crumb")).toHaveText("haa Worker · agy-web");
   await agyRow.click();
   await expect(panel).toHaveCount(0);
   await expect(agyRow).not.toHaveAttribute("data-open");
+
+  // A codex Worker's conversation is not a listed Session: read from its file, what the panel says comes from haa.
+  await codexRow.click();
+  await expect(panel.getByTestId("crumb")).toHaveText("haa Worker · codex-review");
+  await expect(panel.getByTestId("panel-meta")).toContainText("codex · gpt-6.2-sol:high");
+  await expect(panel.getByTestId("panel-meta")).toContainText("1 个 Task");
+  await expect(panel.getByTestId("worker-panel-open")).toHaveCount(0);
+  const transcript = panel.getByTestId("panel-transcript");
+  await expect(transcript).toContainText("评审完成：没有阻塞问题，已提交 Result。");
+  await transcript.getByTestId("turn-fold").click();
+  await expect(transcript).toContainText("git diff --stat HEAD~1 -- web/src/features/haa");
+  await expect(codexRow).toHaveAttribute("data-open", "true");
+  await row("pi-research").click();
+  await expect(panel.getByTestId("panel-meta")).toContainText("pi · deepseek-v4.1-flash");
+  await expect(panel.getByTestId("panel-transcript")).toContainText("条目之间用 id / parentId 连成树");
+  await row("pi-research").click();
+  await expect(panel).toHaveCount(0);
 
   // Keyboard: Enter on the focused row opens it.
   await agyRow.focus();

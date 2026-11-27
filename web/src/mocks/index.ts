@@ -56,6 +56,7 @@ import {
   richWorkflows,
 } from "@/mocks/data/rich";
 import { richModelCosts, sessionData } from "@/mocks/data/sessions";
+import { workerFiles } from "@/mocks/data/haaWorkers";
 
 const LATENCY_MS = 30;
 
@@ -192,6 +193,8 @@ const findData = (sessionId: string) => {
 };
 
 function mainNodes(sessionId: string): Node[] {
+  const file = workerFiles.get(sessionId);
+  if (file) return file;
   const nodes = [...findData(sessionId).nodes, ...(appended.get(sessionId) ?? [])];
   const fork = forks.get(sessionId);
   const at = fork ? nodes.findIndex((n) => n.id === fork.at) : -1;
@@ -250,7 +253,7 @@ function buildTranscript(req: {
   branchChoices: BranchChoice[];
   includeHidden: boolean;
 }): Transcript {
-  const d = findData(req.sessionId);
+  const d = workerFiles.has(req.sessionId) ? null : findData(req.sessionId);
   const revision = (revisions.get(req.sessionId) ?? 0) + 1;
   const isRich = req.sessionId === RICH_ID;
   let nodes: Node[];
@@ -271,7 +274,7 @@ function buildTranscript(req: {
   const hiddenCount = nodes.filter((n) => n.hidden).length;
   const visible = req.includeHidden ? nodes : nodes.filter((n) => !n.hidden);
   const inherited =
-    req.scope.kind === "main" && d.forkOf
+    req.scope.kind === "main" && d?.forkOf
       ? {
           originSessionId: d.forkOf.id,
           originTitle: findData(d.forkOf.id).summary.title,

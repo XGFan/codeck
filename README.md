@@ -34,7 +34,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 
 ## 只读保证
 
-应用从不写入、移动或删除数据目录（默认 `~/.claude`）、agy 的数据目录（`~/.gemini/antigravity-cli`）与 `~/.haa` 下的任何文件，不打开 agy 的 SQLite（[ADR-0002](docs/adr/0002-read-only.md)）。Connect 后对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
+应用从不写入、移动或删除数据目录（默认 `~/.claude`）、agy 的数据目录（`~/.gemini/antigravity-cli`）、`~/.haa`、codex 的 `~/.codex` 与 pi 的 `~/.pi/agent` 下的任何文件，不打开 agy 的 SQLite（[ADR-0002](docs/adr/0002-read-only.md)）。Connect 后对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
 
 | 内容 | 位置 |
 |---|---|
@@ -56,7 +56,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 
 从 Finder / Dock 启动的应用读不到 shell 里的环境变量，如果使用了 `CLAUDE_CONFIG_DIR`，请在「设置 → 数据」（⌘,）中填写路径。
 
-agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有 agy 的 Session；开发时可用环境变量 `CODECK_AGY_ROOT` 换掉，haa 的目录（haa Worker 的归属）用 `CODECK_HAA_HOME`。
+agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有 agy 的 Session；开发时可用环境变量 `CODECK_AGY_ROOT` 换掉，haa 的目录（haa Worker 的归属）用 `CODECK_HAA_HOME`，haa 的 codex、pi Worker 的对话所在的目录用 `CODECK_CODEX_ROOT`（默认 `~/.codex`）、`CODECK_PI_ROOT`（默认 `~/.pi/agent`）。
 
 ## 环境要求
 
@@ -64,7 +64,7 @@ agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有
 - Rust 1.91+（`rustup`）、Xcode Command Line Tools
 - Node 22+ 与 pnpm
 - Connect（可选）：ToH（clay 后端）与 ccrpc；ccrpc 依次取 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`，插件用 `ccrpc plugin install` 安装（见 [crates/ccrpc](crates/ccrpc)）
-- haa（可选）：装了 haa 时，Live 或已连接的 Session 在输入区上方显示它名下的 haa Worker，agy 的 Worker 点开在右侧看它的对话；haa 依次取 `CODECK_HAA`、`~/.local/bin/haa`、PATH 里的 `haa`，需要支持 `haa ls --all --json --watch` 的版本
+- haa（可选）：装了 haa 时，Live 或已连接的 Session 在输入区上方显示它名下的 haa Worker，agy、codex、pi 的 Worker 点开在右侧看它的对话（codex、pi 的从它们自己的记录现读，不进列表与搜索）；haa 依次取 `CODECK_HAA`、`~/.local/bin/haa`、PATH 里的 `haa`，需要支持 `haa ls --all --json --watch` 的版本
 
 ## 开发
 

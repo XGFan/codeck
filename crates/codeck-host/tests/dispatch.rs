@@ -36,6 +36,8 @@ async fn dispatches_json_calls_and_refuses_local_methods_remotely() {
             images: Some(state.path().join("images")),
             data_root: Some(root.path().to_path_buf()),
             agy_root: state.path().join("__agy"),
+            codex_root: state.path().join("__haa").join("__codex"),
+            pi_root: state.path().join("__haa").join("__pi"),
             haa_home: state.path().join("__haa"),
             refresh_prices: false,
             ..HostConfig::desktop()

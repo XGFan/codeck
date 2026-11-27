@@ -40,6 +40,7 @@ dirs = "7.0"
 tempfile = "3.27"
 anyhow = "1"
 base64 = "0.22"
+ruzstd = "0.9.1"
 alacritty_terminal = "0.26"
 toh-proto = { git = "ssh://git@github.com/XGFan/toh.git", branch = "master" }
 

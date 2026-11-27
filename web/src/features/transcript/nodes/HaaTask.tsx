@@ -3,6 +3,7 @@ import type { HaaTask } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatDuration } from "@/lib/format";
 import { useAllSessions } from "@/queries";
+import { readsWorkerById } from "@/features/haa/view";
 import { useTranscriptCtx } from "./scroll";
 
 /** The read-only iPhone Transcript page (`VITE_IPC=remote`) has no right panel, so open buttons stay hidden. */
@@ -53,8 +54,10 @@ function TaskStatus({ status }: { status: string }) {
 /** Card for one completed haa Worker Task, styled after `SubagentCard`. */
 export function HaaTaskCard({ task }: { task: HaaTask }) {
   const { activeWorkerId, openWorker } = useTranscriptCtx();
-  const { data: allSessions } = useAllSessions(canOpenPanel && Boolean(task.sessionId));
-  const hasSession = task.sessionId != null && (allSessions?.some((s) => s.id === task.sessionId) ?? false);
+  // A codex or pi Worker's conversation is read from its file; an agy Worker's must be in the Session list.
+  const byId = readsWorkerById(task.model);
+  const { data: allSessions } = useAllSessions(canOpenPanel && Boolean(task.sessionId) && !byId);
+  const hasSession = task.sessionId != null && (byId || (allSessions?.some((s) => s.id === task.sessionId) ?? false));
   const active = task.sessionId != null && activeWorkerId === task.sessionId;
   const heading = task.title ?? task.task ?? "";
   const meta = [lastModelSegment(task.model), formatDuration(task.durationMs, "detail")].filter(Boolean).join(" · ");

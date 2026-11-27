@@ -68,6 +68,8 @@ async fn the_window_and_lan_clients_share_connections_and_the_ls_watch() {
             images: Some(dir.path().join("images")),
             data_root: Some(dir.path().join("root")),
             agy_root: dir.path().join("__agy"),
+            codex_root: dir.path().join("__haa").join("__codex"),
+            pi_root: dir.path().join("__haa").join("__pi"),
             haa_home: dir.path().join("__haa"),
             refresh_prices: false,
             track_connect: true,

@@ -537,6 +537,8 @@ fn measure_real_root() {
         data_root: root.clone(),
         data_root_source: DataRootSource::Settings,
         agy_root: cache_dir.join("__agy"),
+        codex_root: cache_dir.join("__haa").join("__codex"),
+        pi_root: cache_dir.join("__haa").join("__pi"),
         haa_home: cache_dir.join("__haa"),
         cache_dir: cache_dir.clone(),
     })

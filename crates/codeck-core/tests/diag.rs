@@ -247,6 +247,8 @@ fn real_root_diagnostics() {
         data_root: PathBuf::from(root),
         data_root_source: codeck_core::model::DataRootSource::Settings,
         agy_root: tmp.path().join("__agy"),
+        codex_root: tmp.path().join("__haa").join("__codex"),
+        pi_root: tmp.path().join("__haa").join("__pi"),
         haa_home: tmp.path().join("__haa"),
         cache_dir: tmp.path().to_path_buf(),
     })

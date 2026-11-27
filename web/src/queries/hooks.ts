@@ -88,13 +88,15 @@ export const useSession = (sessionId: string | null) =>
  */
 const TRANSCRIPT_GC_MS = 10_000;
 
-export const useTranscript = (req: TranscriptRequest | null) =>
+/** `refetchMs`: re-read on a timer (a conversation the index does not follow, e.g. a running codex or pi Worker's). */
+export const useTranscript = (req: TranscriptRequest | null, refetchMs?: number) =>
   useQuery({
     queryKey: req ? queryKeys.transcript(req) : ["transcript", null],
     queryFn: () => api.getTranscript(req!),
     enabled: req != null,
     placeholderData: keepPreviousData,
     gcTime: TRANSCRIPT_GC_MS,
+    refetchInterval: refetchMs,
   });
 
 /** Transcript of the open session using the scope / branch / hidden state from the UI store. */

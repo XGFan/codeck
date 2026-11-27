@@ -195,6 +195,8 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
             images: Some(host_state.join("images")),
             data_root: Some(dir.path().join("root")),
             agy_root: host_state.join("__agy"),
+            codex_root: host_state.join("__haa").join("__codex"),
+            pi_root: host_state.join("__haa").join("__pi"),
             haa_home: host_state.join("__haa"),
             refresh_prices: false,
             lan: Some(LanConfig {
@@ -887,6 +889,8 @@ async fn tls_per_ip_connection_limit_and_slow_pair_body_timeout() {
             images: Some(host_state.join("images")),
             data_root: Some(dir.path().join("root")),
             agy_root: host_state.join("__agy"),
+            codex_root: host_state.join("__haa").join("__codex"),
+            pi_root: host_state.join("__haa").join("__pi"),
             haa_home: host_state.join("__haa"),
             refresh_prices: false,
             ..HostConfig::desktop()

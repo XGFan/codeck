@@ -18,6 +18,8 @@ thiserror.workspace = true
 chrono.workspace = true
 libc.workspace = true
 base64.workspace = true
+# codex compresses old rollouts (`.jsonl.zst`).
+ruzstd.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -29,6 +29,9 @@ pub fn source_to_db(source: FileSource) -> &'static str {
     match source {
         FileSource::Claude => SOURCE_CLAUDE,
         FileSource::Agy => SOURCE_AGY,
+        // Never indexed (read by Session id for display only).
+        FileSource::Codex => "codex",
+        FileSource::Pi => "pi",
     }
 }
 

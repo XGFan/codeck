@@ -29,6 +29,7 @@ import {
 import { HOMELAB, LUMEN, ORBIT } from "./projects";
 import { CODE_MODE_ID, CODE_MODE_TITLE, codeModeNodes } from "./codeMode";
 import { RICH_ID, richMain, richSubagents } from "./rich";
+import { CODEX_WORKER_ID } from "./haaWorkers";
 
 const sid = (n: number) =>
   `${["7f3a9c10", "2b8d41e5", "c04e77a2", "91d5be38", "e6a2f0c4", "5e1c0b7a", "3d9f84b1", "a7c63e92", "48b1d0f6", "d2e95a07"][n - 1]}-${String(n).padStart(4, "0")}-4000-8000-${String(n).padStart(12, "0")}`;
@@ -582,6 +583,16 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
             model: "gemini-4-neon-high",
             endedMs: created + 8 * MIN,
             durationMs: 2 * MIN + 30_000,
+          },
+          {
+            worker: "codex-review",
+            sessionId: CODEX_WORKER_ID,
+            title: "评审状态条改动",
+            task: "评审 haa 状态条的改动：只看 web/src/features/haa，找出会做错的地方。",
+            status: "done",
+            model: "codex/gpt-6.2-sol:high",
+            endedMs: created + 9 * MIN,
+            durationMs: 1 * MIN + 5_000,
           },
         ]
       : [];

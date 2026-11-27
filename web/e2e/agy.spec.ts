@@ -175,6 +175,25 @@ test("Recent 不列 Worker，末尾可展开未关联的 haa Worker；非 Worker
   await expect(crumb.getByRole("button")).toHaveCount(0);
 });
 
+test("codex Worker 的 Task 卡片也能在右侧面板看完整过程（从 codex 的记录读，没有单独打开）", async ({ page }) => {
+  await openSession(page, FORK_ORIGIN_TITLE, { folded: true });
+  const card = page.getByTestId("haa-task-card").filter({ hasText: "codex-review" });
+  await expect(card).toContainText("gpt-6.2-sol:high");
+  await card.getByTestId("haa-task-open").click();
+  await expect(card).toContainText("正在右侧查看");
+  const panel = page.getByTestId("worker-panel");
+  await expect(panel.getByTestId("panel-breadcrumb")).toContainText("codex-review");
+  await expect(panel.getByTestId("panel-meta")).toContainText("codex · gpt-6.2-sol:high");
+  await expect(panel.getByTestId("panel-meta")).toContainText("1 个 Task");
+  await expect(panel.getByTestId("worker-panel-open")).toHaveCount(0);
+  const transcript = panel.getByTestId("panel-transcript");
+  await expect(transcript).toContainText("评审完成：没有阻塞问题，已提交 Result。");
+  // A file change opens as a diff.
+  await transcript.getByTestId("turn-fold").click();
+  await transcript.getByText("HaaBar.tsx").first().click();
+  await expect(transcript).toContainText("if (!open) return;");
+});
+
 test("设置 › 数据显示 agy 数据目录", async ({ page }) => {
   await openApp(page);
   await page.keyboard.press("Meta+,");
@@ -188,7 +207,7 @@ test("派活 Session 显示 haa Worker Task 卡片，右侧面板查看完整过
   await openSession(page, FORK_ORIGIN_TITLE, { folded: true });
 
   const cards = page.getByTestId("haa-task-card");
-  await expect(cards).toHaveCount(3);
+  await expect(cards).toHaveCount(4);
 
   const webCard = cards.filter({ hasText: "agy-web" });
   const oldCard = cards.filter({ hasText: "agy-old" });

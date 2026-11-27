@@ -709,43 +709,7 @@ fn translate_tool(raw_name: &str, raw_args: Option<&Value>) -> (String, Value) {
 
 /// Deterministic UUID (version 5 / RFC 4122 layout) derived from `(conv_id, step_index, sub)`.
 fn make_uuid(conv_id: &str, step_index: u64, sub: u32) -> String {
-    const OFFSET: u128 = 0x6c62272e07bb014262b821756295c58d;
-    const PRIME: u128 = 0x0000000001000000000000000000013b;
-    let mut h = OFFSET;
-    let mut feed = |bytes: &[u8]| {
-        for &b in bytes {
-            h ^= u128::from(b);
-            h = h.wrapping_mul(PRIME);
-        }
-    };
-    feed(b"codeck-agy-v1\0");
-    feed(&(conv_id.len() as u64).to_le_bytes());
-    feed(conv_id.as_bytes());
-    feed(&step_index.to_le_bytes());
-    feed(&sub.to_le_bytes());
-
-    let mut b = h.to_be_bytes();
-    b[6] = (b[6] & 0x0f) | 0x50; // version 5
-    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[0],
-        b[1],
-        b[2],
-        b[3],
-        b[4],
-        b[5],
-        b[6],
-        b[7],
-        b[8],
-        b[9],
-        b[10],
-        b[11],
-        b[12],
-        b[13],
-        b[14],
-        b[15],
-    )
+    crate::foreign::derived_uuid(b"codeck-agy-v1\0", conv_id, step_index, sub)
 }
 
 // ---- conversation_metadata.json ----

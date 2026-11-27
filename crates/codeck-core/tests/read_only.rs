@@ -31,6 +31,8 @@ fn read_only(root: &Path, cache: &Path) -> Result<Engine, CoreError> {
         data_root: root.to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: common::engine::test_agy_root(cache),
+        codex_root: common::engine::test_haa_home(cache).join("__codex"),
+        pi_root: common::engine::test_haa_home(cache).join("__pi"),
         haa_home: common::engine::test_haa_home(cache),
         cache_dir: cache.to_path_buf(),
     })

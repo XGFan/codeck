@@ -82,6 +82,9 @@ impl Engine {
                 .collect();
         }
         if main.is_empty() {
+            main.extend(self.raw_worker_file(sid));
+        }
+        if main.is_empty() {
             return Err(CoreError::NotFound("该 Session".into()));
         }
         sort_main(&mut main);
@@ -169,6 +172,30 @@ impl Engine {
         })
     }
 
+    /// A haa Worker's conversation on codex or pi, which the index does not hold: the agent's own file
+    /// for this Session id (`transcript::codex` / `transcript::pi` know where it lives).
+    fn raw_worker_file(&self, sid: &str) -> Option<ScannedFile> {
+        let (path, source) = transcript::codex::find_rollout(&self.cfg.codex_root, sid)
+            .map(|p| (p, FileSource::Codex))
+            .or_else(|| {
+                transcript::pi::find_session(&self.cfg.pi_root, sid).map(|p| (p, FileSource::Pi))
+            })?;
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let md = std::fs::metadata(&path).ok()?;
+        Some(ScannedFile {
+            path,
+            dev: md.dev(),
+            ino: md.ino(),
+            size: md.size(),
+            mtime_ns: scan::mtime_ns(&md),
+            source,
+            role: FileRole::Main,
+            session_id: sid.to_owned(),
+            agent_id: None,
+            workflow_run_id: None,
+        })
+    }
+
     fn build_sidecar(&self, sid: &str, listing: &SessionDirListing) -> CoreResult<SessionSidecar> {
         let mut metas: BTreeMap<String, SubagentMetaFile> = BTreeMap::new();
         let mut workflows: BTreeMap<String, WorkflowFiles> = BTreeMap::new();
@@ -241,7 +268,8 @@ impl Engine {
             Some(c) if c.assembled_revision() == Some(ctx.revision) => c,
             other => {
                 let (states, files) = load_main(&ctx.main, other.map(CachedSession::into_parts))?;
-                let sidecar = if ctx.main.iter().all(|f| f.source == FileSource::Agy) {
+                // Only Claude Code Sessions have a sidecar directory.
+                let sidecar = if ctx.main.iter().all(|f| f.source != FileSource::Claude) {
                     SessionSidecar::default()
                 } else {
                     self.build_sidecar(sid, &ctx.listing)?
@@ -521,6 +549,32 @@ pub(super) fn load_fresh(f: &ScannedFile) -> io::Result<(FileState, LoadedFile)>
                 },
             ))
         }
+        FileSource::Codex | FileSource::Pi => {
+            let (chunk, lines) = if f.source == FileSource::Codex {
+                transcript::codex::read(&f.path, &f.session_id)?
+            } else {
+                transcript::pi::read(&f.path, &f.session_id)?
+            };
+            Ok((
+                FileState {
+                    path: f.path.clone(),
+                    dev: f.dev,
+                    ino: f.ino,
+                    consumed: chunk.consumed_to,
+                    lines,
+                    failed: chunk.failed,
+                    first_error: chunk.first_error,
+                    head,
+                    agy: None,
+                },
+                LoadedFile {
+                    path: f.path.clone(),
+                    role: f.role,
+                    agent_id: None,
+                    records: chunk.records,
+                },
+            ))
+        }
     }
 }
 
@@ -558,13 +612,13 @@ pub(super) fn cached_files(cached: Option<(Vec<FileState>, Vec<LoadedFile>)>) ->
 }
 
 /// Parses `f`, extending its cached parse when a Claude Code file only grew.
-/// agy files are always re-read in full because an earlier `step_index` can be overwritten later
-/// in the file.
+/// Other agents' files are always re-read in full: an earlier agy `step_index` can be overwritten
+/// later in the file, and a codex or pi file is adapted as a whole (results pair with earlier calls).
 pub(super) fn load_one(
     f: &ScannedFile,
     cached: Option<(FileState, LoadedFile)>,
 ) -> io::Result<(FileState, LoadedFile)> {
-    if f.source == FileSource::Agy {
+    if f.source != FileSource::Claude {
         return load_fresh(f);
     }
     match cached {

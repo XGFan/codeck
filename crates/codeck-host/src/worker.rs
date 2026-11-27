@@ -87,6 +87,8 @@ pub fn channel() -> (JobSender, Receiver<Job>, Arc<AtomicBool>) {
 pub struct WorkerPaths {
     pub agy_root: PathBuf,
     pub haa_home: PathBuf,
+    pub codex_root: PathBuf,
+    pub pi_root: PathBuf,
     pub cache_dir: PathBuf,
     pub ignore_live_cwd: Option<PathBuf>,
 }
@@ -328,6 +330,7 @@ impl Worker {
             wanted.data_root.as_deref().map(std::path::Path::new),
             self.paths.agy_root.clone(),
             self.paths.haa_home.clone(),
+            [self.paths.codex_root.clone(), self.paths.pi_root.clone()],
             self.paths.cache_dir.clone(),
             self.paths.ignore_live_cwd.clone(),
         )

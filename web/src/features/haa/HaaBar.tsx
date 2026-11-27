@@ -14,6 +14,7 @@ import {
   formatWorkerDuration,
   isActiveState,
   isActiveWorker,
+  readsWorkerById,
   shortModelName,
   sortWorkers,
   STATE_LABEL,
@@ -203,14 +204,14 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
   const toggleExpanded = useUi((s) => s.toggleExpanded);
   const toggle = () => toggleExpanded(HAA_KEY);
 
-  // Only agy Workers' conversations are read (pi and codex ones are not), so a row opens when its id is listed.
+  // A row opens its conversation: an agy Worker's once its Session is listed, a codex or pi Worker's from its file.
   const panelWorker = useUi((s) => parseWorkerPanelId(s.panelStack[s.panelStack.length - 1]));
   const setPanelStack = useUi((s) => s.setPanelStack);
   const { data: allSessions } = useAllSessions(own.some((w) => w.sessionId != null));
   const listed = useMemo(() => new Set(allSessions?.map((s) => s.id)), [allSessions]);
   const onOpenFor = (w: HaaWorker) => {
     const sid = w.sessionId;
-    if (sid == null || !listed.has(sid)) return undefined;
+    if (sid == null || !(listed.has(sid) || readsWorkerById(w.model))) return undefined;
     return () => setPanelStack(panelWorker === sid ? [] : [workerPanelId(sid)]);
   };
 

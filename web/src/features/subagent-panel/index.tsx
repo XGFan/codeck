@@ -8,6 +8,11 @@ import { MAIN_SCOPE, parseWorkerPanelId, selectOverlayOpen, useUi } from "@/stat
 import { TranscriptList } from "@/features/transcript/Transcript";
 import { RunStatus, useSessionLive } from "@/features/transcript/nodes/Agents";
 import { runState } from "@/features/transcript/runState";
+import { useHaa } from "@/features/haa/store";
+import { isActiveWorker, shortModelName, workerBackend } from "@/features/haa/view";
+
+/** How often a running codex or pi Worker's conversation is re-read (the index does not follow its file). */
+const WORKER_FILE_REFETCH_MS = 2000;
 
 const crumbLabel = (run: SubagentRun | undefined, id: string) =>
   run ? [run.agentType ?? run.name, run.description].filter(Boolean).join(" · ") || id : id;
@@ -27,20 +32,28 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
   const selectSession = useUi((s) => s.selectSession);
   const includeHidden = useUi((s) => s.showHidden);
   const { data: ownerDetail } = useSession(ownerSessionId);
-  const { data: detail } = useSession(workerSessionId);
   const { data: allSessions } = useAllSessions();
+  // An agy Worker's conversation is a listed Session; a codex or pi Worker's is read from its file by id, with no
+  // Session detail: what the panel says about it comes from haa.
+  const listed = allSessions?.find((s) => s.id === workerSessionId) ?? null;
+  const { data: detail } = useSession(listed ? workerSessionId : null);
+  const haaWorker = useHaa((s) => s.workers.find((w) => w.sessionId === workerSessionId));
+  const tasks = useMemo(
+    () => ownerDetail?.haaTasks.filter((t) => t.sessionId === workerSessionId) ?? [],
+    [ownerDetail, workerSessionId],
+  );
   const req = useMemo(
     () => ({ sessionId: workerSessionId, scope: MAIN_SCOPE, branchChoices: [], includeHidden }),
     [workerSessionId, includeHidden],
   );
-  const { data, isPlaceholderData, error } = useTranscript(req);
+  const following = !listed && haaWorker != null && isActiveWorker(haaWorker);
+  const { data, isPlaceholderData, error } = useTranscript(req, following ? WORKER_FILE_REFETCH_MS : undefined);
 
-  const summary = detail?.summary ?? allSessions?.find((s) => s.id === workerSessionId) ?? null;
-  const workerName =
-    summary?.haaWorker?.name ??
-    ownerDetail?.haaTasks.find((t) => t.sessionId === workerSessionId)?.worker ??
-    summary?.title ??
-    null;
+  const summary = detail?.summary ?? listed;
+  const workerName = summary?.haaWorker?.name ?? tasks[0]?.worker ?? haaWorker?.name ?? summary?.title ?? null;
+  const haaModel = haaWorker?.model ?? tasks[tasks.length - 1]?.model ?? undefined;
+  const agent = summary?.agent ?? workerBackend(haaModel) ?? "agy";
+  const model = summary?.primaryModel ?? shortModelName(haaModel);
 
   const close = () => setPanelStack([]);
   const openStandalone = () => {
@@ -55,9 +68,17 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
   });
 
   const loaded = data && data.sessionId === workerSessionId && data.scope.kind === "main";
-  const dur = detail ? detail.durationMs : summary ? summary.lastActiveMs - summary.createdMs : null;
+  const taskCount = Math.max(haaWorker?.tasks ?? 0, tasks.length);
+  const taskMs = tasks.reduce((sum, t) => sum + (t.durationMs ?? 0), 0);
+  const dur = detail
+    ? detail.durationMs
+    : summary
+      ? summary.lastActiveMs - summary.createdMs
+      : taskMs > 0
+        ? taskMs
+        : null;
   const meta = [
-    summary ? `${summary.messageCount} 条消息` : null,
+    summary ? `${summary.messageCount} 条消息` : taskCount > 0 ? `${taskCount} 个 Task` : null,
     formatDuration(dur, "detail"),
     summary ? `输出 ${formatTokens(summary.tokens.output)}` : null,
     "Cost 未记录",
@@ -83,15 +104,17 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
             {workerName ? `haa Worker · ${workerName}` : "haa Worker"}
           </span>
           <span className="flex-1" />
-          <button
-            type="button"
-            data-testid="worker-panel-open"
-            onClick={openStandalone}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-accent hover:bg-selection"
-          >
-            <ExternalLink size={12} strokeWidth={1.8} aria-hidden />
-            单独打开
-          </button>
+          {summary && (
+            <button
+              type="button"
+              data-testid="worker-panel-open"
+              onClick={openStandalone}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-accent hover:bg-selection"
+            >
+              <ExternalLink size={12} strokeWidth={1.8} aria-hidden />
+              单独打开
+            </button>
+          )}
           <button
             type="button"
             aria-label="关闭面板"
@@ -103,7 +126,7 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
           </button>
         </nav>
         <div data-testid="panel-meta" className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-secondary">
-          <span className="text-agy">{summary?.primaryModel ? `agy · ${summary.primaryModel}` : "agy"}</span>
+          <span className="text-agy">{model ? `${agent} · ${model}` : agent}</span>
           {meta.map((m) => (
             <span key={m}>{m}</span>
           ))}

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc Connect ToH clay 里运行中的 Session（ADR-0007）；原生 iPhone App 经局域网浏览与 Connect 一台 Host：打开了「局域网访问」的桌面应用（ADR-0012），或 headless daemon（ADR-0011）；局域网上走 TLS、扫码配对（ADR-0017）。agy（Antigravity CLI）的对话只读接入（ADR-0018）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
+CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc Connect ToH clay 里运行中的 Session（ADR-0007）；原生 iPhone App 经局域网浏览与 Connect 一台 Host：打开了「局域网访问」的桌面应用（ADR-0012），或 headless daemon（ADR-0011）；局域网上走 TLS、扫码配对（ADR-0017）。agy（Antigravity CLI）的对话只读接入（ADR-0018）；haa 在 codex、pi 上的 Worker 对话只在 Worker 面板里按 id 现读（ADR-0020）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
 
 ## 仓库布局（monorepo）
 
@@ -82,6 +82,7 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 - **命令表只定义一次**：`methods.rs` 的 `for_each_method!` 列出每个命令（`remote` 或 `local`、参数、返回类型、文档注释），codeck-host 由它生成 `dispatch`，desktop 的 `commands.rs` 由它生成 tauri 命令（名字、参数、顺序决定 bindings）。新增命令：在 `Host` 上写同名 async 方法（`commands.rs` / `ccrpc/mod.rs`，阻塞工作经 `tokio::task::spawn_blocking`，错误转 `AppError`，`message` 是面向用户的中文文案），再加进表里；`local` 只给桌面（设置、数据根、Finder 等），daemon 只暴露 `remote`。
 - **E2E 全部跑在 mock 上**（tauri-driver 不支持 macOS）：新增/修改 IPC 能力时要同步 `web/src/mocks/` 的实现和 mock 数据。
 - **agy**（ADR-0018）：只有 `crates/transcript/src/agy.rs` 知道 agy 的格式（JSONL 的 step、`conversation_metadata.json`、presence 锁的位置），它把 step 译成 `RawEntry`，下游的组装、⌘F、CLI 沿用；codeck-core 按 `files.source` 分派读文件，agy 的文件一变就整份 Reparse、不进全文检索、不定价、不进统计；Live 由 `codeck-core/src/agy_live.rs` 只读地看哪个进程开着 presence 锁；haa Worker 的归属由 `codeck-core/src/haa.rs` 读 `~/.haa`。agy 的格式变了只改 agy.rs。
+- **haa 的 codex / pi Worker**（ADR-0020）：只有 `crates/transcript/src/codex.rs`、`pi.rs` 知道两边的格式（找文件、切行、造条目的共用部分在 `foreign.rs`，不知道任何一边的格式），译成 `RawEntry` 后照常组装；不扫描、不进索引，codeck-core 的 `session_cache` 在索引里找不到一个 id 时才按 id 去两边的目录找（`FileSource::Codex` / `Pi`，总是整份重读），所以 `get_transcript`、工具详情、图片都能用，`get_session` 与列表里没有它们；前端按 haa 模型名的后端（`features/haa/view.ts` 的 `readsWorkerById`）决定状态条的行与 Task 卡片能不能打开。
 
 ### 终端窗口（过渡用，ADR-0015）
 
@@ -96,7 +97,7 @@ cd ios && xcodegen generate && xcodebuild -project CoDeck.xcodeproj -scheme CoDe
 
 ## 约束
 
-- **对数据根严格只读**（ADR-0002）：源文件只能只读打开（`File::open`，或只读的 `OpenOptions`），绝不写入、移动、删除 `~/.claude` 下任何东西；agy 的 `~/.gemini/antigravity-cli` 与 `~/.haa` 同样只读，不打开 agy 的 SQLite、不碰 presence 锁。应用自己的状态只放在 `~/Library/Caches/dev.joy.codeck/`（索引、价格表缓存）和 `~/Library/Application Support/dev.joy.codeck/`（设置）。
+- **对数据根严格只读**（ADR-0002）：源文件只能只读打开（`File::open`，或只读的 `OpenOptions`），绝不写入、移动、删除 `~/.claude` 下任何东西；agy 的 `~/.gemini/antigravity-cli`、`~/.haa`、codex 的 `~/.codex` 与 pi 的 `~/.pi/agent` 同样只读，不打开 agy 的 SQLite、不碰 presence 锁。应用自己的状态只放在 `~/Library/Caches/dev.joy.codeck/`（索引、价格表缓存）和 `~/Library/Application Support/dev.joy.codeck/`（设置）。
 - **测试 fixture**：`crates/codeck-core/tests/fixtures/<场景>/` 是迷你数据根，由 `examples/sanitize.rs` 从真实 Session 脱敏生成；测试通过 `common::fixture_root(name)` 复制到临时目录使用，不要直接写 fixture 目录。`tests/fixtures_sanity.rs` 钉死了 fixture README 表格里的每个数字，并做敏感信息检查（`CODECK_FIXTURE_DENYLIST` 追加私有词）——改动或新增 fixture 时同步更新 README 表格和该测试，绝不提交未脱敏的真实数据。
 - 启动、后台调度、设置这类流程单测覆盖不到，需要 `pnpm tauri dev` 实测。
 - 在 macOS 27 上 release 构建依赖根 `Cargo.toml` 中 `profile.release.build-override` 的 `strip = "none"`，不要删。

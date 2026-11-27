@@ -5,12 +5,15 @@
 
 pub mod agy;
 pub mod assemble;
+pub mod codex;
 pub mod error;
+mod foreign;
 pub mod known;
 pub mod layout;
 pub mod live;
 pub mod model;
 pub mod parse;
+pub mod pi;
 pub mod pricing;
 pub mod raw;
 

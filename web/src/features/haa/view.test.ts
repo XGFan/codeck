@@ -5,8 +5,10 @@ import {
   formatTaskText,
   formatTaskTooltip,
   formatWorkerDuration,
+  readsWorkerById,
   shortModelName,
   sortWorkers,
+  workerBackend,
 } from "./view";
 
 const NOW = 1_700_000_000_000;
@@ -77,6 +79,19 @@ describe("shortModelName", () => {
     expect(shortModelName("a/b/c")).toBe("c");
     expect(shortModelName("plain")).toBe("plain");
     expect(shortModelName(undefined)).toBe("");
+  });
+});
+
+describe("workerBackend and readsWorkerById", () => {
+  it("reads the backend before the first slash; codex and pi Workers are read by id", () => {
+    expect(workerBackend("pi/agent-gateway/deepseek-v4.1-flash")).toBe("pi");
+    expect(workerBackend("gpt-6.2-sol")).toBeNull();
+    expect(workerBackend(undefined)).toBeNull();
+    expect(readsWorkerById("codex/gpt-6.2-sol:high")).toBe(true);
+    expect(readsWorkerById("pi/agent-gateway/deepseek-v4.1-flash")).toBe(true);
+    expect(readsWorkerById("agy/gemini-4-neon-high")).toBe(false);
+    // Older haa wrote the model without its backend.
+    expect(readsWorkerById("agent-gateway/deepseek-v4.1-flash")).toBe(false);
   });
 });
 

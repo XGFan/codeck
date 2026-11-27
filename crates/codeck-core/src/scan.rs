@@ -23,6 +23,10 @@ pub enum FileSource {
     #[default]
     Claude,
     Agy,
+    /// A haa Worker's codex rollout (`transcript::codex`): read by Session id for display, never indexed.
+    Codex,
+    /// A haa Worker's pi session (`transcript::pi`): read by Session id for display, never indexed.
+    Pi,
 }
 
 /// A transcript file (main or agent), identified by realpath.

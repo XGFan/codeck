@@ -79,6 +79,8 @@ impl Context {
             data_root_source: root.source,
             agy_root: paths::resolve_agy_root(),
             haa_home: paths::resolve_haa_home(),
+            codex_root: paths::resolve_codex_root(),
+            pi_root: paths::resolve_pi_root(),
             cache_dir,
         })?)
     }

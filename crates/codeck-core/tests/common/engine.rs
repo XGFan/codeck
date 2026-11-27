@@ -33,6 +33,8 @@ pub fn open_engine_with_agy(root: &Path, agy_root: &Path, cache: &Path) -> Engin
         data_root: root.to_path_buf(),
         data_root_source: DataRootSource::Settings,
         agy_root: agy_root.to_path_buf(),
+        codex_root: test_haa_home(cache).join("__codex"),
+        pi_root: test_haa_home(cache).join("__pi"),
         haa_home: test_haa_home(cache),
         cache_dir: cache.to_path_buf(),
     })

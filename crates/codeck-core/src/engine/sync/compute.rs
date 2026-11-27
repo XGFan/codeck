@@ -155,7 +155,8 @@ pub(super) fn compute_session(
                 FileSource::Claude => {
                     writer::extract_rows(lf.records.iter().filter(|r| r.offset >= ing.from))
                 }
-                FileSource::Agy => {
+                // Codex and pi files are never indexed; grouped with agy for completeness.
+                FileSource::Agy | FileSource::Codex | FileSource::Pi => {
                     let unknown = st.agy.as_ref().map_or(&[][..], |a| a.unknown.as_slice());
                     writer::extract_agy_rows(
                         lf.records.iter().filter(|r| r.offset >= ing.from),
@@ -170,7 +171,7 @@ pub(super) fn compute_session(
                 parsed_offset: st.consumed,
                 // agy records are deduplicated by step index: count physical lines instead.
                 line_count: match f.source {
-                    FileSource::Agy => u64::from(st.lines),
+                    FileSource::Agy | FileSource::Codex | FileSource::Pi => u64::from(st.lines),
                     FileSource::Claude => lf.records.len() as u64 + u64::from(st.failed),
                 },
                 failed_lines: u64::from(st.failed),

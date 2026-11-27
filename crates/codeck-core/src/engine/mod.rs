@@ -57,6 +57,11 @@ pub struct EngineConfig {
     pub agy_root: PathBuf,
     /// Read-only haa home directory (`~/.haa`), for haa Worker detection and ownership.
     pub haa_home: PathBuf,
+    /// Read-only codex data root (`~/.codex`): a haa Worker's Session that ran on codex is read by its
+    /// id when shown (`transcript::codex`), not indexed.
+    pub codex_root: PathBuf,
+    /// Read-only pi agent directory (`~/.pi/agent`), likewise for a Worker that ran on pi.
+    pub pi_root: PathBuf,
     /// App-owned cache dir holding `index.sqlite` (ADR-0003).
     pub cache_dir: PathBuf,
 }
@@ -700,6 +705,8 @@ mod tests {
             data_root: tmp.path().join("missing-root"),
             data_root_source: DataRootSource::Default,
             agy_root: tmp.path().join("missing-agy"),
+            codex_root: tmp.path().join("missing-haa").join("__codex"),
+            pi_root: tmp.path().join("missing-haa").join("__pi"),
             haa_home: tmp.path().join("missing-haa"),
             cache_dir: cache_dir.clone(),
         })
@@ -724,6 +731,8 @@ mod tests {
             data_root: root,
             data_root_source: DataRootSource::Settings,
             agy_root: tmp.path().join("__agy"),
+            codex_root: tmp.path().join("__haa").join("__codex"),
+            pi_root: tmp.path().join("__haa").join("__pi"),
             haa_home: tmp.path().join("__haa"),
             cache_dir: tmp.path().to_path_buf(),
         })
@@ -801,6 +810,8 @@ mod tests {
             data_root: root,
             data_root_source: DataRootSource::Settings,
             agy_root: tmp.path().join("__agy"),
+            codex_root: tmp.path().join("__haa").join("__codex"),
+            pi_root: tmp.path().join("__haa").join("__pi"),
             haa_home: tmp.path().join("__haa"),
             cache_dir: tmp.path().to_path_buf(),
         })
@@ -895,6 +906,8 @@ mod tests {
             data_root,
             data_root_source: DataRootSource::Settings,
             agy_root: tmp.path().join("__agy"),
+            codex_root: tmp.path().join("__haa").join("__codex"),
+            pi_root: tmp.path().join("__haa").join("__pi"),
             haa_home: tmp.path().join("__haa"),
             cache_dir,
         })
