@@ -3,6 +3,7 @@
 //! on the data root (files are only opened read-only); no SQLite, no tauri. Used by
 //! codeck-core (index, search, stats) and by ccrpc (following a running Session).
 
+pub mod agy;
 pub mod assemble;
 pub mod error;
 pub mod known;
