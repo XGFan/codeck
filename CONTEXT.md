@@ -9,7 +9,7 @@
 _Avoid_: 会话文件, conversation, chat, transcript（指整体时）
 
 **Agent**:
-产生 Session 的编程助手：`claude`（Claude Code）或 `agy`（Antigravity CLI）。每个 Session 恰有一个 Agent，由它所在的数据目录决定（ADR-0018）。
+产生 Session 的编程助手：`claude`（Claude Code）或 `agy`（Antigravity CLI）。每个 Session 恰有一个 Agent，由它所在的数据目录决定（ADR-0018）。haa 在 codex、pi 上的 Worker 对话不是 Session，也就没有 Agent，只在 Worker 面板里看（ADR-0020，三者的对照见 docs/agent-integrations.md）。
 _Avoid_: 来源, source, CLI（指这一层时）；不要和 Subagent Run、Claude Code 的 Agent 工具混用
 
 **Project**:

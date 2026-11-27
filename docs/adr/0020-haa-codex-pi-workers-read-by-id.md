@@ -5,6 +5,7 @@
 - **读后端自己的原始记录**：codex 的 rollout（`~/.codex/sessions/…/rollout-<时间>-<thread id>.jsonl`，旧的是 `.jsonl.zst`）、pi 的 session 文件（`~/.pi/agent/sessions/<目录>/<时间>_<id>.jsonl`），只读。格式只有 `crates/transcript/src/codex.rs`、`pi.rs` 知道，译成 Claude Code 的条目后照常组装（同 ADR-0018 的做法）。
 - **不是 Session**：不扫描、不进索引、不进列表、全文检索与统计；索引里找不到一个 id 时，Engine 才按 id 去两边的目录找文件。对话、工具详情、图片因此都走原来的命令，前端只多一个判断：haa 模型名的后端是 `codex` 或 `pi` 的 Worker 有 `sessionId` 就能打开。
 - **codex 只取它界面显示的那一份**（`item_completed` 的消息、命令、文件改动、MCP 调用）：模型那一份（`response_item`）里是开发者指令和调用工具的 `exec` 脚本，读起来不像 codex 自己显示的过程。
+- **以后的 Agent 后端照此接入**：这是接其他 Agent 的默认做法，agy（ADR-0018）是例外。三者的对照与接入新后端的步骤在 [docs/agent-integrations.md](../agent-integrations.md)。
 
 ## Considered Options
 
