@@ -21,6 +21,8 @@ export const appInfo = {
   dataRootExists: true,
   cacheDir: "/Users/dev/Library/Caches/dev.joy.codeck",
   schemaVersion: 1,
+  agyRoot: "/Users/dev/.gemini/antigravity-cli",
+  agyRootExists: true,
 } satisfies AppInfo;
 
 export const indexStatus = {

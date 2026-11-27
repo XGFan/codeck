@@ -34,6 +34,7 @@ const session = (
 ): SessionSummary => ({
   id,
   agent: "claude",
+  haaWorker: null,
   projectId,
   title: id,
   titleSource: "ai",

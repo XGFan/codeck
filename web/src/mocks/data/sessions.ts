@@ -382,6 +382,7 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
   const summary: SessionSummary = {
     id: d.id,
     agent: "claude",
+    haaWorker: null,
     projectId: d.projectId,
     title: d.title,
     titleSource: d.titleSource,

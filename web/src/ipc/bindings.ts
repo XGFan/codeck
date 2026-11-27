@@ -200,6 +200,8 @@ export type AppInfo = {
 	dataRoot: string,
 	dataRootSource: DataRootSource,
 	dataRootExists: boolean,
+	agyRoot: string,
+	agyRootExists: boolean,
 	cacheDir: string,
 	schemaVersion: number,
 };
@@ -398,6 +400,13 @@ export type ForkOrigin = {
 export type HaaWatchEndedEvent = {
 	id: number,
 	message: string,
+};
+
+/**  Ownership metadata for an agy Session started by haa as a Worker. */
+export type HaaWorker = {
+	ownerSessionId: string | null,
+	name: string | null,
+	taskTitle: string | null,
 };
 
 /**  `haa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed. */
@@ -856,6 +865,8 @@ export type SessionSummary = {
 	primaryModel: string | null,
 	/**  Projects whose files an edit tool (main or Subagent) wrote, `project_id` included if edited. */
 	editedProjectIds: string[],
+	/**  Present when this Session is a haa Worker; fields are filled from `~/.haa` when available. */
+	haaWorker: HaaWorker | null,
 };
 
 /**  Per-session cost, request count, and active spans within a single-day range. */
