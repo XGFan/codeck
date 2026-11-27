@@ -2,7 +2,7 @@
 //! themselves. Expected numbers are documented in `tests/fixtures/README.md`.
 mod common;
 
-use common::{FIXTURES, SCENARIOS, fixture_root, fixture_root_with_pids, ids};
+use common::{FIXTURES, RootKind, SCENARIOS, fixture_root, fixture_root_with_pids, ids};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -10,6 +10,21 @@ use std::path::{Path, PathBuf};
 
 /// (path relative to tests/fixtures, non-empty lines, lines that fail to parse)
 const FILES: &[(&str, usize, usize)] = &[
+    (
+        "agy/brain/830e3bc5-0957-5b0b-a5dd-d340b130039e/.system_generated/logs/transcript_full.jsonl",
+        2,
+        0,
+    ),
+    (
+        "agy/brain/8c54e127-d8c4-55e2-9034-566dac2ca233/.system_generated/logs/transcript_full.jsonl",
+        57,
+        0,
+    ),
+    (
+        "agy/brain/c23ef150-997c-55e8-8dc2-3debd3f67351/.system_generated/logs/transcript_full.jsonl",
+        39,
+        0,
+    ),
     (
         "code_mode/projects/-Users-dev-code-lumen-api/c0de5e55-0000-4000-8000-00000000c0de.jsonl",
         40,
@@ -377,6 +392,20 @@ const FACTS: &[FactRow] = &[
     ),
 ];
 
+const AGY_SHORT_ID: &str = "830e3bc5-0957-5b0b-a5dd-d340b130039e";
+const AGY_TUI_ID: &str = "8c54e127-d8c4-55e2-9034-566dac2ca233";
+const AGY_HAA_ID: &str = "c23ef150-997c-55e8-8dc2-3debd3f67351";
+
+/// agy transcripts: (session id, unique steps, duplicate step indices,
+/// deduplicated PLANNER_RESPONSE steps with tool_calls, total tool calls,
+/// deduplicated tokens [in, out, cache_read])
+type AgyFactRow = (&'static str, usize, usize, usize, usize, [u64; 3]);
+const AGY_FACTS: &[AgyFactRow] = &[
+    (AGY_SHORT_ID, 2, 0, 0, 0, [11170, 1, 0]),
+    (AGY_TUI_ID, 53, 4, 9, 9, [75004, 511, 218237]),
+    (AGY_HAA_ID, 39, 0, 13, 18, [66486, 16360, 477979]),
+];
+
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     for e in fs::read_dir(dir).unwrap() {
         let p = e.unwrap().path();
@@ -567,7 +596,7 @@ fn every_scenario_parses_with_expected_counts() {
     let mut expected: BTreeMap<&str, (usize, usize)> =
         FILES.iter().map(|&(p, l, f)| (p, (l, f))).collect();
     let mut total = 0u64;
-    for scn in SCENARIOS {
+    for &(scn, _) in SCENARIOS {
         let mut all = Vec::new();
         walk(&Path::new(FIXTURES).join(scn), &mut all);
         for p in all {
@@ -1302,9 +1331,236 @@ fn live_sessions_render_for_this_process() {
 }
 
 #[test]
+fn agy_transcript_facts_match_readme() {
+    for &(sid, want_steps, want_dups, want_replies_w_tools, want_tool_calls, want_tokens) in
+        AGY_FACTS
+    {
+        let p = Path::new(FIXTURES)
+            .join("agy/brain")
+            .join(sid)
+            .join(".system_generated/logs/transcript_full.jsonl");
+        let (entries, bad) = read_jsonl(&p);
+        assert!(bad.is_empty(), "agy {sid} has corrupt lines");
+        let mut by_idx: BTreeMap<u64, &Value> = BTreeMap::new();
+        let mut dups = 0usize;
+        for (_, v) in &entries {
+            let idx = v["step_index"].as_u64().expect("step_index");
+            if by_idx.insert(idx, v).is_some() {
+                dups += 1;
+            }
+        }
+        let mut replies_w_tools = 0usize;
+        let mut tool_calls = 0usize;
+        let mut tokens = [0u64; 3];
+        for v in by_idx.values() {
+            if let Some(calls) = v.get("tool_calls").and_then(Value::as_array)
+                && !calls.is_empty()
+            {
+                if s(v, "type") == "PLANNER_RESPONSE" {
+                    replies_w_tools += 1;
+                }
+                tool_calls += calls.len();
+            }
+            for (i, k) in ["input_tokens", "output_tokens", "cache_read_tokens"]
+                .iter()
+                .enumerate()
+            {
+                tokens[i] += v.get(*k).and_then(Value::as_u64).unwrap_or(0);
+            }
+        }
+        assert_eq!(
+            (by_idx.len(), dups, replies_w_tools, tool_calls, tokens),
+            (
+                want_steps,
+                want_dups,
+                want_replies_w_tools,
+                want_tool_calls,
+                want_tokens
+            ),
+            "agy/{sid}"
+        );
+    }
+}
+
+#[test]
+fn agy_scenario_shapes() {
+    let agy = Path::new(FIXTURES).join("agy");
+    let agy_file = |sid: &str| {
+        agy.join("brain")
+            .join(sid)
+            .join(".system_generated/logs/transcript_full.jsonl")
+    };
+
+    // Metadata contains exactly the three fixture sessions with consistent IDs and NumSteps.
+    let meta: Value = serde_json::from_str(
+        &fs::read_to_string(agy.join("cache/conversation_metadata.json")).unwrap(),
+    )
+    .unwrap();
+    let convs = meta["conversations"].as_object().unwrap();
+    assert_eq!(convs.len(), 3);
+    for &(sid, want_steps, ..) in AGY_FACTS {
+        let entry = &convs[sid];
+        assert_eq!(s(&entry["summary"], "ID"), sid);
+        assert_eq!(
+            entry["summary"]["NumSteps"].as_u64(),
+            Some(want_steps as u64)
+        );
+        let uris = entry["summary"]["WorkspaceURIs"].as_array().unwrap();
+        assert!(!uris.is_empty(), "{sid} workspaces");
+        for u in uris {
+            assert!(
+                u.as_str().unwrap().starts_with("file:///Users/dev/"),
+                "{sid} non-dev workspace uri: {u}"
+            );
+        }
+    }
+    let haa_uris: Vec<&str> = convs[AGY_HAA_ID]["summary"]["WorkspaceURIs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(
+        haa_uris
+            .iter()
+            .all(|u| *u == "file:///Users/dev/.haa" || u.starts_with("file:///Users/dev/.haa/")),
+        "haa worker workspaces: {haa_uris:?}"
+    );
+
+    // One stale empty presence lock matching the TUI session ID.
+    let lock = agy.join("presence").join(format!("{AGY_TUI_ID}.lock"));
+    assert!(lock.is_file());
+    assert_eq!(fs::metadata(&lock).unwrap().len(), 0);
+
+    // TUI session: tags, system lead-in, command approval, ask_question, denied ERROR, RUNNING, dup indices.
+    let (tui, _) = read_jsonl(&agy_file(AGY_TUI_ID));
+    let first_user = s(&tui[0].1, "content");
+    for tag in [
+        "<USER_REQUEST>",
+        "</USER_REQUEST>",
+        "<ADDITIONAL_METADATA>",
+        "</ADDITIONAL_METADATA>",
+        "<USER_SETTINGS_CHANGE>",
+        "</USER_SETTINGS_CHANGE>",
+    ] {
+        assert!(first_user.contains(tag), "missing {tag}");
+    }
+    assert!(tui.iter().any(|(_, v)| {
+        s(v, "type") == "SYSTEM_MESSAGE"
+            && s(v, "content")
+                .starts_with("The following is a <SYSTEM_MESSAGE> not actually sent by the user.")
+            && s(v, "content").contains("<SYSTEM_MESSAGE>")
+            && s(v, "content").contains("</SYSTEM_MESSAGE>")
+    }));
+    assert!(tui.iter().any(|(_, v)| {
+        s(v, "type") == "GENERIC"
+            && s(v, "content").starts_with("Created At: ")
+            && s(v, "content").contains("Completed At: ")
+            && s(v, "content").contains("Command exited with code ")
+    }));
+    assert!(tui.iter().any(|(_, v)| {
+        s(v, "type") == "GENERIC"
+            && s(v, "status") == "RUNNING"
+            && s(v, "content").contains(&format!(
+                "Tool is running as a background task with task id: {AGY_TUI_ID}/"
+            ))
+    }));
+    assert!(tui.iter().any(|(_, v)| {
+        s(v, "type") == "GENERIC" && s(v, "status") == "ERROR" && !s(v, "error").is_empty()
+    }));
+    let tui_tools: HashSet<&str> = tui
+        .iter()
+        .filter_map(|(_, v)| v.get("tool_calls").and_then(Value::as_array))
+        .flatten()
+        .map(|tc| s(tc, "name"))
+        .collect();
+    assert!(tui_tools.contains("run_command") && tui_tools.contains("ask_question"));
+
+    // haa Worker session: thinking, file tools under /Users/dev/.haa, RUNNING, mcp_haa_report.
+    let (haa, _) = read_jsonl(&agy_file(AGY_HAA_ID));
+    assert!(haa.iter().any(|(_, v)| !s(v, "thinking").is_empty()));
+    assert!(haa.iter().any(|(_, v)| {
+        s(v, "type") == "GENERIC"
+            && s(v, "status") == "RUNNING"
+            && s(v, "content").contains(&format!(
+                "Tool is running as a background task with task id: {AGY_HAA_ID}/"
+            ))
+    }));
+    let haa_tools: HashSet<&str> = haa
+        .iter()
+        .filter_map(|(_, v)| v.get("tool_calls").and_then(Value::as_array))
+        .flatten()
+        .map(|tc| s(tc, "name"))
+        .collect();
+    for t in [
+        "run_command",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "mcp_haa_report",
+    ] {
+        assert!(haa_tools.contains(t), "haa missing tool {t}");
+    }
+    for (_, v) in &haa {
+        for tc in v
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(p) = tc.pointer("/args/Path").and_then(Value::as_str) {
+                assert!(p.starts_with("/Users/dev/.haa/"), "non-haa path: {p}");
+            }
+        }
+    }
+
+    // Short session: 2 steps, no tool calls.
+    let (short, _) = read_jsonl(&agy_file(AGY_SHORT_ID));
+    assert_eq!(short.len(), 2);
+    assert_eq!(s(&short[0].1, "type"), "USER_INPUT");
+    assert_eq!(s(&short[1].1, "type"), "PLANNER_RESPONSE");
+    assert!(short.iter().all(|(_, v)| v.get("tool_calls").is_none()));
+}
+
+#[test]
 fn fixture_root_copies_every_scenario() {
-    for scn in SCENARIOS {
+    for &(scn, kind) in SCENARIOS {
         let root = fixture_root(scn);
-        assert!(root.path().join("projects").is_dir(), "{scn}");
+        match kind {
+            RootKind::Claude => assert!(root.path().join("projects").is_dir(), "{scn}"),
+            RootKind::Agy => {
+                assert!(root.path().join("brain").is_dir(), "{scn}");
+                assert!(
+                    root.path()
+                        .join("cache/conversation_metadata.json")
+                        .is_file(),
+                    "{scn}"
+                );
+                assert!(
+                    root.path()
+                        .join("presence")
+                        .join(format!("{AGY_TUI_ID}.lock"))
+                        .is_file(),
+                    "{scn} lock"
+                );
+                // Confirm dot-prefixed `.system_generated` dirs and JSONL transcripts are copied.
+                let mut agy_count = 0usize;
+                for &(rel_path, want_lines, want_bad) in FILES {
+                    let Some(sub) = rel_path.strip_prefix("agy/") else {
+                        continue;
+                    };
+                    agy_count += 1;
+                    let copied = root.path().join(sub);
+                    assert!(copied.is_file(), "missing copied agy jsonl: {sub}");
+                    let (ok, bad) = read_jsonl(&copied);
+                    assert_eq!(
+                        (ok.len() + bad.len(), bad.len()),
+                        (want_lines, want_bad),
+                        "copied {sub}"
+                    );
+                }
+                assert_eq!(agy_count, AGY_FACTS.len());
+            }
+        }
     }
 }

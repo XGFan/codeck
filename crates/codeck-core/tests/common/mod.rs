@@ -16,18 +16,28 @@ mod fixtures;
 #[allow(unused_imports)]
 pub use fixtures::{FIXTURES, fixture_dir, ids};
 
-pub const SCENARIOS: &[&str] = &[
-    "basic",
-    "branch",
-    "compact",
-    "fork",
-    "continued",
-    "copies",
-    "subagents",
-    "workflow",
-    "persisted_and_images",
-    "live",
-    "code_mode",
+/// Data root layout kind for each fixture scenario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootKind {
+    /// Claude Code data root (`projects/…`, `sessions/…`).
+    Claude,
+    /// Antigravity CLI data root (`brain/…`, `cache/…`, `presence/…`).
+    Agy,
+}
+
+pub const SCENARIOS: &[(&str, RootKind)] = &[
+    ("basic", RootKind::Claude),
+    ("branch", RootKind::Claude),
+    ("compact", RootKind::Claude),
+    ("fork", RootKind::Claude),
+    ("continued", RootKind::Claude),
+    ("copies", RootKind::Claude),
+    ("subagents", RootKind::Claude),
+    ("workflow", RootKind::Claude),
+    ("persisted_and_images", RootKind::Claude),
+    ("live", RootKind::Claude),
+    ("code_mode", RootKind::Claude),
+    ("agy", RootKind::Agy),
 ];
 
 /// Pids rendered into the `live` sessions dir.
