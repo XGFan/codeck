@@ -1,5 +1,6 @@
-import type { LiveState, Node, SessionSummary, TitleSource, TokenTotals } from "@/ipc/bindings";
+import type { Agent, HaaWorker, LiveState, Node, SessionSummary, TitleSource, TokenTotals } from "@/ipc/bindings";
 import { asstNode, call, costOf, DAY, HOUR, MIN, NOW, sumTok, tok, userNode } from "./builders";
+import { AGY_ENDED_ID, AGY_ENDED_TITLE, AGY_LIVE_ID, AGY_LIVE_TITLE, agyEndedNodes, agyLiveNodes } from "./agy";
 import { HOMELAB, LUMEN, ORBIT } from "./projects";
 import { CODE_MODE_ID, CODE_MODE_TITLE, codeModeNodes } from "./codeMode";
 import { RICH_ID, richMain, richSubagents } from "./rich";
@@ -19,6 +20,8 @@ export const IDS = {
   homelabLonghorn: sid(9),
   untitled: sid(10),
   codeMode: CODE_MODE_ID,
+  agyLive: AGY_LIVE_ID,
+  agyEnded: AGY_ENDED_ID,
 };
 
 interface Turn {
@@ -35,6 +38,8 @@ interface Turn {
 
 interface Def {
   id: string;
+  agent?: Agent;
+  haaWorker?: HaaWorker | null;
   projectId: string;
   /** Projects an edit tool wrote to (`projectId` included if edited). */
   editedProjectIds?: string[];
@@ -289,6 +294,40 @@ const defs: Def[] = [
     tokens: tok(300, 120, 0, 0),
     turns: [],
   },
+  {
+    id: IDS.agyLive,
+    agent: "agy",
+    haaWorker: {
+      ownerSessionId: IDS.rich,
+      name: "worker-agy",
+      taskTitle: "补齐限流中间件边界测试",
+    },
+    projectId: HOMELAB,
+    title: AGY_LIVE_TITLE,
+    titleSource: "firstPrompt",
+    createdAgo: 2 * HOUR,
+    lastActiveAgo: 15 * MIN,
+    gitBranch: "feat/rate-limit",
+    live: live("busy", 52104),
+    model: "gemini-4-neon-high",
+    tokens: tok(18_400, 4_200, 0, 0),
+    turns: [],
+  },
+  {
+    id: IDS.agyEnded,
+    agent: "agy",
+    haaWorker: null,
+    projectId: HOMELAB,
+    title: AGY_ENDED_TITLE,
+    titleSource: "firstPrompt",
+    createdAgo: 5 * DAY,
+    lastActiveAgo: 5 * DAY - 20 * MIN,
+    gitBranch: "main",
+    live: null,
+    model: "gemini-4-neon-high",
+    tokens: tok(6_200, 1_900, 0, 0),
+    turns: [],
+  },
 ];
 
 /** Main + Subagent cost of the rich session (each run at its own model's rate). */
@@ -358,6 +397,10 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     nodes = richMain;
   } else if (d.id === IDS.codeMode) {
     nodes = codeModeNodes(created);
+  } else if (d.id === IDS.agyLive) {
+    nodes = agyLiveNodes(created);
+  } else if (d.id === IDS.agyEnded) {
+    nodes = agyEndedNodes(created);
   } else if (d.forkOf) {
     const inheritedNodes = turnNodes("fo", NOW - originDef.createdAgo, originDef.turns).slice(
       0,
@@ -381,8 +424,8 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
       : nodes.filter((n) => !(n.body.kind === "userPrompt" && n.body.origin.kind === "commandOutput")).length;
   const summary: SessionSummary = {
     id: d.id,
-    agent: "claude",
-    haaWorker: null,
+    agent: d.agent ?? "claude",
+    haaWorker: d.haaWorker ?? null,
     projectId: d.projectId,
     title: d.title,
     titleSource: d.titleSource,
@@ -395,12 +438,18 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
         ? 27
         : d.id === IDS.codeMode
           ? 7
-          : nodes.filter((n) => n.body.kind === "assistant" && n.body.blocks.some((b) => b.kind === "toolCall")).length,
+          : nodes.reduce(
+              (count, n) =>
+                count + (n.body.kind === "assistant" ? n.body.blocks.filter((b) => b.kind === "toolCall").length : 0),
+              0,
+            ),
     subagentCount: d.id === IDS.rich ? richSubagents.length : (d.subagentCount ?? 0),
     tokens: d.id === IDS.rich ? richTokens : d.tokens,
     ...(d.id === IDS.rich
       ? richCost()
-      : { cost: costOf(d.model, d.tokens) ?? 0, unpricedMessages: costOf(d.model, d.tokens) == null ? 1 : 0 }),
+      : d.agent === "agy"
+        ? { cost: 0, unpricedMessages: 0 }
+        : { cost: costOf(d.model, d.tokens) ?? 0, unpricedMessages: costOf(d.model, d.tokens) == null ? 1 : 0 }),
     gitBranch: d.gitBranch,
     live: d.live,
     forkOrigin: d.forkOf

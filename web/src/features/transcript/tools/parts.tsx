@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, CircleX, ImageIcon, Loader2, X } from "lucide-react";
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { ImageRef, ToolCall } from "@/ipc/bindings";
 import { parseAnsi, stripAnsi } from "@/lib/ansi";
@@ -9,7 +9,8 @@ import { TokenSpans, useHighlight } from "@/lib/shiki";
 import { useImage } from "@/queries/hooks";
 import { useUi } from "@/state/ui";
 import { toolKey } from "../keys";
-import { formatBytes, type OutputState, type ToolCtx } from "./data";
+import { prettyJson } from "../util";
+import { formatBytes, useFullInput, useToolCtx, type OutputState, type ToolCtx } from "./data";
 
 /** What a call without a result is doing; a permission card says it waits for approval instead. */
 export const PendingText = createContext("执行中");
@@ -142,8 +143,40 @@ export function Shell({
           className={cn("ml-[22px] overflow-hidden rounded-lg border", failed ? "border-error/30" : "border-border")}
         >
           {children}
+          <AgyOriginal nodeId={nodeId} call={call} />
         </div>
       )}
+    </div>
+  );
+}
+
+interface AgyOriginalData {
+  name: string;
+  args: unknown;
+}
+
+function parseAgyOriginal(input: Record<string, unknown> | null): AgyOriginalData | null {
+  const raw = input?.agyOriginal;
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.name !== "string" || !obj.name) return null;
+  return { name: obj.name, args: obj.args ?? {} };
+}
+
+/** Original agy tool name and arguments attached by the backend on translated tool calls. */
+function AgyOriginal({ nodeId, call }: { nodeId: string; call: ToolCall }) {
+  const ctx = useToolCtx(nodeId);
+  const { input } = useFullInput(call, ctx, true);
+  const orig = parseAgyOriginal(input);
+  const origArgs = orig?.args;
+  const pretty = useMemo(() => (origArgs !== undefined ? prettyJson(JSON.stringify(origArgs)) : ""), [origArgs]);
+  if (!orig) return null;
+  return (
+    <div data-testid="agy-original" className="border-t border-border bg-ground">
+      <Label>
+        原调用：<code className="font-mono text-text/90">{orig.name}</code>
+      </Label>
+      <CodeView code={pretty} lang="json" startLine={1} />
     </div>
   );
 }

@@ -28,7 +28,7 @@ function useFork(sessionId: string | null) {
     if (!sessionId || !d?.cwd || offer.kind !== "enabled") return;
     void fork({ sessionId, cwd: d.cwd, title: d.summary.title, at, restore });
   };
-  return { offer, forking, start };
+  return { offer, forking, start, isAgy: d?.summary.agent === "agy" };
 }
 
 /**
@@ -58,7 +58,8 @@ export function ForkButton({ sessionId, nodeId }: { sessionId: string; nodeId: s
 }
 
 function OwnForkButton({ sessionId, nodeId }: { sessionId: string; nodeId: string }) {
-  const { offer, forking, start } = useFork(sessionId);
+  const { offer, forking, start, isAgy } = useFork(sessionId);
+  if (isAgy) return null;
   const running = forking?.at === nodeId;
   return (
     <DropdownMenu>
@@ -109,7 +110,8 @@ function ForkItem({ label, desc }: { label: string; desc: string }) {
 
 /** 「Fork」 in the header's 「···」 menu: a new Session with the whole Main Line, its input box empty. */
 export function ForkMenuItem({ sessionId }: { sessionId: string }) {
-  const { offer, forking, start } = useFork(sessionId);
+  const { offer, forking, start, isAgy } = useFork(sessionId);
+  if (isAgy) return null;
   return (
     <DropdownMenuItem
       data-testid="fork-session"

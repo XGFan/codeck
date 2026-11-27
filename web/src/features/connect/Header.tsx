@@ -12,6 +12,7 @@ import {
 import { termAvailable } from "@/features/terminal/bridge";
 import { openTerminalWindow } from "@/features/terminal/windows";
 import { api } from "@/ipc";
+import type { Agent } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { errorText } from "@/lib/errors";
 import { formatTokens } from "@/lib/format";
@@ -60,11 +61,14 @@ export const footBtn =
  */
 export function ConnectButton({
   sessionId,
+  agent,
   resume,
 }: {
   sessionId: string;
+  agent?: Agent;
   resume?: { cwd: string | null; cwdMissing: boolean; live: boolean };
 }) {
+  const isAgy = agent === "agy";
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
   const c = useConnect((s) => connFor(s, sessionId));
   const taken = useConnect((s) => (entry ? holderConnected(s, entry.holder_id) : false));
@@ -82,7 +86,7 @@ export function ConnectButton({
   // open a moment, so passing over Sessions with ↑↓ connects none of them.
   const autoConnect = useUi((s) => s.autoConnect);
   const autoHolder =
-    autoConnect && entry?.plugin && !connecting && !c && !taken && !error && !resuming && !ccrpcError
+    !isAgy && autoConnect && entry?.plugin && !connecting && !c && !taken && !error && !resuming && !ccrpcError
       ? entry.holder_id
       : null;
   useEffect(() => {
@@ -95,6 +99,8 @@ export function ConnectButton({
     // connect and sessionId do not change (the button is keyed by Session).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoHolder]);
+
+  if (isAgy) return null;
 
   // A Resume on its way: until ccrpc names the Session, or its failure is dealt with.
   if (resuming)
@@ -149,7 +155,15 @@ export function ConnectButton({
  * window) or shows it again — iOS and web list it either way; not offered when ccrpc is too old to say — and
  * 「显示 Terminal」 (desktop only, ADR-0015).
  */
-export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: string; separated?: boolean }) {
+export function ConnectMenuItems({
+  sessionId,
+  agent,
+  separated = true,
+}: {
+  sessionId: string;
+  agent?: Agent;
+  separated?: boolean;
+}) {
   const entry = useConnect((s) => lsEntryFor(s, sessionId));
   const c = useConnect((s) => connFor(s, sessionId));
   const taken = useConnect((s) => (entry ? holderConnected(s, entry.holder_id) : false));
@@ -159,6 +173,7 @@ export function ConnectMenuItems({ sessionId, separated = true }: { sessionId: s
   const setError = useConnect((s) => s.setError);
   const resuming = useConnect((s) => !!s.resuming[sessionId]);
   const connecting = useConnect((s) => !!s.connecting[sessionId]);
+  if (agent === "agy") return null;
   const live = c && isLive(c) ? c : null;
   const canConnect = !live && entry && !taken && !resuming;
   const pane = entry && entry.hidden != null ? { holder: entry.holder_id, hidden: entry.hidden } : null;

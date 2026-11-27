@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { isComposingKey, popupOpen } from "@/lib/hotkeys";
 import { scrollToNode } from "@/features/transcript/nodes/scroll";
 import type { Row } from "@/features/transcript/grouping";
+import { useSession } from "@/queries";
 import { MAIN_SCOPE, selectOverlayOpen, useUi } from "@/state/ui";
 import { withCodeCalls } from "../state/codeCalls";
 import type { CodeCall, ConnState } from "../state/conn";
@@ -39,13 +40,15 @@ const liveConn = (s: Parameters<typeof connFor>[0], sessionId: string | null) =>
  */
 export function useRewindView(transcript: Transcript | null, rows: Row[]): RewindView | null {
   const sessionId = transcript?.sessionId ?? null;
+  const { data: session } = useSession(sessionId);
+  const isAgy = session?.summary.agent === "agy";
   const conn = useConnect((s) => liveConn(s, sessionId)?.conn ?? null);
   const own = useConnect((s) => liveConn(s, sessionId)?.rewound ?? null);
   // On the phone the app holds the Connect.
   const native = useNativeConnect((s) => s.c);
   const rewound = native ? native.rewound : own;
   const connected = native ? native.connected : !!conn;
-  const canFork = native ? native.canFork : true;
+  const canFork = !isAgy && (native ? native.canFork : true);
   const picking = useConnect((s) => !!liveConn(s, sessionId)?.picking);
   const clearRewound = useConnect((s) => s.clearRewound);
   const main = useMemo(

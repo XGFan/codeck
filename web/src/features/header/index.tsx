@@ -82,6 +82,7 @@ export function SessionHeader() {
   }
 
   const s = d.summary;
+  const isAgy = s.agent === "agy";
   const t = s.tokens;
   const project = d.projectPath.split("/").filter(Boolean).pop() ?? d.projectPath;
 
@@ -93,13 +94,15 @@ export function SessionHeader() {
     >
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
-        <ForkPending sessionId={sessionId} />
-        <ConnectButton
-          key={sessionId}
-          sessionId={sessionId}
-          resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }}
-        />
-        <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} />
+        {!isAgy && <ForkPending sessionId={sessionId} />}
+        {!isAgy && (
+          <ConnectButton
+            key={sessionId}
+            sessionId={sessionId}
+            resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }}
+          />
+        )}
+        <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} readOnly={isAgy} />
       </div>
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
         <StateWord sessionId={sessionId} live={s.live} lastActiveMs={s.lastActiveMs} />
@@ -107,9 +110,15 @@ export function SessionHeader() {
           {project}
           {s.gitBranch && <span className="text-secondary"> · {s.gitBranch}</span>}
         </span>
-        <span data-testid="session-cost" title={costBreakdown(d.modelCosts, s.unpricedMessages)}>
-          Cost {formatCost(s.cost)}
-          {s.unpricedMessages > 0 && "+"}
+        <span data-testid="session-cost" title={isAgy ? undefined : costBreakdown(d.modelCosts, s.unpricedMessages)}>
+          {isAgy ? (
+            "Cost 未记录"
+          ) : (
+            <>
+              Cost {formatCost(s.cost)}
+              {s.unpricedMessages > 0 && "+"}
+            </>
+          )}
         </span>
         <span>{formatDuration(d.durationMs)}</span>
         <span>{s.messageCount} 条消息</span>
@@ -197,7 +206,15 @@ function StateWord({
  * the connection's debug info while connected. A Session not in the index yet (`resumeCommand` null) has only the
  * connection's items.
  */
-function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeCommand: string | null }) {
+function MoreMenu({
+  sessionId,
+  resumeCommand,
+  readOnly = false,
+}: {
+  sessionId: string;
+  resumeCommand: string | null;
+  readOnly?: boolean;
+}) {
   const showHidden = useUi((s) => s.showHidden);
   const setShowHidden = useUi((s) => s.setShowHidden);
   const debug = useConnectDebugInfo(sessionId);
@@ -214,14 +231,14 @@ function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeComma
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" data-testid="header-menu">
-        <ConnectMenuItems sessionId={sessionId} separated={resumeCommand != null || debug != null} />
+        {!readOnly && <ConnectMenuItems sessionId={sessionId} separated={resumeCommand != null || debug != null} />}
         {resumeCommand != null && (
           <>
             <DropdownMenuCheckboxItem checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)}>
               显示系统消息
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
-            <ForkMenuItem sessionId={sessionId} />
+            {!readOnly && <ForkMenuItem sessionId={sessionId} />}
             <DropdownMenuItem onSelect={() => void api.copyText(resumeCommand)}>
               <Copy size={13} strokeWidth={1.5} aria-hidden />
               复制 Resume 命令
@@ -235,7 +252,7 @@ function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeComma
             </DropdownMenuItem>
           </>
         )}
-        {debug && (
+        {!readOnly && debug && (
           <DropdownMenuItem onSelect={() => void api.copyText(debug)}>
             <Bug size={13} strokeWidth={1.5} aria-hidden />
             复制排查信息

@@ -464,7 +464,7 @@ export function CompactView({ nodeId, call, startMs, ctx }: RenderProps) {
       main = str(input.query);
   }
   const extras = Object.entries(input).filter(
-    ([k, v]) => !["pattern", "url", "query"].includes(k) && v != null && v !== "",
+    ([k, v]) => !["pattern", "url", "query", "agyOriginal"].includes(k) && v != null && v !== "",
   );
   return (
     <Shell
