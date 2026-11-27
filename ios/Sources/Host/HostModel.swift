@@ -43,6 +43,12 @@ final class HostModel {
     private(set) var needsPairing = false
     /// Prevents concurrent pairing attempts.
     private(set) var isPairing = false
+    /// True once `/v1/pair` redemption is in flight; prevents dismissing the QR setup sheet until it returns.
+    private(set) var isRedeeming = false
+    /// Total duration budget for probing all candidate addresses in a pairing link.
+    static let defaultResolveTimeout: Duration = .seconds(10)
+    /// Per-address `/health` timeout during pairing resolution.
+    static let perAddressHealthTimeout: TimeInterval = 3
     /// Increments on each `hello` after the first, i.e. after every reconnect: open pages catch up.
     private(set) var resyncGeneration = 0
     /// Increments on every Host switch; in-flight work from older generations is discarded.
@@ -104,16 +110,24 @@ final class HostModel {
     /// DEBUG-only plaintext loopback path (`127.0.0.1`, no fingerprint, no token).
     func connect(to address: HostAddress) {
         guard store.allowLoopback, address.host == "127.0.0.1" else { return }
+        let previousDeviceId = host?.deviceId ?? store.savedDeviceId
         let loopback = PairedHost(address: address, fingerprint: nil, deviceId: nil, token: nil)
         guard (try? store.save(loopback)) != nil else { return }
         use(loopback)
+        if let oldId = previousDeviceId {
+            store.deleteToken(forDeviceId: oldId)
+        }
     }
 
-    /// Probes `link.addresses` sequentially with unauthenticated pinned `/health` (3s each) and returns
-    /// the first reachable address without sending any credentials.
-    func resolve(_ link: PairingLink, dependencies: PairingDependencies? = nil) async throws -> HostAddress {
+    /// Probes `link.addresses` sequentially with unauthenticated pinned `/health` (3s each, 10s total)
+    /// and returns the first reachable address without sending any credentials.
+    func resolve(
+        _ link: PairingLink,
+        dependencies: PairingDependencies? = nil,
+        totalTimeout: Duration = HostModel.defaultResolveTimeout
+    ) async throws -> HostAddress {
         let deps = dependencies ?? .live(store: store)
-        return try await Self.resolveAddress(for: link, dependencies: deps)
+        return try await Self.resolveAddress(for: link, dependencies: deps, totalTimeout: totalTimeout)
     }
 
     /// Pairs with `link` at a previously resolved `address`. Calls while pairing is in progress are ignored.
@@ -121,17 +135,26 @@ final class HostModel {
     func pair(with link: PairingLink, at address: HostAddress, dependencies: PairingDependencies? = nil) async throws -> Bool {
         guard !isPairing else { return false }
         isPairing = true
-        defer { isPairing = false }
+        isRedeeming = false
+        defer {
+            isRedeeming = false
+            isPairing = false
+        }
+        let previousDeviceId = host?.deviceId ?? store.savedDeviceId
         let deps = dependencies ?? .live(store: store)
         let paired = try await Self.executePairing(
             link: link,
             at: address,
             existing: host,
             deviceName: UIDevice.current.name,
-            dependencies: deps
+            dependencies: deps,
+            onRedeemStart: { self.isRedeeming = true }
         )
         try Task.checkCancellation()
         use(paired)
+        if let oldId = previousDeviceId, oldId != paired.deviceId {
+            store.deleteToken(forDeviceId: oldId)
+        }
         return true
     }
 
@@ -141,7 +164,12 @@ final class HostModel {
     func pair(with link: PairingLink, dependencies: PairingDependencies? = nil) async throws -> Bool {
         guard !isPairing else { return false }
         isPairing = true
-        defer { isPairing = false }
+        isRedeeming = false
+        defer {
+            isRedeeming = false
+            isPairing = false
+        }
+        let previousDeviceId = host?.deviceId ?? store.savedDeviceId
         let deps = dependencies ?? .live(store: store)
         let address = try await Self.resolveAddress(for: link, dependencies: deps)
         try Task.checkCancellation()
@@ -150,36 +178,87 @@ final class HostModel {
             at: address,
             existing: host,
             deviceName: UIDevice.current.name,
-            dependencies: deps
+            dependencies: deps,
+            onRedeemStart: { self.isRedeeming = true }
         )
         try Task.checkCancellation()
         use(paired)
+        if let oldId = previousDeviceId, oldId != paired.deviceId {
+            store.deleteToken(forDeviceId: oldId)
+        }
         return true
     }
 
-    /// Step 1 of pairing: probe `link.addresses` sequentially with 3s unauthenticated pinned `/health`.
+    private enum ResolveOutcome: Sendable {
+        case resolved(HostAddress)
+        case timedOut
+        case failed(any Error)
+    }
+
+    /// Step 1 of pairing: probe `link.addresses` sequentially with unauthenticated pinned `/health`
+    /// (up to 3s per address and `totalTimeout` overall, default 10s).
     static func resolveAddress(
         for link: PairingLink,
-        dependencies deps: PairingDependencies
+        dependencies deps: PairingDependencies,
+        totalTimeout: Duration = defaultResolveTimeout
     ) async throws -> HostAddress {
-        var versionError: HostError?
-        for candidate in link.addresses {
-            try Task.checkCancellation()
-            do {
-                _ = try await deps.checkHealth(candidate, link.fingerprint, 3)
-                return candidate
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let error as HostError {
-                if Task.isCancelled { throw CancellationError() }
-                if case .versionMismatch = error, versionError == nil {
-                    versionError = error
+        try Task.checkCancellation()
+        guard totalTimeout > .zero else { throw HostError.pairingUnreachable }
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: totalTimeout)
+        let perLimit = perAddressHealthTimeout
+
+        return try await withThrowingTaskGroup(of: ResolveOutcome.self) { group in
+            group.addTask {
+                var versionError: HostError?
+                for candidate in link.addresses {
+                    try Task.checkCancellation()
+                    let remaining = clock.now.duration(to: deadline)
+                    guard remaining > .zero else {
+                        return .failed(versionError ?? HostError.pairingUnreachable)
+                    }
+                    let remainingSeconds = Double(remaining.components.seconds)
+                        + Double(remaining.components.attoseconds) / 1e18
+                    let timeout = min(perLimit, remainingSeconds)
+                    do {
+                        _ = try await deps.checkHealth(candidate, link.fingerprint, timeout)
+                        try Task.checkCancellation()
+                        return .resolved(candidate)
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch let error as HostError {
+                        if Task.isCancelled { throw CancellationError() }
+                        if case .versionMismatch = error, versionError == nil {
+                            versionError = error
+                        }
+                    } catch {
+                        if Task.isCancelled { throw CancellationError() }
+                    }
                 }
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
+                return .failed(versionError ?? HostError.pairingUnreachable)
             }
+
+            group.addTask {
+                try await clock.sleep(until: deadline)
+                return .timedOut
+            }
+
+            defer { group.cancelAll() }
+
+            while let outcome = try await group.next() {
+                switch outcome {
+                case .resolved(let address):
+                    return address
+                case .timedOut:
+                    if Task.isCancelled { throw CancellationError() }
+                    throw HostError.pairingUnreachable
+                case .failed(let error):
+                    throw error
+                }
+            }
+            throw CancellationError()
         }
-        throw versionError ?? HostError.pairingUnreachable
     }
 
     /// Steps 2–3 of pairing against a previously resolved `address`:
@@ -194,7 +273,8 @@ final class HostModel {
         at address: HostAddress,
         existing: PairedHost?,
         deviceName: String,
-        dependencies deps: PairingDependencies
+        dependencies deps: PairingDependencies,
+        onRedeemStart: (@MainActor () -> Void)? = nil
     ) async throws -> PairedHost {
         try Task.checkCancellation()
 
@@ -230,6 +310,7 @@ final class HostModel {
         }
 
         try Task.checkCancellation()
+        onRedeemStart?()
         let credentials = try await deps.pair(address, link.fingerprint, link.key, deviceName)
         try Task.checkCancellation()
         let paired = PairedHost(

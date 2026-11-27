@@ -89,7 +89,9 @@ struct HostSetupView: View {
         .navigationTitle(current == nil ? "" : "重新扫码")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if current != nil {
+            // Once `/v1/pair` redemption has been sent, lock dismissal until it returns so a
+            // consumed pairing key's token is not discarded mid-flight.
+            if current != nil && !model.isRedeeming {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消", systemImage: "xmark") {
                         cancelPairing()
@@ -98,11 +100,14 @@ struct HostSetupView: View {
                 }
             }
         }
+        .interactiveDismissDisabled(model.isRedeeming)
         .sensoryFeedback(.error, trigger: error) { _, new in new != nil }
         .task { await prepareCamera() }
         .onDisappear {
             scanning = false
-            cancelPairing()
+            if !model.isRedeeming {
+                cancelPairing()
+            }
         }
     }
 

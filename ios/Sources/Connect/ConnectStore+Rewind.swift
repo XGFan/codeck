@@ -29,17 +29,21 @@ extension ConnectStore {
     /// 「回退」 on the prompt `uuid`: a failure is shown on the Session.
     func rewind(_ c: ConnState, uuid: String) async {
         guard c.canCommand, c.state == .idle, rewinding[c.conn] == nil else { return }
+        let gen = generation
         if let id = c.sessionId { errors[id] = nil }
         rewinding[c.conn] = uuid
+        defer { if generation == gen { rewinding[c.conn] = nil } }
         let r = await command(c.conn, ["type": "rewind", "uuid": .string(uuid)])
+        guard generation == gen else { return }
         if r.success {
             // The card comes with the Host's next state, a moment after this response. Until it is there the input
             // box's 「中止」 stays off: its Esc would only step the terminal back into the Rewind picker.
-            for _ in 0..<20 where !hasRewindCard(c.conn) { try? await Task.sleep(for: .milliseconds(100)) }
+            for _ in 0..<20 where generation == gen && !hasRewindCard(c.conn) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         } else if let id = c.sessionId {
             errors[id] = "回退失败：\(r.errorText)"
         }
-        rewinding[c.conn] = nil
     }
 
     private func hasRewindCard(_ conn: String) -> Bool {
@@ -49,11 +53,13 @@ extension ConnectStore {
     /// Answers the confirm page (`nil`: cancel); nil when done, else what to say on the card. Restoring the
     /// conversation puts the prompt into the input box and marks where the conversation now ends.
     func answerRewind(_ c: ConnState, _ request: RewindRequest, _ option: RewindRequest.Option?) async -> String? {
+        let gen = generation
         var cmd: [String: JSONValue] = ["type": "answer_rewind", "request_id": .string(request.requestId)]
         if let option { cmd["option"] = .string(option.rawValue) } else { cmd["cancel"] = true }
         // A Fork's own rewind: ccrpc goes on with the Fork, whose `fork` event brings the prompt.
         let forking = { if case .fork = self.starts[c.conn] { true } else { false } }()
         let r = await command(c.conn, .object(cmd))
+        guard generation == gen else { return nil }
         guard r.success else {
             return "\(option == nil ? "取消回退" : "回退")失败：\(r.errorText)"
         }

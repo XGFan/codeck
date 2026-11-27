@@ -712,6 +712,61 @@ final class TranscriptBridgeTests: XCTestCase {
         XCTAssertEqual(pushed.count, 4)
     }
 
+    func testSameURLReloadIgnoresOldNavReadyAndAcceptsCurrentNav() throws {
+        let suite = "TranscriptBridgeTests.sameURLReload.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = HostStore(defaults: defaults, keychain: BridgeMemoryKeychain(), allowLoopback: false)
+        let model = HostModel(store: store)
+
+        let base = HostWebBridge.transcriptURL(sessionId: "s1")
+        let nav1URL = HostWebBridge.withNavID(base, navID: "nav-1")
+        let nav2URL = HostWebBridge.withNavID(base, navID: "nav-2")
+        let replacedNavURL = HostWebBridge.withNavID(nav1URL, navID: "nav-2")
+        XCTAssertEqual(HostWebBridge.navID(of: nav1URL), "nav-1")
+        XCTAssertEqual(HostWebBridge.navID(of: nav2URL), "nav-2")
+        XCTAssertEqual(replacedNavURL, nav2URL)
+        XCTAssertNotEqual(HostWebBridge.withNavID(base), HostWebBridge.withNavID(base))
+
+        var pushed: [String] = []
+        let bridge = TranscriptEventBridge(
+            boundHostGeneration: 1,
+            currentHostGeneration: { 1 },
+            subscribe: { model.subscribeRawEvents($0) },
+            push: { pushed.append($0) }
+        )
+
+        // Initial load commits nav-1 and becomes ready.
+        bridge.didStartNavigation(expectedNavID: "nav-1")
+        bridge.didCommit(url: nav1URL)
+        XCTAssertTrue(bridge.pageDidReady(frameURL: nav1URL))
+        XCTAssertEqual(pushed, [HostWebBridge.syntheticHello])
+
+        // Reload the SAME logical URL with a new nav-2.
+        bridge.didStartNavigation(expectedNavID: "nav-2")
+        // Stale commit from nav-1 must be ignored while nav-2 is expected.
+        bridge.didCommit(url: nav1URL)
+        XCTAssertFalse(bridge.pageDidReady(frameURL: nav1URL))
+
+        // New navigation commits nav-2.
+        bridge.didCommit(url: nav2URL)
+
+        // Late `ready` from the OLD nav-1 page arriving after nav-2 committed must be ignored.
+        XCTAssertFalse(bridge.pageDidReady(frameURL: nav1URL))
+        XCTAssertFalse(bridge.pageDidReady(frameURL: base))
+        model.emitRawEvent(#"{"event":"prices-changed-event","payload":null}"#)
+        XCTAssertEqual(pushed.count, 1)
+
+        // Real `ready` from the CURRENT nav-2 page is accepted and starts event delivery.
+        XCTAssertTrue(bridge.pageDidReady(frameURL: nav2URL))
+        XCTAssertEqual(pushed.count, 2)
+        XCTAssertEqual(pushed.last, HostWebBridge.syntheticHello)
+
+        let liveEvent = #"{"event":"live-changed-event","payload":{"live":[]}}"#
+        model.emitRawEvent(liveEvent)
+        XCTAssertEqual(pushed.last, liveEvent)
+    }
+
     private func parseJSONDict(_ text: String?) -> [String: Any]? {
         guard let text, let data = text.data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]

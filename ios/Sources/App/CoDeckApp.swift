@@ -11,9 +11,16 @@ struct CoDeckApp: App {
         var hadHost: Bool
     }
 
+    private enum URLPairingPhase {
+        case resolving
+        case pairing
+    }
+
     /// Resolved external `codeck://pair` link awaiting user confirmation against the actual reachable address.
     @State private var pendingPairing: PendingPairing?
-    @State private var pairingFromURL = false
+    @State private var urlPairingPhase: URLPairingPhase?
+    @State private var resolveTask: Task<Void, Never>?
+    @State private var resolveToken: UUID?
     @State private var urlPairingError: String?
 
     var body: some Scene {
@@ -30,12 +37,20 @@ struct CoDeckApp: App {
             .environment(model)
             .tint(Palette.accentText)
             .overlay {
-                if pairingFromURL {
+                if let phase = urlPairingPhase {
                     ZStack {
                         Color.black.opacity(0.25).ignoresSafeArea()
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("正在连接…").font(.subheadline.weight(.semibold))
+                        VStack(spacing: 12) {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("正在连接…").font(.subheadline.weight(.semibold))
+                            }
+                            if phase == .resolving {
+                                Button("取消") {
+                                    cancelURLResolve()
+                                }
+                                .font(.subheadline.weight(.medium))
+                            }
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 14)
@@ -88,7 +103,7 @@ struct CoDeckApp: App {
 
     private func handleOpenURL(_ url: URL) {
         // Ignore incoming links while pairing/probing is in progress or another confirmation is open.
-        guard !model.isPairing, !pairingFromURL, pendingPairing == nil else { return }
+        guard !model.isPairing, urlPairingPhase == nil, pendingPairing == nil else { return }
         switch PairingPresentation.classifyOpenURL(url) {
         case .ignore:
             return
@@ -102,27 +117,51 @@ struct CoDeckApp: App {
     /// Probes candidate addresses via unauthenticated `/health` first so the confirmation prompt names
     /// the actual reachable `host:port` before any credentials or pairing keys are sent.
     private func resolveURLPairing(_ link: PairingLink) {
-        pairingFromURL = true
+        urlPairingPhase = .resolving
         urlPairingError = nil
-        Task {
+        resolveTask?.cancel()
+        let token = UUID()
+        resolveToken = token
+        resolveTask = Task {
+            defer {
+                if resolveToken == token {
+                    resolveToken = nil
+                    resolveTask = nil
+                    if urlPairingPhase == .resolving {
+                        urlPairingPhase = nil
+                    }
+                }
+            }
             do {
                 let address = try await model.resolve(link)
-                pairingFromURL = false
+                guard !Task.isCancelled, resolveToken == token else { return }
+                urlPairingPhase = nil
+                resolveTask = nil
+                resolveToken = nil
                 pendingPairing = PendingPairing(link: link, address: address, hadHost: model.host != nil)
             } catch is CancellationError {
-                pairingFromURL = false
+                // Cancelled during probe: dismiss silently without showing confirmation or error.
             } catch {
-                pairingFromURL = false
+                guard !Task.isCancelled, resolveToken == token else { return }
                 urlPairingError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
         }
     }
 
+    private func cancelURLResolve() {
+        resolveToken = nil
+        resolveTask?.cancel()
+        resolveTask = nil
+        if urlPairingPhase == .resolving {
+            urlPairingPhase = nil
+        }
+    }
+
     private func startURLPairing(_ link: PairingLink, at address: HostAddress) {
-        pairingFromURL = true
+        urlPairingPhase = .pairing
         urlPairingError = nil
         Task {
-            defer { pairingFromURL = false }
+            defer { urlPairingPhase = nil }
             do {
                 _ = try await model.pair(with: link, at: address)
             } catch is CancellationError {

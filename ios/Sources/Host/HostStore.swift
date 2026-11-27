@@ -165,10 +165,17 @@ struct HostStore: @unchecked Sendable {
         return PairedHost(address: address, fingerprint: fingerprint, deviceId: deviceId, token: token)
     }
 
+    /// Currently stored device id in UserDefaults, if any.
+    var savedDeviceId: String? {
+        loadRecord()?.deviceId
+    }
+
     /// Saves a Host: for new credentials writes Keychain first (aborting without touching existing
-    /// state on failure), then updates UserDefaults, then deletes any superseded Keychain item.
+    /// state on failure), then updates UserDefaults, and returns any superseded `deviceId` so the
+    /// caller can delete the old Keychain item after switching the active connection.
     /// Reusing the same fingerprint/deviceId/token updates only the address metadata in UserDefaults.
-    func save(_ host: PairedHost) throws {
+    @discardableResult
+    func save(_ host: PairedHost) throws -> String? {
         let previousRecord = loadRecord()
         let previousDeviceId = previousRecord?.deviceId
         let reusingSameCredentials: Bool
@@ -208,8 +215,15 @@ struct HostStore: @unchecked Sendable {
         defaults.set(data, forKey: Self.storageKey)
 
         if let oldId = previousDeviceId, oldId != host.deviceId {
-            keychain.delete(service: Self.keychainService, account: oldId)
+            return oldId
         }
+        return nil
+    }
+
+    /// Deletes a superseded device token from Keychain after the active connection has switched.
+    func deleteToken(forDeviceId deviceId: String) {
+        guard !deviceId.isEmpty else { return }
+        keychain.delete(service: Self.keychainService, account: deviceId)
     }
 
     private func loadRecord() -> Record? {

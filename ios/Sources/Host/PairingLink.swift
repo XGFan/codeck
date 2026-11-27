@@ -4,6 +4,7 @@ import Foundation
 struct PairingLink: Equatable, Sendable {
     static let fingerprintLength = 43
     static let keyLength = 22
+    static let maxHosts = 4
 
     var hosts: [String]
     var port: Int
@@ -79,7 +80,7 @@ struct PairingLink: Equatable, Sendable {
 
         // Only RFC 1918 private IPv4 addresses are accepted, even in DEBUG builds.
         let parts = rawHosts.split(separator: ",", omittingEmptySubsequences: false)
-        guard !parts.isEmpty else { throw ParseError.invalid }
+        guard !parts.isEmpty, parts.count <= maxHosts else { throw ParseError.invalid }
         var hosts: [String] = []
         hosts.reserveCapacity(parts.count)
         for part in parts {

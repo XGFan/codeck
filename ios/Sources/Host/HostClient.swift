@@ -32,6 +32,8 @@ enum HostError: Error, Equatable, LocalizedError {
 struct HostClient: Sendable {
     /// The `apiVersion` this app speaks.
     static let apiVersion = 2
+    /// Upper bound on `/health` response body size; larger probe replies are aborted mid-stream.
+    static let healthMaxBytes = 16 * 1024
 
     let address: HostAddress
     let fingerprint: String?
@@ -79,10 +81,11 @@ struct HostClient: Sendable {
     // MARK: Health & Pairing
 
     /// Checks that the address runs a compatible CoDeck Host. Does not send Authorization.
+    /// Aborts immediately if the response exceeds `healthMaxBytes`.
     func checkHealth(timeout: TimeInterval = 5) async throws -> HostHealth {
         var request = URLRequest(url: baseURL.appending(path: "health"))
         request.timeoutInterval = timeout
-        let (data, http) = try await send(request)
+        let (data, http) = try await send(request, maxBytes: Self.healthMaxBytes)
         guard http.statusCode == 200 else { throw HostError.notCoDeck }
         return try Self.validateHealth(data)
     }
@@ -284,10 +287,16 @@ struct HostClient: Sendable {
         }
     }
 
-    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    private func send(_ request: URLRequest, maxBytes: Int? = nil) async throws -> (Data, HTTPURLResponse) {
         let (data, response): (Data, URLResponse)
         do {
-            if let pinnedSession {
+            if let maxBytes {
+                if let pinnedSession {
+                    (data, response) = try await pinnedSession.data(for: request, maxBytes: maxBytes)
+                } else {
+                    (data, response) = try await streamBounded(request, maxBytes: maxBytes)
+                }
+            } else if let pinnedSession {
                 (data, response) = try await pinnedSession.data(for: request)
             } else {
                 (data, response) = try await session.data(for: request)
@@ -302,6 +311,27 @@ struct HostClient: Sendable {
         }
         guard let http = response as? HTTPURLResponse else { throw HostError.badResponse }
         return (data, http)
+    }
+
+    /// Streaming fallback for injected `URLSession` instances without a `PinnedSession`.
+    private func streamBounded(_ request: URLRequest, maxBytes: Int) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        if response.expectedContentLength > Int64(maxBytes) {
+            bytes.task.cancel()
+            throw HostError.badResponse
+        }
+        var buffer = Data()
+        if response.expectedContentLength > 0 {
+            buffer.reserveCapacity(Int(min(Int64(maxBytes), response.expectedContentLength)))
+        }
+        for try await byte in bytes {
+            if buffer.count >= maxBytes {
+                bytes.task.cancel()
+                throw HostError.badResponse
+            }
+            buffer.append(byte)
+        }
+        return (buffer, response)
     }
 
     private struct PairRequest: Encodable {

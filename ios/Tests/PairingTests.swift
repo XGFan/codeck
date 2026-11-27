@@ -28,6 +28,11 @@ final class PairingTests: XCTestCase {
             HostAddress(host: "10.0.0.5", port: 443),
             HostAddress(host: "172.16.4.2", port: 443),
         ])
+
+        let four = try PairingLink.parse(
+            "codeck://pair?h=192.168.1.20,10.0.0.5,172.16.4.2,10.0.0.9&p=443&fp=\(Self.validFP)&k=\(Self.validKey)"
+        )
+        XCTAssertEqual(four.hosts, ["192.168.1.20", "10.0.0.5", "172.16.4.2", "10.0.0.9"])
     }
 
     func testPairingLinkRejectsInvalidInputs() {
@@ -53,6 +58,7 @@ final class PairingTests: XCTestCase {
             ("public IP", "codeck://pair?h=8.8.8.8&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)"),
             ("loopback", "codeck://pair?h=127.0.0.1&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)"),
             ("mixed private+public", "codeck://pair?h=10.0.0.1,8.8.8.8&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)"),
+            ("five addresses exceeds limit", "codeck://pair?h=10.0.0.1,10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)"),
             ("trailing comma", "codeck://pair?h=10.0.0.1,&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)"),
             ("hostname", "codeck://pair?h=mac.local&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)"),
             // Port out of bounds / invalid
@@ -228,16 +234,22 @@ final class PairingTests: XCTestCase {
         XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-old"), "tok-old")
         XCTAssertNil(keychain.read(service: HostStore.keychainService, account: "dev-new"))
 
-        // Succeeding save writes new item, updates defaults, and deletes old Keychain item.
-        try store.save(second)
+        // Succeeding save writes new item, updates defaults, and returns superseded deviceId without deleting yet.
+        let superseded = try store.save(second)
         XCTAssertEqual(store.load(), second)
-        XCTAssertNil(keychain.read(service: HostStore.keychainService, account: "dev-old"))
+        XCTAssertEqual(superseded, "dev-old")
+        XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-old"), "tok-old")
         XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-new"), "tok-new")
+        if let superseded {
+            store.deleteToken(forDeviceId: superseded)
+        }
+        XCTAssertNil(keychain.read(service: HostStore.keychainService, account: "dev-old"))
 
-        // Updating address for the SAME deviceId keeps the Keychain item.
+        // Updating address for the SAME deviceId keeps the Keychain item and reports no superseded id.
         var moved = second
         moved.address = HostAddress(host: "10.0.0.9", port: 38471)
-        try store.save(moved)
+        let sameSuperseded = try store.save(moved)
+        XCTAssertNil(sameSuperseded)
         XCTAssertEqual(store.load(), moved)
         XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-new"), "tok-new")
     }
@@ -1077,6 +1089,376 @@ final class PairingTests: XCTestCase {
         XCTAssertFalse(PairingPresentation.shouldReturnToSessionList(needsPairing: false))
         XCTAssertTrue(PairingPresentation.shouldReturnToSessionList(needsPairing: true))
     }
+
+    // MARK: Regression Round 2 — Resolve Timeout/Cancel, 16 KB Streaming Cap, Redeem Phase, Keychain Order & Rewind Guard
+
+    func testResolveEnforcesTotalTimeoutAndCancelsInFlightProbe() async {
+        let link = PairingLink(
+            hosts: ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
+            port: 38471,
+            fingerprint: Self.validFP,
+            key: Self.validKey
+        )
+        let recorder = CallRecorder()
+        let deps = PairingDependencies(
+            checkHealth: { addr, _, _ in
+                recorder.record("start:\(addr.host)")
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch is CancellationError {
+                    recorder.record("cancelled:\(addr.host)")
+                    throw CancellationError()
+                }
+                return HostHealth(product: "CoDeck", apiVersion: 2, version: nil)
+            },
+            checkToken: { _, _, _ in },
+            pair: { _, _, _, _ in ("x", "y") },
+            save: { _ in }
+        )
+
+        let started = ContinuousClock.now
+        do {
+            _ = try await HostModel.resolveAddress(
+                for: link,
+                dependencies: deps,
+                totalTimeout: .milliseconds(150)
+            )
+            XCTFail("Expected pairingUnreachable on total timeout")
+        } catch let error as HostError {
+            XCTAssertEqual(error, .pairingUnreachable)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        let elapsed = started.duration(to: .now)
+        XCTAssertLessThan(elapsed, .seconds(2))
+        XCTAssertEqual(recorder.calls, ["start:10.0.0.1", "cancelled:10.0.0.1"])
+    }
+
+    func testResolveCancellationStopsProbingWithoutTryingNextCandidate() async throws {
+        let link = PairingLink(
+            hosts: ["10.0.0.1", "10.0.0.2"],
+            port: 38471,
+            fingerprint: Self.validFP,
+            key: Self.validKey
+        )
+        let recorder = CallRecorder()
+        let deps = PairingDependencies(
+            checkHealth: { addr, _, _ in
+                recorder.record("start:\(addr.host)")
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch is CancellationError {
+                    recorder.record("cancelled:\(addr.host)")
+                    throw CancellationError()
+                }
+                return HostHealth(product: "CoDeck", apiVersion: 2, version: nil)
+            },
+            checkToken: { _, _, _ in },
+            pair: { _, _, _, _ in ("x", "y") },
+            save: { _ in }
+        )
+
+        let task = Task {
+            try await HostModel.resolveAddress(for: link, dependencies: deps, totalTimeout: .seconds(10))
+        }
+        for _ in 0..<100 where recorder.calls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(recorder.calls, ["start:10.0.0.1"])
+
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Expected CancellationError")
+        } catch is CancellationError {}
+        XCTAssertEqual(recorder.calls, ["start:10.0.0.1", "cancelled:10.0.0.1"])
+    }
+
+    func testHealthProbeAbortsOversizedStreamingResponseMidStream() async throws {
+        let address = HostAddress(host: "10.0.0.1", port: 38471)
+        let pinned = PinnedSession(expectedFingerprint: nil, protocolClasses: [StreamingHealthURLProtocol.self])
+        let client = HostClient(address: address, pinnedSession: pinned)
+        defer { StreamingHealthURLProtocol.config = nil }
+
+        // 1. Chunked stream (unknown Content-Length) of 64 * 4 KiB = 256 KiB aborts mid-stream once > 16 KiB.
+        let chunkedTracker = StreamingHealthTracker()
+        StreamingHealthURLProtocol.config = .init(
+            statusCode: 200,
+            declaredLength: nil,
+            chunkSize: 4096,
+            totalChunks: 64,
+            chunkIntervalMs: 5,
+            tracker: chunkedTracker
+        )
+        do {
+            _ = try await client.checkHealth(timeout: 5)
+            XCTFail("Expected badResponse for oversized chunked /health")
+        } catch let error as HostError {
+            XCTAssertEqual(error, .badResponse)
+        }
+        for _ in 0..<50 where !chunkedTracker.stopped {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(chunkedTracker.stopped)
+        XCTAssertLessThan(chunkedTracker.chunksSent, 20, "Must abort streaming long before sending all 64 chunks")
+
+        // 2. Declared Content-Length > 16 KiB aborts on response headers before any body chunk is read.
+        let headerTracker = StreamingHealthTracker()
+        StreamingHealthURLProtocol.config = .init(
+            statusCode: 200,
+            declaredLength: HostClient.healthMaxBytes + 1,
+            chunkSize: 4096,
+            totalChunks: 10,
+            chunkIntervalMs: 5,
+            tracker: headerTracker
+        )
+        do {
+            _ = try await client.checkHealth(timeout: 5)
+            XCTFail("Expected badResponse for oversized Content-Length /health")
+        } catch let error as HostError {
+            XCTAssertEqual(error, .badResponse)
+        }
+        for _ in 0..<50 where !headerTracker.stopped {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(headerTracker.stopped)
+        XCTAssertEqual(headerTracker.chunksSent, 0)
+
+        // 3. Exact 16 KiB valid JSON succeeds; 16 KiB + 1 byte fails (also covers injected URLSession fallback).
+        let baseJSON = #"{"product":"CoDeck","apiVersion":2}"#
+        let exact16K = Data((baseJSON + String(repeating: " ", count: HostClient.healthMaxBytes - baseJSON.utf8.count)).utf8)
+        XCTAssertEqual(exact16K.count, HostClient.healthMaxBytes)
+
+        let stubSession = StubURLProtocol.makeSession()
+        let fallbackClient = HostClient(address: address, session: stubSession)
+        StubURLProtocol.handler = { _ in (200, exact16K, ["Content-Type": "application/json"]) }
+        let okHealth = try await fallbackClient.checkHealth(timeout: 5)
+        XCTAssertEqual(okHealth.apiVersion, 2)
+
+        var over16K = exact16K
+        over16K.append(UInt8(ascii: " "))
+        StubURLProtocol.handler = { _ in (200, over16K, ["Content-Type": "application/json"]) }
+        do {
+            _ = try await fallbackClient.checkHealth(timeout: 5)
+            XCTFail("Expected badResponse for 16 KiB + 1 byte /health")
+        } catch let error as HostError {
+            XCTAssertEqual(error, .badResponse)
+        }
+    }
+
+    @MainActor
+    func testHostModelIsRedeemingOnlyDuringPairExchange() async throws {
+        let suite = "PairingTests.redeemPhase.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = HostStore(defaults: defaults, keychain: MemoryKeychain(), allowLoopback: false)
+        let stubSession = StubURLProtocol.makeSession()
+        StubURLProtocol.handler = { _ in (500, Data(), [:]) }
+
+        let model = HostModel(
+            store: store,
+            clientFactory: { host, _ in HostClient(host: host, session: stubSession) },
+            streamFactory: { host, _ in EventStream(host: host, session: stubSession) }
+        )
+
+        let link = PairingLink(
+            hosts: ["10.0.0.2"],
+            port: 38471,
+            fingerprint: Self.validFP,
+            key: Self.validKey
+        )
+        let healthGate = AsyncGate()
+        let pairGate = AsyncGate()
+        let recorder = CallRecorder()
+        let deps = PairingDependencies(
+            checkHealth: { _, _, _ in
+                recorder.record("health")
+                await healthGate.wait()
+                return HostHealth(product: "CoDeck", apiVersion: 2, version: nil)
+            },
+            checkToken: { _, _, _ in },
+            pair: { _, _, _, _ in
+                recorder.record("pair")
+                await pairGate.wait()
+                return ("dev1", "tok1")
+            },
+            save: { try store.save($0) }
+        )
+
+        let task = Task { try await model.pair(with: link, dependencies: deps) }
+        for _ in 0..<100 where !recorder.calls.contains("health") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        // Probing phase: pairing is active, redemption has NOT started yet (dismiss/cancel still allowed).
+        XCTAssertTrue(model.isPairing)
+        XCTAssertFalse(model.isRedeeming)
+
+        await healthGate.open()
+        for _ in 0..<100 where !recorder.calls.contains("pair") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        // Redemption phase: `/v1/pair` is in flight (sheet dismissal locked).
+        XCTAssertTrue(model.isPairing)
+        XCTAssertTrue(model.isRedeeming)
+
+        await pairGate.open()
+        _ = try await task.value
+        model.pause()
+        XCTAssertFalse(model.isPairing)
+        XCTAssertFalse(model.isRedeeming)
+    }
+
+    @MainActor
+    func testHostModelDeletesOldKeychainItemOnlyAfterUseSwitchesConnection() async throws {
+        let suite = "PairingTests.keychainOrder.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let recorder = CallRecorder()
+        let keychain = MemoryKeychain()
+        let store = HostStore(defaults: defaults, keychain: keychain, allowLoopback: false)
+
+        let oldHost = PairedHost(
+            address: HostAddress(host: "10.0.0.1", port: 38471),
+            fingerprint: Self.validFP,
+            deviceId: "dev-old",
+            token: "tok-old"
+        )
+        try store.save(oldHost)
+
+        let stubSession = StubURLProtocol.makeSession()
+        StubURLProtocol.handler = { _ in (500, Data(), [:]) }
+
+        let model = HostModel(
+            store: store,
+            clientFactory: { host, _ in
+                recorder.record("use:\(host.deviceId ?? "")")
+                if host.deviceId == "dev-new" {
+                    // During `use(paired)`, the old Keychain item must still exist (deleted only after switch).
+                    XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-old"), "tok-old")
+                }
+                return HostClient(host: host, session: stubSession)
+            },
+            streamFactory: { host, _ in EventStream(host: host, session: stubSession) }
+        )
+        model.pause()
+        // Start recording Keychain mutations after initial load.
+        keychain.onWrite = { account in recorder.record("kc:write:\(account)") }
+        keychain.onDelete = { account in recorder.record("kc:delete:\(account)") }
+
+        let link = PairingLink(
+            hosts: ["10.0.0.2"],
+            port: 38471,
+            fingerprint: Self.otherFP,
+            key: Self.validKey
+        )
+        let deps = PairingDependencies(
+            checkHealth: { _, _, _ in HostHealth(product: "CoDeck", apiVersion: 2, version: nil) },
+            checkToken: { _, _, _ in },
+            pair: { _, _, _, _ in ("dev-new", "tok-new") },
+            save: { try store.save($0) }
+        )
+
+        let paired = try await model.pair(with: link, dependencies: deps)
+        model.pause()
+        XCTAssertTrue(paired)
+        XCTAssertNil(keychain.read(service: HostStore.keychainService, account: "dev-old"))
+        XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-new"), "tok-new")
+        XCTAssertEqual(recorder.calls, [
+            "use:dev-old",
+            "kc:write:dev-new",
+            "use:dev-new",
+            "kc:delete:dev-old",
+        ])
+    }
+
+    @MainActor
+    func testConnectStoreRewindAndAnswerRewindDropStaleWritesAfterReset() async throws {
+        let store = ConnectStore()
+        let hostA = PairedHost(address: HostAddress(host: "10.0.0.1", port: 38471), fingerprint: Self.validFP, deviceId: "dA", token: "tA")
+        let hostB = PairedHost(address: HostAddress(host: "10.0.0.2", port: 38471), fingerprint: Self.otherFP, deviceId: "dB", token: "tB")
+
+        let entered = CallRecorder()
+        let reqRelease = DispatchSemaphore(value: 0)
+        let session = StubURLProtocol.makeSession()
+        let clientA = HostClient(host: hostA, session: session)
+        let clientB = HostClient(host: hostB, session: session)
+
+        var conn = ConnState(conn: "c1")
+        conn.sessionId = "s1"
+        conn.ready = true
+        conn.state = .idle
+
+        // 1. rewind failure in-flight across reset → must not write errors or clear new Host's rewinding state.
+        StubURLProtocol.handler = { _ in
+            entered.record("rewind")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"result":{"success":false,"error":"old rewind err"}}"#.utf8), [:])
+        }
+        store.reset(client: clientA)
+        let rewindTask = Task { await store.rewind(conn, uuid: "u-old") }
+        for _ in 0..<200 where entered.calls.count < 1 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.reset(client: clientB)
+        store.rewinding["c1"] = "u-new"
+        reqRelease.signal()
+        await rewindTask.value
+        XCTAssertNil(store.errors["s1"])
+        XCTAssertEqual(store.rewinding["c1"], "u-new")
+
+        // 2. answerRewind success (.both with restored text) across reset → must not write draft or rewounds.
+        StubURLProtocol.handler = { _ in
+            entered.record("answer-both")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"result":{"success":true,"data":{"text":"stale draft"}}}"#.utf8), [:])
+        }
+        let req = RewindRequest(requestId: "r1", uuid: "u-old", options: [.both, .conversation, .code])
+        store.reset(client: clientA)
+        let answerBothTask = Task { await store.answerRewind(conn, req, .both) }
+        for _ in 0..<200 where entered.calls.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.reset(client: clientB)
+        reqRelease.signal()
+        let bothErr = await answerBothTask.value
+        XCTAssertNil(bothErr)
+        XCTAssertNil(store.restoredPrompts["c1"])
+        XCTAssertNil(store.rewounds["c1"])
+        XCTAssertNil(store.notes["c1"])
+
+        // 3. answerRewind failure across reset → returns nil (no stale error shown).
+        StubURLProtocol.handler = { _ in
+            entered.record("answer-fail")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"result":{"success":false,"error":"old answer err"}}"#.utf8), [:])
+        }
+        store.reset(client: clientA)
+        let answerFailTask = Task { await store.answerRewind(conn, req, .conversation) }
+        for _ in 0..<200 where entered.calls.count < 3 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.reset(client: clientB)
+        reqRelease.signal()
+        let failErr = await answerFailTask.value
+        XCTAssertNil(failErr)
+
+        // 4. answerRewind (.code) across reset → must not write notes.
+        StubURLProtocol.handler = { _ in
+            entered.record("answer-code")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"result":{"success":true}}"#.utf8), [:])
+        }
+        store.reset(client: clientA)
+        let answerCodeTask = Task { await store.answerRewind(conn, req, .code) }
+        for _ in 0..<200 where entered.calls.count < 4 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.reset(client: clientB)
+        reqRelease.signal()
+        let codeErr = await answerCodeTask.value
+        XCTAssertNil(codeErr)
+        XCTAssertNil(store.notes["c1"])
+    }
 }
 
 // MARK: - Test Doubles
@@ -1086,6 +1468,8 @@ private final class MemoryKeychain: KeychainStoring, @unchecked Sendable {
     private var storage: [String: String] = [:]
     private var writes = 0
     var failNextWrite: Error?
+    var onWrite: (@Sendable (String) -> Void)?
+    var onDelete: (@Sendable (String) -> Void)?
 
     var writeCount: Int { lock.withLock { writes } }
 
@@ -1094,18 +1478,24 @@ private final class MemoryKeychain: KeychainStoring, @unchecked Sendable {
     }
 
     func write(_ value: String, service: String, account: String) throws {
-        try lock.withLock {
+        let cb: (@Sendable (String) -> Void)? = try lock.withLock {
             if let error = failNextWrite {
                 failNextWrite = nil
                 throw error
             }
             writes += 1
             storage["\(service):\(account)"] = value
+            return onWrite
         }
+        cb?(account)
     }
 
     func delete(service: String, account: String) {
-        lock.withLock { _ = storage.removeValue(forKey: "\(service):\(account)") }
+        let cb: (@Sendable (String) -> Void)? = lock.withLock {
+            _ = storage.removeValue(forKey: "\(service):\(account)")
+            return onDelete
+        }
+        cb?(account)
     }
 }
 
@@ -1182,4 +1572,81 @@ private final class StubURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private final class StreamingHealthTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _chunksSent = 0
+    private var _stopped = false
+
+    var chunksSent: Int { lock.withLock { _chunksSent } }
+    var stopped: Bool { lock.withLock { _stopped } }
+
+    func incrementChunks() { lock.withLock { _chunksSent += 1 } }
+    func markStopped() { lock.withLock { _stopped = true } }
+}
+
+private final class StreamingHealthURLProtocol: URLProtocol {
+    struct Config {
+        var statusCode: Int
+        var declaredLength: Int?
+        var chunkSize: Int
+        var totalChunks: Int
+        var chunkIntervalMs: Int
+        var tracker: StreamingHealthTracker
+    }
+
+    nonisolated(unsafe) static var config: Config?
+
+    private let stopLock = NSLock()
+    private var stopped = false
+    private var activeTracker: StreamingHealthTracker?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let cfg = Self.config, let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
+            return
+        }
+        stopLock.withLock { activeTracker = cfg.tracker }
+        var headers: [String: String] = ["Content-Type": "application/json"]
+        if let declaredLength = cfg.declaredLength {
+            headers["Content-Length"] = "\(declaredLength)"
+        }
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: cfg.statusCode,
+            httpVersion: "HTTP/1.1",
+            headerFields: headers
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+
+        let chunk = Data(repeating: UInt8(ascii: "x"), count: cfg.chunkSize)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            for _ in 0..<cfg.totalChunks {
+                Thread.sleep(forTimeInterval: Double(cfg.chunkIntervalMs) / 1000.0)
+                if self.isStopped { return }
+                cfg.tracker.incrementChunks()
+                self.client?.urlProtocol(self, didLoad: chunk)
+            }
+            if !self.isStopped {
+                self.client?.urlProtocolDidFinishLoading(self)
+            }
+        }
+    }
+
+    override func stopLoading() {
+        let tracker: StreamingHealthTracker? = stopLock.withLock {
+            stopped = true
+            return activeTracker
+        }
+        tracker?.markStopped()
+    }
+
+    private var isStopped: Bool {
+        stopLock.withLock { stopped }
+    }
 }

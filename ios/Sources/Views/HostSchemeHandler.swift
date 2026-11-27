@@ -7,6 +7,7 @@ enum HostWebBridge {
     static let authority = "host"
     static let transcriptPath = "/web/transcript.html"
     static let rpcHandlerName = "codeckRpc"
+    static let navQueryItemName = "nav"
     static let syntheticHello = #"{"event":"hello","payload":{"apiVersion":2}}"#
 
     static let forwardedHeaderNames = [
@@ -34,6 +35,28 @@ enum HostWebBridge {
         c.path = transcriptPath
         c.queryItems = [URLQueryItem(name: "sessionId", value: sessionId)]
         return c.url!
+    }
+
+    /// Appends (or replaces) a per-navigation `nav=<navID>` query item so reloading the same
+    /// logical URL produces a distinct document URL for `ready` and message matching.
+    static func withNavID(_ url: URL, navID: String = UUID().uuidString) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        var items = (components.queryItems ?? []).filter { $0.name != navQueryItemName }
+        items.append(URLQueryItem(name: navQueryItemName, value: navID))
+        components.queryItems = items
+        return components.url ?? url
+    }
+
+    /// Extracts the non-empty `nav` query parameter from a page URL, if present.
+    static func navID(of url: URL?) -> String? {
+        guard let url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let value = components.queryItems?.first(where: { $0.name == navQueryItemName })?.value,
+              !value.isEmpty
+        else { return nil }
+        return value
     }
 
     /// Validates a `codeck-web` request: authority `host`, GET method, decoded path under `/web/`
@@ -401,6 +424,7 @@ final class TranscriptEventBridge {
     private let push: (String) -> Void
 
     private var pageGeneration = 0
+    private var expectedNavID: String?
     private var committedURL: URL?
     private var ready = false
     private var unsubscribe: (() -> Void)?
@@ -418,15 +442,21 @@ final class TranscriptEventBridge {
     }
 
     /// Stops forwarding immediately when a new provisional navigation begins and clears the committed page.
-    func didStartNavigation() {
+    /// When `expectedNavID` is supplied, only commits and `ready` messages carrying that exact `nav` pass.
+    func didStartNavigation(expectedNavID: String? = nil) {
         stop()
         committedURL = nil
+        self.expectedNavID = expectedNavID
     }
 
-    /// Marks the current main-frame navigation as committed for `url` if the Host generation still matches.
+    /// Marks the current main-frame navigation as committed for `url` if the Host generation and expected `nav` match.
     func didCommit(url: URL?) {
         stop()
         guard currentHostGeneration() == boundHostGeneration else {
+            committedURL = nil
+            return
+        }
+        if let expectedNavID, HostWebBridge.navID(of: url) != expectedNavID {
             committedURL = nil
             return
         }
@@ -434,7 +464,7 @@ final class TranscriptEventBridge {
     }
 
     /// Called only on a real `{ type: "ready" }` message from the page (never on the 1.5s display fallback).
-    /// Accepted only after `didCommit`, when `frameURL` matches the committed page and Host generation matches.
+    /// Accepted only after `didCommit`, when `frameURL` matches the committed page (and `nav` id) and Host generation matches.
     @discardableResult
     func pageDidReady(frameURL: URL?) -> Bool {
         guard !ready,
@@ -442,6 +472,9 @@ final class TranscriptEventBridge {
               currentHostGeneration() == boundHostGeneration,
               HostWebBridge.matchesPageURL(frameURL, expected: committedURL)
         else { return false }
+        if let expectedNavID, HostWebBridge.navID(of: frameURL) != expectedNavID {
+            return false
+        }
         ready = true
         let pageGen = pageGeneration
         // Push a synthetic hello first so the page runs its initial resync after mounting subscriptions.

@@ -136,6 +136,9 @@ struct TranscriptWebView: UIViewRepresentable {
 
         private weak var webView: WKWebView?
         private var activeNavigation: WKNavigation?
+        private var startingLoad = false
+        private var pendingNavID: String?
+        private var pendingNavURL: URL?
         private var committedURL: URL?
         private var ready = false
         private var writtenInsets: [CGFloat]?
@@ -181,6 +184,8 @@ struct TranscriptWebView: UIViewRepresentable {
         func teardown() {
             readyFallback?.cancel()
             readyFallback = nil
+            pendingNavID = nil
+            pendingNavURL = nil
             committedURL = nil
             activeNavigation = nil
             schemeHandler.cancelAll()
@@ -199,8 +204,20 @@ struct TranscriptWebView: UIViewRepresentable {
             writtenInsets = nil
             writtenConnect = nil
             readyFallback?.cancel()
-            eventBridge.didStartNavigation()
-            activeNavigation = web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20))
+            // Stamp each load with a unique `nav` query param so a late `ready` from a previous
+            // document of the same logical URL cannot preempt the newly committed reload.
+            let navID = UUID().uuidString
+            let navURL = HostWebBridge.withNavID(url, navID: navID)
+            pendingNavID = navID
+            pendingNavURL = navURL
+            activeNavigation = nil
+            eventBridge.didStartNavigation(expectedNavID: navID)
+            startingLoad = true
+            let nav = web.load(URLRequest(url: navURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20))
+            startingLoad = false
+            if activeNavigation == nil {
+                activeNavigation = nav
+            }
         }
 
         /// Sets the page's two CSS variables when they changed; a new page starts without them (`force`).
@@ -281,8 +298,14 @@ struct TranscriptWebView: UIViewRepresentable {
             ready = false
             committedURL = nil
             readyFallback?.cancel()
-            activeNavigation = navigation
-            eventBridge.didStartNavigation()
+            if startingLoad {
+                activeNavigation = navigation
+            } else if activeNavigation !== navigation {
+                pendingNavID = nil
+                pendingNavURL = nil
+                activeNavigation = navigation
+            }
+            eventBridge.didStartNavigation(expectedNavID: pendingNavID)
         }
 
         func webView(_ web: WKWebView, didCommit navigation: WKNavigation!) {
@@ -291,7 +314,11 @@ struct TranscriptWebView: UIViewRepresentable {
                 return
             }
             guard activeNavigation == nil || activeNavigation === navigation else { return }
-            let url = web.url ?? loadedURL
+            let url = web.url ?? pendingNavURL ?? loadedURL
+            if let pendingNavID, HostWebBridge.navID(of: url) != pendingNavID {
+                committedURL = nil
+                return
+            }
             committedURL = url
             eventBridge.didCommit(url: url)
         }
