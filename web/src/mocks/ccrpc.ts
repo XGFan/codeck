@@ -216,8 +216,12 @@ export interface CcrpcProbe {
   lanRemoveFails?: string;
   /** Set by a test: lifetime in ms for the next `lanPairStart` offer (consumed once). */
   lanOfferTtlMs?: number;
+  /** Set by a test: next `lanPairStart` emits a redeem event for this device name before resolving (consumed once). */
+  lanPairEarlyRedeem?: string;
   /** Simulates a phone redeeming the active pairing offer: adds a device, clears the offer, emits `lan-devices-event`. */
   lanRedeem: (name?: string) => PairedDevice;
+  /** Simulates a paired device connecting over WSS: updates `lastSeenAt` and emits `lan-devices-event` with null pairing fields. */
+  lanTouchDevice: (id: string, at?: number) => PairedDevice;
   /** What `connectSnapshot` lists: the Host's connections, as `HostConn`s. */
   snapshot: Record<string, unknown>[];
   /** A client on the LAN starts a connection replaying the recording `name`; returns its id. */
@@ -261,6 +265,10 @@ const probe: CcrpcProbe = {
   lanRedeem: (name = "iPhone") => {
     const offer = probe.lanOffer;
     if (!offer) throw new Error("没有待配对的报价");
+    if (Date.now() >= offer.expiresAt) {
+      probe.lanOffer = null;
+      throw new Error("配对码已过期");
+    }
     const device: PairedDevice = {
       id: `dev${String(++lanDeviceSeq).padStart(9, "0")}`,
       name,
@@ -271,6 +279,14 @@ const probe: CcrpcProbe = {
     probe.lanDevices = [...probe.lanDevices, device];
     emitLanDevices(offer.id, device.id);
     return device;
+  },
+  lanTouchDevice: (id, at = Date.now()) => {
+    const idx = probe.lanDevices.findIndex((d) => d.id === id);
+    if (idx < 0) throw new Error(`没有设备 ${id}`);
+    const updated: PairedDevice = { ...probe.lanDevices[idx]!, lastSeenAt: at };
+    probe.lanDevices = probe.lanDevices.map((d, i) => (i === idx ? updated : d));
+    emitLanDevices(null, null);
+    return updated;
   },
   snapshot: [],
   remoteConn: (name) => {
@@ -824,6 +840,13 @@ export function createMockCcrpc(): CcrpcApi {
         expiresAt: Date.now() + ttl,
       };
       probe.lanOffer = offer;
+      const earlyName = probe.lanPairEarlyRedeem;
+      probe.lanPairEarlyRedeem = undefined;
+      if (earlyName !== undefined) {
+        // Simulate Host emitting `lan-devices-event` before the `lanPairStart` invoke reply arrives.
+        probe.lanRedeem(earlyName);
+        await new Promise((r) => setTimeout(r, 20));
+      }
       return offer;
     },
     lanPairCancel: async (id) => {

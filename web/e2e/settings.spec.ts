@@ -89,7 +89,7 @@ test("局域网配对：扫码弹层显示二维码与倒计时，兑换后提�
   await modal.getByTestId("lan-pair-copy").click();
   await expect(modal.getByTestId("lan-pair-copy")).toHaveText("已复制");
 
-  await page.evaluate(() => window.__cvCcrpc!.lanRedeem("客厅的 iPhone"));
+  const paired = await page.evaluate(() => window.__cvCcrpc!.lanRedeem("客厅的 iPhone"));
   await expect(modal.getByTestId("lan-pair-success")).toHaveText("已配对 客厅的 iPhone");
   await expect(modal).toHaveCount(0, { timeout: 5000 });
 
@@ -100,6 +100,30 @@ test("局域网配对：扫码弹层显示二维码与倒计时，兑换后提�
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("客厅的 iPhone");
   await expect(rows.first()).toContainText(/配对于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+  await expect(rows.first()).toContainText("从未连接");
+
+  // Once the device connects over WSS, the list refreshes and updates lastSeenAt.
+  await page.evaluate((id) => window.__cvCcrpc!.lanTouchDevice(id), paired.id);
+  await expect(rows.first()).not.toContainText("从未连接");
+  await expect(rows.first()).toContainText(/最近连接 \S+/);
+});
+
+test("局域网配对：兑换事件早于 lanPairStart 回包到达仍显示已配对", async ({ page }) => {
+  await openGeneral(page);
+  await page.getByTestId("lan-access-true").click();
+  await expect(page.getByTestId("lan-pair-button")).toBeVisible();
+
+  await page.evaluate(() => void (window.__cvCcrpc!.lanPairEarlyRedeem = "早到的 iPhone"));
+  await page.getByTestId("lan-pair-button").click();
+
+  const modal = page.getByTestId("lan-pair-dialog");
+  await expect(modal.getByTestId("lan-pair-success")).toHaveText("已配对 早到的 iPhone");
+  await expect(modal).toHaveCount(0, { timeout: 5000 });
+  expect(await page.evaluate(() => window.__cvCcrpc!.lanCancelled)).toEqual([]);
+
+  const rows = page.getByTestId("lan-device-row");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("早到的 iPhone");
   await expect(rows.first()).toContainText("从未连接");
 });
 
@@ -119,7 +143,7 @@ test("局域网配对：关闭弹层取消当前报价；过期后显示已过�
   await expect.poll(() => page.evaluate(() => window.__cvCcrpc!.lanCancelled)).toEqual([firstId]);
   expect(await page.evaluate(() => window.__cvCcrpc!.lanOffer)).toBeNull();
 
-  // Next offer expires quickly: shows expired state and lets the user regenerate a fresh one.
+  // Next offer expires quickly: shows expired state, refuses redemption, and lets the user regenerate a fresh one.
   await page.evaluate(() => void (window.__cvCcrpc!.lanOfferTtlMs = 350));
   await page.getByTestId("lan-pair-button").click();
   await expect(modal.getByTestId("lan-pair-qr")).toBeVisible();
@@ -128,6 +152,11 @@ test("局域网配对：关闭弹层取消当前报价；过期后显示已过�
 
   await expect(modal.getByTestId("lan-pair-expired")).toHaveText("配对码已过期");
   await expect(modal.getByTestId("lan-pair-qr")).toHaveClass(/opacity-30/);
+
+  await expect(page.evaluate(() => window.__cvCcrpc!.lanRedeem("过期设备"))).rejects.toThrow("配对码已过期");
+  await expect(modal.getByTestId("lan-pair-success")).toHaveCount(0);
+  await expect(modal.getByTestId("lan-pair-expired")).toHaveText("配对码已过期");
+  expect(await page.evaluate(() => window.__cvCcrpc!.lanDevices)).toEqual([]);
 
   await modal.getByTestId("lan-pair-regenerate").click();
   await expect(modal.getByTestId("lan-pair-expired")).toHaveCount(0);

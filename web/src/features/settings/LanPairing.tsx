@@ -20,6 +20,31 @@ function formatCountdown(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+interface PairSession {
+  alive: boolean;
+  paired: boolean;
+  offerId: string | null;
+  reqSeq: number;
+  /** Paired events received while `lanPairStart` was in flight, keyed by offer id. */
+  pendingPaired: Map<string, string>;
+  closeTimer: ReturnType<typeof setTimeout> | null;
+  copyTimer: ReturnType<typeof setTimeout> | null;
+  unlisten: (() => void) | null;
+}
+
+function createPairSession(): PairSession {
+  return {
+    alive: true,
+    paired: false,
+    offerId: null,
+    reqSeq: 0,
+    pendingPaired: new Map(),
+    closeTimer: null,
+    copyTimer: null,
+    unlisten: null,
+  };
+}
+
 /** Modal that starts a one-time LAN pairing offer, tracks its countdown, and closes once redeemed. */
 export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [offer, setOffer] = useState<PairingOffer | null>(null);
@@ -29,85 +54,108 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
-  // Tracks the active unredeemed offer so any close cancels it, and paired events match only our offer.
-  const activeOfferIdRef = useRef<string | null>(null);
-  const aliveRef = useRef(false);
-  const reqSeqRef = useRef(0);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Each open owns its own lifecycle object so a fast close-and-reopen never lets a stale
+  // subscription or in-flight `lanPairStart` leak into the next open.
+  const sessionRef = useRef<PairSession | null>(null);
   const onOpenChangeRef = useRef(onOpenChange);
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   }, [onOpenChange]);
 
-  const requestOffer = useCallback(async () => {
-    const seq = ++reqSeqRef.current;
-    setLoading(true);
-    setError(null);
-    setCopied(false);
-    try {
-      const next = await api.lanPairStart();
-      if (!aliveRef.current || reqSeqRef.current !== seq) {
-        // Closed or superseded while the RPC was in flight: drop the stale offer.
-        void api.lanPairCancel(next.id);
-        return;
-      }
-      activeOfferIdRef.current = next.id;
-      setOffer(next);
-      setNow(Date.now());
-    } catch (e) {
-      if (!aliveRef.current || reqSeqRef.current !== seq) return;
-      setError(errorText(e));
-    } finally {
-      if (aliveRef.current && reqSeqRef.current === seq) setLoading(false);
-    }
+  const markPaired = useCallback((session: PairSession, name: string) => {
+    if (!session.alive || session.paired) return;
+    session.paired = true;
+    session.offerId = null;
+    session.pendingPaired.clear();
+    setPairedName(name);
+    if (session.closeTimer) clearTimeout(session.closeTimer);
+    session.closeTimer = setTimeout(() => {
+      if (session.alive) onOpenChangeRef.current(false);
+    }, PAIR_SUCCESS_CLOSE_MS);
   }, []);
+
+  const requestOffer = useCallback(
+    async (session: PairSession) => {
+      if (!session.alive || session.paired) return;
+      const seq = ++session.reqSeq;
+      session.offerId = null;
+      session.pendingPaired.clear();
+      setLoading(true);
+      setError(null);
+      setCopied(false);
+      try {
+        const next = await api.lanPairStart();
+        if (!session.alive || session.reqSeq !== seq) {
+          // Closed or superseded while the RPC was in flight: drop the stale offer unless already redeemed.
+          if (!session.pendingPaired.has(next.id)) void api.lanPairCancel(next.id);
+          return;
+        }
+        const earlyName = session.pendingPaired.get(next.id);
+        session.pendingPaired.clear();
+        if (earlyName !== undefined) {
+          markPaired(session, earlyName);
+          return;
+        }
+        session.offerId = next.id;
+        setOffer(next);
+        setNow(Date.now());
+      } catch (e) {
+        if (!session.alive || session.reqSeq !== seq) return;
+        setError(errorText(e));
+      } finally {
+        if (session.alive && session.reqSeq === seq) setLoading(false);
+      }
+    },
+    [markPaired],
+  );
 
   useEffect(() => {
     if (!open) return;
-    aliveRef.current = true;
-    activeOfferIdRef.current = null;
+    const session = createPairSession();
+    sessionRef.current = session;
     setOffer(null);
+    setLoading(true);
     setError(null);
     setPairedName(null);
     setCopied(false);
 
-    let unlisten: (() => void) | null = null;
-    let closeTimer: ReturnType<typeof setTimeout> | null = null;
-
     // Subscribe to `lan-devices-event` before calling `lanPairStart` so a fast redeem is never missed.
     void (async () => {
-      const off = await api.onLanDevices((e) => {
-        if (!aliveRef.current) return;
-        if (e.pairedOffer && e.pairedOffer === activeOfferIdRef.current) {
+      try {
+        const off = await api.onLanDevices((e) => {
+          if (!session.alive || session.paired || !e.pairedOffer) return;
           const name = e.devices.find((d) => d.id === e.pairedDevice)?.name ?? "设备";
-          activeOfferIdRef.current = null;
-          setPairedName(name);
-          closeTimer = setTimeout(() => {
-            if (aliveRef.current) onOpenChangeRef.current(false);
-          }, PAIR_SUCCESS_CLOSE_MS);
+          if (session.offerId != null) {
+            if (e.pairedOffer === session.offerId) markPaired(session, name);
+          } else {
+            // `lanPairStart` has not resolved yet: buffer until we learn the offer id.
+            session.pendingPaired.set(e.pairedOffer, name);
+          }
+        });
+        if (!session.alive) {
+          off();
+          return;
         }
-      });
-      if (!aliveRef.current) {
-        off();
-        return;
+        session.unlisten = off;
+        await requestOffer(session);
+      } catch (e) {
+        if (!session.alive) return;
+        setError(errorText(e));
+        setLoading(false);
       }
-      unlisten = off;
-      await requestOffer();
     })();
 
     return () => {
-      aliveRef.current = false;
-      if (closeTimer) clearTimeout(closeTimer);
-      if (copyTimerRef.current) {
-        clearTimeout(copyTimerRef.current);
-        copyTimerRef.current = null;
-      }
-      unlisten?.();
-      const id = activeOfferIdRef.current;
-      activeOfferIdRef.current = null;
+      session.alive = false;
+      if (sessionRef.current === session) sessionRef.current = null;
+      if (session.closeTimer) clearTimeout(session.closeTimer);
+      if (session.copyTimer) clearTimeout(session.copyTimer);
+      session.unlisten?.();
+      const id = session.offerId;
+      session.offerId = null;
       if (id) void api.lanPairCancel(id);
     };
-  }, [open, requestOffer]);
+  }, [open, markPaired, requestOffer]);
 
   const remainingMs = offer ? Math.max(0, offer.expiresAt - now) : 0;
   const expired = offer != null && pairedName == null && remainingMs <= 0;
@@ -119,11 +167,15 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
   }, [open, offer, expired, pairedName]);
 
   const copyLink = async () => {
-    if (!offer) return;
+    const session = sessionRef.current;
+    if (!offer || !session || !session.alive) return;
     await api.copyText(offer.url);
+    if (!session.alive) return;
     setCopied(true);
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    if (session.copyTimer) clearTimeout(session.copyTimer);
+    session.copyTimer = setTimeout(() => {
+      if (session.alive) setCopied(false);
+    }, 1500);
   };
 
   return (
@@ -178,7 +230,9 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
                       className="h-8"
                       disabled={loading}
                       data-testid="lan-pair-regenerate"
-                      onClick={() => void requestOffer()}
+                      onClick={() => {
+                        if (sessionRef.current) void requestOffer(sessionRef.current);
+                      }}
                     >
                       重新生成
                     </Button>
@@ -205,7 +259,9 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
                     className="h-8"
                     disabled={loading}
                     data-testid="lan-pair-regenerate"
-                    onClick={() => void requestOffer()}
+                    onClick={() => {
+                      if (sessionRef.current) void requestOffer(sessionRef.current);
+                    }}
                   >
                     重新生成
                   </Button>
@@ -247,10 +303,11 @@ export function PairedDevicesList() {
     let alive = true;
     let unlisten: (() => void) | null = null;
     void api
-      .onLanDevices((e) => {
+      .onLanDevices(() => {
         if (!alive) return;
-        void qc.cancelQueries({ queryKey: queryKeys.lanDevices });
-        qc.setQueryData(queryKeys.lanDevices, e.devices);
+        // Treat the event as an invalidation signal instead of writing its snapshot directly,
+        // so an out-of-order event from a concurrent mutation cannot overwrite newer state.
+        void qc.invalidateQueries({ queryKey: queryKeys.lanDevices }, { cancelRefetch: true });
       })
       .then((off) => {
         if (alive) unlisten = off;
@@ -267,6 +324,7 @@ export function PairedDevicesList() {
     onSuccess: () => {
       setConfirmId(null);
       setRemoveError(null);
+      void qc.invalidateQueries({ queryKey: queryKeys.lanDevices }, { cancelRefetch: true });
     },
     onError: (e) => setRemoveError(errorText(e)),
   });
