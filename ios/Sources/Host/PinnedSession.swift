@@ -15,30 +15,15 @@ enum CertificatePinning {
 }
 
 /// Task-level URLSession delegate that pins the leaf certificate SHA-256 fingerprint,
-/// rejects HTTP redirects, tracks certificate mismatches per task identifier, and supports
-/// streaming byte-bounded reads for unauthenticated `/health` probes.
+/// rejects HTTP redirects, and tracks certificate mismatches per task identifier.
 ///
 /// Intentionally does NOT implement the session-level `urlSession(_:didReceive:completionHandler:)`
 /// so server-trust challenges for both data tasks and WebSocket tasks arrive here with their `task`.
-final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class PinnedSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let expectedFingerprint: String?
-
-    private final class BoundedTaskState {
-        let maxBytes: Int
-        let continuation: CheckedContinuation<(Data, URLResponse), Error>
-        var response: URLResponse?
-        var data = Data()
-        var exceededLimit = false
-
-        init(maxBytes: Int, continuation: CheckedContinuation<(Data, URLResponse), Error>) {
-            self.maxBytes = maxBytes
-            self.continuation = continuation
-        }
-    }
 
     private let lock = NSLock()
     private var mismatchedTasks: Set<Int> = []
-    private var boundedTasks: [Int: BoundedTaskState] = [:]
 
     init(expectedFingerprint: String?) {
         self.expectedFingerprint = expectedFingerprint
@@ -50,16 +35,6 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
 
     func consumeMismatch(taskIdentifier: Int) -> Bool {
         lock.withLock { mismatchedTasks.remove(taskIdentifier) != nil }
-    }
-
-    fileprivate func registerBoundedTask(
-        taskIdentifier: Int,
-        maxBytes: Int,
-        continuation: CheckedContinuation<(Data, URLResponse), Error>
-    ) {
-        lock.withLock {
-            boundedTasks[taskIdentifier] = BoundedTaskState(maxBytes: maxBytes, continuation: continuation)
-        }
     }
 
     func urlSession(
@@ -100,67 +75,6 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
         // Never follow redirects from the Host (prevents credential leakage or scheme downgrade).
         completionHandler(nil)
     }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
-    ) {
-        let disposition: URLSession.ResponseDisposition = lock.withLock {
-            guard let state = boundedTasks[dataTask.taskIdentifier] else {
-                return .allow
-            }
-            state.response = response
-            if response.expectedContentLength > Int64(state.maxBytes) {
-                state.exceededLimit = true
-                state.data.removeAll(keepingCapacity: false)
-                return .cancel
-            }
-            return .allow
-        }
-        completionHandler(disposition)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        let shouldCancel: Bool = lock.withLock {
-            guard let state = boundedTasks[dataTask.taskIdentifier], !state.exceededLimit else {
-                return false
-            }
-            if state.data.count + data.count > state.maxBytes {
-                state.exceededLimit = true
-                state.data.removeAll(keepingCapacity: false)
-                return true
-            }
-            state.data.append(data)
-            return false
-        }
-        if shouldCancel {
-            dataTask.cancel()
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        let (state, mismatched): (BoundedTaskState?, Bool) = lock.withLock {
-            let state = boundedTasks.removeValue(forKey: task.taskIdentifier)
-            // Only consume mismatch flags for bounded tasks handled here; completion-handler and WebSocket
-            // tasks consume their own mismatch flags in their callers.
-            let mismatched = state != nil ? (mismatchedTasks.remove(task.taskIdentifier) != nil) : false
-            return (state, mismatched)
-        }
-        guard let state else { return }
-        if mismatched {
-            state.continuation.resume(throwing: HostError.certificateChanged)
-        } else if state.exceededLimit {
-            state.continuation.resume(throwing: HostError.badResponse)
-        } else if let error {
-            state.continuation.resume(throwing: error)
-        } else if let response = state.response {
-            state.continuation.resume(returning: (state.data, response))
-        } else {
-            state.continuation.resume(throwing: HostError.badResponse)
-        }
-    }
 }
 
 /// Owns a `URLSession` configured with `PinnedSessionDelegate` and `urlCache = nil`,
@@ -169,16 +83,13 @@ final class PinnedSession: Sendable {
     let delegate: PinnedSessionDelegate
     let session: URLSession
 
-    init(expectedFingerprint: String?, protocolClasses: [AnyClass]? = nil) {
+    init(expectedFingerprint: String?) {
         let delegate = PinnedSessionDelegate(expectedFingerprint: expectedFingerprint)
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
-        if let protocolClasses {
-            config.protocolClasses = protocolClasses
-        }
         self.delegate = delegate
         self.session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
     }
@@ -220,25 +131,6 @@ final class PinnedSession: Sendable {
         }
     }
 
-    /// Streams a data task through `URLSessionDataDelegate` and cancels immediately if the response
-    /// declares or delivers more than `maxBytes`, without buffering an unbounded body.
-    func data(for request: URLRequest, maxBytes: Int) async throws -> (Data, URLResponse) {
-        let holder = DataTaskHolder()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                let task = session.dataTask(with: request)
-                delegate.registerBoundedTask(
-                    taskIdentifier: task.taskIdentifier,
-                    maxBytes: maxBytes,
-                    continuation: continuation
-                )
-                holder.set(task)
-                task.resume()
-            }
-        } onCancel: {
-            holder.cancel()
-        }
-    }
 }
 
 private final class DataTaskHolder: @unchecked Sendable {
