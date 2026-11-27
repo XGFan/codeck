@@ -114,9 +114,11 @@ curl -sSf https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_an
 
 iPhone App 连到一台 **Host**（打开了「局域网访问」的 CoDeck，或运行 `codeck-host` daemon 的 Mac 或 Linux 机器），浏览它的 Session、阅读 Transcript，并 Connect 它的 ToH clay 里运行的 Session：看进度、作答审批与提问、继续对话（可附照片）、切换权限模式 / 模型 / 思考等级、停止后台任务、Disconnect 或关闭 Session；也能在 Host 上新建 Session、Resume 已结束的 Session、Fork（整个 Session，或从某条提示词之前），已连接时回退到某条提示词之前。列表、输入区与卡片是原生界面，Transcript 是 Host 提供的网页。同一个 Session 在一个 Host 上只有一个 Connect，连到该 Host 的各客户端共用（[ADR-0011](docs/adr/0011-host-crate-daemon-and-native-ios.md)）。
 
-**没有鉴权**：daemon 默认只监听本机局域网网卡（名字以 `en`、`eth`、`wl` 开头）的私网 IPv4 地址，不含 VPN、虚拟机与容器网桥，其他网卡要用 `--listen` 指定；默认的监听地址随网络变化增减，daemon 不用重启。它只接受同一子网的来源，只认以 IP 访问的请求，拒绝来自网页的跨源请求；同一局域网里能访问它的设备都能读 Session、在 Host 上新建 Session 和 Connect。只在可信网络里运行，连着酒店、咖啡馆等公共 Wi-Fi 时不要开着它。
+**TLS 与配对**：Host 默认只监听本机局域网网卡（名字以 `en`、`eth`、`wl` 开头）的私网 IPv4 地址，不含 VPN、虚拟机与容器网桥，其他网卡要用 `--listen` 指定；默认的监听地址随网络变化增减，daemon 不用重启。局域网上只讲 HTTPS：Host 第一次需要时生成一张自签证书（存在 settings.json 旁的 `tls/`），iPhone 只认配对时记下的那张。除了 `/health` 与配对接口，每个请求都要带这台设备配对时得到的 token；在 Host 上移除一台设备，它的连接立即断开（[ADR-0017](docs/adr/0017-lan-access-tls-and-qr-pairing.md)）。另外只接受同一子网的来源、只认以 IP 访问的请求、拒绝来自网页的跨源请求。显式 `--listen 127.0.0.1` 的回环监听照旧明文、不鉴权，只给本机开发与测试用。
 
-在 Mac 上用桌面版当 Host：打开「设置 › 通用 › 局域网访问」，把设置里显示的地址填进 iPhone。桌面窗口和 iPhone 共用同一个 Connect，都能操作；打开期间关窗只隐藏，⌘Q 才退出（[ADR-0012](docs/adr/0012-desktop-app-is-the-lan-host.md)）。上面的安全说明同样适用，应用也不阻止系统休眠，Mac 睡着后 iPhone 连不上。同一台 Mac 上不要同时开着它和 daemon：两者用同一个端口，而且是两个 Host，一个 Session 同时只能被其中一个 Connect。
+**配对**：在 Host 上生成二维码——桌面版在「设置 › 通用 › 局域网访问」里点「配对新设备」，daemon 运行 `codeck-host pair`（在终端里打印二维码）——用 iPhone 上的 CoDeck 扫码，或用系统相机扫码后在 CoDeck 里确认。二维码 5 分钟内只能用一次。iPhone 只存一台 Host，扫新码即替换；Host 换了地址就再扫一次，不会多出一台设备。已配对的设备在桌面的同一处列出、可移除；daemon 用 `codeck-host devices` 与 `codeck-host unpair <id>`。
+
+在 Mac 上用桌面版当 Host：打开「设置 › 通用 › 局域网访问」，点「配对新设备」后用 iPhone 扫码。桌面窗口和 iPhone 共用同一个 Connect，都能操作；打开期间关窗只隐藏，⌘Q 才退出（[ADR-0012](docs/adr/0012-desktop-app-is-the-lan-host.md)）。应用不阻止系统休眠，Mac 睡着后 iPhone 连不上。同一台 Mac 上不要同时开着它和 daemon：两者用同一个端口，而且是两个 Host，一个 Session 同时只能被其中一个 Connect。
 
 Linux 或不想开桌面版时，启动 daemon（与桌面版的索引、设置、日志分开，状态目录默认 macOS `~/Library/Application Support/dev.joy.codeck.host`、Linux `$XDG_STATE_HOME/codeck`）：
 
@@ -128,7 +130,7 @@ target/release/codeck-host --web-dir web/dist-web    # 默认端口 38471；--li
 
 目前的限制：没有推送通知；回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；daemon 没有连接数与请求频率的限制。
 
-daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动输入 Host 的局域网 IPv4，iOS 会询问是否允许访问本地网络。
+daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动扫 Host 上的配对二维码，iOS 会询问是否允许使用相机与访问本地网络。
 
 不开 Xcode、用 Ad Hoc 证书装机时运行装机脚本：无签名 Release 构建，按证书组重签，经 devicectl 的网络通道安装（手机与 Mac 已配对即可，不用数据线）：
 

@@ -32,6 +32,10 @@ _Avoid_: 断开, detach
 持有数据目录、索引与 Connect 的那台机器（Mac 或 Linux），客户端（Mac 桌面、iPhone、浏览器）连上它来浏览 Session 和 Connect。一个 Session 在一个 Host 上至多有一个 Connect，该 Host 的所有客户端共用它：都能看、都能操作，Disconnect 对所有客户端生效。在 Mac 上打开「局域网访问」后，CoDeck 应用本身就是 Host，它的窗口是这个 Host 的一个客户端。
 _Avoid_: 服务端, server, daemon（指概念而非进程时）, Mac（指 Host 时）
 
+**配对**:
+iPhone 扫 Host 上的二维码，换回这台设备自己的凭据（token），并记下 Host 的证书指纹；之后只有配对过的设备能连这台 Host。在 Host 上移除一台设备即撤销它的凭据，它的连接随即断开。
+_Avoid_: 绑定, 登录, 授权（指这一步时）
+
 **Resume**:
 让一个已结束的 Session 重新运行（`claude --resume`）并 Connect 它；Session ID 不变，仍是同一个 Session。
 _Avoid_: 恢复, 继续, 重启

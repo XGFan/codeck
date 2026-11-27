@@ -17,6 +17,6 @@ iPhone 端尽量做原生（之前做过「网页 + 壳」，体验很差）：�
 - 在 Host 的 Connect 状态取代桌面 TS store 之前，Rust 与 TS 各有一份状态逻辑。ADR-0010 的撤回记录存在前端 localStorage 里，也要挪到 Host，否则 iPhone 认不出撤回的提示词。
 - 方法表用一个宏定义，同时生成 Rust 的分发代码和由 specta 导出的 TS 方法类型；Swift 只手写它用到的那部分类型。每个方法标为 local（只给桌面，如改设置、在 Finder 里显示）或 remote，daemon 只暴露 remote 方法。daemon 的设置来自它自己的 settings.json 与命令行参数，客户端不能修改。
 - `/health` 返回整数 `apiVersion`，只在接口有不兼容改动时加一；版本不一致时 iOS 直接说明，不等到解码失败。Transcript 的网页由 Host 提供，和 Host 的数据始终是同一版本，改渲染不用重装 App。
-- MVP 只在局域网使用，不鉴权：daemon 默认只监听私网 IPv4、校验来源子网，回环地址只在用 `--listen` 显式指定时监听（开发与 E2E 用）；拒绝 `Origin: null` 和不认识的浏览器 Origin。新建、Resume 和 Fork 也对局域网开放，所以只能在可信网络里用。
+- MVP 只在局域网使用，不鉴权：daemon 默认只监听私网 IPv4、校验来源子网，回环地址只在用 `--listen` 显式指定时监听（开发与 E2E 用）；拒绝 `Origin: null` 和不认识的浏览器 Origin。新建、Resume 和 Fork 也对局域网开放，所以只能在可信网络里用。（ADR-0017 起局域网上改为 TLS 加扫码配对。）
 - 在 Mac 上调试时，daemon 与桌面是两个 Host，索引、日志、图片各用自己的目录，不共用 `dev.joy.codeck` 的缓存。
 - daemon 仍然遵守 ADR-0002，对数据根只读；Linux 上的状态目录按 XDG 规范放置。

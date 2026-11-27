@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc Connect ToH clay 里运行中的 Session（ADR-0007）；原生 iPhone App 经局域网浏览与 Connect 一台 Host：打开了「局域网访问」的桌面应用（ADR-0012），或 headless daemon（ADR-0011）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
+CoDeck：macOS 桌面应用（Tauri 2 + React 19），搜索和阅读 `~/.claude` 下 Claude Code 的历史 Session，并经 ccrpc Connect ToH clay 里运行中的 Session（ADR-0007）；原生 iPhone App 经局域网浏览与 Connect 一台 Host：打开了「局域网访问」的桌面应用（ADR-0012），或 headless daemon（ADR-0011）；局域网上走 TLS、扫码配对（ADR-0017）。显示名写 CoDeck，代码、包名、路径与环境变量里写小写 `codeck` / `CODECK_`。
 
 ## 仓库布局（monorepo）
 
