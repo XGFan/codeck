@@ -1,6 +1,6 @@
 # CoDeck
 
-macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
+macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session；也能只读地阅读 agy（Antigravity CLI）的对话（不进全文搜索与统计，不能 Connect）。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
 
 - **侧栏按 Project 分组**：顶部固定的 Live 列出正在运行的 Session；中间只列你添加的 Project，顺序由你拖动排定，组里的 Session 按你最后一次输入排序，AI 回复不会让它们跳动；像 `~/Project/<公司>` 这样装着多个仓库的目录可以「收拢子 Project」，子仓库成为它下面的子组；底部固定的 Recent 按时间列出其余所有 Session，没添加的 Project 的也在这里。
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
@@ -34,7 +34,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 
 ## 只读保证
 
-应用从不写入、移动或删除数据目录（默认 `~/.claude`）下的任何文件（[ADR-0002](docs/adr/0002-read-only.md)）。Connect 后对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
+应用从不写入、移动或删除数据目录（默认 `~/.claude`）、agy 的数据目录（`~/.gemini/antigravity-cli`）与 `~/.haa` 下的任何文件，不打开 agy 的 SQLite（[ADR-0002](docs/adr/0002-read-only.md)）。Connect 后对 Claude Code 的写入只经 ccrpc（向 Pane 的 PTY 写入、回复 ccrpc 插件的审批请求），应用仍不写数据目录下的任何文件。应用自己的状态只放在：
 
 | 内容 | 位置 |
 |---|---|
@@ -55,6 +55,8 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 按以下顺序确定：设置中的覆盖 → 环境变量 `CLAUDE_CONFIG_DIR` → `~/.claude`。
 
 从 Finder / Dock 启动的应用读不到 shell 里的环境变量，如果使用了 `CLAUDE_CONFIG_DIR`，请在「设置 → 数据」（⌘,）中填写路径。
+
+agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有 agy 的 Session；开发时可用环境变量 `CODECK_AGY_ROOT` 换掉，haa 的目录（haa Worker 的归属）用 `CODECK_HAA_HOME`。
 
 ## 环境要求
 
@@ -162,10 +164,10 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 
 | 命令 | 作用 |
 |---|---|
-| `codeck sessions [--project P] [--live] [--limit N]` | 列出 Session，带 Live 状态 |
+| `codeck sessions [--project P] [--live] [--limit N]` | 列出 Session，带 Live 状态与 Agent |
 | `codeck search "词" [--project P] [--limit N]` | 全文搜索，语法同 ⌘K，命中带 sessionId 与轮次 |
 | `codeck show <id> [--turn N] [--full] [--agent ID]` | 紧凑文本形式的对话，默认 Main Line |
-| `codeck wait <id> [--timeout 秒]` | 等到 Session 变成 idle、waiting 或结束；超时退出码 124 |
+| `codeck wait <id> [--timeout 秒]` | 等到 Session 变成 idle、waiting 或结束；超时退出码 124；agy 的 Session 不支持 |
 | `codeck new --cwd DIR` | 新建 Session，提示词从 stdin 读，发出后放手；输出里的 `url` 在 CoDeck 里打开它 |
 
 索引只读打开，版本或数据目录不一致时报错，不会改动它；桌面没开时索引不更新，结果里的 `indexedAt` 说明数据有多新。`--project P` 收 Project 的路径。全局选项 `--cache-dir DIR` 指定索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`，在 daemon 的 Host 上指向 `<状态目录>/cache`。

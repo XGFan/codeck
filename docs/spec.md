@@ -4,7 +4,7 @@
 
 ## 定位
 
-macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session，并能 Connect ToH clay 里运行中的 Session。查看的核心场景有两个：**找回某次对话**（搜索、定位）和**复盘某个 Session**（读得舒服）；统计是附加功能。除经 ccrpc Connect（见「Connect」一节，ADR-0007）外不对 Session 做任何写操作；数据目录始终只读（ADR-0002）。
+macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session，并能 Connect ToH clay 里运行中的 Session。查看的核心场景有两个：**找回某次对话**（搜索、定位）和**复盘某个 Session**（读得舒服）；统计是附加功能。除经 ccrpc Connect（见「Connect」一节，ADR-0007）外不对 Session 做任何写操作；数据目录始终只读（ADR-0002）。另外只读地接入 agy（Antigravity CLI）的对话（ADR-0018，见「数据模型」的「agy 的 Session」）。
 
 ## 平台与分发
 
@@ -38,6 +38,8 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - **价格表**：内置一份 LiteLLM 中 `claude-*` 模型的快照；启动时以及之后每 10 分钟检查一次，缓存超过一天就在后台重新下载 LiteLLM 价格表（ADR-0005），存到 Caches 下的 `pricing.json`，价格有变化时重新计算全部 Cost。下载失败沿用缓存或内置快照，不提示。
 - 数据根目录：默认 `~/.claude`，识别 `CLAUDE_CONFIG_DIR`，也可以在设置里修改；只支持一个数据根目录。不读取 `~/.claude/transcripts/`。
 
+- **agy 的 Session**（ADR-0018）：数据目录固定为 `~/.gemini/antigravity-cli`（`CODECK_AGY_ROOT` 可换，开发用），只读。每个对话是 `brain/<id>/.system_generated/logs/transcript_full.jsonl`，一行一个 step，同一 step 下标出现多次时以最后一行为准；Session ID 是目录名，Agent 是 `agy`。只有 `crates/transcript/src/agy.rs` 知道这个格式：它把 step 译成和 Claude Code 一样的条目，排成一条 Main Line（没有 Branch、Fork、compact）。用户 step 只取 `<USER_REQUEST>` 之间的文字（后面 agy 加的时间与设置变化不算）；工具结果按顺序对上前一条回复的调用，转入后台的命令的说明也是结果；`run_command`、`read_file`、`edit_file`、`write_file`、`update_steps`、`search_web` 显示成 Bash / Read / Edit / Write / TodoWrite / WebSearch，工具详情里另写 agy 原来的工具名与参数，其他工具按原名用通用方式显示；系统消息照系统条目折叠，出错的 step 显示为错误。标题取 `cache/conversation_metadata.json` 的 `Title`，没有时用首条提示词；启动 Project 取它的第一个 workspace，没有时归入 agy 数据目录本身。有 agy 进程打开着 `presence/<id>.lock` 时是 Live，状态未知。不进全文检索与统计，不计 Cost（写「未记录」），token 照常显示。haa 起的（任一 workspace 在 `~/.haa` 或 `~/.paaa` 下，或调用过 `mcp_haa_*` / `mcp_paaa_*`）标为 haa Worker；`~/.haa/usage.jsonl` 的 Task 记录（按 `sessionId`）或 `workers.json` 里有它时，附上所属的 Main Session、Worker 名与 Task 标题。「复制 Resume 命令」是 `agy --conversation <id>`；没有 Connect、Resume、Fork 入口。
+
 ## 索引
 
 - 可以丢弃的镜像缓存，存放在 `~/Library/Caches/<bundle-id>/`；源文件删除后对应 Session 随之消失；schema 变化时直接重建（ADR-0003）。
@@ -56,6 +58,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 - ↑↓ 在各段之间连续移动，⇥ / ⇧⇥ 跳到下一段 / 上一段的第一项；打开的 Session 不在当前 Project 筛选里时清除筛选。关闭后保留输入和范围，再打开时全选输入框。
 - 默认范围：用户输入、Claude 回复（含存成 thinking 块的 narration）、工具输入，用 SQLite FTS5 trigram 索引；AskUserQuestion 的回答和备注按"你"的角色索引，打开命中定位到对应的问答；少于 3 个字符的词（如两个汉字）改用子串匹配，这种情况下只对 ASCII 字母忽略大小写。
 - 工具输出不建索引，也不搜索（ADR-0004）。
+- agy 的 Session 不进全文索引：对话内容搜不到它们，按标题、Project 仍能在 Session 段找到；⌘F 照常。
 - 输入法组字期间不过滤也不发起搜索，确认上屏后才搜索（⌘F 同理）；组字时按 Esc 只取消候选词，不关闭搜索或查找。
 - 不建索引：attachment、hook 输出、系统注入、图片、元数据。
 - 对话内容按 Session 分组，按时间倒序；全文索引未建完时提示进度，Session 与 Project 的匹配不受影响；命中位置在 Subagent 里时标注其 agentType，在已回退的 Branch 里时标注"已回退的分支"；打开命中会自动切换分支、打开 Subagent 面板并定位高亮。
@@ -116,7 +119,7 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 ## 统计面板
 
-三部分：额度（顶部一条）、用量（左栏）、使用频率（右栏；周期与最近 7 天时下面再加用量走势）。看某一天时右栏换成当天的 Session 与用量走势，见「单日」。窄窗口下单栏。不统计工具调用，不按 Project 过滤或排行，没有 Session 数、消息数、活跃天数与 Session 排行。弹窗最大 1180 × 720，高度固定，图表保持固定高度；头部（标题、时间范围）固定，只有下方内容滚动。
+三部分：额度（顶部一条）、用量（左栏）、使用频率（右栏；周期与最近 7 天时下面再加用量走势）。看某一天时右栏换成当天的 Session 与用量走势，见「单日」。窄窗口下单栏。只算 Claude Code 的 Session（agy 的不计，ADR-0018）。不统计工具调用，不按 Project 过滤或排行，没有 Session 数、消息数、活跃天数与 Session 排行。弹窗最大 1180 × 720，高度固定，图表保持固定高度；头部（标题、时间范围）固定，只有下方内容滚动。
 
 - **额度**：订阅账号此刻的状态，不随时间范围变。套餐徽标（Max 等）；每项额度一条——「当前 5 小时」「本周 · 全部模型」「本周 · <模型名>」：百分比、进度条、「X 后重置」。用量超过时间进度（这段窗口已过的比例，窗长 5 小时 / 7 天，由重置时刻推）3 个百分点及以上时，进度条上超出的那一段颜色加深，小字后面加「超前 N%」；落后或相差不到 3 个百分点时就是普通的进度条。悬停进度条提示「时间已过 N%」。用到 80% 以上换琥珀色并写「快用完了」，100% 换红色并写「已用完」。右侧刷新按钮与「HH:MM 更新」。读取中画空条；从未读到过且失败时这一条写原因与「重试」；重取失败但有上次的数据时照旧显示，更新时间处写「读取失败，显示的是 HH:MM 的数据」；账号没有订阅额度（API key 登录等）时整条不显示。数据由 Host 经无界面的 claude 读取（ADR-0016）：不发提示词，约 1 秒，Host 缓存 60 秒；窗口在前台（有焦点且可见）时每 5 分钟读一次，回到前台时距上次读取（不论成败）超过 60 秒则重读；按登录的账号，与数据根设置无关。
 - **侧栏左下角**（列表隐藏时在工具栏）：统计图标。读到额度时，有一项用到 80% / 100% 图标换成琥珀 / 红色，点开是浮层：标题行里是「额度」、套餐徽标，右边是「HH:MM 更新」与刷新按钮；下面各项额度（小字是「X 后重置 · 今天 16:40」这样的重置时刻，超前同样只靠加深的那一段表示）与「打开统计」；重取失败但有上次的数据时另起一行写「读取失败，显示的是 HH:MM 的数据」。读不到额度时点了直接打开统计。
@@ -138,6 +141,8 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 ## 诊断
 
 在设置（⌘,）的"格式兼容性"页（顶部五张卡片：已扫描文件、解析失败行数、未知类型（条目类型、内容块、系统子类型合计几种）、未知工具、认不出的消息，各与下方对应的表一致）：解析失败的行（含文件与首个错误）、未知的条目类型 / 内容块 / 系统子类型 / 工具名及出现次数和涉及版本、认不出的消息（按"你"的消息处理却带结构标记的 user 条目：开头是认不出的标签，或 `origin.kind` 不是已知的几种，按标记汇总；新版 claude 加了消息类型时在这里出现。Code Mode 送达里不认识的事件种类也记在这里：`poll_events` 附件与 `Poll` 的结果里的记 `event kind: <种类>`，`Poll` 的结果说有事件却一个也读不出时记 `event: none read`）、各 Claude Code 版本汇总（标题下写共几个版本、从最低到最高版本；表里只列有失败行或未知项的版本，都没有时不显示表）、文件内重复 uuid 数、未关联的 Subagent 数；可复制报告、重建索引。
+
+agy 的条目按 `agy.rs` 里它自己的已知名单判定，与 Claude Code 的分开过滤。
 
 ## 设置
 
@@ -238,11 +243,11 @@ macOS 桌面应用，用来查看 `~/.claude` 下 Claude Code 的历史 Session�
 
 - **输出**：除 `show` 外 stdout 是一个 JSON 文档，字段小驼峰；基于索引的结果带 `indexedAt`（索引最后一次写入的时间）。成功退出码 0，`wait` 超时 124，其他错误 1，stderr 是一行 `{"code","message"}`（`new` 知道 Pane 时另带 `holderId`）。文本字段有上限，截断处写明原长。
 - **索引**：只读打开（`--cache-dir` 指定目录，默认桌面的；在 daemon 的 Host 上是 `<状态目录>/cache`）。索引不存在、schema 版本或数据目录不一致时报错退出，不做修改，也不建任何文件。不运行同步、监听与价格下载。
-- **`sessions`**：按最后活动倒序，默认 20 条；`status` 为 `busy` / `waiting` / `idle` / `ended`，实时读进程文件。`--live` 只留运行中的（索引没收录的 Session 不在内）。`--project` 收 Project 的路径。
+- **`sessions`**：按最后活动倒序，默认 20 条，每条带 `agent`；`status` 为 `busy` / `waiting` / `idle` / `ended`，实时读进程文件。`--live` 只留运行中的（索引没收录的 Session 不在内）。`--project` 收 Project 的路径。
 - **`search`**：语法同 ⌘K，默认 20 个 Session、每个 5 条命中。每条命中有 `location`：`mainLine`（带 `turn`）、`subagent`（带 `agentId`，无 `turn`）、`branch`（已回退的 Branch，无 `turn`）、`unknown`（文件在索引之后变了，无 `turn`）。
 - **轮次**：每条用户输入（人亲手输入的与命令；Subagent Run 里还有上级发来的消息）开始一轮，第一条是第 1 轮；第一条用户输入之前的内容是第 0 轮。Main Line 上的编号在 `search` 与 `show --turn` 里相同。
 - **`show`**：默认 Main Line 的概览，一轮一段（用户输入、工具列表、回答），超过 50 轮时只显示最后 50 轮并写明。`--turn N` 输出这一轮的完整过程（说明、思考、工具；Code Mode 的代码写成「执行代码 <description>」，后面列出代码里调用的工具）与回答；`--full`（必须带 `--turn`）附上每次工具调用的输入与输出，每段 8000 字、一轮 20 万字为限。`--agent ID` 换成一个 Subagent Run。回答是这一轮最后一次工具调用或思考之后的文字，同界面的按轮折叠。打开被接替的 Session 时转到接替它的 Session（同界面）。Session 的文件列表、Fork 来源、接续与 Subagent 统计来自索引，文件内容总是读最新的；索引没收录时直接读 `projects/*/<id>.jsonl`，头部写 `partial`，没有 Fork 与接续信息，也没有 `project=`。
-- **`wait`**：只读进程文件，每秒一次，`idle` / `waiting` / 结束时立即返回 `{"sessionId","status","waitingFor"}`；默认 110 秒，超时退出码 124，stdout 仍是当前状态。进程文件连续两次读不到才算结束；既没有进程文件也没有 transcript 的 id 报 `not_found`。
+- **`wait`**：agy 的 Session 不支持（不知道它在忙还是空闲），报 `unsupported`。其余只读进程文件，每秒一次，`idle` / `waiting` / 结束时立即返回 `{"sessionId","status","waitingFor"}`；默认 110 秒，超时退出码 124，stdout 仍是当前状态。进程文件连续两次读不到才算结束；既没有进程文件也没有 transcript 的 id 报 `not_found`。
 - **`new`**：校验 `--cwd` 是目录、stdin 的提示词非空且不以 `!` 开头（ccrpc 会把它当 TUI 的 shell 命令执行，绕过审批），用设置里的启动规则与「新开的 Pane」拼 `ccrpc new`，环境同桌面（登录 shell）。等 `ready`，`session_id` 为 null 时再等 `started`（各 60 秒），发 `prompt`，等响应成功后关闭 stdin：ccrpc Disconnect，Session 继续运行，输出 `{"sessionId","holderId","cwd","url"}`，`url` 是在桌面打开它的链接 `codeck://session/<sessionId>`。目录信任框（`choice`，layout `trust_folder`）答「不信任」让 claude 退出，ccrpc 随即关掉这个 Pane（`start_failed`），报错 `untrusted_dir`；claude 没有起来（`start_failed`）报错 `exited`，Pane 已由 ccrpc 关掉；其他 `choice`、超时、提示词发送失败时关闭 stdin 报错，Pane 留给人处理；启动画面（`dialog` 事件）可能自己过去，不立即失败，超时的报错写明停在对话框上；ccrpc 启动失败或提前退出时，错误是它的 `fatal` 给的原因，没有时是 stderr 的最后一行。
 
 ## 测试
@@ -275,3 +280,4 @@ React + TypeScript + Vite；Tailwind + shadcn/ui（macOS 风格，跟随系统�
 - 某个 Session 的 Main Line 持续计算失败时，该 Session 不建全文索引，搜索浮层会一直提示索引未完成。
 - sidecar（`meta.json`、workflow json）比对应转录更新的 Session，每次启动都会重算一次。
 - 无斜杠前缀的历史命令记录，标题要等文件重新解析后才会更新。
+- agy：Live 只知道还在不在，不知道忙还是空闲；不能 Connect；经 `agy acp` 新建的对话（haa Worker）在 agy 重写 `conversation_metadata.json` 之前，标题是首条提示词、Project 是 agy 数据目录；已删除的 haa worktree 不在仓库里，各成一个「目录已不存在」的 Project；haa Worker 要等 haa 在 Task 记录里写下 `sessionId`（或还在 `workers.json` 里）才连得到 Main Session；子 agent 产生的对话是独立的 Session；Linux 上的进程探测没有实测。
