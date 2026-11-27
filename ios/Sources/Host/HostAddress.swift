@@ -14,12 +14,14 @@ struct HostAddress: Equatable, Sendable {
         case notIPv4
         case notPrivate
         case badPort
+        case loopbackOnly
 
         var errorDescription: String? {
             switch self {
             case .notIPv4: "请输入 IPv4 地址，例如 192.168.1.20。"
             case .notPrivate: "只能连接局域网内的私网地址（10.x、172.16–31.x、192.168.x）。"
             case .badPort: "端口应为 1–65535 之间的整数。"
+            case .loopbackOnly: "手输地址仅支持 127.0.0.1。"
             }
         }
     }
@@ -76,24 +78,11 @@ struct HostAddress: Equatable, Sendable {
         guard o.count == 4 else { return false }
         return o[0] == 10 || (o[0] == 172 && (16...31).contains(o[1])) || (o[0] == 192 && o[1] == 168)
     }
-}
 
-/// The saved Host, in UserDefaults.
-struct HostAddressStore {
-    private static let hostKey = "codeck.host.address"
-    private static let portKey = "codeck.host.port"
-
-    var defaults: UserDefaults = .standard
-
-    func load() -> HostAddress? {
-        guard let host = defaults.string(forKey: Self.hostKey) else { return nil }
-        let port = defaults.integer(forKey: Self.portKey)
-        // Re-validate: a saved loopback address from a debug build is not used by a release build.
-        return try? HostAddress.parse(host: host, port: String(port == 0 ? HostAddress.defaultPort : port))
-    }
-
-    func save(_ address: HostAddress) {
-        defaults.set(address.host, forKey: Self.hostKey)
-        defaults.set(address.port, forKey: Self.portKey)
+    /// Parses a DEBUG-only manual loopback input (only accepts `127.0.0.1`).
+    static func parseLoopback(host hostInput: String, port portInput: String) throws -> HostAddress {
+        let parsed = try parse(host: hostInput, port: portInput, allowLoopback: true)
+        guard parsed.host == "127.0.0.1" else { throw ValidationError.loopbackOnly }
+        return parsed
     }
 }

@@ -23,6 +23,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         NSLocalNetworkUsageDescription: CoDeck 经局域网连接 Host，浏览其中的 Session。
+        NSCameraUsageDescription: CoDeck 用相机扫描 Host 上的配对二维码。
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: dev.joy.codeck.ios
+            CFBundleURLSchemes:
+              - codeck
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:

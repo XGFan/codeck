@@ -85,6 +85,7 @@ struct SessionDetailView: View {
                 TranscriptWebView(
                     url: url,
                     reloadToken: reloadToken,
+                    model: model,
                     onReady: { phase = .ready },
                     onFailure: { phase = .failed($0) },
                     onCopy: copy,
@@ -198,11 +199,8 @@ struct SessionDetailView: View {
     }
 
     private var transcriptURL: URL? {
-        guard let address = model.address else { return nil }
-        var c = URLComponents(url: address.baseURL, resolvingAgainstBaseURL: false)!
-        c.path = "/web/transcript.html"
-        c.queryItems = [URLQueryItem(name: "sessionId", value: sessionId)]
-        return c.url
+        guard model.host != nil else { return nil }
+        return HostWebBridge.transcriptURL(sessionId: sessionId)
     }
 
     private func loadDetail() async {

@@ -74,7 +74,7 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(c.changed, ["a"])
         XCTAssertTrue(c.projectsChanged)
 
-        guard case .hello(1) = try HostEvent.decode(Data(#"{"event": "hello", "payload": {"apiVersion": 1}}"#.utf8)) else {
+        guard case .hello(2) = try HostEvent.decode(Data(#"{"event": "hello", "payload": {"apiVersion": 2}}"#.utf8)) else {
             return XCTFail()
         }
         guard case .pricesChanged = try HostEvent.decode(Data(#"{"event": "prices-changed-event", "payload": null}"#.utf8)) else {
@@ -96,11 +96,11 @@ final class DecodingTests: XCTestCase {
     }
 
     func testHealthVersionCheck() throws {
-        XCTAssertEqual(try HostClient.validateHealth(Data(#"{"product":"CoDeck","apiVersion":1,"version":"0.9.0"}"#.utf8)).version, "0.9.0")
-        XCTAssertThrowsError(try HostClient.validateHealth(Data(#"{"product":"CoDeck","apiVersion":2,"version":"1.0.0"}"#.utf8))) {
-            XCTAssertEqual($0 as? HostError, .versionMismatch(host: 2))
+        XCTAssertEqual(try HostClient.validateHealth(Data(#"{"product":"CoDeck","apiVersion":2,"version":"0.9.0"}"#.utf8)).version, "0.9.0")
+        XCTAssertThrowsError(try HostClient.validateHealth(Data(#"{"product":"CoDeck","apiVersion":3,"version":"1.0.0"}"#.utf8))) {
+            XCTAssertEqual($0 as? HostError, .versionMismatch(host: 3))
         }
-        XCTAssertThrowsError(try HostClient.validateHealth(Data(#"{"product":"Other","apiVersion":1}"#.utf8))) {
+        XCTAssertThrowsError(try HostClient.validateHealth(Data(#"{"product":"Other","apiVersion":2}"#.utf8))) {
             XCTAssertEqual($0 as? HostError, .notCoDeck)
         }
         XCTAssertThrowsError(try HostClient.validateHealth(Data("<html>".utf8))) {

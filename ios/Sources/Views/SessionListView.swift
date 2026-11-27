@@ -37,11 +37,13 @@ struct SessionListView: View {
                 model.connect.openRequest = nil
                 path.append(SessionRoute(id: request.sessionId))
             }
+            .onChange(of: model.generation) { _, _ in
+                path = NavigationPath()
+            }
             .sheet(isPresented: $changingHost) {
                 NavigationStack {
-                    HostSetupView(current: model.address) { address in
+                    HostSetupView(current: model.address) {
                         path = NavigationPath()
-                        model.connect(to: address)
                     }
                 }
             }
@@ -55,7 +57,12 @@ struct SessionListView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if searching {
                     if let problem = model.problem {
-                        OfflineCard(message: problem, onRetry: model.retry) { changingHost = true }
+                        OfflineCard(
+                            message: problem,
+                            showsRetry: PairingPresentation.showsRetryInOfflineCard(needsPairing: model.needsPairing),
+                            onRetry: model.retry,
+                            onRescan: { changingHost = true }
+                        )
                     }
                     if !all.isEmpty {
                         card(all) { SessionSearchRow(session: $0, project: model.project(of: $0), now: now) }
@@ -91,7 +98,12 @@ struct SessionListView: View {
             store.conn(for: id).map { $0.isLive && !store.requests(of: $0).isEmpty } ?? false
         }
         if let problem = model.problem {
-            OfflineCard(message: problem, onRetry: model.retry) { changingHost = true }
+            OfflineCard(
+                message: problem,
+                showsRetry: PairingPresentation.showsRetryInOfflineCard(needsPairing: model.needsPairing),
+                onRetry: model.retry,
+                onRescan: { changingHost = true }
+            )
         }
         Group {
             if !s.pending.isEmpty {
@@ -163,7 +175,7 @@ struct SessionListView: View {
                         Text(address.display)
                     }
                 }
-                Button("更换 Host", systemImage: "network") { changingHost = true }
+                Button("重新扫码", systemImage: "qrcode.viewfinder") { changingHost = true }
             } label: {
                 Image(systemName: "desktopcomputer")
                     .overlay(alignment: .topTrailing) {
@@ -182,15 +194,19 @@ struct SessionListView: View {
 /// 连不上 Host: what happened, and what to do about it.
 struct OfflineCard: View {
     let message: String
+    var showsRetry: Bool = true
     let onRetry: () -> Void
-    let onChangeHost: () -> Void
+    let onRescan: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(message).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.warnText)
             HStack(spacing: 8) {
-                Button("重试", action: onRetry).buttonStyle(PillButtonStyle(height: 44))
-                Button("更换 Host", action: onChangeHost).buttonStyle(PillButtonStyle(kind: .tinted, height: 44))
+                if showsRetry {
+                    Button("重试", action: onRetry).buttonStyle(PillButtonStyle(height: 44))
+                }
+                Button("重新扫码", action: onRescan)
+                    .buttonStyle(PillButtonStyle(kind: showsRetry ? .tinted : .primary, height: 44))
             }
         }
         .padding(14)

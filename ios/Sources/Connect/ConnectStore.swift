@@ -50,10 +50,13 @@ final class ConnectStore {
     @ObservationIgnored var touched: Set<String> = []
     /// The latest snapshot asked for; an older one's answer is dropped.
     @ObservationIgnored private var syncRound = 0
+    /// Incremented on every `reset(client:)` so in-flight calls from an older Host generation are dropped.
+    @ObservationIgnored private var generation = 0
     @ObservationIgnored private(set) var client: HostClient?
 
     /// A new Host: everything from the old one goes.
     func reset(client: HostClient?) {
+        generation += 1
         self.client = client
         conns = [:]
         order = []
@@ -81,15 +84,16 @@ final class ConnectStore {
     /// After every `hello`: the Host keeps no event history, so take its whole state again.
     func resync() async {
         guard let client else { return }
+        let gen = generation
         async let list = client.call("ccrpc_ls", args: Empty(), as: Lossy<LsEntry>.self)
         await syncStates()
         do {
             let entries = try await list
-            guard client.address == self.client?.address else { return }
+            guard generation == gen else { return }
             ls = entries.items
             lsError = nil
         } catch {
-            guard client.address == self.client?.address else { return }
+            guard generation == gen else { return }
             lsError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -98,11 +102,12 @@ final class ConnectStore {
     @discardableResult
     func syncStates() async -> Bool {
         guard let client else { return false }
+        let gen = generation
         syncRound += 1
         let round = syncRound
         touched = []
         guard let states = try? await client.call("connect_states", args: Empty(), as: Lossy<ConnState>.self),
-              client.address == self.client?.address, round == syncRound
+              generation == gen, round == syncRound
         else { return false }
         let merged = Self.merged(local: conns, snapshot: states.items, touched: touched, ending: ending)
         for s in states.items where !touched.contains(s.conn) {
@@ -249,12 +254,13 @@ final class ConnectStore {
     /// 「Connect」: the Host attaches ccrpc to the Holder (or returns the Connect it already has).
     func connect(sessionId: String) async {
         guard let client, let entry = lsEntry(for: sessionId), !connecting.contains(sessionId) else { return }
+        let gen = generation
         connecting.insert(sessionId)
         errors[sessionId] = nil
         defer { connecting.remove(sessionId) }
         do {
             let conn = try await client.call("connect_shared", args: ["holderId": entry.holderId], as: String.self)
-            guard client.address == self.client?.address else { return }
+            guard generation == gen else { return }
             // Until its first state event: a placeholder, so the page shows 「启动中」 at once.
             if conns[conn] == nil {
                 var c = ConnState(conn: conn)

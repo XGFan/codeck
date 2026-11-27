@@ -48,9 +48,23 @@ final class HostAddressTests: XCTestCase {
     func testStoreRoundTrip() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "HostAddressTests"))
         defaults.removePersistentDomain(forName: "HostAddressTests")
-        let store = HostAddressStore(defaults: defaults)
+        let keychain = TestKeychain()
+        let store = HostStore(defaults: defaults, keychain: keychain, allowLoopback: false)
         XCTAssertNil(store.load())
-        store.save(HostAddress(host: "10.1.2.3", port: 4000))
-        XCTAssertEqual(store.load(), HostAddress(host: "10.1.2.3", port: 4000))
+        let host = PairedHost(
+            address: HostAddress(host: "10.1.2.3", port: 4000),
+            fingerprint: String(repeating: "A", count: 43),
+            deviceId: "abcdef012345",
+            token: "secret-token"
+        )
+        try store.save(host)
+        XCTAssertEqual(store.load(), host)
     }
+}
+
+private final class TestKeychain: KeychainStoring, @unchecked Sendable {
+    private var values: [String: String] = [:]
+    func read(service: String, account: String) -> String? { values["\(service):\(account)"] }
+    func write(_ value: String, service: String, account: String) throws { values["\(service):\(account)"] = value }
+    func delete(service: String, account: String) { values.removeValue(forKey: "\(service):\(account)") }
 }
