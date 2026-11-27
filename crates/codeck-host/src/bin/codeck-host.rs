@@ -1,11 +1,11 @@
 //! `codeck-host`: CoDeck's headless Host (ADR-0011). Indexes a data root like the desktop app and serves
-//! the Host's `remote` methods and events over HTTP + WebSocket to the LAN, without authentication.
+//! the Host's `remote` methods and events over HTTPS + WebSocket (plain HTTP on loopback) to the LAN.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codeck_host::lan::{DEFAULT_PORT, net, server};
+use codeck_host::lan::{DEFAULT_PORT, net, security, server};
 use codeck_host::{Host, HostConfig};
 
 /// How often the default listeners are checked against the machine's addresses.
@@ -97,6 +97,10 @@ fn default_web_dir() -> PathBuf {
     beside
 }
 
+fn needs_tls_cert(follow_network: bool, subnets: &[net::Subnet]) -> bool {
+    follow_network || subnets.iter().any(server::needs_tls)
+}
+
 fn fail(msg: impl std::fmt::Display) -> ! {
     eprintln!("codeck-host: {msg}");
     std::process::exit(1);
@@ -145,6 +149,17 @@ fn main() {
     }
     let state_dir = args.state_dir.unwrap_or_else(default_state_dir);
     let web_dir = args.web_dir.unwrap_or_else(default_web_dir);
+    let security = if needs_tls_cert(follow_network, &subnets) {
+        let sec = security::LanSecurity::open(state_dir.clone())
+            .unwrap_or_else(|e| fail(format!("加载设备列表失败：{e}")));
+        let cert = sec
+            .ensure_cert()
+            .unwrap_or_else(|e| fail(format!("准备 TLS 证书失败：{e}")));
+        tracing::info!("tls certificate fingerprint: {}", cert.fingerprint);
+        Some(Arc::new(sec))
+    } else {
+        None
+    };
     let (events, sink) = server::event_channel();
     let host = Host::start(
         HostConfig {
@@ -171,6 +186,7 @@ fn main() {
         allowed_origins: Arc::new(args.allow_origin),
         web_dir,
         gate: server::Gate::default(),
+        security: None,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -178,8 +194,11 @@ fn main() {
         .unwrap_or_else(|e| fail(e));
     runtime.block_on(async move {
         let port = args.port.unwrap_or(DEFAULT_PORT);
-        let mut serving =
-            server::Serving::new(port, Box::new(move |s| server::router(ctx.clone(), s)));
+        let mut serving = server::Serving::new(
+            port,
+            Box::new(move |s, sec| server::router(ctx.with_security(sec), s)),
+            security,
+        );
         for subnet in subnets {
             serving
                 .start(subnet)
@@ -249,5 +268,20 @@ mod tests {
         assert!(parse(&["--listen", "::1"]).is_err());
         assert!(parse(&["--port"]).is_err());
         assert!(parse(&["--bogus"]).is_err());
+    }
+
+    #[test]
+    fn cert_only_loaded_for_non_loopback_or_network_follow() {
+        let lo = net::Subnet {
+            addr: Ipv4Addr::LOCALHOST,
+            mask: Ipv4Addr::new(255, 0, 0, 0),
+        };
+        let lan = net::Subnet {
+            addr: Ipv4Addr::new(192, 168, 1, 20),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+        assert!(needs_tls_cert(true, &[]));
+        assert!(!needs_tls_cert(false, &[lo]));
+        assert!(needs_tls_cert(false, &[lo, lan]));
     }
 }

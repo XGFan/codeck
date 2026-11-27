@@ -89,6 +89,14 @@ macro_rules! for_each_method {
             local fn lan_status() -> $crate::types::LanStatus;
             /// Turns LAN access on or off at once and saves that; returns the state after.
             local fn lan_set_enabled(on: bool) -> $crate::types::LanStatus;
+            /// Starts a 5-minute LAN pairing offer (QR code SVG and `codeck://pair` link), replacing any previous one.
+            local fn lan_pair_start() -> $crate::types::PairingOffer;
+            /// Cancels the active LAN pairing offer if its id matches `id`.
+            local fn lan_pair_cancel(id: String) -> ();
+            /// Paired LAN devices (readable even when LAN access is off).
+            local fn lan_devices() -> Vec<$crate::types::PairedDevice>;
+            /// Removes a paired LAN device and closes its active connections; missing ids are ignored.
+            local fn lan_remove_device(id: String) -> ();
             /// Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any existing watch),
             /// or stops the existing watch (`on = false`; `id` is unused). Desktop only.
             local fn haa_watch(on: bool, id: u32) -> ();

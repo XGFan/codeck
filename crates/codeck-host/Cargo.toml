@@ -12,6 +12,7 @@ codeck-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 specta.workspace = true
+specta-typescript.workspace = true
 notify.workspace = true
 notify-debouncer-full.workspace = true
 tracing.workspace = true
@@ -22,7 +23,14 @@ base64.workspace = true
 chrono.workspace = true
 libc.workspace = true
 axum.workspace = true
+futures-util.workspace = true
+qrcode.workspace = true
+rcgen.workspace = true
+ring.workspace = true
+rustls.workspace = true
+sha2.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "net", "macros", "rt", "rt-multi-thread", "signal"] }
+tokio-rustls.workspace = true
 tower-http = { workspace = true, features = ["fs", "set-header"] }
 # Only the daemon (src/bin/codeck-host.rs) uses these two.
 tracing-subscriber.workspace = true
@@ -32,4 +40,3 @@ dirs.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "io-util"] }
 tokio-tungstenite.workspace = true
-futures-util.workspace = true

@@ -90,6 +90,14 @@ export const commands = {
 	lanStatus: () => __TAURI_INVOKE<LanStatus>("lan_status"),
 	/**  Turns LAN access on or off at once and saves that; returns the state after. */
 	lanSetEnabled: (on: boolean) => __TAURI_INVOKE<LanStatus>("lan_set_enabled", { on }),
+	/**  Starts a 5-minute LAN pairing offer (QR code SVG and `codeck://pair` link), replacing any previous one. */
+	lanPairStart: () => __TAURI_INVOKE<PairingOffer>("lan_pair_start"),
+	/**  Cancels the active LAN pairing offer if its id matches `id`. */
+	lanPairCancel: (id: string) => __TAURI_INVOKE<null>("lan_pair_cancel", { id }),
+	/**  Paired LAN devices (readable even when LAN access is off). */
+	lanDevices: () => __TAURI_INVOKE<PairedDevice[]>("lan_devices"),
+	/**  Removes a paired LAN device and closes its active connections; missing ids are ignored. */
+	lanRemoveDevice: (id: string) => __TAURI_INVOKE<null>("lan_remove_device", { id }),
 	/**
 	 *  Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any existing watch),
 	 *  or stops the existing watch (`on = false`; `id` is unused). Desktop only.
@@ -127,6 +135,7 @@ export const events = {
 	haaWorkersEvent: makeEvent<HaaWorkersEvent>("haa-workers-event"),
 	indexStatusEvent: makeEvent<IndexStatusEvent>("index-status-event"),
 	keepAliveEvent: makeEvent<KeepAliveEvent>("keep-alive-event"),
+	lanDevicesEvent: makeEvent<LanDevicesEvent>("lan-devices-event"),
 	liveChangedEvent: makeEvent<LiveChangedEvent>("live-changed-event"),
 	notificationClickEvent: makeEvent<NotificationClickEvent>("notification-click-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
@@ -493,6 +502,13 @@ export type KeepAliveEvent = {
 	error: string | null,
 };
 
+/**  The paired LAN device list changed (a device paired or was removed). */
+export type LanDevicesEvent = {
+	devices: PairedDevice[],
+	pairedOffer: string | null,
+	pairedDevice: string | null,
+};
+
 /**  「局域网访问」 as the settings page shows it. */
 export type LanStatus = {
 	enabled: boolean,
@@ -587,6 +603,25 @@ export type Notice = {
 /**  A system notification was clicked: the `url` it was sent with (`commands::notify`). */
 export type NotificationClickEvent = {
 	url: string,
+};
+
+/**  A paired client device, exposed in IPC and `codeck-host devices`. */
+export type PairedDevice = {
+	id: string,
+	name: string,
+	/**  Epoch milliseconds. */
+	pairedAt: number,
+	/**  Epoch milliseconds of the last WebSocket connection, if any. */
+	lastSeenAt: number | null,
+};
+
+/**  A freshly generated pairing offer for the desktop settings modal. */
+export type PairingOffer = {
+	id: string,
+	url: string,
+	svg: string,
+	/**  Wall-clock expiration timestamp in epoch milliseconds. */
+	expiresAt: number,
 };
 
 /**  Where a [`PromptOrigin::Peer`] message came from. */

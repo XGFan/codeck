@@ -7,11 +7,12 @@ use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Extension, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::serve::ListenerExt;
 use axum::{Json, Router};
 use codeck_core::model::{AppError, ErrorCode};
 use serde_json::{Value, json};
@@ -20,12 +21,16 @@ use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+use super::devices::DeviceRevoke;
 use super::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
+use super::security::{LanSecurity, RedeemError};
+use super::tls::TlsListener;
 use crate::{EventSink, Host, HostEvent};
 
 /// Bumped only on incompatible changes to the methods, events or envelopes.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
+const PAIR_BODY_LIMIT: usize = 4 * 1024;
 /// Events a slow client may fall behind by before it is dropped (it resyncs on reconnect).
 const EVENT_BACKLOG: usize = 1024;
 /// The Transcript page's policy: only this Host's scripts, styles, images and connections (the Shiki
@@ -39,6 +44,16 @@ pub struct Ctx {
     pub allowed_origins: Arc<Vec<String>>,
     pub web_dir: PathBuf,
     pub gate: Gate,
+    /// `Some` on non-loopback TLS listeners (enforces bearer auth and exposes `/v1/pair`); `None` on loopback.
+    pub security: Option<Arc<LanSecurity>>,
+}
+
+impl Ctx {
+    pub fn with_security(&self, security: Option<Arc<LanSecurity>>) -> Self {
+        let mut c = self.clone();
+        c.security = security;
+        c
+    }
 }
 
 /// Whether what is already connected is still served. A stopped listener's upgraded WebSockets and the requests
@@ -84,6 +99,7 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
                     | HostEvent::HaaWorkers { .. }
                     | HostEvent::HaaWatchEnded { .. }
                     | HostEvent::KeepAlive { .. }
+                    | HostEvent::LanDevices { .. }
             )
         {
             return;
@@ -94,38 +110,69 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
     (tx, sink)
 }
 
+/// Whether a listener on `subnet` must speak TLS and require pairing auth (every address except loopback).
+pub fn needs_tls(subnet: &Subnet) -> bool {
+    !subnet.addr.is_loopback()
+}
+
+type RouterFactory = Box<dyn Fn(Subnet, Option<Arc<LanSecurity>>) -> Router + Send>;
+
 /// The listeners being served, one per [`Subnet`].
 pub struct Serving {
     port: u16,
-    router: Box<dyn Fn(Subnet) -> Router + Send>,
+    router: RouterFactory,
+    security: Option<Arc<LanSecurity>>,
     tasks: HashMap<Subnet, JoinHandle<()>>,
     /// Could not be bound at the last look, and why: logged once, tried again at each.
     failed: HashMap<Subnet, String>,
 }
 
 impl Serving {
-    pub fn new(port: u16, router: Box<dyn Fn(Subnet) -> Router + Send>) -> Self {
+    pub fn new(port: u16, router: RouterFactory, security: Option<Arc<LanSecurity>>) -> Self {
         Serving {
             port,
             router,
+            security,
             tasks: HashMap::new(),
             failed: HashMap::new(),
         }
     }
 
     pub async fn start(&mut self, subnet: Subnet) -> std::io::Result<()> {
+        let (tls, route_security) = if needs_tls(&subnet) {
+            let Some(sec) = self.security.clone() else {
+                return Err(std::io::Error::other(format!(
+                    "没有 TLS 与鉴权配置，不在 {} 上监听",
+                    subnet.addr
+                )));
+            };
+            let cfg = sec.server_config().map_err(std::io::Error::other)?;
+            (Some(cfg), Some(sec))
+        } else {
+            (None, None)
+        };
         let listener = tokio::net::TcpListener::bind((subnet.addr, self.port)).await?;
+        let scheme = if tls.is_some() { "https" } else { "http" };
         tracing::info!(
-            "listening on http://{}/ (peers from {}/{})",
+            "listening on {scheme}://{}/ (peers from {}/{})",
             listener
                 .local_addr()
                 .map_or(subnet.addr.to_string(), |a| a.to_string()),
             subnet.addr,
             subnet.prefix_len()
         );
-        let app = (self.router)(subnet).into_make_service_with_connect_info::<SocketAddr>();
+        let app = (self.router)(subnet, route_security)
+            .into_make_service_with_connect_info::<SocketAddr>();
         let task = tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app).await {
+            let res = match tls {
+                Some(cfg) => {
+                    // `tap_io` supplies `Connected<IncomingStream<TapIo<L, _>>> for SocketAddr` in axum 0.8.
+                    let listener = TlsListener::new(listener, cfg).tap_io(|_| ());
+                    axum::serve(listener, app).await
+                }
+                None => axum::serve(listener, app).await,
+            };
+            if let Err(e) = res {
                 tracing::error!("serve {}: {e}", subnet.addr);
             }
         });
@@ -154,7 +201,9 @@ impl Serving {
                     self.failed.remove(&s);
                 }
                 Err(e) => {
-                    let why = if e.kind() == std::io::ErrorKind::AddrInUse {
+                    let why = if needs_tls(&s) && self.security.is_none() {
+                        e.to_string()
+                    } else if e.kind() == std::io::ErrorKind::AddrInUse {
                         format!("{}:{} 已被占用", s.addr, self.port)
                     } else {
                         format!("监听不了 {}:{}：{e}", s.addr, self.port)
@@ -201,6 +250,14 @@ struct Guard {
     subnet: Subnet,
     allowed_origins: Arc<Vec<String>>,
     gate: Gate,
+    security: Option<Arc<LanSecurity>>,
+}
+
+/// Authenticated device attached to request extensions by [`check`].
+#[derive(Clone)]
+struct AuthedDevice {
+    id: String,
+    revoke: DeviceRevoke,
 }
 
 /// The routes for one listener, whose peers must come from `subnet`.
@@ -209,14 +266,33 @@ pub fn router(ctx: Ctx, subnet: Subnet) -> Router {
         subnet,
         allowed_origins: ctx.allowed_origins.clone(),
         gate: ctx.gate.clone(),
+        security: ctx.security.clone(),
     };
-    Router::new()
+    let no_store = || {
+        SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        )
+    };
+    let mut r = Router::new()
         .route("/health", get(health))
-        .route("/v1/rpc", post(rpc))
+        .merge(
+            Router::new()
+                .route("/v1/rpc", post(rpc))
+                .layer(DefaultBodyLimit::max(BODY_LIMIT))
+                .layer(no_store()),
+        )
         .route("/v1/events", get(events))
-        .nest_service("/web", web(&ctx.web_dir))
-        .with_state(ctx)
-        .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .nest_service("/web", web(&ctx.web_dir));
+    if ctx.security.is_some() {
+        r = r.merge(
+            Router::new()
+                .route("/v1/pair", post(pair))
+                .layer(DefaultBodyLimit::max(PAIR_BODY_LIMIT))
+                .layer(no_store()),
+        );
+    }
+    r.with_state(ctx)
         .layer(middleware::from_fn_with_state(guard, check))
 }
 
@@ -238,10 +314,43 @@ fn forbidden(why: &'static str) -> Response {
     (StatusCode::FORBIDDEN, why).into_response()
 }
 
+fn unauthorized(close: bool) -> Response {
+    let body = Json(json!({
+        "error": {
+            "code": "unauthorized",
+            "message": "这台设备没有配对或已被移除，请重新扫码配对。",
+        }
+    }));
+    if close {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(header::CONNECTION, "close")],
+            body,
+        )
+            .into_response()
+    } else {
+        (StatusCode::UNAUTHORIZED, body).into_response()
+    }
+}
+
+/// Only exact `(method, path)` pairs exempt from bearer auth on non-loopback listeners.
+fn is_public_route(method: &Method, path: &str) -> bool {
+    matches!(
+        (method, path),
+        (&Method::GET | &Method::HEAD, "/health") | (&Method::POST, "/v1/pair")
+    )
+}
+
+fn bearer_token(h: &HeaderMap) -> Option<&str> {
+    let v = h.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = v.split_once(' ')?;
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
+}
+
 async fn check(
     State(g): State<Guard>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     if g.gate.is_closed() {
@@ -260,23 +369,50 @@ async fn check(
     if !host_allowed(host.as_deref(), &g.subnet) {
         return forbidden("不接受这个主机名");
     }
-    match check_origin(origin.as_deref(), host.as_deref(), &g.allowed_origins) {
-        OriginCheck::Deny => forbidden("不接受这个来源"),
-        OriginCheck::Allow => gated(&g.gate, next, req).await,
+    let cors_origin = match check_origin(
+        origin.as_deref(),
+        host.as_deref(),
+        &g.allowed_origins,
+        g.security.is_some(),
+    ) {
+        OriginCheck::Deny => return forbidden("不接受这个来源"),
+        OriginCheck::Allow => None,
         OriginCheck::Cors => {
             let Some(origin) = origin.and_then(|o| HeaderValue::from_str(&o).ok()) else {
                 return forbidden("不接受这个来源");
             };
-            let preflight = req.method() == Method::OPTIONS;
-            let mut res = if preflight {
-                StatusCode::NO_CONTENT.into_response()
-            } else {
-                gated(&g.gate, next, req).await
-            };
-            cors(res.headers_mut(), origin);
-            res
+            if req.method() == Method::OPTIONS {
+                let mut res = StatusCode::NO_CONTENT.into_response();
+                cors(res.headers_mut(), origin);
+                return res;
+            }
+            Some(origin)
         }
+    };
+
+    let mut revoke = None;
+    if let Some(security) = &g.security
+        && !is_public_route(req.method(), req.uri().path())
+    {
+        let Some((id, sig)) = bearer_token(req.headers()).and_then(|t| security.verify(t)) else {
+            let mut res = unauthorized(false);
+            if let Some(origin) = cors_origin {
+                cors(res.headers_mut(), origin);
+            }
+            return res;
+        };
+        req.extensions_mut().insert(AuthedDevice {
+            id,
+            revoke: sig.clone(),
+        });
+        revoke = Some(sig);
     }
+
+    let mut res = gated(&g.gate, revoke.as_ref(), next, req).await;
+    if let Some(origin) = cors_origin {
+        cors(res.headers_mut(), origin);
+    }
+    res
 }
 
 /// The connection goes too: this Gate stays closed, even once LAN access is on again with a new one.
@@ -289,12 +425,18 @@ fn gate_closed() -> Response {
         .into_response()
 }
 
-/// The request, unless the Gate closes first: one past the check may still be sending its body, and would otherwise
-/// run whenever that arrives.
-async fn gated(gate: &Gate, next: Next, req: Request) -> Response {
+/// The request, unless the Gate closes or the device is revoked first: one past the check may still be
+/// sending its body, and would otherwise run whenever that arrives.
+async fn gated(gate: &Gate, revoke: Option<&DeviceRevoke>, next: Next, req: Request) -> Response {
     tokio::select! {
         res = next.run(req) => res,
         _ = gate.closed() => gate_closed(),
+        _ = async {
+            match revoke {
+                Some(r) => r.revoked().await,
+                None => std::future::pending().await,
+            }
+        } => unauthorized(true),
     }
 }
 
@@ -346,7 +488,12 @@ fn is_json(h: &HeaderMap) -> bool {
 }
 
 /// `{method, args}` → `{result}` or `{error: {code, message}}`; only `remote` methods.
-async fn rpc(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Response {
+async fn rpc(
+    State(ctx): State<Ctx>,
+    authed: Option<Extension<AuthedDevice>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     if !is_json(&headers) {
         return (
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -364,6 +511,12 @@ async fn rpc(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respons
             return Json(json!({ "error": e })).into_response();
         }
     };
+    // Re-check after reading the body and right before dispatching side effects.
+    if let Some(Extension(a)) = authed
+        && a.revoke.is_revoked()
+    {
+        return unauthorized(true);
+    }
     Json(match ctx.host.remote_call(&req.method, req.args).await {
         Ok(result) => json!({ "result": result }),
         Err(e) => json!({ "error": e }),
@@ -371,10 +524,122 @@ async fn rpc(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respons
     .into_response()
 }
 
+#[derive(serde::Deserialize)]
+struct PairRequest {
+    key: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// Exchanges a single-use pairing key for a device id and bearer token (only mounted on non-loopback listeners).
+async fn pair(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Response {
+    if !is_json(&headers) {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "请求须是 application/json",
+        )
+            .into_response();
+    }
+    let Some(security) = &ctx.security else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let req: PairRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "invalid_request",
+                        "message": format!("请求不是有效的 JSON：{e}"),
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+    match security.redeem(&req.key, &req.name) {
+        Ok(res) => {
+            ctx.host.emit_event(HostEvent::LanDevices {
+                devices: res.devices,
+                paired_offer: Some(res.offer_id),
+                paired_device: Some(res.device.id.clone()),
+            });
+            Json(json!({
+                "result": {
+                    "deviceId": res.device.id,
+                    "token": res.token,
+                }
+            }))
+            .into_response()
+        }
+        Err(RedeemError::Expired) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": {
+                    "code": "pairing_expired",
+                    "message": "配对码已过期或已用过，请在 Host 上重新生成。",
+                }
+            })),
+        )
+            .into_response(),
+        Err(RedeemError::SaveFailed(why)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": {
+                    "code": "pairing_failed",
+                    "message": format!("保存配对失败：{why}"),
+                }
+            })),
+        )
+            .into_response(),
+    }
+}
+
 /// First `hello`, then every event as it happens; no history.
-async fn events(ws: WebSocketUpgrade, State(ctx): State<Ctx>) -> Response {
+async fn events(
+    ws: WebSocketUpgrade,
+    State(ctx): State<Ctx>,
+    authed: Option<Extension<AuthedDevice>>,
+) -> Response {
+    let authed = authed.map(|Extension(a)| a);
+    if let Some(ref a) = authed
+        && a.revoke.is_revoked()
+    {
+        return unauthorized(true);
+    }
     let rx = ctx.events.subscribe();
-    ws.on_upgrade(move |socket| relay(socket, rx, ctx.gate))
+    ws.on_upgrade(move |socket| run_ws_session(socket, ctx, rx, authed))
+}
+
+async fn run_ws_session(
+    socket: WebSocket,
+    ctx: Ctx,
+    rx: broadcast::Receiver<Utf8Bytes>,
+    authed: Option<AuthedDevice>,
+) {
+    let revoke = if let Some(a) = authed {
+        // Re-check after upgrade completes in case the device was removed in the gap.
+        if a.revoke.is_revoked() {
+            drop(socket);
+            return;
+        }
+        if let Some(sec) = &ctx.security {
+            sec.touch(&a.id);
+        }
+        Some(a.revoke)
+    } else {
+        None
+    };
+    tokio::select! {
+        _ = relay(socket, rx, ctx.gate) => {}
+        _ = async {
+            match revoke {
+                Some(r) => r.revoked().await,
+                None => std::future::pending().await,
+            }
+        } => {}
+    }
 }
 
 async fn relay(mut socket: WebSocket, mut rx: broadcast::Receiver<Utf8Bytes>, gate: Gate) {
@@ -510,6 +775,11 @@ mod tests {
             id: 1,
             message: "ended".into(),
         });
+        sink(HostEvent::LanDevices {
+            devices: vec![],
+            paired_offer: None,
+            paired_device: None,
+        });
         sink(HostEvent::CcrpcLs { ls: "[]".into() });
         let got: Vec<Value> = std::iter::from_fn(|| rx.try_recv().ok())
             .map(|t| serde_json::from_str(t.as_str()).unwrap())
@@ -539,7 +809,7 @@ mod tests {
             addr: Ipv4Addr::LOCALHOST,
             mask: Ipv4Addr::new(255, 0, 0, 0),
         };
-        let mut serving = Serving::new(addr.port(), Box::new(|_| Router::new()));
+        let mut serving = Serving::new(addr.port(), Box::new(|_, _| Router::new()), None);
         let answers = || async { tokio::net::TcpStream::connect(addr).await.is_ok() };
         // Stopping and starting are not instant: the old socket goes when its task does.
         async fn eventually(mut check: impl AsyncFnMut() -> bool) {
@@ -599,6 +869,7 @@ mod tests {
             allowed_origins: Arc::new(vec!["http://localhost:1420".into()]),
             web_dir: web.path().to_path_buf(),
             gate: gate.clone(),
+            security: None,
         };
         let subnet = Subnet {
             addr: Ipv4Addr::LOCALHOST,
@@ -615,7 +886,16 @@ mod tests {
         assert_eq!(status, 200);
         let v: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["product"], "CoDeck");
-        assert_eq!(v["apiVersion"], 1);
+        assert_eq!(v["apiVersion"], 2);
+
+        // Loopback exposes no `/v1/pair`.
+        let (status, ..) = http(
+            addr,
+            "POST /v1/pair HTTP/1.1\r\nContent-Type: application/json",
+            r#"{"key":"k","name":"n"}"#,
+        )
+        .await;
+        assert_eq!(status, 404);
 
         // The first scan runs in the background.
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -730,7 +1010,7 @@ mod tests {
         let v: Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
         assert_eq!(
             v,
-            json!({ "event": "hello", "payload": { "apiVersion": 1 } })
+            json!({ "event": "hello", "payload": { "apiVersion": 2 } })
         );
 
         // LAN access goes off with the listener still up: the WebSocket is closed, a request refused, and that
@@ -748,5 +1028,126 @@ mod tests {
         s.read_to_string(&mut out).await.unwrap();
         assert!(out.starts_with("HTTP/1.1 403"), "{out}");
         assert!(out.ends_with("局域网访问已关闭"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn non_loopback_without_security_is_refused() {
+        let lan = Subnet {
+            addr: Ipv4Addr::new(192, 168, 1, 20),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+        let lo = Subnet {
+            addr: Ipv4Addr::LOCALHOST,
+            mask: Ipv4Addr::new(255, 0, 0, 0),
+        };
+        assert!(needs_tls(&lan));
+        assert!(!needs_tls(&lo));
+
+        let mut serving = Serving::new(0, Box::new(|_, _| Router::new()), None);
+        let err = serving.start(lan).await.unwrap_err();
+        assert!(err.to_string().contains("没有 TLS 与鉴权配置"), "{err}");
+
+        serving.follow(&[lan]).await;
+        assert!(serving.listening().is_empty());
+        assert_eq!(
+            serving.errors(),
+            ["没有 TLS 与鉴权配置，不在 192.168.1.20 上监听"]
+        );
+    }
+
+    /// Simulates revocation landing in the gap between auth middleware and `events` / `on_upgrade`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ws_revoked_in_upgrade_gap_is_rejected_and_not_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+        let offer = sec.start_pairing().unwrap();
+        let paired = sec.redeem(&offer.key, "iPhone").unwrap();
+        let (dev_id, revoke) = sec.verify(&paired.token).unwrap();
+
+        let (events_tx, sink) = event_channel();
+        let host = Host::start(
+            HostConfig {
+                cache_dir: dir.path().join("cache"),
+                settings_path: dir.path().join("settings.json"),
+                ccrpc_logs: Some(dir.path().join("logs")),
+                images: Some(dir.path().join("images")),
+                data_root: Some(dir.path().join("root")),
+                refresh_prices: false,
+                ..HostConfig::desktop()
+            },
+            sink,
+        )
+        .unwrap();
+        let ctx = Ctx {
+            host,
+            events: events_tx,
+            allowed_origins: Arc::default(),
+            web_dir: dir.path().join("web"),
+            gate: Gate::default(),
+            security: Some(Arc::clone(&sec)),
+        };
+
+        // Pre-revoke the device before mounting a handler that runs `events` directly (simulating
+        // revocation right after `check` inserted `AuthedDevice`) and one that runs `run_ws_session`
+        // directly (simulating revocation right after 101 Switching Protocols).
+        sec.remove(&dev_id).unwrap();
+        assert!(revoke.is_revoked());
+        let authed = AuthedDevice {
+            id: dev_id.clone(),
+            revoke: revoke.clone(),
+        };
+
+        let app = Router::new()
+            .route(
+                "/before-upgrade",
+                get({
+                    let authed = authed.clone();
+                    move |ws: WebSocketUpgrade, state: State<Ctx>| {
+                        events(ws, state, Some(Extension(authed.clone())))
+                    }
+                }),
+            )
+            .route(
+                "/after-upgrade",
+                get(move |ws: WebSocketUpgrade, State(ctx): State<Ctx>| {
+                    let authed = authed.clone();
+                    async move {
+                        let rx = ctx.events.subscribe();
+                        ws.on_upgrade(move |socket| run_ws_session(socket, ctx, rx, Some(authed)))
+                    }
+                }),
+            )
+            .with_state(ctx);
+
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        // Gap 1: revoked before `events` returns 101 -> receives 401.
+        let err = tokio_tungstenite::connect_async(format!("ws://{addr}/before-upgrade"))
+            .await
+            .unwrap_err();
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(resp) => {
+                assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+            }
+            other => panic!("expected HTTP 401, got {other:?}"),
+        }
+
+        // Gap 2: revoked after 101, inside `on_upgrade` -> closes without sending `hello`.
+        let (mut ws, resp) = tokio_tungstenite::connect_async(format!("ws://{addr}/after-upgrade"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SWITCHING_PROTOCOLS);
+        use futures_util::StreamExt;
+        match tokio::time::timeout(Duration::from_secs(2), ws.next())
+            .await
+            .expect("ws should close immediately")
+        {
+            None | Some(Err(_)) => {}
+            Some(Ok(msg)) => panic!("revoked ws unexpectedly sent frame: {msg:?}"),
+        }
     }
 }

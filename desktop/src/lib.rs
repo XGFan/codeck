@@ -15,7 +15,8 @@ use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 use crate::events::{
     CcrpcClosingEvent, CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent,
     CcrpcRemoteConnEvent, HaaWatchEndedEvent, HaaWorkersEvent, IndexStatusEvent, KeepAliveEvent,
-    LiveChangedEvent, NotificationClickEvent, PricesChangedEvent, SessionsChangedEvent,
+    LanDevicesEvent, LiveChangedEvent, NotificationClickEvent, PricesChangedEvent,
+    SessionsChangedEvent,
 };
 
 /// The single source of commands and events, shared by the app and the bindings export.
@@ -36,6 +37,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             HaaWorkersEvent,
             HaaWatchEndedEvent,
             KeepAliveEvent,
+            LanDevicesEvent,
             NotificationClickEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
@@ -187,6 +189,16 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
                 error,
             }
             .emit(&handle),
+            HostEvent::LanDevices {
+                devices,
+                paired_offer,
+                paired_device,
+            } => LanDevicesEvent {
+                devices,
+                paired_offer,
+                paired_device,
+            }
+            .emit(&handle),
             // For the LAN's clients: the window folds ccrpc's lines itself.
             HostEvent::ConnectState(_) | HostEvent::ConnectRemoved { .. } => Ok(()),
         };
@@ -311,6 +323,24 @@ fn host_events_match_the_typed_events() {
             session_id: "s".into(),
             active: false,
             error: Some("e".into()),
+        },
+    );
+    let dev = codeck_host::lan::PairedDevice {
+        id: "0123456789ab".into(),
+        name: "iPhone".into(),
+        paired_at: 1_700_000_000_000.0,
+        last_seen_at: Some(1_700_000_005_000.0),
+    };
+    same(
+        HostEvent::LanDevices {
+            devices: vec![dev.clone()],
+            paired_offer: Some("abcdef012345".into()),
+            paired_device: Some(dev.id.clone()),
+        },
+        LanDevicesEvent {
+            devices: vec![dev.clone()],
+            paired_offer: Some("abcdef012345".into()),
+            paired_device: Some(dev.id),
         },
     );
 }

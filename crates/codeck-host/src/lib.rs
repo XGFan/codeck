@@ -34,7 +34,7 @@ use crate::state::{AppState, open_engine};
 pub mod types {
     pub use crate::ccrpc::relay::{AnalyzerRecords, AnalyzerTest};
     pub use crate::ccrpc::{AnalyzerInfo, CcrpcInfo};
-    pub use crate::lan::LanStatus;
+    pub use crate::lan::{LanStatus, PairedDevice, PairingOffer};
     pub use crate::settings::{LaunchRule, SidebarProject};
     pub use codeck_core::model::*;
 }
@@ -164,6 +164,11 @@ impl Host {
         });
         keepalive::spawn(Arc::downgrade(&host));
         Ok(host)
+    }
+
+    /// Emits a HostEvent through this Host's event sink.
+    pub(crate) fn emit_event(&self, event: HostEvent) {
+        (self.events)(event);
     }
 
     /// Closes every ccrpc (the process is quitting); the Sessions themselves keep running.

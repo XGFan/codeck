@@ -1,5 +1,5 @@
 //! Where a Host listens and whom it answers: private IPv4 interfaces only, peers from the
-//! listener's own subnet, and no foreign browser origins (ADR-0011: LAN only, no auth).
+//! listener's own subnet, and no foreign browser origins (ADR-0011: LAN only).
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -74,7 +74,7 @@ pub fn interfaces() -> std::io::Result<Vec<Iface>> {
 
 /// Name prefixes of LAN interfaces (macOS `en*`; Linux `eth*`, `en*`, `wl*`). An allowlist: the private
 /// addresses of VPNs, virtual machines, containers and overlays are not the LAN, and a new kind of virtual
-/// interface must not get the unauthenticated API by default. `--listen` names any other interface.
+/// interface must not expose the LAN API by default. `--listen` names any other interface.
 const LAN_IFACES: &[&str] = &["en", "eth", "wl"];
 
 fn is_lan(name: &str) -> bool {
@@ -162,15 +162,21 @@ pub enum OriginCheck {
 }
 
 /// `origin` is the request's `Origin` header, `host` its `Host` header (already checked by [`host_allowed`],
-/// so an origin equal to it is this Host's own page).
-pub fn check_origin(origin: Option<&str>, host: Option<&str>, allowed: &[String]) -> OriginCheck {
+/// so an origin matching the listener's scheme and `Host` is this Host's own page).
+pub fn check_origin(
+    origin: Option<&str>,
+    host: Option<&str>,
+    allowed: &[String],
+    tls: bool,
+) -> OriginCheck {
     let Some(origin) = origin else {
         return OriginCheck::Allow;
     };
     if origin == "null" {
         return OriginCheck::Deny;
     }
-    if host.is_some_and(|h| origin.strip_prefix("http://") == Some(h)) {
+    let scheme = if tls { "https://" } else { "http://" };
+    if host.is_some_and(|h| origin.strip_prefix(scheme) == Some(h)) {
         return OriginCheck::Allow;
     }
     if allowed.iter().any(|a| a == origin) {
@@ -370,13 +376,28 @@ mod tests {
     fn origins() {
         let allowed = vec!["http://localhost:1420".to_string()];
         let host = Some("192.168.1.20:38471");
-        assert_eq!(check_origin(None, host, &allowed), OriginCheck::Allow);
         assert_eq!(
-            check_origin(Some("http://192.168.1.20:38471"), host, &allowed),
+            check_origin(None, host, &allowed, false),
             OriginCheck::Allow
         );
         assert_eq!(
-            check_origin(Some("http://localhost:1420"), host, &allowed),
+            check_origin(Some("http://192.168.1.20:38471"), host, &allowed, false),
+            OriginCheck::Allow
+        );
+        assert_eq!(
+            check_origin(Some("https://192.168.1.20:38471"), host, &allowed, true),
+            OriginCheck::Allow
+        );
+        assert_eq!(
+            check_origin(Some("http://192.168.1.20:38471"), host, &allowed, true),
+            OriginCheck::Deny
+        );
+        assert_eq!(
+            check_origin(Some("http://localhost:1420"), host, &allowed, false),
+            OriginCheck::Cors
+        );
+        assert_eq!(
+            check_origin(Some("http://localhost:1420"), host, &allowed, true),
             OriginCheck::Cors
         );
         for bad in [
@@ -386,14 +407,14 @@ mod tests {
             "http://evil.example",
         ] {
             assert_eq!(
-                check_origin(Some(bad), host, &allowed),
+                check_origin(Some(bad), host, &allowed, false),
                 OriginCheck::Deny,
                 "{bad}"
             );
         }
         // Without a Host header only the allow list helps.
         assert_eq!(
-            check_origin(Some("http://192.168.1.20:38471"), None, &allowed),
+            check_origin(Some("http://192.168.1.20:38471"), None, &allowed, false),
             OriginCheck::Deny
         );
     }

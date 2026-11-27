@@ -91,3 +91,12 @@ pub struct HaaWatchEndedEvent {
 pub struct NotificationClickEvent {
     pub url: String,
 }
+
+/// The paired LAN device list changed (a device paired or was removed).
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LanDevicesEvent {
+    pub devices: Vec<codeck_host::lan::PairedDevice>,
+    pub paired_offer: Option<String>,
+    pub paired_device: Option<String>,
+}

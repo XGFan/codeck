@@ -54,6 +54,13 @@ pub enum HostEvent {
         active: bool,
         error: Option<String>,
     },
+    /// The paired LAN device list changed (a device paired or was removed). Only for the desktop window; never
+    /// forwarded to LAN clients.
+    LanDevices {
+        devices: Vec<crate::lan::PairedDevice>,
+        paired_offer: Option<String>,
+        paired_device: Option<String>,
+    },
 }
 
 pub type EventSink = Arc<dyn Fn(HostEvent) + Send + Sync>;
@@ -79,6 +86,7 @@ impl HostEvent {
             HostEvent::HaaWorkers { .. } => "haa-workers-event",
             HostEvent::HaaWatchEnded { .. } => "haa-watch-ended-event",
             HostEvent::KeepAlive { .. } => "keep-alive-event",
+            HostEvent::LanDevices { .. } => "lan-devices-event",
         }
     }
 
@@ -111,6 +119,15 @@ impl HostEvent {
                 active,
                 error,
             } => Ok(json!({ "sessionId": session_id, "active": active, "error": error })),
+            HostEvent::LanDevices {
+                devices,
+                paired_offer,
+                paired_device,
+            } => Ok(json!({
+                "devices": devices,
+                "pairedOffer": paired_offer,
+                "pairedDevice": paired_device,
+            })),
         };
         v.unwrap_or(Value::Null)
     }

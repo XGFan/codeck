@@ -1,10 +1,17 @@
 //! The Host's HTTP + WebSocket face on the LAN. The daemon always serves it; the desktop app when 「局域网访问」 is on
 //! (ADR-0012), which is what [`LanService`] switches.
 
+pub mod devices;
 pub mod net;
+pub mod pairing;
+pub mod security;
 pub mod server;
+pub mod tls;
 
-use std::path::PathBuf;
+pub use self::devices::PairedDevice;
+pub use self::pairing::PairingOffer;
+
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -16,10 +23,11 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use self::net::Subnet;
+use self::security::LanSecurity;
 use self::server::{Ctx, Gate, Serving};
-use crate::Host;
 use crate::ccrpc::relay;
 use crate::commands::{CmdResult, internal};
+use crate::{Host, HostEvent};
 
 /// The daemon's and the desktop app's port.
 pub const DEFAULT_PORT: u16 = 38471;
@@ -73,6 +81,8 @@ pub(crate) struct LanService {
     enabled: AtomicBool,
     /// Serializes turning it on and off.
     running: tokio::sync::Mutex<Option<Running>>,
+    /// Device table, active pairing offer, and lazily loaded TLS certificate.
+    security: Mutex<Option<Arc<LanSecurity>>>,
 }
 
 struct Running {
@@ -138,6 +148,9 @@ impl Host {
                 self.ccrpc.keep_watching(hub, self.events.clone());
             }
         } else if !on && let Some(r) = running.take() {
+            if let Some(sec) = self.lan.security.lock().as_ref() {
+                sec.cancel_any_pairing();
+            }
             r.gate.close();
             // Over when the port is free again.
             let _ = r.task.await;
@@ -148,18 +161,130 @@ impl Host {
         self.lan.enabled.store(on, Ordering::SeqCst);
     }
 
+    /// Opens (and caches) this Host's [`LanSecurity`] without touching the TLS certificate.
+    pub async fn lan_security(&self) -> Result<Arc<LanSecurity>, String> {
+        if let Some(sec) = self.lan.security.lock().clone() {
+            return Ok(sec);
+        }
+        let dir = self
+            .config
+            .settings_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let sec = tokio::task::spawn_blocking(move || LanSecurity::open(dir))
+            .await
+            .map_err(|e| format!("加载设备列表失败：{e}"))??;
+        let sec = Arc::new(sec);
+        let mut slot = self.lan.security.lock();
+        Ok(Arc::clone(slot.get_or_insert(sec)))
+    }
+
+    pub async fn lan_pair_start(&self) -> CmdResult<PairingOffer> {
+        let Some(cfg) = &self.config.lan else {
+            return Err(relay::invalid("先打开局域网访问。"));
+        };
+        let running = self.lan.running.lock().await;
+        let Some(r) = running.as_ref() else {
+            return Err(relay::invalid("先打开局域网访问。"));
+        };
+        let addresses = r.status.lock().addresses.clone();
+        if pairing::private_ipv4_addrs(&addresses).is_empty() {
+            return Err(relay::invalid("没有可用的局域网地址。"));
+        }
+        let sec = self.lan_security().await.map_err(relay::io)?;
+        let port = cfg.port;
+        tokio::task::spawn_blocking(move || pairing::create_pairing_offer(&sec, port, &addresses))
+            .await
+            .map_err(internal)?
+            .map_err(|e| {
+                if e == "没有可用的局域网地址。" {
+                    relay::invalid(e)
+                } else {
+                    relay::io(e)
+                }
+            })
+    }
+
+    pub async fn lan_pair_cancel(&self, id: String) -> CmdResult<()> {
+        if let Some(sec) = self.lan.security.lock().clone() {
+            sec.cancel_pairing(&id);
+        }
+        Ok(())
+    }
+
+    pub async fn lan_devices(&self) -> CmdResult<Vec<PairedDevice>> {
+        let sec = self.lan_security().await.map_err(relay::io)?;
+        Ok(sec.devices())
+    }
+
+    pub async fn lan_remove_device(&self, id: String) -> CmdResult<()> {
+        let sec = self.lan_security().await.map_err(relay::io)?;
+        let (removed, devices) = tokio::task::spawn_blocking(move || sec.remove(&id))
+            .await
+            .map_err(internal)?
+            .map_err(relay::io)?;
+        if removed {
+            self.emit_event(HostEvent::LanDevices {
+                devices,
+                paired_offer: None,
+                paired_device: None,
+            });
+        }
+        Ok(())
+    }
+
     /// Listens now, so the status it leaves is accurate, and goes on following the network until the gate closes.
     async fn lan_start(&self, cfg: &LanConfig) -> Running {
         let host = self.me.upgrade().expect("a Host is made by Host::start");
         let gate = Gate::default();
+        let fail_running = |why: String| {
+            tracing::error!("cannot start LAN service: {why}");
+            let status = Arc::new(Mutex::new(LanStatus {
+                enabled: true,
+                addresses: Vec::new(),
+                error: Some(why),
+            }));
+            let task = {
+                let gate = gate.clone();
+                tokio::spawn(async move {
+                    gate.closed().await;
+                })
+            };
+            Running {
+                gate: gate.clone(),
+                status,
+                task,
+            }
+        };
+        let security = match self.lan_security().await {
+            Ok(sec) => sec,
+            Err(why) => return fail_running(why),
+        };
+        let cert_res = {
+            let sec = Arc::clone(&security);
+            tokio::task::spawn_blocking(move || sec.ensure_cert())
+                .await
+                .map_err(|e| format!("加载 TLS 证书失败：{e}"))
+                .and_then(|r| r)
+        };
+        if let Err(why) = cert_res {
+            return fail_running(why);
+        }
         let ctx = Ctx {
             host,
             events: cfg.events.clone(),
             allowed_origins: Arc::default(),
             web_dir: cfg.web_dir.clone(),
             gate: gate.clone(),
+            security: None,
         };
-        let mut serving = Serving::new(cfg.port, Box::new(move |s| server::router(ctx.clone(), s)));
+        let mut serving = Serving::new(
+            cfg.port,
+            Box::new(move |s, sec| server::router(ctx.with_security(sec), s)),
+            Some(security),
+        );
         let status = Arc::new(Mutex::new(LanStatus {
             enabled: true,
             ..LanStatus::default()
