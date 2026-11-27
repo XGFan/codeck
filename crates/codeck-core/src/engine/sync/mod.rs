@@ -19,7 +19,7 @@ use crate::index::{reader, writer};
 use crate::model::{FileRole, IndexPhase, IndexStatus};
 use crate::scan::FileSource;
 use crate::{project, scan};
-use compute::{SessionWork, compute_session};
+use compute::{AgyEnv, SessionWork, compute_session};
 use plan::{SessionPlan, batches, diff_sidecars, plan_sync};
 use write::{rebill_changed, session_exists, update_superseded, write_work};
 
@@ -122,6 +122,12 @@ impl Engine {
     ) -> CoreResult<(ChangeSet, BTreeSet<String>)> {
         let p: &dyn Fn(&IndexStatus) = p.unwrap_or(&|_| {});
         let agy_meta = read_agy_metadata(&self.cfg.agy_root);
+        let haa_repos = crate::haa::worktree_repos(&self.cfg.haa_home);
+        let agy_env = AgyEnv {
+            root: &self.cfg.agy_root,
+            haa_home: &self.cfg.haa_home,
+            haa_repos: &haa_repos,
+        };
         let (mut scan, db_files, claude_scope, stored_fps) = match scope {
             SyncScope::Scoped { sessions, agy_all } => {
                 let (scan, db, widened) = self.scan_scope(sessions, *agy_all)?;
@@ -168,7 +174,9 @@ impl Engine {
         };
         let mut recompute_dirty = sidecar_dirty;
         for f in scan.files.iter().filter(|f| f.source == FileSource::Agy) {
-            let cur_fp = agy_meta.get(&f.session_id).map(|m| m.fingerprint as i64);
+            let cur_fp = agy_meta
+                .get(&f.session_id)
+                .map(|m| compute::agy_fingerprint(m, &haa_repos));
             if stored_fps
                 .get(&f.session_id)
                 .is_some_and(|&stored| stored != cur_fp)
@@ -256,15 +264,7 @@ impl Engine {
                     .map(|(plan, cached, keep)| {
                         let need_main_set = !plan.reparse && with_text.contains(&plan.sid);
                         let meta = agy_meta.get(&plan.sid);
-                        compute_session(
-                            plan,
-                            cached,
-                            keep,
-                            need_main_set,
-                            meta,
-                            &self.cfg.agy_root,
-                            &self.cfg.haa_home,
-                        )
+                        compute_session(plan, cached, keep, need_main_set, meta, &agy_env)
                     })
                     .collect();
                 let (files_done, bytes_done) = works.iter().fold((0u32, 0u64), |(f, b), w| {

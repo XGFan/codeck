@@ -440,6 +440,63 @@ fn agy_title_project_and_haa_workspace_resolution() {
 }
 
 #[test]
+fn haa_worktree_record_puts_a_worker_under_its_repo_on_the_next_sync() {
+    let claude = tempfile::tempdir().unwrap();
+    let agy = fixture_root("agy");
+    let cache = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let haa_home = work.path().join(".haa");
+    fs::create_dir_all(&haa_home).unwrap();
+    let repo = work.path().join("my-repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    let repo_real = fs::canonicalize(&repo).unwrap();
+    // The worktree is gone (haa deletes it once merged): only agy's metadata still names it.
+    let worktree = haa_home.join("worktrees/haa-agy-web-ecdd8f");
+    let mut meta = read_meta_json(agy.path());
+    meta["conversations"][AGY_SHORT]["summary"]["WorkspaceURIs"] =
+        json!([format!("file://{}", worktree.display())]);
+    write_meta_json(agy.path(), &meta);
+
+    let engine = Engine::open(EngineConfig {
+        data_root: claude.path().to_path_buf(),
+        data_root_source: DataRootSource::Settings,
+        agy_root: agy.path().to_path_buf(),
+        haa_home: haa_home.clone(),
+        cache_dir: cache.path().to_path_buf(),
+    })
+    .unwrap();
+    engine.scan_all(&|_| {}).unwrap();
+    let before = engine.get_session(AGY_SHORT).unwrap();
+    assert_eq!(before.summary.project_id, worktree.to_string_lossy());
+    assert!(before.project_missing);
+    let tui_before = engine.get_session(AGY_TUI).unwrap().summary.project_id;
+
+    // haa's record arrives (or is backfilled) without any agy file changing.
+    fs::write(
+        haa_home.join("usage.jsonl"),
+        format!(
+            "{}\n",
+            json!({"kind": "worktree", "worker": "agy-web", "cwd": worktree, "repo": repo, "branch": "haa/agy-web-ecdd8f"})
+        ),
+    )
+    .unwrap();
+    engine.scan_all(&|_| {}).unwrap();
+    let after = engine.get_session(AGY_SHORT).unwrap();
+    assert_eq!(after.summary.project_id, repo_real.to_string_lossy());
+    assert!(!after.project_missing);
+    // The Session's own directory stays the worktree it ran in.
+    assert_eq!(
+        after.cwd.as_deref(),
+        Some(worktree.to_string_lossy().as_ref())
+    );
+    // Sessions outside haa worktrees keep their project.
+    assert_eq!(
+        engine.get_session(AGY_TUI).unwrap().summary.project_id,
+        tui_before
+    );
+}
+
+#[test]
 fn agy_skips_fts_with_done_progress_while_find_in_session_works() {
     let claude = fixture_root("basic");
     let agy = fixture_root("agy");

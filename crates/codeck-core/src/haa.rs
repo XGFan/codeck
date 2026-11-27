@@ -29,6 +29,10 @@ struct UsageRow {
     title: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    repo: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -88,6 +92,32 @@ pub fn load(haa_home: &Path) -> HashMap<String, HaaWorker> {
         &haa_home.join("usage.jsonl"),
         &haa_home.join("workers.json"),
     )
+}
+
+/// `worktree directory -> repo root` from haa's `kind = "worktree"` records in `<haa_home>/usage.jsonl`
+/// (written when `--worktree` creates one; old ones backfilled). haa deletes a worktree once merged, so
+/// this is what puts an agy Session that ran in one back under its repo. Read on every sync: the file is
+/// small. Missing or malformed lines are skipped; the last record for a directory wins.
+pub fn worktree_repos(haa_home: &Path) -> HashMap<PathBuf, PathBuf> {
+    let mut out = HashMap::new();
+    let Ok(file) = File::open(haa_home.join("usage.jsonl")) else {
+        return out;
+    };
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        let Ok(row) = serde_json::from_str::<UsageRow>(&line) else {
+            continue;
+        };
+        if row.kind.as_deref() != Some("worktree") {
+            continue;
+        }
+        if let (Some(cwd), Some(repo)) = (non_empty(row.cwd), non_empty(row.repo)) {
+            out.insert(PathBuf::from(cwd), PathBuf::from(repo));
+        }
+    }
+    out
 }
 
 fn file_stamp(path: &Path) -> FileStamp {
@@ -212,6 +242,32 @@ mod tests {
                 task_title: None,
             }
         );
+    }
+
+    #[test]
+    fn worktree_repos_reads_worktree_records_last_one_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("usage.jsonl"),
+            [
+                r#"{"kind":"worktree","worker":"w1","cwd":"/h/worktrees/haa-w1-aaaaaa","repo":"/r/old","branch":"haa/w1-aaaaaa"}"#,
+                "not json",
+                r#"{"kind":"task","worker":"w1","cwd":"/h/worktrees/haa-w2-bbbbbb","repo":"/r/ignored"}"#,
+                r#"{"kind":"worktree","worker":"w3","cwd":"/h/worktrees/haa-w3-cccccc"}"#,
+                r#"{"kind":"worktree","worker":"w1","cwd":"/h/worktrees/haa-w1-aaaaaa","repo":"/r/new","backfilled":"branch"}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let repos = worktree_repos(dir.path());
+        assert_eq!(
+            repos,
+            HashMap::from([(
+                PathBuf::from("/h/worktrees/haa-w1-aaaaaa"),
+                PathBuf::from("/r/new")
+            )])
+        );
+        assert!(worktree_repos(&dir.path().join("missing")).is_empty());
     }
 
     #[test]
