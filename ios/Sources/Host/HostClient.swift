@@ -99,7 +99,8 @@ struct HostClient: Sendable {
     }
 
     /// Exchanges a one-time pairing key for a device id and bearer token. Does not send Authorization.
-    func pair(key: String, name: String, timeout: TimeInterval = 10) async throws -> (deviceId: String, token: String) {
+    /// The timeout outlasts the Host's 10 s body read plus its commit, so a slow commit is not abandoned mid-way.
+    func pair(key: String, name: String, timeout: TimeInterval = 30) async throws -> (deviceId: String, token: String) {
         var request = URLRequest(url: baseURL.appending(path: "v1/pair"))
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
