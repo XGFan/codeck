@@ -93,6 +93,11 @@ impl LanSecurity {
         self.inner.lock().pairing.cancel_any();
     }
 
+    #[cfg(test)]
+    pub(crate) fn has_active_pairing(&self) -> bool {
+        self.inner.lock().pairing.is_active()
+    }
+
     pub fn redeem(&self, key: &str, name: &str) -> Result<RedeemSuccess, RedeemError> {
         self.redeem_at(key, name, Instant::now(), now_ms())
     }
@@ -132,12 +137,21 @@ impl LanSecurity {
         self.inner.lock().devices.verify(token)
     }
 
-    /// Removes a device, firing its revocation signal, and returns `(was_present, updated_list)`.
-    pub fn remove(&self, id: &str) -> Result<(bool, Vec<PairedDevice>), String> {
+    /// Removes a device, firing its revocation signal, and returns `(removed_device, updated_list)`.
+    pub fn remove_device(
+        &self,
+        id: &str,
+    ) -> Result<(Option<PairedDevice>, Vec<PairedDevice>), String> {
         let mut st = self.inner.lock();
-        let removed = st.devices.remove(id)?;
+        let removed = st.devices.remove_device(id)?;
         let devices = st.devices.list();
         Ok((removed, devices))
+    }
+
+    /// Removes a device, firing its revocation signal, and returns `(was_present, updated_list)`.
+    pub fn remove(&self, id: &str) -> Result<(bool, Vec<PairedDevice>), String> {
+        let (removed, devices) = self.remove_device(id)?;
+        Ok((removed.is_some(), devices))
     }
 
     pub fn touch(&self, id: &str) {

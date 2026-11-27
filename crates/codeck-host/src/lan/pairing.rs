@@ -195,6 +195,11 @@ impl Pairing {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_active(&self) -> bool {
+        self.current.is_some()
+    }
+
     /// Checks whether `key` matches the current unexpired offer without consuming it yet, so the
     /// caller can persist `devices.json` before committing the redemption.
     pub fn check(&mut self, key: &str, now: Instant) -> bool {

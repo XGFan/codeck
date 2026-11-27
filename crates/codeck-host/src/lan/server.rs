@@ -125,6 +125,8 @@ pub struct Serving {
     tasks: HashMap<Subnet, JoinHandle<()>>,
     /// Could not be bound at the last look, and why: logged once, tried again at each.
     failed: HashMap<Subnet, String>,
+    /// Live mirror of `self.listening()` updated on every `start` / `follow` / `stop`.
+    snapshot: Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl Serving {
@@ -135,7 +137,17 @@ impl Serving {
             security,
             tasks: HashMap::new(),
             failed: HashMap::new(),
+            snapshot: Arc::default(),
         }
+    }
+
+    /// Shared live view of the `address:port`s currently bound by this [`Serving`].
+    pub fn listening_handle(&self) -> Arc<parking_lot::Mutex<Vec<String>>> {
+        Arc::clone(&self.snapshot)
+    }
+
+    fn sync_snapshot(&self) {
+        *self.snapshot.lock() = self.listening();
     }
 
     pub async fn start(&mut self, subnet: Subnet) -> std::io::Result<()> {
@@ -177,6 +189,7 @@ impl Serving {
             }
         });
         self.tasks.insert(subnet, task);
+        self.sync_snapshot();
         Ok(())
     }
 
@@ -214,11 +227,13 @@ impl Serving {
                 }
             }
         }
+        self.sync_snapshot();
     }
 
     /// Stops every listener; their port is free when this returns.
     pub async fn stop(&mut self) {
         let tasks: Vec<_> = self.tasks.drain().map(|(_, task)| task).collect();
+        self.sync_snapshot();
         for task in &tasks {
             task.abort();
         }

@@ -187,21 +187,27 @@ impl Devices {
         Some((dev.id.clone(), revoke))
     }
 
-    /// Removes a device, persisting first and then firing its revocation signal. Returns `Ok(false)`
+    /// Removes a device, persisting first and then firing its revocation signal. Returns `Ok(None)`
     /// when `id` is not present.
-    pub fn remove(&mut self, id: &str) -> Result<bool, String> {
+    pub fn remove_device(&mut self, id: &str) -> Result<Option<PairedDevice>, String> {
         let Some(pos) = self.devices.iter().position(|d| d.id == id) else {
-            return Ok(false);
+            return Ok(None);
         };
         let mut next = self.devices.clone();
-        next.remove(pos);
+        let removed = next.remove(pos).to_public();
         save_atomic(&self.path, &next)?;
 
         self.devices = next;
         if let Some(revoke) = self.revokes.remove(id) {
             revoke.revoke();
         }
-        Ok(true)
+        Ok(Some(removed))
+    }
+
+    /// Removes a device, persisting first and then firing its revocation signal. Returns `Ok(false)`
+    /// when `id` is not present.
+    pub fn remove(&mut self, id: &str) -> Result<bool, String> {
+        Ok(self.remove_device(id)?.is_some())
     }
 
     /// Updates `lastSeenAt` for `id`; write failures are logged and ignored so connections stay up.

@@ -1,6 +1,7 @@
 //! The Host's HTTP + WebSocket face on the LAN. The daemon always serves it; the desktop app when 「局域网访问」 is on
 //! (ADR-0012), which is what [`LanService`] switches.
 
+pub mod control;
 pub mod devices;
 pub mod net;
 pub mod pairing;
