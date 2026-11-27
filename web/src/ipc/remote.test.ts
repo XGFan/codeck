@@ -45,8 +45,10 @@ describe("remote api", () => {
       "getPlanUsage",
       "keepAliveMinutes",
       "setKeepAliveMinutes",
-      "notify",
-      "removeNotifications",
+      "attentionDone",
+      "notifySettings",
+      "setNotifySettings",
+      "testBark",
     ]);
     for (const c of commands) {
       if (local.has(c.name)) continue;

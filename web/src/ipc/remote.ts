@@ -268,9 +268,13 @@ export function createRemoteApi(target: string | RemoteTransport): RemoteApi {
     keepAliveMinutes: () => desktopOnly("缓存保活"),
     setKeepAliveMinutes: () => desktopOnly("缓存保活"),
     onKeepAlive: async () => () => {},
-    notify: async () => {},
-    removeNotifications: async () => {},
     onNotificationClick: async () => () => {},
+    setViewing: async (sessionId) => void (await rpc("set_viewing", { sessionId })),
+    attentionDone: async () => [],
+    onAttention: async () => () => {},
+    notifySettings: () => desktopOnly("通知设置"),
+    setNotifySettings: () => desktopOnly("通知设置"),
+    testBark: () => desktopOnly("通知设置"),
     onCcrpcLine: (cb) =>
       listen<{ conn: string; line: string }>("ccrpc-line-event", ({ conn, line }) => {
         try {

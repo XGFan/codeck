@@ -18,7 +18,8 @@ import type {
   LanDevicesEvent,
   LanStatus,
   LiveChanged,
-  Notice,
+  NotifyInfo,
+  NotifySettings,
   PairedDevice,
   PairingOffer,
   PlanUsage,
@@ -136,15 +137,20 @@ export interface Api {
   onKeepAlive(cb: (e: { sessionId: string; active: boolean; error: string | null }) => void): Promise<Unlisten>;
   /** The Dock badge; 0 clears it. */
   setBadge(count: number): Promise<void>;
-  /**
-   * A system notification, in place of the one with its `id` when that is still there; a click on it brings the
-   * window back and reports `url` (a `codeck://` link).
-   */
-  notify(n: Notice): Promise<void>;
-  /** Takes the notifications with these `id`s out of Notification Center. */
-  removeNotifications(ids: string[]): Promise<void>;
-  /** A notification sent by `notify` was clicked: its `url`. */
+  /** A system notification (the Host sends them) was clicked: its `url` (a `codeck://` link). */
   onNotificationClick(cb: (url: string) => void): Promise<Unlisten>;
+  /** Tells the Host which Session this window looks at (null: none): what counts as seen for the notifications. */
+  setViewing(sessionId: string | null): Promise<void>;
+  /** The 「已完成」 Sessions now (the Host decides them; later changes come to `onAttention`). */
+  attentionDone(): Promise<string[]>;
+  /** The 「已完成」 Sessions changed. */
+  onAttention(cb: (done: string[]) => void): Promise<Unlisten>;
+  /** 「设置 › 通用」 的通知 and how the last push to the iPhone went. */
+  notifySettings(): Promise<NotifyInfo>;
+  /** Saves 「设置 › 通用」 的通知; returns what was saved. */
+  setNotifySettings(settings: NotifySettings): Promise<NotifyInfo>;
+  /** Pushes a test notification to Bark with these values (not saved). */
+  testBark(server: string, deviceKey: string): Promise<void>;
   /** ccrpc's lines, parsed (lines that are not JSON are dropped). */
   onCcrpcLine(cb: (conn: string, msg: InMsg) => void): Promise<Unlisten>;
   /** ccrpc exited; `code` is null when killed by a signal. */

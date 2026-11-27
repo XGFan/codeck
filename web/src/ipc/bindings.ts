@@ -43,6 +43,19 @@ export const commands = {
 	keepAliveMinutes: () => __TAURI_INVOKE<number>("keep_alive_minutes"),
 	/**  Saves 「缓存保活」 (minutes, 0 = off); returns what was saved. */
 	setKeepAliveMinutes: (minutes: number) => __TAURI_INVOKE<number>("set_keep_alive_minutes", { minutes }),
+	/**
+	 *  Tells the Host which Session this caller looks at (`None`: none): the desktop window while in front, the
+	 *  iPhone's Session page while the app is (ADR-0019).
+	 */
+	setViewing: (sessionId: string | null) => __TAURI_INVOKE<null>("set_viewing", { sessionId }),
+	/**  The 「已完成」 Sessions now (a reloaded window; later ones come as `AttentionEvent`). */
+	attentionDone: () => __TAURI_INVOKE<string[]>("attention_done"),
+	/**  「设置 › 通用」 的通知 and how the last push to the iPhone went. */
+	notifySettings: () => __TAURI_INVOKE<NotifyInfo>("notify_settings"),
+	/**  Saves 「设置 › 通用」 的通知; returns what was saved. */
+	setNotifySettings: (settings: NotifySettings) => __TAURI_INVOKE<NotifyInfo>("set_notify_settings", { settings }),
+	/**  Pushes a test notification to Bark with these values (not saved). */
+	testBark: (server: string, deviceKey: string) => __TAURI_INVOKE<null>("test_bark", { server, deviceKey }),
 	ccrpcInfo: () => __TAURI_INVOKE<CcrpcInfo>("ccrpc_info"),
 	/**
 	 *  Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
@@ -114,17 +127,11 @@ export const commands = {
 	fetchedMs: number,
 	limits: PlanLimit[],
 } | null>("get_plan_usage", { refresh }),
-	/**
-	 *  Shows a system notification, in place of the one with its `id` when that is still there. Not in the Host's
-	 *  table: it is the window's, like the Dock badge.
-	 */
-	notify: (notice: Notice) => __TAURI_INVOKE<void>("notify", { notice }),
-	/**  Takes the notifications with these `id`s (as given to `notify`) out of Notification Center. */
-	removeNotifications: (ids: string[]) => __TAURI_INVOKE<void>("remove_notifications", { ids }),
 };
 
 /** Events */
 export const events = {
+	attentionEvent: makeEvent<AttentionEvent>("attention-event"),
 	ccrpcClosingEvent: makeEvent<CcrpcClosingEvent>("ccrpc-closing-event"),
 	ccrpcExitEvent: makeEvent<CcrpcExitEvent>("ccrpc-exit-event"),
 	ccrpcLineEvent: makeEvent<CcrpcLineEvent>("ccrpc-line-event"),
@@ -211,6 +218,11 @@ export type AssistantBlock = ({ kind: "text"; text: string }) & { blockType?: ne
 ({ kind: "thinking"; text: string }) & { blockType?: never; rawJson?: never } | {
 	kind: "toolCall",
 } & ToolCall | ({ kind: "unknown"; blockType: string; rawJson: string }) & { text?: never };
+
+/**  The 「已完成」 Sessions changed (the Host's `attention`). */
+export type AttentionEvent = {
+	done: string[],
+};
 
 /**  Selects a non-default Branch: at `anchor_key`, follow `head_id` (an id, not an index, so it is stable under live appends). */
 export type BranchChoice = {
@@ -595,26 +607,32 @@ text: string } |
 /**  A tool result not absorbed into its call (the call is not on the shown path). */
 { kind: "toolResult"; text: string } | { kind: "attachment"; attachmentType: string; text: string } | { kind: "unknown"; entryType: string; rawJson: string };
 
-/**  A notification to show. */
-export type Notice = {
-	/**  Names it: a later one with the same `id` takes its place, and `remove` finds it by this. */
-	id: string,
-	title: string,
-	body: string,
-	/**  Reported when it is clicked (a `codeck://` link). */
-	url: string,
-	/**  Notification Center keeps the notifications of one thread together. */
-	thread: string | null,
-	/**
-	 *  Time-sensitive: shown during a Focus that lets such notifications through. It takes the entitlement
-	 *  `com.apple.developer.usernotifications.time-sensitive`; an app signed without it has it shown as a plain one.
-	 */
-	timeSensitive: boolean,
-};
-
-/**  A system notification was clicked: the `url` it was sent with (`commands::notify`). */
+/**  A system notification was clicked: the `url` it was sent with (the Host's `attention`). */
 export type NotificationClickEvent = {
 	url: string,
+};
+
+/**  「设置 › 通用」 的通知 and how the last push went. */
+export type NotifyInfo = {
+	settings: NotifySettings,
+	/**  The last push failed, and none went out since. */
+	lastPushError: PushError | null,
+};
+
+/**  「设置 › 通用」 的通知 as the window reads and saves them: each delay in minutes, `null` = off. */
+export type NotifySettings = {
+	/**  「等待作答通知」 (0 = at once). */
+	waitingMinutes: number | null,
+	/**  「已完成通知」 (0 = at once). */
+	doneMinutes: number | null,
+	/**
+	 *  「补推到 iPhone」: one only on the Mac goes to the iPhone too after this long unsettled; `null`: only once
+	 *  nobody uses the Mac.
+	 */
+	escalateMinutes: number | null,
+	barkServer: string,
+	/**  Empty: no pushes to the iPhone. */
+	barkDeviceKey: string,
 };
 
 /**  A paired client device, exposed in IPC and `codeck-host devices`. */
@@ -726,6 +744,13 @@ system: boolean } | { kind: "commandOutput" } |
 { kind: "peer"; source: PeerSource; 
 /**  The sender: the other Session's name, the agent's, the plugin's. */
 from: string | null } | { kind: "meta" };
+
+/**  The last push to the iPhone that failed. */
+export type PushError = {
+	message: string,
+	/**  Epoch milliseconds. */
+	at: number,
+};
 
 /**
  *  One message of a prompt relayed from other agents: a `<teammate-message>`, a

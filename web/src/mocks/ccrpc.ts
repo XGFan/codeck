@@ -24,7 +24,8 @@ import type {
   LanDevicesEvent,
   LanStatus,
   LaunchRule,
-  Notice,
+  NotifySettings,
+  PushError,
   PairedDevice,
   PairingOffer,
 } from "@/ipc/bindings";
@@ -141,6 +142,25 @@ const lsEndedCbs = new Set<(message: string) => void>();
 const remoteConnCbs = new Set<(conn: string, holderId: string | null) => void>();
 const closingCbs = new Set<(conn: string) => void>();
 const notificationCbs = new Set<(url: string) => void>();
+const attentionCbs = new Set<(done: string[]) => void>();
+/** The Host's 「已完成」, as the mock keeps it: a turn that ended (busy → idle) while the window looked elsewhere. */
+const done = new Set<string>();
+/** What the window last said it looks at (`setViewing`). */
+let viewingNow: string | null = null;
+/** Sessions whose cache the Host is refreshing (`keepAliveEvent`): their status changes are the `/btw` panel's. */
+const refreshing = new Set<string>();
+const emitDone = () => {
+  for (const cb of attentionCbs) cb([...done]);
+};
+
+/** A Live Session's status went `from` → `to` (null: not Live): 「已完成」 as the Host would keep it. */
+export function attentionOnLive(sessionId: string, from: string | null, to: string | null) {
+  if (refreshing.has(sessionId) || from === to) return;
+  const was = done.has(sessionId);
+  if (from === "busy" && to === "idle" && viewingNow !== sessionId) done.add(sessionId);
+  else done.delete(sessionId);
+  if (was !== done.has(sessionId)) emitDone();
+}
 const keepAliveCbs = new Set<(e: { sessionId: string; active: boolean; error: string | null }) => void>();
 const lanDevicesCbs = new Set<(e: LanDevicesEvent) => void>();
 const conns = new Map<string, Conn>();
@@ -159,12 +179,18 @@ export interface CcrpcProbe {
   watching: boolean;
   guiLog: string[];
   badge: number;
-  /** System notifications sent (`notify`), in order. */
-  notifications: Notice[];
-  /** The `id`s of the notifications taken out of Notification Center (`removeNotifications`), in order. */
-  removedNotifications: string[];
-  /** The user clicks a notification with this link. */
+  /** The user clicks a notification (the Host's) with this link. */
   clickNotification: (url: string) => void;
+  /** `setViewing` calls, in order. */
+  viewing: (string | null)[];
+  /** 「设置 › 通用」 的通知 as last saved. */
+  notify: NotifySettings;
+  /** The last push that failed, as `notifySettings` reports it. */
+  lastPushError: PushError | null;
+  /** `testBark` calls, in order. */
+  barkTests: { server: string; deviceKey: string }[];
+  /** Why the next `testBark` fails; null: it succeeds. */
+  barkTestError: string | null;
   /** 「缓存保活」 as last saved (minutes, 0 = off). */
   keepAlive: number;
   /** The Host starts (`active`) or ends refreshing this Session's prompt cache. */
@@ -247,13 +273,24 @@ const probe: CcrpcProbe = {
   watching: false,
   guiLog: [],
   badge: 0,
-  notifications: [],
-  removedNotifications: [],
   clickNotification: (url) => {
     for (const cb of notificationCbs) cb(url);
   },
+  viewing: [],
+  notify: {
+    waitingMinutes: 3,
+    doneMinutes: 3,
+    escalateMinutes: 5,
+    barkServer: "https://api.day.app",
+    barkDeviceKey: "",
+  },
+  lastPushError: null,
+  barkTests: [],
+  barkTestError: null,
   keepAlive: 40,
   keepAliveEvent: (sessionId, active, error) => {
+    if (active) refreshing.add(sessionId);
+    else refreshing.delete(sessionId);
     for (const cb of keepAliveCbs) cb({ sessionId, active, error: error ?? null });
   },
   images: 0,
@@ -595,8 +632,12 @@ type CcrpcApi = Pick<
   | "ccrpcSaveImage"
   | "pickDir"
   | "setBadge"
-  | "notify"
-  | "removeNotifications"
+  | "setViewing"
+  | "attentionDone"
+  | "onAttention"
+  | "notifySettings"
+  | "setNotifySettings"
+  | "testBark"
   | "keepAliveMinutes"
   | "setKeepAliveMinutes"
   | "onKeepAlive"
@@ -820,13 +861,23 @@ export function createMockCcrpc(): CcrpcApi {
     setBadge: async (n) => {
       probe.badge = n;
     },
-    notify: async (n) => {
-      probe.notifications.push(n);
-    },
-    removeNotifications: async (ids) => {
-      probe.removedNotifications.push(...ids);
-    },
     onNotificationClick: (cb) => subscribe(notificationCbs, cb),
+    setViewing: async (sessionId) => {
+      probe.viewing.push(sessionId);
+      viewingNow = sessionId;
+      if (sessionId != null && done.delete(sessionId)) emitDone();
+    },
+    attentionDone: async () => [...done],
+    onAttention: (cb) => subscribe(attentionCbs, cb),
+    notifySettings: async () => ({ settings: { ...probe.notify }, lastPushError: probe.lastPushError }),
+    setNotifySettings: async (s) => {
+      probe.notify = { ...s, barkServer: s.barkServer.trim().replace(/\/+$/, "") || "https://api.day.app" };
+      return { settings: { ...probe.notify }, lastPushError: probe.lastPushError };
+    },
+    testBark: async (server, deviceKey) => {
+      probe.barkTests.push({ server, deviceKey });
+      if (probe.barkTestError) throw appError("internal", probe.barkTestError);
+    },
     keepAliveMinutes: async () => probe.keepAlive,
     setKeepAliveMinutes: async (m) => (probe.keepAlive = m),
     onKeepAlive: (cb) => subscribe(keepAliveCbs, cb),

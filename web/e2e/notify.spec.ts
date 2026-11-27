@@ -4,22 +4,24 @@ import { openApp, RICH_TITLE } from "./helpers";
 const WAITING_TITLE = "优化首页首屏加载（LCP 3.2s → 1.8s）";
 
 type Probe = {
-  notifications: {
-    id: string;
-    title: string;
-    body: string;
-    url: string;
-    thread: string | null;
-    timeSensitive: boolean;
-  }[];
   clickNotification(url: string): void;
+  viewing: (string | null)[];
+  notify: {
+    waitingMinutes: number | null;
+    doneMinutes: number | null;
+    escalateMinutes: number | null;
+    barkServer: string;
+    barkDeviceKey: string;
+  };
+  lastPushError: { message: string; at: number } | null;
+  barkTests: { server: string; deviceKey: string }[];
+  barkTestError: string | null;
   keepAlive: number;
   badge: number;
   keepAliveEvent(sessionId: string, active: boolean): void;
-  removedNotifications: string[];
 };
-const notifications = (page: Page) =>
-  page.evaluate(() => (window.__cvCcrpc as unknown as Probe).notifications.map((n) => ({ ...n })));
+const probe = <T>(page: Page, f: (p: Probe) => T) =>
+  page.evaluate((src) => new Function("p", `return (${src})(p)`)(window.__cvCcrpc), f.toString()) as Promise<T>;
 
 const liveRow = (page: Page, title: string) => page.getByTestId("live-row").filter({ hasText: title });
 
@@ -33,20 +35,17 @@ async function endTurn(page: Page) {
   return id!;
 }
 
-/** Notification delays as saved in 「设置 › 通用」 (ms; null = off), before the app starts. */
-const delays = (page: Page, d: { waiting: number | null; done: number | null }) =>
-  page.addInitScript((d) => localStorage.setItem("codeck.notify", JSON.stringify(d)), d);
-
-test("一轮结束时没在看它：侧栏标「已完成」，打开即清除", async ({ page }) => {
+test("一轮结束时没在看它：侧栏标「已完成」；打开它即告诉 Host 在看它，标记清除", async ({ page }) => {
   await page.goto("/");
   const row = liveRow(page, RICH_TITLE);
   await expect(row.getByTestId("live-dot")).toHaveAttribute("data-state", "busy");
-  await endTurn(page);
+  const id = await endTurn(page);
   await expect(row.getByTestId("done-tag")).toHaveText("已完成");
   await expect(row.getByTestId("live-dot")).toHaveAttribute("data-state", "done");
 
   await row.click();
   await expect(page.getByTestId("header").getByRole("heading", { name: RICH_TITLE })).toBeVisible();
+  await expect.poll(() => probe(page, (p) => p.viewing.at(-1))).toBe(id);
   await expect(page.getByTestId("done-tag")).toHaveCount(0);
   await expect(row.getByTestId("live-dot")).toHaveAttribute("data-state", "idle");
 });
@@ -60,64 +59,68 @@ test("看着它时一轮结束不标「已完成」", async ({ page }) => {
   await expect(page.getByTestId("done-tag")).toHaveCount(0);
 });
 
-test("等待作答到设定时长才发通知，点通知打开该 Session", async ({ page }) => {
-  await page.clock.install();
+test("点通知打开它说的 Session", async ({ page }) => {
   await page.goto("/");
-  await expect(liveRow(page, WAITING_TITLE)).toBeVisible();
-  await page.clock.fastForward("02:50");
-  expect(await notifications(page)).toEqual([]);
-  await page.clock.fastForward("00:15");
-  await expect.poll(() => notifications(page)).toHaveLength(1);
-  const [n] = await notifications(page);
-  expect(n.title).toBe(WAITING_TITLE);
-  expect(n.body).toMatch(/^等待作答 3 分钟 · /);
-  // Its own in Notification Center: named and grouped by the Session, and let through a Focus.
-  const sessionId = await liveRow(page, WAITING_TITLE).getAttribute("data-session-id");
-  expect(n).toMatchObject({ id: `session-${sessionId}`, thread: sessionId, timeSensitive: true });
-  // Once only.
-  await page.clock.fastForward("05:00");
-  expect(await notifications(page)).toHaveLength(1);
-
-  await page.evaluate((url) => (window.__cvCcrpc as unknown as Probe).clickNotification(url), n.url);
+  const id = await liveRow(page, WAITING_TITLE).getAttribute("data-session-id");
+  await page.evaluate((url) => (window.__cvCcrpc as unknown as Probe).clickNotification(url), `codeck://session/${id}`);
   await expect(page.getByTestId("header").getByRole("heading", { name: WAITING_TITLE })).toBeVisible();
-  // Looked at: it leaves Notification Center too.
-  await page.clock.fastForward("00:02");
-  await expect
-    .poll(() => page.evaluate(() => (window.__cvCcrpc as unknown as Probe).removedNotifications))
-    .toEqual([n.id]);
+  await expect.poll(() => probe(page, (p) => p.viewing.at(-1))).toBe(id);
 });
 
-test("已完成到点发通知", async ({ page }) => {
-  await delays(page, { waiting: 0, done: 0 });
-  await page.goto("/");
-  await expect.poll(() => notifications(page)).toHaveLength(1);
-  await endTurn(page);
-  await expect.poll(() => notifications(page)).toHaveLength(2);
-  expect((await notifications(page))[1]).toMatchObject({
-    title: RICH_TITLE,
-    body: expect.stringMatching(/^已完成/),
-    timeSensitive: false,
-  });
-});
-
-test("设置里关闭的通知不发", async ({ page }) => {
-  await delays(page, { waiting: 0, done: 0 });
+test("通知的时长存在 Host 的设置里，补推默认 5 分钟", async ({ page }) => {
   await openApp(page);
   await page.keyboard.press("Meta+,");
+  await expect(page.getByTestId("notify-waiting-3")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("notify-escalate-5")).toHaveAttribute("aria-checked", "true");
   await page.getByTestId("notify-waiting-off").click();
-  await page.getByTestId("notify-done-off").click();
-  await expect(page.getByTestId("notify-done-off")).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Escape");
-  const before = (await notifications(page)).length;
-  await endTurn(page);
-  await expect(liveRow(page, RICH_TITLE).getByTestId("done-tag")).toBeVisible();
-  await page.waitForTimeout(1500);
-  expect(await notifications(page)).toHaveLength(before);
-  // Kept for the next start.
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("codeck.notify")!))).toEqual({
-    waiting: null,
-    done: null,
+  await page.getByTestId("notify-done-0").click();
+  await page.getByTestId("notify-escalate-off").click();
+  await expect(page.getByTestId("notify-escalate-off")).toHaveAttribute("aria-checked", "true");
+  expect(await probe(page, (p) => p.notify)).toMatchObject({
+    waitingMinutes: null,
+    doneMinutes: 0,
+    escalateMinutes: null,
   });
+});
+
+test("Bark：测试推送用框里的值，保存后推送；最近一次失败写在下面", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    (window.__cvCcrpc as unknown as Probe).lastPushError = { message: "Bark 返回 400：bad key", at: Date.now() };
+  });
+  await page.keyboard.press("Meta+,");
+  await expect(page.getByTestId("bark-server")).toHaveValue("https://api.day.app");
+  await expect(page.getByTestId("bark-test")).toBeDisabled();
+  await expect(page.getByTestId("bark-last-error")).toContainText("最近一次推送失败：Bark 返回 400：bad key");
+
+  await page.getByTestId("bark-key").fill("K1");
+  await page.getByTestId("bark-test").click();
+  await expect(page.getByTestId("bark-test-result")).toHaveText("已发送");
+  expect(await probe(page, (p) => p.barkTests)).toEqual([{ server: "https://api.day.app", deviceKey: "K1" }]);
+  // Not saved by the test.
+  expect(await probe(page, (p) => p.notify.barkDeviceKey)).toBe("");
+
+  await page.evaluate(() => {
+    (window.__cvCcrpc as unknown as Probe).barkTestError = "连不上 Bark 服务器";
+  });
+  await page.getByTestId("bark-test").click();
+  await expect(page.getByTestId("bark-test-result")).toHaveText("发送失败：连不上 Bark 服务器");
+
+  await page.getByTestId("bark-save").click();
+  await expect(page.getByTestId("bark-save")).toBeDisabled();
+  expect(await probe(page, (p) => p.notify.barkDeviceKey)).toBe("K1");
+});
+
+test("旧版存在本机的通知时长搬进 Host 的设置", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem("seeded")) {
+      localStorage.setItem("codeck.notify", JSON.stringify({ waiting: 0, done: null }));
+      sessionStorage.setItem("seeded", "1");
+    }
+  });
+  await openApp(page);
+  await expect.poll(() => probe(page, (p) => [p.notify.waitingMinutes, p.notify.doneMinutes])).toEqual([0, null]);
+  expect(await page.evaluate(() => localStorage.getItem("codeck.notify"))).toBeNull();
 });
 
 test("缓存保活期间 /btw 面板的等待不算等待作答，「已完成」也不清掉", async ({ page }) => {
@@ -125,7 +128,7 @@ test("缓存保活期间 /btw 面板的等待不算等待作答，「已完成�
   const id = await endTurn(page);
   const row = liveRow(page, RICH_TITLE);
   await expect(row.getByTestId("done-tag")).toBeVisible();
-  const badge = () => page.evaluate(() => (window.__cvCcrpc as unknown as Probe).badge);
+  const badge = () => probe(page, (p) => p.badge);
   const before = await badge();
   // The Host's `/btw` panel: the process file says waiting for a moment.
   await page.evaluate((sid) => (window.__cvCcrpc as unknown as Probe).keepAliveEvent(sid, true), id);
@@ -151,5 +154,5 @@ test("设置里的缓存保活：默认 40 分钟，可关闭", async ({ page })
   await expect(page.getByTestId("keep-alive-40")).toHaveAttribute("aria-checked", "true");
   await page.getByTestId("keep-alive-0").click();
   await expect(page.getByTestId("keep-alive-0")).toHaveAttribute("aria-checked", "true");
-  expect(await page.evaluate(() => (window.__cvCcrpc as unknown as Probe).keepAlive)).toBe(0);
+  expect(await probe(page, (p) => p.keepAlive)).toBe(0);
 });

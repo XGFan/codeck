@@ -103,7 +103,7 @@ export function ConnectRoot() {
   useEffect(() => {
     void api.setBadge(n).catch(() => {});
   }, [n]);
-  useAttention(live);
+  useAttention();
   const sessionId = useUi((s) => s.sessionId);
   const openConnected = useConnect((s) => {
     const c = connFor(s, sessionId);

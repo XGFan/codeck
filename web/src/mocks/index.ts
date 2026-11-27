@@ -31,7 +31,7 @@ import type {
   TranscriptScope,
 } from "@/ipc/bindings";
 import type { Api, Unlisten } from "@/ipc/api";
-import { appError, createMockCcrpc } from "./ccrpc";
+import { appError, attentionOnLive, createMockCcrpc } from "./ccrpc";
 import { createMockHaa } from "./haa";
 import { createMockPlan } from "./plan";
 import { NOW, sumTok, tok, TINY_PNG_BASE64 } from "@/mocks/data/builders";
@@ -611,8 +611,9 @@ export function createMockApi(): Api {
       dispatch(name, payload);
     },
     setLive(sessionId, state) {
-      findData(sessionId);
+      const before = summaryOf(sessionId).live?.status ?? null;
       liveOverrides.set(sessionId, state);
+      attentionOnLive(sessionId, before, state?.status ?? null);
       dispatch("liveChanged", liveSnapshot());
     },
     appendNode(sessionId, node) {

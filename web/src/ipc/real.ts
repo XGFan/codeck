@@ -69,10 +69,14 @@ export function createRealApi(): Api {
     keepAliveMinutes: commands.keepAliveMinutes,
     setKeepAliveMinutes: commands.setKeepAliveMinutes,
     onKeepAlive: (cb) => events.keepAliveEvent.listen(({ payload }) => cb(payload)),
-    notify: async (n) => void (await commands.notify(n)),
-    removeNotifications: async (ids) => void (await commands.removeNotifications(ids)),
     // The shell brings the window back (`notify::init` in lib.rs); the link says which Session to open.
     onNotificationClick: (cb) => events.notificationClickEvent.listen(({ payload }) => cb(payload.url)),
+    setViewing: async (sessionId) => void (await commands.setViewing(sessionId)),
+    attentionDone: commands.attentionDone,
+    onAttention: (cb) => events.attentionEvent.listen(({ payload }) => cb(payload.done)),
+    notifySettings: commands.notifySettings,
+    setNotifySettings: commands.setNotifySettings,
+    testBark: async (server, deviceKey) => void (await commands.testBark(server, deviceKey)),
     onCcrpcLine: (cb) =>
       events.ccrpcLineEvent.listen(({ payload }) => {
         let msg: InMsg;

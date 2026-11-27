@@ -6,14 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DiagnosticsContent } from "@/features/diagnostics";
-import { notifyAvailable, useAttentionStore } from "@/features/attention";
-import type { DueKind } from "@/features/attention/rules";
+import { notifyAvailable } from "@/features/attention";
 import { CcrpcSettings } from "@/features/connect";
 import { formatAnchorReset, useCycleRule } from "@/features/quota";
 import { formatCount } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import { api } from "@/ipc";
-import type { DataRootSource } from "@/ipc/bindings";
+import type { DataRootSource, NotifySettings } from "@/ipc/bindings";
 import { queryKeys, useAppInfo, useIndexStatus } from "@/queries";
 import { CONV_WIDTH, useUi } from "@/state/ui";
 import { errorText } from "@/lib/errors";
@@ -259,27 +258,155 @@ function KeepAliveField() {
   );
 }
 
+const MINUTES = [1, 3, 5, 10].map((m) => ({ value: String(m), label: `${m} 分钟` }));
 /** 「关闭」 or how long a Session stays so, unseen, before its notification. */
 const DELAYS: { value: string; label: string }[] = [
   { value: "off", label: "关闭" },
   { value: "0", label: "立即" },
-  ...[1, 3, 5, 10].map((m) => ({ value: String(m * 60_000), label: `${m} 分钟` })),
+  ...MINUTES,
 ];
+const ESCALATE: { value: string; label: string }[] = [{ value: "off", label: "关闭" }, ...MINUTES];
 
-function NotifyField({ kind, label, hint }: { kind: DueKind; label: string; hint: string }) {
-  const ms = useAttentionStore((s) => s.delays[kind]);
-  const setDelay = useAttentionStore((s) => s.setDelay);
+const NOTIFY_KEY = ["notifySettings"];
+
+/** 「设置 › 通用」 的通知, kept by the Host (ADR-0019). */
+function useNotifySettings() {
+  const qc = useQueryClient();
+  const { data: info } = useQuery({ queryKey: NOTIFY_KEY, queryFn: () => api.notifySettings() });
+  const save = useMutation({
+    mutationFn: (s: NotifySettings) => api.setNotifySettings(s),
+    onSuccess: (saved) => qc.setQueryData(NOTIFY_KEY, saved),
+  });
+  return { info, save };
+}
+
+type MinutesKey = "waitingMinutes" | "doneMinutes" | "escalateMinutes";
+
+function NotifyField({
+  field,
+  label,
+  hint,
+  options,
+  testId,
+}: {
+  field: MinutesKey;
+  label: string;
+  hint: string;
+  options: { value: string; label: string }[];
+  testId: string;
+}) {
+  const { info, save } = useNotifySettings();
+  const minutes = info?.settings[field];
   return (
     <div className="flex flex-col gap-1.5">
       <Segmented
         label={label}
-        value={ms == null ? "off" : String(ms)}
-        options={DELAYS}
-        onChange={(v) => setDelay(kind, v === "off" ? null : Number(v))}
-        testId={`notify-${kind}`}
+        value={info == null ? "" : minutes == null ? "off" : String(minutes)}
+        options={options}
+        onChange={(v) => info && save.mutate({ ...info.settings, [field]: v === "off" ? null : Number(v) })}
+        testId={testId}
       />
       <div className="text-[12px] text-secondary">{hint}</div>
+      {save.error && <div className="text-[12px] text-error">{errorText(save.error)}</div>}
     </div>
+  );
+}
+
+const timeOf = (ms: number) =>
+  new Date(ms).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+/** 「iPhone 推送（Bark）」: where the Host pushes when nobody uses the Mac. 「发送测试推送」 uses the fields as they are. */
+function BarkField() {
+  const { info, save } = useNotifySettings();
+  const [server, setServer] = useState("");
+  const [key, setKey] = useState("");
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const savedServer = info?.settings.barkServer;
+  const savedKey = info?.settings.barkDeviceKey;
+  useEffect(() => {
+    if (savedServer != null) setServer(savedServer);
+    if (savedKey != null) setKey(savedKey);
+  }, [savedServer, savedKey]);
+  const edit = (set: (v: string) => void, v: string) => {
+    set(v);
+    setResult(null);
+  };
+  const test = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      await api.testBark(server, key);
+      setResult({ ok: true, text: "已发送" });
+    } catch (e) {
+      setResult({ ok: false, text: `发送失败：${errorText(e)}` });
+    }
+    setTesting(false);
+  };
+  const dirty = info != null && (server !== info.settings.barkServer || key !== info.settings.barkDeviceKey);
+  const field = "grid grid-cols-[84px_1fr] items-center gap-2";
+  const failed = info?.lastPushError;
+  return (
+    <form
+      className="flex flex-col gap-2 text-[13px]"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (info) save.mutate({ ...info.settings, barkServer: server, barkDeviceKey: key });
+      }}
+    >
+      <label className={field}>
+        <span className="text-secondary">服务器</span>
+        <Input
+          value={server}
+          onChange={(e) => edit(setServer, e.target.value)}
+          placeholder="https://api.day.app"
+          data-testid="bark-server"
+        />
+      </label>
+      <label className={field}>
+        <span className="text-secondary">Device Key</span>
+        <Input
+          value={key}
+          onChange={(e) => edit(setKey, e.target.value)}
+          autoComplete="off"
+          placeholder="Bark App 里推送地址中的 key"
+          data-testid="bark-key"
+        />
+      </label>
+      <div className="flex items-center gap-2">
+        <Button type="submit" className="h-8" disabled={!dirty || save.isPending} data-testid="bark-save">
+          保存
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-8"
+          disabled={testing || !key.trim()}
+          onClick={() => void test()}
+          data-testid="bark-test"
+        >
+          {testing ? "正在发送…" : "发送测试推送"}
+        </Button>
+        {result && (
+          <span
+            data-testid="bark-test-result"
+            className={cn("text-[12px]", result.ok ? "text-secondary" : "text-error")}
+          >
+            {result.text}
+          </span>
+        )}
+      </div>
+      {save.error && <div className="text-[12px] text-error">{errorText(save.error)}</div>}
+      {failed && (
+        <div data-testid="bark-last-error" className="text-[12px] text-error">
+          最近一次推送失败：{failed.message} · {timeOf(failed.at)}
+        </div>
+      )}
+      <div className="text-[12px] text-secondary">
+        Mac 没人在用时，通知推到 iPhone 上的 Bark，点开进入 CoDeck 的这个 Session；不填 Device Key 就不推。要在 iPhone
+        的设置里给 Bark 打开「后台 App 刷新」，处理完的通知才会从手机上删掉。
+      </div>
+    </form>
   );
 }
 
@@ -317,17 +444,33 @@ function GeneralTab() {
         <>
           <Row label="等待作答通知" testId="set-notify-waiting">
             <NotifyField
-              kind="waiting"
+              field="waitingMinutes"
               label="等待作答通知"
-              hint="Session 等待作答这么久、期间没在 CoDeck 里看过它时，发系统通知。"
+              hint="Session 等待作答这么久、期间没在 Mac 或 iPhone 上看过它时，发通知。"
+              options={DELAYS}
+              testId="notify-waiting"
             />
           </Row>
           <Row label="已完成通知" testId="set-notify-done">
             <NotifyField
-              kind="done"
+              field="doneMinutes"
               label="已完成通知"
-              hint="Session 一轮结束这么久、期间没在 CoDeck 里看过它时，发系统通知。"
+              hint="Session 一轮结束这么久、期间没在 Mac 或 iPhone 上看过它时，发通知。"
+              options={DELAYS}
+              testId="notify-done"
             />
+          </Row>
+          <Row label="补推到 iPhone" testId="set-notify-escalate">
+            <NotifyField
+              field="escalateMinutes"
+              label="补推到 iPhone"
+              hint="Mac 有人在用时先发 Mac 通知；离开 Mac 或过了这么久还没处理，再推到 iPhone。"
+              options={ESCALATE}
+              testId="notify-escalate"
+            />
+          </Row>
+          <Row label="iPhone 推送（Bark）" testId="set-notify-bark">
+            <BarkField />
           </Row>
           <Row label="缓存保活" testId="set-keep-alive">
             <KeepAliveField />

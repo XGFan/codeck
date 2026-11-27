@@ -1,19 +1,18 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect } from "react";
 import { api } from "@/ipc";
-import { isLive, useConnect, waitingSessions } from "@/features/connect/state/store";
-import { useAllSessions, useProjects } from "@/queries";
+import type { Unlisten } from "@/ipc/api";
 import { useUi } from "@/state/ui";
-import { due, markNotified, message, record, step, sweep, type Status } from "./rules";
-import { isKeeping, useAttentionStore } from "./store";
+import { LEGACY_KEY, legacyDelays } from "./migrate";
+import { useAttentionStore } from "./store";
 
 export { isKeeping, useAttentionStore } from "./store";
 
-/** The notifications exist only where the app runs on the Mac (not the LAN page). */
+/** The notifications' settings exist only where the app runs on the Mac (not the LAN page). */
 export const notifyAvailable = import.meta.env.VITE_IPC !== "remote";
 
-/** The Session's turn ended while nobody looked, and it has not been looked at since (「已完成」). */
+/** The Session's turn ended while nobody looked, and it has not been looked at since (「已完成」, the Host's). */
 export function useDone(sessionId: string): boolean {
-  return useAttentionStore((s) => !!s.tracks[sessionId]?.done);
+  return useAttentionStore((s) => s.done.includes(sessionId));
 }
 
 /** The Session being looked at: the window is in front and shows it. */
@@ -22,96 +21,61 @@ function viewing(): string | null {
   return useUi.getState().sessionId;
 }
 
+/** Delays an earlier version kept in localStorage go to the Host's settings, once. */
+async function migrateLegacyDelays() {
+  const legacy = legacyDelays(localStorage.getItem(LEGACY_KEY));
+  if (legacy == null) return;
+  const { settings } = await api.notifySettings();
+  await api.setNotifySettings({ ...settings, ...legacy });
+  localStorage.removeItem(LEGACY_KEY);
+}
+
 /**
- * Keeps 「已完成」 and sends the notifications, from the Live Sessions' statuses: a connected one's from ccrpc
- * (it knows at once), the others' from their process files, waiting when Live waits or a request card is open.
- * Mount once (`ConnectRoot`).
+ * The Host decides the notifications and 「已完成」 (ADR-0019): this tells it which Session the window looks at, and
+ * keeps 「已完成」 and the cache refreshes it reports. Mount once (`ConnectRoot`).
  */
-export function useAttention(live: { id: string; status: Status }[]) {
-  const conns = useConnect((s) => s.conns);
-  const statuses = useMemo(() => {
-    const out: Record<string, Status> = {};
-    for (const l of live) out[l.id] = l.status;
-    for (const c of Object.values(conns)) {
-      const id = c.sessionId;
-      if (id == null || !(id in out) || !isLive(c)) continue;
-      if (c.state === "busy" || c.state === "idle" || c.state === "waiting") out[id] = c.state;
-    }
-    const waiting = live.filter((l) => l.status === "waiting").map((l) => l.id);
-    for (const id of waitingSessions(waiting, conns)) if (id in out) out[id] = "waiting";
-    return out;
-  }, [live, conns]);
-  const { data: sessions } = useAllSessions();
-  const { data: projects } = useProjects();
-  const latest = useRef({ statuses, sessions, projects });
-  latest.current = { statuses, sessions, projects };
-
-  const update = useRef(() => {
-    const { statuses, sessions, projects } = latest.current;
-    const store = useAttentionStore.getState();
-    const at = Date.now();
-    // While the Host refreshes a Session's cache its `/btw` panel makes it waiting: it keeps what it was.
-    const now = { ...statuses };
-    for (const id of Object.keys(now))
-      if (isKeeping(store.keeping, id, at) && store.tracks[id]) now[id] = store.tracks[id].status;
-    let tracks = step(store.tracks, now, at, viewing());
-    const fire = notifyAvailable ? due(tracks, at, store.delays) : [];
-    if (fire.length > 0) {
-      tracks = markNotified(
-        tracks,
-        fire.map((f) => f.id),
-      );
-      const ls = useConnect.getState().ls;
-      const items = fire.map((f) => {
-        const s = sessions?.find((x) => x.id === f.id);
-        const entry = ls.find((e) => e.session_id === f.id);
-        return {
-          ...f,
-          title: s?.title ?? entry?.title ?? "新 Session",
-          project: projects?.find((p) => p.id === s?.projectId)?.displayName ?? entry?.cwd?.split("/").pop() ?? null,
-        };
-      });
-      const m = message(items, at);
-      const { sessionId, ...notice } = m;
-      void api.notify({ ...notice, url: `codeck://session/${sessionId}` }).catch(() => {});
-      store.setSent(record(store.sent, { id: m.id, sessions: items.map((i) => i.id), at }));
-    }
-    if (tracks !== store.tracks) store.setTracks(tracks);
-    // Looked at, answered or ended: its notification leaves Notification Center too.
-    const sent = useAttentionStore.getState().sent;
-    if (sent.length > 0) {
-      const { remove, keep } = sweep(sent, tracks);
-      if (keep.length !== sent.length) store.setSent(keep);
-      if (remove.length > 0) void api.removeNotifications(remove).catch(() => {});
-    }
-  }).current;
-
-  useEffect(update, [statuses, update]);
+export function useAttention() {
   useEffect(() => {
-    // Wall-clock based: a timer the system slowed down only sends late, never wrong.
-    const timer = window.setInterval(update, 1000);
-    window.addEventListener("focus", update);
-    window.addEventListener("blur", update);
-    document.addEventListener("visibilitychange", update);
-    const unUi = useUi.subscribe((s, p) => {
-      if (s.sessionId !== p.sessionId) update();
-    });
-    let unKeep: (() => void) | null = null;
-    let gone = false;
-    void api
-      .onKeepAlive((e) => {
-        useAttentionStore.getState().setKeeping(e.sessionId, e.active);
-        update();
-      })
-      .then((f) => (gone ? f() : (unKeep = f)));
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", update);
-      window.removeEventListener("blur", update);
-      document.removeEventListener("visibilitychange", update);
-      unUi();
-      gone = true;
-      unKeep?.();
+    let last: string | null | undefined;
+    const report = () => {
+      const v = viewing();
+      if (v === last) return;
+      last = v;
+      void api.setViewing(v).catch(() => {});
     };
-  }, [update]);
+    report();
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
+    const unUi = useUi.subscribe((s, p) => {
+      if (s.sessionId !== p.sessionId) report();
+    });
+
+    const store = useAttentionStore.getState();
+    let gone = false;
+    let reported = false;
+    const unlisten: Unlisten[] = [];
+    const keep = (p: Promise<Unlisten>) => void p.then((f) => (gone ? f() : unlisten.push(f)));
+    keep(
+      api.onAttention((done) => {
+        reported = true;
+        store.setDone(done);
+      }),
+    );
+    // A reloaded window: what is done already (unless an event said otherwise meanwhile).
+    void api
+      .attentionDone()
+      .then((done) => !gone && !reported && store.setDone(done))
+      .catch(() => {});
+    keep(api.onKeepAlive((e) => store.setKeeping(e.sessionId, e.active)));
+    if (notifyAvailable) void migrateLegacyDelays().catch(() => {});
+    return () => {
+      gone = true;
+      window.removeEventListener("focus", report);
+      window.removeEventListener("blur", report);
+      document.removeEventListener("visibilitychange", report);
+      unUi();
+      unlisten.forEach((f) => f());
+    };
+  }, []);
 }
