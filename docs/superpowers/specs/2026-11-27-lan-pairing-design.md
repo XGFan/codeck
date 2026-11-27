@@ -6,7 +6,7 @@ iPhone 连 Host 现在是手输私网 IPv4、明文 HTTP、不鉴权（ADR-0011�
 
 - 防冒用也防偷听：局域网上一律 TLS，每台设备凭自己的 token 访问。
 - 首次配对扫码：二维码带地址、端口、证书指纹与一次性配对密钥，iPhone 不用信任首次连接。
-- 不做：Bonjour 等自动发现（地址变了就重新扫码）、iPhone 存多台 Host（扫新码即替换）、出局域网访问（VPN、Tailscale 等，监听网卡与子网的规则不变）、双向 TLS、iPhone 端「忘记 Host」。
+- 不做：Bonjour 等自动发现（地址变了就重新扫码）、iPhone 存多台 Host（扫新码即替换）、监听 VPN 网卡与 Tailscale（实现后放开了来源网段，经 WireGuard 等隧道转进局域网的可以连，见文末「实现后的调整」）、双向 TLS、iPhone 端「忘记 Host」。
 - 回环地址（显式 `--listen 127.x`，开发、真实后端 E2E、模拟器联调用）照旧明文、不鉴权。桌面的「局域网访问」从不监听回环。
 
 ## Host 端
@@ -39,7 +39,7 @@ iPhone 连 Host 现在是手输私网 IPv4、明文 HTTP、不鉴权（ADR-0011�
 - 不要求 token：`GET /health`（返回 `product` 与 `apiVersion`）与 `POST /v1/pair`。
 - 其余（`/v1/rpc`、`/v1/events`、`/web/*`）要求 `Authorization: Bearer <token>`，按 SHA-256 查设备表；查不到返回 401 与 `{error: {code: "unauthorized", message: "这台设备没有配对或已被移除，请重新扫码配对。"}}`。
 - 每条 WebSocket 记下所属设备。移除设备时立即关掉它的 WebSocket，之后的请求都是 401。
-- 来源子网、Host 头、Origin 的校验照旧，配对接口同样受它们约束。
+- Host 头、Origin 的校验照旧，配对接口同样受它们约束；来源子网只在没有 TLS 的回环监听上校验（实现后的调整，见文末）。
 - `apiVersion` 1 → 2。旧版 App 连不上新 Host，按版本不一致或连不上处理。
 
 ### 管理入口
@@ -52,7 +52,7 @@ iPhone 连 Host 现在是手输私网 IPv4、明文 HTTP、不鉴权（ADR-0011�
 ### 入口
 
 - 「连接 Host」页改为扫码页：App 内相机取景（Info.plist 加 `NSCameraUsageDescription`），扫到配对链接即开始配对；已有 Host 时说明会替换它。
-- App 注册 `codeck` 链接。从系统相机或别处打开 `codeck://pair?…` 时先确认「与 Host 192.168.2.165 配对？会替换当前的 Host。」，确认后才配对，免得网页上的链接把手机配到别人的 Host 上。地址规则同现在（只收私网 IPv4），格式不对的链接报错。
+- App 注册 `codeck` 链接。从系统相机或别处打开 `codeck://pair?…` 时先不带凭据探测链接里的地址，再按实际连上的地址确认「与 Host 192.168.2.165:38471 配对？会替换当前的 Host。」，确认后才配对，免得网页上的链接把手机配到别人的 Host 上。地址规则同现在（只收私网 IPv4），格式不对的链接报错。
 - DEBUG 版保留手输 `127.0.0.1`，连明文的回环 daemon。模拟器上测 TLS 配对用 `xcrun simctl openurl` 喂链接。
 
 ### 配对过程
@@ -120,3 +120,15 @@ token 不进网页（没有 Cookie），WKWebView 接触不到证书，每台 iP
 3. 前端：传输层拆分、桌面配对界面（画布选定后）、mock 与 E2E。
 4. iOS：固定指纹的会话、扫码页、链接入口、Transcript 页中转、错误文案。
 5. ADR、spec、README、CONTEXT、CLAUDE.md 收尾。
+
+## 实现后的调整（2026-11-27）
+
+按三轮评审与之后的取舍，实现与上文有这些不同（当前行为以 ADR-0017、docs/spec.md 与各 CLAUDE.md 为准）：
+
+- **外部链接先探测再确认**：确认框原先显示第一个地址，实际连上的可能是另一个；现在先不带凭据探测（最多 4 个地址、总共 10 秒、可取消），再按实际连上的「地址:端口」确认。Host 生成的链接也最多 4 个地址，按网卡顺序。
+- **Transcript 页绑定 Host**：每个 WebView 记下创建时的 Host 代际与 client，换 Host 后旧页面拿不到新 Host 的凭据；数据存储非持久化；scheme handler 合成的响应一律 no-store；页面 URL 每次加载带唯一的 `nav` 参数，`ready` 只认当前这次的。
+- **来源不限网段**：TLS 监听不再要求来源与监听地址同网段，在外经 WireGuard 等隧道转进家里局域网的手机可以连（2026-11-27 实测：来自 192.168.255.10 的连接通过鉴权）；回环监听仍只接受本机来源。
+- **资源与超时**：TLS 连接全进程 128 条、每个来源 16 条，180 秒没有读到数据即断开；`/v1/pair` 读请求体 10 秒、4 KiB；iPhone 等兑换应答 30 秒。
+- **daemon 的状态目录与 control.sock**：拒绝空路径与根目录，设为 0700，对 `daemon.lock` 取 flock（桌面也取），control.sock 两端核对 uid、路径过长时启动即报错、只删本实例绑定的 socket。
+- **评审后又精简掉的**：在途请求感知的空闲计时、状态目录逐级与逐跳的信任校验、settings.json / devices.json 的权限校验、兑换的取消标志与双锁、iPhone 探测 `/health` 的 16 KiB 流式上限——按「允许取舍、let it crash」的标准，这些防的是罕见情况，复杂度不值得。
+- **设计画布未更新**：配对弹层、设备列表与 iPhone 扫码页的原型还没画进画布（见 docs/TODO.md）。

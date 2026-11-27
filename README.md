@@ -128,7 +128,7 @@ cargo build --release -p codeck-host             # → target/release/codeck-hos
 target/release/codeck-host --web-dir web/dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
 ```
 
-目前的限制：没有推送通知；回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；daemon 没有连接数与请求频率的限制。
+目前的限制：没有推送通知；回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；没有请求频率的限制（连接数的上限见上）；在外只能经 WireGuard 等转进家里局域网的隧道连，隧道直接连到 Host 本机（utun 网卡）或用 Tailscale 的 100.x 地址都连不上（Host 不监听那类网卡，iPhone 只收 RFC 1918 地址）。
 
 daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动扫 Host 上的配对二维码，iOS 会询问是否允许使用相机与访问本地网络。
 
