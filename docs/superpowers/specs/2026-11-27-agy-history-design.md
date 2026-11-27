@@ -84,19 +84,19 @@ agy 的 Session 显示 token 数；Cost 写「未记录」，不计入任何 Cos
 
 - 数据根：`EngineConfig` 加 `agy_root`（`paths.rs` 解析，固定 `~/.gemini/antigravity-cli`；目录不存在也照样记下这个路径）。索引的 `meta` 与 `data_root` 一并记它：可写打开时不一致就删库重建（重建后照样写回），只读打开（CLI）时不一致就报错、不动索引（ADR-0013）。
 - 扫描：另走 `brain/*/.system_generated/logs/transcript_full.jsonl`，Session ID 取目录名；按 inode 去重照旧。扫描结果带上文件的种类，`files` 表记下它。
-- 读文件只有一个入口：按种类分派到 Claude Code 的解析或 agy 的翻译。同步（`compute.rs`）、打开对话（`session_cache.rs`）、CLI 遇到索引里没有的 Session 时的回退都走它；agy 的 Session 没有 sidecar 与 Subagent 目录。
+- 读文件只有一个入口：按种类分派到 Claude Code 的解析或 agy 的翻译。同步（`compute.rs`）、打开对话（`session_cache.rs`）、CLI 遇到索引里没有的 Session 时的回退都走它；agy 的文件在这里总是整份重读，不沿用旧解析往后接（同一下标可能被改写），所以对话开着时也立刻看到改写。agy 的 Session 没有 sidecar 与 Subagent 目录。
 - 同步：agy 的文件一变就走现有的 Reparse（不走 Append），这个 Session 的行全部重写；文件都不大。
 - 全文检索：agy 的文件不进。写入时它的全文进度直接记为完成，不进积压。
-- metadata：每次同步读一次 `conversation_metadata.json`，把每个 agy Session 的标题、启动 cwd、haa 标记与索引里的比，变了就重算这个 Session 的行（不动对话缓存）。启动时的全扫描也一样比，所以应用关着时改的也会更新。
+- metadata：`sessions` 里存每个 agy Session 用到的条目字段（`Title`、`WorkspaceURIs`）的指纹。每次同步读一次 `conversation_metadata.json`，指纹变了就重算这个 Session 的行（不动对话缓存）；比的是原始字段，不是算出来的标题与 haa 标记（标题没有时回落首条提示词，haa 标记还来自工具调用，都在重算时由 JSONL 与 metadata 一起得出）。启动时的全扫描也一样比，所以应用关着时改的也会更新。
 - 索引：`sessions` 加 `agent` 与 `haa_worker`，`SCHEMA_VERSION` +1。agy 的消息行照常写（Session 的 token 由它加总），但定价跳过 agy：cost 留空，不计入「未定价」。统计与它的下钻只算 `agent = 'claude'`。
 - Live：只探测一次，结果给列表、详情、轮询、`is_live` 与 CLI 的 `wait` 共用。macOS 用 libproc 列出 `antigravity` 进程打开的文件，Linux 读 `/proc/<pid>/fd`；都只读、不加锁。`presence/<id>.lock` 对上的就是 Live，状态直接是 `Unknown`（不经 `LiveStatus::from_raw`，它会把没有状态当成空闲）。
 - haa：读列表与详情时按 `sessionId` 查 `~/.haa/usage.jsonl` 与 `workers.json`（按 mtime 缓存，只读），得到 Main Session、Worker 名、Task 标题，像 `live` 一样附上，不进索引。
-- 诊断：agy 的认不出的条目经 `diag_counts` 关联的文件与 Session 按 Agent 分开显示，不另建表。
+- 诊断：翻译除了记录还返回它按 agy 原名判定出的认不出计数，agy 的文件写入时用它代替按 Claude Code 名单算出的那份；读出时 Claude Code 的名单只过滤 Claude Code 的条目。界面上经 `diag_counts` 关联的文件与 Session 按 Agent 分开显示，不另建表。
 - `resume_command` 按 Agent 给出。
 
 ### codeck-host
 
-监听在 agy 数据根下单独映射：接受 `brain/<id>/.system_generated/logs/transcript_full.jsonl` 与 `cache/conversation_metadata.json`（现有的过滤会拒掉以 `.` 开头的目录），`changed_sessions` 认得 agy 的路径，不退回全量扫描。Live 照旧每 3 秒轮询。应用信息里显示 agy 的数据目录。命令表不变，类型多了字段，重跑 `pnpm bindings`。
+监听在 agy 数据根下单独映射：接受 `brain/<id>/.system_generated/logs/transcript_full.jsonl` 与 `cache/conversation_metadata.json`（现有的过滤会拒掉以 `.` 开头的目录）。`changed_sessions` 从 JSONL 的路径取 Session ID；批次里有 metadata 时 agy 这一侧整根比对（大小与 mtime 没变的文件不重读，只比指纹），不靠路径推 Session。Live 照旧每 3 秒轮询。应用信息里显示 agy 的数据目录。命令表不变，类型多了字段，重跑 `pnpm bindings`。
 
 ### 前端、iPhone、CLI
 
@@ -130,9 +130,9 @@ CONTEXT.md 加 Agent，Session、Live Session 的定义扩到 agy；`docs/spec.m
 - fixture：`crates/codeck-core/tests/fixtures/agy/`，迷你 agy 数据根（`brain/…/transcript_full.jsonl`、`cache/conversation_metadata.json`、一个残留的 presence 锁），由 `examples/sanitize.rs` 扩展后从真实会话脱敏生成；README 表格与 `fixtures_sanity.rs` 钉住数字，敏感信息检查照旧。
 - `agy.rs` 的单元测试：每种 step；`<USER_REQUEST>` 后面带 `<ADDITIONAL_METADATA>` / `<USER_SETTINGS_CHANGE>` 的取法；`RUNNING` 的结果；每个译名工具（含 `Read` 的 limit）；同下标以后一行为准；按顺序配对（含末尾缺结果）；认不出的类型。
 - Engine 集成测试：
-  - Claude Code 与 agy 两个数据根一起建索引，列表带 `agent`；agy 的文件不进全文索引（⌘K 搜不到，也不报错）。
+  - Claude Code 与 agy 两个数据根一起建索引，列表带 `agent`；agy 的文件不进全文索引：用一个只在回答正文里出现的词，写入后（跑全文积压之前）它的全文进度已是完成，⌘K 没有命中、⌘F 能定位到。
   - 重开 Engine 后打开 agy 的对话；对话开着时 agy 改写了某个 step，再打开看到新内容。
-  - 只改 metadata 的标题，列表跟着变；停掉 Engine 改了再开，也跟着变。
+  - 只改 metadata 的标题，列表跟着变；停掉 Engine 改了再开，也跟着变；同一批里既有 A 的 JSONL 又有 B 的标题变化，两个都更新；什么都没变的第二次同步不重算任何 Session。
   - 全量 rebill / 重新定价之后 agy 的 token 还在，请求数、未定价数与 Cost 都不因 agy 增加；统计不含 agy。
   - Resume 命令；haa Worker 标记与归属（fixture 里放 `~/.haa` 的文件）；Live（「哪个进程开着哪个锁」做成可注入的，测试里注入；进程探测本身另用本进程开着的文件测一次）。
   - CLI：agy 根不一致时只读打开报错、索引不动；`show` 一个索引里没有的 agy Session。
