@@ -4,6 +4,7 @@ import SwiftUI
 /// over it, and native loading / error states.
 struct SessionDetailView: View {
     @Environment(HostModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
     @State private var sessionId: String
     @State private var detail: SessionDetail?
     @State private var phase = Phase.loading
@@ -177,18 +178,31 @@ struct SessionDetailView: View {
         .task(id: sessionId) { await loadDetail() }
         .onChange(of: unindexed) { was, now in
             // Indexed after its first prompt: show its transcript.
-            if was, !now { reload() }
+            if was, !now {
+                reload()
+                reportViewing()
+            }
         }
         .onChange(of: model.resyncGeneration) {
             // The page refetches by itself after a reconnect (its own socket's `hello`): only a failed load starts over.
             if case .failed = phase { reload() } else { Task { await loadDetail() } }
+            // The Host forgets what a device looked at once its event connections are all gone: say it again.
+            reportViewing()
         }
-        .onAppear { model.connect.pageOpened(sessionId) }
-        .onDisappear { model.connect.pageClosed(sessionId) }
+        .onAppear {
+            model.connect.pageOpened(sessionId)
+            reportViewing()
+        }
+        .onDisappear {
+            model.connect.pageClosed(sessionId)
+            model.stopViewing(sessionId)
+        }
         .onChange(of: sessionId) { old, new in
             model.connect.pageClosed(old)
             model.connect.pageOpened(new)
+            reportViewing()
         }
+        .onChange(of: scenePhase) { reportViewing() }
         .onChange(of: model.connect.moved[sessionId]) { _, next in
             // `/clear` and the like: the page follows its Connect, and the input box keeps what was typed.
             guard let next else { return }
@@ -203,6 +217,12 @@ struct SessionDetailView: View {
                 forkAt = nil
             }
         }
+    }
+
+    /// A new Session has no Session ID yet; nothing to report until it is indexed.
+    private func reportViewing() {
+        guard scenePhase == .active, !unindexed else { return }
+        model.reportViewing(sessionId)
     }
 
     private var transcriptURL: URL? {

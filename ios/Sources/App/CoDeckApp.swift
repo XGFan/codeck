@@ -102,6 +102,10 @@ struct CoDeckApp: App {
     }
 
     private func handleOpenURL(_ url: URL) {
+        if let sessionId = SessionLink.parse(url) {
+            if model.host != nil, !model.needsPairing { model.sessionOpenRequest = sessionId }
+            return
+        }
         // Ignore incoming links while pairing/probing is in progress or another confirmation is open.
         guard !model.isPairing, urlPairingPhase == nil, pendingPairing == nil else { return }
         switch PairingPresentation.classifyOpenURL(url) {

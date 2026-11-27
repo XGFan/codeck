@@ -13,6 +13,7 @@ struct SessionListView: View {
     @State private var creating = false
     /// The order 等你处理 was last shown in.
     @State private var pendingOrder: [String] = []
+    @State private var openError: String?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -41,6 +42,13 @@ struct SessionListView: View {
                 model.connect.openRequest = nil
                 path.append(SessionRoute(id: request.sessionId))
             }
+            .task(id: model.sessionOpenRequest.map { "\($0)|\(model.hasLoaded)" }) { await openRequestedSession() }
+            .alert(
+                openError ?? "",
+                isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })
+            ) {
+                Button("好", role: .cancel) {}
+            }
             .onChange(of: model.generation) { _, _ in
                 creating = false
                 path = NavigationPath()
@@ -58,6 +66,21 @@ struct SessionListView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Opens the Session a `codeck://session` link named, once the list has loaded.
+    private func openRequestedSession() async {
+        guard let id = model.sessionOpenRequest, model.hasLoaded, let client = model.client else { return }
+        let gen = model.generation
+        var found = model.session(id: id) != nil
+        if !found { found = (try? await client.getSession(id)) != nil }
+        guard model.generation == gen, model.sessionOpenRequest == id else { return }
+        model.sessionOpenRequest = nil
+        if found {
+            path.append(SessionRoute(id: id))
+        } else {
+            openError = "找不到这个 Session。"
         }
     }
 

@@ -55,6 +55,11 @@ final class HostModel {
     private(set) var generation = 0
     /// Current Host's HTTP client (shares the pinned session with the event stream).
     private(set) var client: HostClient?
+    /// A Session a `codeck://session` link asked to open; the Session list takes it once the list has loaded.
+    var sessionOpenRequest: String?
+    /// The Session last reported as on screen (`set_viewing`), and the report in flight: reports go out in order.
+    @ObservationIgnored private var viewing: String?
+    @ObservationIgnored private var viewingReport: Task<Void, Never>?
     /// The Host's Connects and `ccrpc ls`.
     let connect = ConnectStore()
 
@@ -360,6 +365,8 @@ final class HostModel {
         hasLoaded = false
         problem = nil
         helloCount = 0
+        sessionOpenRequest = nil
+        viewing = nil
 
         let pinned = PinnedSession(expectedFingerprint: paired.fingerprint)
         let client = makeClient(paired, pinned)
@@ -570,6 +577,26 @@ final class HostModel {
     }
 
     // MARK: Derived
+
+    /// Tells the Host which Session is on screen (nil: none), so it stops notifying about it. Each report waits for
+    /// the one before it, so the Host gets the last one last. Failures are ignored.
+    func reportViewing(_ sessionId: String?) {
+        guard let client, !needsPairing else { return }
+        viewing = sessionId
+        let gen = generation
+        let previous = viewingReport
+        viewingReport = Task {
+            await previous?.value
+            guard generation == gen else { return }
+            let _: JSONValue? = try? await client.call("set_viewing", args: ["sessionId": sessionId])
+        }
+    }
+
+    /// `sessionId`'s page went away: none is on screen, unless another page reported itself meanwhile (a page pushed
+    /// over this one appears before this one disappears).
+    func stopViewing(_ sessionId: String) {
+        if viewing == sessionId { reportViewing(nil) }
+    }
 
     func project(of session: SessionSummary) -> ProjectSummary? { projects[session.projectId] }
 
