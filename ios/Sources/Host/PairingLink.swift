@@ -31,6 +31,15 @@ struct PairingLink: Equatable, Sendable {
         return try parse(components)
     }
 
+    /// Returns true for `codeck://pair` URLs regardless of whether their path or query is valid.
+    static func isPairingURL(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        return components.scheme?.lowercased() == "codeck"
+            && components.host?.lowercased() == "pair"
+    }
+
     static func parse(_ url: URL) throws -> PairingLink {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw ParseError.invalid

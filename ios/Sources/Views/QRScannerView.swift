@@ -2,19 +2,46 @@
 import SwiftUI
 import UIKit
 
-/// Pure presentation helpers shared by the pairing URL entry and offline banner (unit-tested).
+/// Pure presentation helpers shared by the pairing URL entry, setup screen, and offline banner (unit-tested).
 enum PairingPresentation {
-    /// Confirmation copy shown when opening a `codeck://pair` link from outside the app.
-    static func openURLConfirmMessage(for link: PairingLink, hasCurrentHost: Bool) -> String {
-        if hasCurrentHost {
-            return "与 Host \(link.firstHost) 配对？会替换当前的 Host。"
+    enum OpenURLClassification: Equatable, Sendable {
+        case ignore
+        case invalidPairingLink(String)
+        case pairingLink(PairingLink)
+    }
+
+    /// Distinguishes valid `codeck://pair`, malformed `codeck://pair`, and unrelated URLs.
+    static func classifyOpenURL(_ url: URL) -> OpenURLClassification {
+        guard PairingLink.isPairingURL(url) else { return .ignore }
+        do {
+            return .pairingLink(try PairingLink.parse(url))
+        } catch {
+            return .invalidPairingLink((error as? LocalizedError)?.errorDescription ?? "这不是 CoDeck 的配对二维码。")
         }
-        return "与 Host \(link.firstHost) 配对？"
+    }
+
+    /// Confirmation copy shown when opening a `codeck://pair` link from outside the app,
+    /// naming the actual reachable `host:port` discovered during health probing.
+    static func openURLConfirmMessage(for address: HostAddress, hasCurrentHost: Bool) -> String {
+        if hasCurrentHost {
+            return "与 Host \(address.display) 配对？会替换当前的 Host。"
+        }
+        return "与 Host \(address.display) 配对？"
+    }
+
+    /// Notice shown above the QR scanner when a Host is already configured.
+    static func setupReplacementNotice(hasCurrentHost: Bool) -> String? {
+        hasCurrentHost ? "扫码后会替换当前的 Host。" : nil
     }
 
     /// Terminal auth/certificate errors (`needsPairing`) only allow rescanning, not retrying.
     static func showsRetryInOfflineCard(needsPairing: Bool) -> Bool {
         !needsPairing
+    }
+
+    /// When the device enters `needsPairing`, any open Session detail pops back to the list so the offline card is visible.
+    static func shouldReturnToSessionList(needsPairing: Bool) -> Bool {
+        needsPairing
     }
 }
 
@@ -67,8 +94,9 @@ struct QRScannerPreviewView: UIViewRepresentable {
         private let lock = NSLock()
         private var configured = false
         private var active = true
-        var onDetect: @MainActor (String) -> Void
+        @MainActor var onDetect: @MainActor (String) -> Void
 
+        @MainActor
         init(onDetect: @escaping @MainActor (String) -> Void) {
             self.onDetect = onDetect
         }
@@ -81,6 +109,7 @@ struct QRScannerPreviewView: UIViewRepresentable {
             }
         }
 
+        @MainActor
         func setScanning(_ scanning: Bool) {
             lock.withLock { active = scanning }
             sessionQueue.async { [weak self] in
@@ -93,6 +122,7 @@ struct QRScannerPreviewView: UIViewRepresentable {
             }
         }
 
+        @MainActor
         func stop() {
             lock.withLock { active = false }
             sessionQueue.async { [weak self] in
@@ -127,7 +157,7 @@ struct QRScannerPreviewView: UIViewRepresentable {
             }
         }
 
-        func metadataOutput(
+        nonisolated func metadataOutput(
             _ output: AVCaptureMetadataOutput,
             didOutput metadataObjects: [AVMetadataObject],
             from connection: AVCaptureConnection
@@ -138,9 +168,10 @@ struct QRScannerPreviewView: UIViewRepresentable {
                   let value = readable.stringValue,
                   !value.isEmpty
             else { return }
-            let callback = onDetect
-            Task { @MainActor in
-                callback(value)
+            // Only hop the decoded string across queues; read `onDetect` and re-check scanning state on MainActor.
+            Task { @MainActor [weak self] in
+                guard let self, self.lock.withLock({ self.active }) else { return }
+                self.onDetect(value)
             }
         }
     }

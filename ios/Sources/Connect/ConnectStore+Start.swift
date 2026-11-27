@@ -19,7 +19,9 @@ extension ConnectStore {
     /// `ccrpc_new {cwd}`: returns the connection to follow (its page shows 「正在启动…」).
     func startNew(cwd: String) async throws -> String {
         guard let client else { throw HostError.badResponse }
+        let gen = generation
         let conn = try await client.call("ccrpc_new", args: ["cwd": cwd], as: String.self, timeout: 60)
+        guard generation == gen else { throw CancellationError() }
         beginFollowing(conn, .new(cwd: cwd))
         return conn
     }
@@ -27,17 +29,21 @@ extension ConnectStore {
     /// `ccrpc_resume {sessionId, cwd}`: the page stays on the Session, which the connection takes once ready.
     func resume(sessionId: String, cwd: String) async {
         guard let client, !isResuming(sessionId) else { return }
+        let gen = generation
         let kind = StartKind.resume(sessionId: sessionId)
         pendingStarts.insert(kind)
-        defer { pendingStarts.remove(kind) }
+        defer { if generation == gen { pendingStarts.remove(kind) } }
         errors[sessionId] = nil
         await dropEnded(of: sessionId)
+        guard generation == gen else { return }
         do {
             let conn = try await client.call(
                 "ccrpc_resume", args: ["sessionId": sessionId, "cwd": cwd], as: String.self, timeout: 60
             )
+            guard generation == gen else { return }
             beginFollowing(conn, kind)
         } catch {
+            guard generation == gen else { return }
             errors[sessionId] = "Resume 失败：\(Self.text(error))"
         }
     }
@@ -46,9 +52,10 @@ extension ConnectStore {
     /// or `both` for the code too). Its page opens once claude names the new Session.
     func fork(sessionId: String, cwd: String, title: String, at: String? = nil, restore: String? = nil) async {
         guard let client, !isForking(sessionId) else { return }
+        let gen = generation
         let kind = StartKind.fork(origin: sessionId)
         pendingStarts.insert(kind)
-        defer { pendingStarts.remove(kind) }
+        defer { if generation == gen { pendingStarts.remove(kind) } }
         if errors[sessionId]?.hasPrefix("Fork 失败") == true { errors[sessionId] = nil }
         do {
             let conn = try await client.call(
@@ -57,8 +64,10 @@ extension ConnectStore {
                 as: String.self,
                 timeout: 60
             )
+            guard generation == gen else { return }
             beginFollowing(conn, kind)
         } catch {
+            guard generation == gen else { return }
             errors[sessionId] = "Fork 失败：\(Self.text(error))"
         }
     }

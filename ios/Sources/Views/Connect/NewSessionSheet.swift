@@ -3,6 +3,8 @@ import SwiftUI
 /// 「新建 Session」: pick a Project or type a directory on the Host (completed from its file system), then
 /// `ccrpc_new` starts claude there in a new clay Pane and Connects it.
 struct NewSessionSheet: View {
+    /// Host generation when the sheet was opened; any Host switch dismisses the sheet and drops results.
+    let hostGeneration: Int
     /// The connection started and the directory it starts in.
     let onStarted: (_ conn: String, _ cwd: String) -> Void
     @Environment(HostModel.self) private var model
@@ -86,23 +88,41 @@ struct NewSessionSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             }
-            .task { sidebar = try? await model.client?.sidebarProjects() }
+            .task {
+                let gen = hostGeneration
+                let loaded = try? await model.client?.sidebarProjects()
+                guard model.generation == gen else { return }
+                sidebar = loaded
+            }
             .task(id: path) { await complete() }
+            .onChange(of: model.generation) { _, newGen in
+                if newGen != hostGeneration { dismiss() }
+            }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 
     private func complete() async {
+        let gen = hostGeneration
         let partial = path
         // The Host completes full paths only.
         guard partial.hasPrefix("/") else { return completions = [] }
         try? await Task.sleep(for: .milliseconds(200))
-        guard !Task.isCancelled, let found = try? await model.client?.completeDirectories(partial) else { return }
+        guard !Task.isCancelled,
+              model.generation == gen,
+              let found = try? await model.client?.completeDirectories(partial),
+              model.generation == gen
+        else { return }
         completions = found.filter { $0 != partial }
     }
 
     private func start() {
+        let gen = hostGeneration
+        guard model.generation == gen else {
+            dismiss()
+            return
+        }
         let cwd = cwd
         guard !cwd.isEmpty, StartFlow.cwdProblem(path) == nil, !starting else { return }
         starting = true
@@ -111,9 +131,19 @@ struct NewSessionSheet: View {
             defer { starting = false }
             do {
                 let conn = try await model.connect.startNew(cwd: cwd)
+                guard model.generation == gen else {
+                    dismiss()
+                    return
+                }
                 dismiss()
                 onStarted(conn, cwd)
+            } catch is CancellationError {
+                if model.generation != gen { dismiss() }
             } catch {
+                guard model.generation == gen else {
+                    dismiss()
+                    return
+                }
                 self.error = "新建 Session 失败：\(ConnectStore.text(error))"
             }
         }

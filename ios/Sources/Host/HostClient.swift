@@ -110,12 +110,11 @@ struct HostClient: Sendable {
         if status == 401 { throw HostError.removed }
         let decoder = JSONDecoder()
         if let body = try? decoder.decode(RPCError.self, from: data) {
-            if status == 403 || body.error.code == "pairing_expired" {
+            if status == 403, body.error.code == "pairing_expired" {
                 throw HostError.pairingExpired
             }
             throw HostError.host(code: body.error.code, message: body.error.message)
         }
-        if status == 403 { throw HostError.pairingExpired }
         guard (200..<300).contains(status) else { throw HostError.badResponse }
         do {
             let payload = try decoder.decode(RPCResult<PairPayload>.self, from: data).result
@@ -186,8 +185,8 @@ struct HostClient: Sendable {
     }
 
     /// Forwards an RPC for the Transcript web bridge, returning the Host's raw JSON response body
-    /// without decoding `result`.
-    func forwardRPC(method: String, args: JSONValue, timeout: TimeInterval = 20) async throws -> Data {
+    /// and HTTP status (including 401) without decoding `result` or mapping 401 to `.removed`.
+    func forwardRPC(method: String, args: JSONValue, timeout: TimeInterval = 20) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: baseURL.appending(path: "v1/rpc"))
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -195,22 +194,27 @@ struct HostClient: Sendable {
         authorize(&request)
         request.httpBody = try JSONEncoder().encode(RPCRequest(method: method, args: args))
         let (data, http) = try await send(request)
-        if (200..<300).contains(http.statusCode) {
-            return data
+        if (200..<300).contains(http.statusCode) || http.statusCode == 401 {
+            return (data, http)
         }
         if (try? JSONDecoder().decode(RPCError.self, from: data)) != nil {
-            return data
+            return (data, http)
         }
         throw HostError.badResponse
     }
 
     /// Authenticated `GET` against the Host (used by the Transcript scheme handler).
+    /// Preserves raw HTTP status codes (including 401) and percent-encoded path/query values.
     func get(path: String, query: String? = nil, timeout: TimeInterval = 20) async throws -> (Data, HTTPURLResponse) {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-        components.path = path.hasPrefix("/") ? path : "/" + path
-        if let query, !query.isEmpty {
-            // Preserve existing percent-encoding when valid; fall back to encoding raw strings.
-            if query.unicodeScalars.allSatisfy({ Self.encodedQueryAllowed.contains($0) }) {
+        let normalizedPath = path.hasPrefix("/") ? path : "/" + path
+        if Self.isValidPercentEncoded(normalizedPath, allowed: Self.encodedPathAllowed) {
+            components.percentEncodedPath = normalizedPath
+        } else {
+            components.path = normalizedPath
+        }
+        if let query {
+            if Self.isValidPercentEncoded(query, allowed: Self.encodedQueryAllowed) {
                 components.percentEncodedQuery = query
             } else {
                 components.query = query
@@ -224,11 +228,39 @@ struct HostClient: Sendable {
         return try await send(request)
     }
 
+    private static let encodedPathAllowed: CharacterSet = {
+        var set = CharacterSet.urlPathAllowed
+        set.insert(charactersIn: "%")
+        return set
+    }()
+
     private static let encodedQueryAllowed: CharacterSet = {
         var set = CharacterSet.urlQueryAllowed
         set.insert(charactersIn: "%")
         return set
     }()
+
+    private static func isValidPercentEncoded(_ value: String, allowed: CharacterSet) -> Bool {
+        guard value.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+        let bytes = Array(value.utf8)
+        var i = 0
+        while i < bytes.count {
+            if bytes[i] == 0x25 { // '%'
+                guard i + 2 < bytes.count,
+                      isASCIIHex(bytes[i + 1]),
+                      isASCIIHex(bytes[i + 2])
+                else { return false }
+                i += 3
+            } else {
+                i += 1
+            }
+        }
+        return true
+    }
+
+    private static func isASCIIHex(_ b: UInt8) -> Bool {
+        (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66)
+    }
 
     /// `{"result"}`, or `{"error": {code, message}}`, which the Host sends with HTTP 200 (and any other status).
     /// HTTP 401 always maps to `.removed` regardless of body.
@@ -262,11 +294,13 @@ struct HostClient: Sendable {
             }
         } catch let error as HostError {
             throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled { throw CancellationError() }
             throw HostError.unreachable(address.display)
         }
         guard let http = response as? HTTPURLResponse else { throw HostError.badResponse }
-        if http.statusCode == 401 { throw HostError.removed }
         return (data, http)
     }
 

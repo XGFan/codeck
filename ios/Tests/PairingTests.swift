@@ -309,36 +309,104 @@ final class PairingTests: XCTestCase {
             XCTAssertEqual(error, .pairingExpired)
         }
 
-        // 4. forwardRPC sends Authorization and returns raw JSON body without decoding result.
+        // 4. forwardRPC sends Authorization and returns raw JSON body + status without decoding result.
         let rawRPC = Data(#"{"result":{"nested":[1,2,3]}}"#.utf8)
         StubURLProtocol.handler = { req in
             XCTAssertEqual(req.url?.absoluteString, "https://192.168.1.20:38471/v1/rpc")
             XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer my-secret-token")
             return (200, rawRPC, [:])
         }
-        let forwarded = try await client.forwardRPC(method: "get_session", args: .object(["sessionId": .string("s1")]))
+        let (forwarded, forwardedResp) = try await client.forwardRPC(method: "get_session", args: .object(["sessionId": .string("s1")]))
+        XCTAssertEqual(forwardedResp.statusCode, 200)
         XCTAssertEqual(forwarded, rawRPC)
 
-        // 5. Authenticated GET preserves path + query and headers.
+        // 5. Authenticated GET preserves percent-encoded path + query (including empty query) and headers.
         StubURLProtocol.handler = { req in
             XCTAssertEqual(req.httpMethod, "GET")
-            XCTAssertEqual(req.url?.absoluteString, "https://192.168.1.20:38471/web/transcript.html?sessionId=abc%201")
+            XCTAssertEqual(req.url?.absoluteString, "https://192.168.1.20:38471/web/a%20b/transcript.html?sessionId=abc%201&x=a%2Bb")
             XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer my-secret-token")
             return (200, Data("<html>ok</html>".utf8), ["Content-Type": "text/html"])
         }
-        let (body, resp) = try await client.get(path: "/web/transcript.html", query: "sessionId=abc%201")
+        let (body, resp) = try await client.get(path: "/web/a%20b/transcript.html", query: "sessionId=abc%201&x=a%2Bb")
         XCTAssertEqual(resp.statusCode, 200)
         XCTAssertEqual(resp.value(forHTTPHeaderField: "Content-Type"), "text/html")
         XCTAssertEqual(String(decoding: body, as: UTF8.self), "<html>ok</html>")
 
-        // 6. Any HTTP 401 maps to .removed regardless of body.
-        StubURLProtocol.handler = { _ in (401, Data("nope".utf8), [:]) }
+        StubURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.absoluteString, "https://192.168.1.20:38471/web/empty.js?")
+            return (200, Data(), [:])
+        }
+        _ = try await client.get(path: "/web/empty.js", query: "")
+
+        // 6. Bridge methods (`get` and `forwardRPC`) preserve raw 401 status and body; typed RPC maps 401 to `.removed`.
+        let unauthorizedBody = Data(#"{"error":{"code":"unauthorized","message":"这台设备没有配对或已被移除，请重新扫码配对。"}}"#.utf8)
+        StubURLProtocol.handler = { _ in (401, unauthorizedBody, ["Content-Type": "application/json"]) }
+        let (get401Data, get401Resp) = try await client.get(path: "/web/transcript.html")
+        XCTAssertEqual(get401Resp.statusCode, 401)
+        XCTAssertEqual(get401Data, unauthorizedBody)
+
+        let (rpc401Data, rpc401Resp) = try await client.forwardRPC(method: "get_session", args: .object([:]))
+        XCTAssertEqual(rpc401Resp.statusCode, 401)
+        XCTAssertEqual(rpc401Data, unauthorizedBody)
+
         do {
-            _ = try await client.get(path: "/web/transcript.html")
-            XCTFail("Expected removed")
+            try await client.checkAuth(timeout: 5)
+            XCTFail("Expected removed for typed RPC 401")
         } catch let error as HostError {
             XCTAssertEqual(error, .removed)
         }
+    }
+
+    func testDecodePair403OnlyPairingExpiredMapsToPairingExpired() {
+        // 403 with pairing_expired → .pairingExpired.
+        let expiredBody = Data(#"{"error":{"code":"pairing_expired","message":"配对码已过期"}}"#.utf8)
+        XCTAssertThrowsError(try HostClient.decodePair(expiredBody, status: 403)) {
+            XCTAssertEqual($0 as? HostError, .pairingExpired)
+        }
+
+        // 403 with another error code (e.g. subnet/Host/Origin rejection) → .host preserving Host message.
+        let subnetBody = Data(#"{"error":{"code":"forbidden","message":"不在允许的局域网内"}}"#.utf8)
+        XCTAssertThrowsError(try HostClient.decodePair(subnetBody, status: 403)) {
+            XCTAssertEqual($0 as? HostError, .host(code: "forbidden", message: "不在允许的局域网内"))
+        }
+
+        // 403 with JSON error message and no code → .host.
+        let noCodeBody = Data(#"{"error":{"message":"Host 头不匹配"}}"#.utf8)
+        XCTAssertThrowsError(try HostClient.decodePair(noCodeBody, status: 403)) {
+            XCTAssertEqual($0 as? HostError, .host(code: nil, message: "Host 头不匹配"))
+        }
+
+        // Non-JSON 403 → .badResponse (must not misreport as pairingExpired).
+        XCTAssertThrowsError(try HostClient.decodePair(Data("Forbidden".utf8), status: 403)) {
+            XCTAssertEqual($0 as? HostError, .badResponse)
+        }
+    }
+
+    func testHostStoreSameFingerprintReuseDoesNotRewriteKeychain() throws {
+        let suite = "PairingTests.reuseNoRewrite.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let keychain = MemoryKeychain()
+        let store = HostStore(defaults: defaults, keychain: keychain, allowLoopback: false)
+
+        let initial = PairedHost(
+            address: HostAddress(host: "10.0.0.1", port: 38471),
+            fingerprint: Self.validFP,
+            deviceId: "dev-same",
+            token: "tok-same"
+        )
+        try store.save(initial)
+        XCTAssertEqual(keychain.writeCount, 1)
+
+        // Arm a Keychain write failure: updating only the address must not call keychain.write at all.
+        keychain.failNextWrite = KeychainError.unexpectedStatus(-25308)
+        var moved = initial
+        moved.address = HostAddress(host: "192.168.1.99", port: 38472)
+        try store.save(moved)
+
+        XCTAssertEqual(keychain.writeCount, 1)
+        XCTAssertEqual(store.load(), moved)
+        XCTAssertEqual(keychain.read(service: HostStore.keychainService, account: "dev-same"), "tok-same")
     }
 
     // MARK: Pairing Flow Steps
@@ -643,28 +711,371 @@ final class PairingTests: XCTestCase {
         XCTAssertEqual(recorder.calls, ["health", "pair"])
     }
 
-    // MARK: Presentation Helpers (URL Confirm & OfflineCard)
+    // MARK: Regression — Same-Fingerprint Save Error, Resolve/Pair Split, Cancellation, Stale Start & Disconnect Probe
 
-    func testOpenURLConfirmMessage() {
+    func testPairingSameFingerprintSaveErrorPropagatesOriginalError() async {
         let link = PairingLink(
-            hosts: ["192.168.1.20", "10.0.0.5"],
+            hosts: ["10.0.0.2"],
             port: 38471,
             fingerprint: Self.validFP,
             key: Self.validKey
         )
+        let existing = PairedHost(
+            address: HostAddress(host: "10.0.0.1", port: 38471),
+            fingerprint: Self.validFP,
+            deviceId: "dev-old",
+            token: "tok-old"
+        )
+        let saveFailure = KeychainError.unexpectedStatus(-25308)
+        let deps = PairingDependencies(
+            checkHealth: { _, _, _ in HostHealth(product: "CoDeck", apiVersion: 2, version: nil) },
+            checkToken: { _, _, _ in },
+            pair: { _, _, _, _ in
+                XCTFail("pair should not be called when token is valid")
+                return ("x", "y")
+            },
+            save: { _ in throw saveFailure }
+        )
+
+        do {
+            _ = try await HostModel.executePairing(
+                link: link,
+                existing: existing,
+                deviceName: "iPhone",
+                dependencies: deps
+            )
+            XCTFail("Expected original KeychainError")
+        } catch let error as KeychainError {
+            XCTAssertEqual(error, saveFailure)
+        } catch {
+            XCTFail("Expected KeychainError, got \(error)")
+        }
+    }
+
+    @MainActor
+    func testHostModelResolveThenPairAtResolvedAddress() async throws {
+        let suite = "PairingTests.resolveThenPair.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = HostStore(defaults: defaults, keychain: MemoryKeychain(), allowLoopback: false)
+        let stubSession = StubURLProtocol.makeSession()
+        StubURLProtocol.handler = { _ in (500, Data(), [:]) }
+
+        let model = HostModel(
+            store: store,
+            clientFactory: { host, _ in HostClient(host: host, session: stubSession) },
+            streamFactory: { host, _ in EventStream(host: host, session: stubSession) }
+        )
+
+        let link = PairingLink(
+            hosts: ["10.0.0.1", "10.0.0.2"],
+            port: 38471,
+            fingerprint: Self.validFP,
+            key: Self.validKey
+        )
+        let recorder = CallRecorder()
+        let deps = PairingDependencies(
+            checkHealth: { addr, fp, timeout in
+                recorder.record("health:\(addr.host):\(Int(timeout))")
+                XCTAssertEqual(fp, Self.validFP)
+                if addr.host == "10.0.0.1" { throw HostError.unreachable(addr.display) }
+                return HostHealth(product: "CoDeck", apiVersion: 2, version: nil)
+            },
+            checkToken: { _, _, _ in recorder.record("checkToken") },
+            pair: { addr, _, _, _ in
+                recorder.record("pair:\(addr.display)")
+                return ("dev1", "tok1")
+            },
+            save: { host in
+                recorder.record("save:\(host.display)")
+                try store.save(host)
+            }
+        )
+
+        // Step 1: resolve only probes /health and sends no credentials.
+        let resolved = try await model.resolve(link, dependencies: deps)
+        XCTAssertEqual(resolved, HostAddress(host: "10.0.0.2", port: 38471))
+        XCTAssertEqual(recorder.calls, ["health:10.0.0.1:3", "health:10.0.0.2:3"])
         XCTAssertEqual(
-            PairingPresentation.openURLConfirmMessage(for: link, hasCurrentHost: false),
-            "与 Host 192.168.1.20 配对？"
+            PairingPresentation.openURLConfirmMessage(for: resolved, hasCurrentHost: true),
+            "与 Host 10.0.0.2:38471 配对？会替换当前的 Host。"
+        )
+
+        // Step 2: pair(with:at:) uses the resolved address directly without re-probing /health.
+        let paired = try await model.pair(with: link, at: resolved, dependencies: deps)
+        model.pause()
+        XCTAssertTrue(paired)
+        XCTAssertEqual(recorder.calls, [
+            "health:10.0.0.1:3",
+            "health:10.0.0.2:3",
+            "pair:10.0.0.2:38471",
+            "save:10.0.0.2:38471",
+        ])
+        XCTAssertEqual(model.address, resolved)
+    }
+
+    func testPairingCancellationStopsBeforePairAndBeforeSave() async throws {
+        let link = PairingLink(
+            hosts: ["10.0.0.1"],
+            port: 38471,
+            fingerprint: Self.validFP,
+            key: Self.validKey
+        )
+
+        // Case A: Cancelled during health probe → /v1/pair and save must NOT run.
+        let gateA = AsyncGate()
+        let recorderA = CallRecorder()
+        let depsA = PairingDependencies(
+            checkHealth: { _, _, _ in
+                recorderA.record("health")
+                await gateA.wait()
+                return HostHealth(product: "CoDeck", apiVersion: 2, version: nil)
+            },
+            checkToken: { _, _, _ in recorderA.record("checkToken") },
+            pair: { _, _, _, _ in
+                recorderA.record("pair")
+                return ("dev1", "tok1")
+            },
+            save: { _ in recorderA.record("save") }
+        )
+        let taskA = Task {
+            try await HostModel.executePairing(link: link, existing: nil, deviceName: "iPhone", dependencies: depsA)
+        }
+        for _ in 0..<50 where recorderA.calls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        taskA.cancel()
+        await gateA.open()
+        do {
+            _ = try await taskA.value
+            XCTFail("Expected CancellationError")
+        } catch is CancellationError {}
+        XCTAssertEqual(recorderA.calls, ["health"])
+
+        // Case B: Cancelled while /v1/pair is in flight → save must NOT run.
+        let gateB = AsyncGate()
+        let recorderB = CallRecorder()
+        let depsB = PairingDependencies(
+            checkHealth: { _, _, _ in HostHealth(product: "CoDeck", apiVersion: 2, version: nil) },
+            checkToken: { _, _, _ in },
+            pair: { _, _, _, _ in
+                recorderB.record("pair")
+                await gateB.wait()
+                return ("dev2", "tok2")
+            },
+            save: { _ in recorderB.record("save") }
+        )
+        let taskB = Task {
+            try await HostModel.executePairing(
+                link: link,
+                at: HostAddress(host: "10.0.0.1", port: 38471),
+                existing: nil,
+                deviceName: "iPhone",
+                dependencies: depsB
+            )
+        }
+        for _ in 0..<50 where recorderB.calls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        taskB.cancel()
+        await gateB.open()
+        do {
+            _ = try await taskB.value
+            XCTFail("Expected CancellationError")
+        } catch is CancellationError {}
+        XCTAssertEqual(recorderB.calls, ["pair"])
+    }
+
+    @MainActor
+    func testHostModelValidHelloInvalidatesInFlightDisconnectProbe() async throws {
+        let suite = "PairingTests.helloInvalidatesProbe.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = HostStore(defaults: defaults, keychain: MemoryKeychain(), allowLoopback: false)
+
+        let initial = PairedHost(
+            address: HostAddress(host: "10.0.0.1", port: 38471),
+            fingerprint: Self.validFP,
+            deviceId: "dev1",
+            token: "tok1"
+        )
+        try store.save(initial)
+
+        let probeEntered = CallRecorder()
+        let releaseProbe = DispatchSemaphore(value: 0)
+        let stubSession = StubURLProtocol.makeSession()
+        StubURLProtocol.handler = { req in
+            if req.url?.path == "/v1/rpc",
+               String(decoding: StubURLProtocol.body(of: req), as: UTF8.self).contains("get_app_info") {
+                probeEntered.record("probe")
+                _ = releaseProbe.wait(timeout: .now() + 5)
+                // Even a 200 (or 401) returning after valid `hello` must be discarded.
+                return (200, Data(#"{"result":{}}"#.utf8), [:])
+            }
+            if req.url?.path == "/health" {
+                return (200, Data(#"{"product":"CoDeck","apiVersion":2}"#.utf8), [:])
+            }
+            return (200, Data(#"{"result":[]}"#.utf8), [:])
+        }
+
+        let model = HostModel(
+            store: store,
+            clientFactory: { host, _ in HostClient(host: host, session: stubSession) },
+            streamFactory: { host, _ in EventStream(host: host, session: stubSession) }
+        )
+        model.pause()
+        let gen = model.generation
+        let client = try XCTUnwrap(model.client)
+
+        model.handleDisconnect(attempt: 1, certMismatch: false, generation: gen, client: client)
+        for _ in 0..<200 where probeEntered.calls.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(probeEntered.calls, ["probe"])
+
+        // Valid hello arrives before the slow disconnect probe finishes.
+        model.handle(.hello(apiVersion: 2))
+        releaseProbe.signal()
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertNil(model.problem)
+        XCTAssertFalse(model.needsPairing)
+    }
+
+    @MainActor
+    func testConnectStoreStartResumeForkDropStaleResultsAfterReset() async throws {
+        let store = ConnectStore()
+        let hostA = PairedHost(address: HostAddress(host: "10.0.0.1", port: 38471), fingerprint: Self.validFP, deviceId: "dA", token: "tA")
+        let hostB = PairedHost(address: HostAddress(host: "10.0.0.2", port: 38471), fingerprint: Self.otherFP, deviceId: "dB", token: "tB")
+
+        let entered = CallRecorder()
+        let reqRelease = DispatchSemaphore(value: 0)
+        let session = StubURLProtocol.makeSession()
+        let clientA = HostClient(host: hostA, session: session)
+        let clientB = HostClient(host: hostB, session: session)
+
+        // 1. startNew in-flight across reset → throws CancellationError and does not write to new Host.
+        StubURLProtocol.handler = { _ in
+            entered.record("start")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"result":"conn-old"}"#.utf8), [:])
+        }
+        store.reset(client: clientA)
+        let startTask = Task { try await store.startNew(cwd: "/tmp/a") }
+        for _ in 0..<200 where entered.calls.count < 1 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(entered.calls.count, 1)
+        store.reset(client: clientB)
+        reqRelease.signal()
+        do {
+            _ = try await startTask.value
+            XCTFail("Expected CancellationError when Host switched during startNew")
+        } catch is CancellationError {}
+        XCTAssertTrue(store.starts.isEmpty)
+        XCTAssertTrue(store.errors.isEmpty)
+
+        // 2. resume failure in-flight across reset → does not write errors or clear new Host's pendingStarts.
+        StubURLProtocol.handler = { _ in
+            entered.record("resume")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"error":{"code":"boom","message":"old failure"}}"#.utf8), [:])
+        }
+        store.reset(client: clientA)
+        let resumeTask = Task { await store.resume(sessionId: "s1", cwd: "/tmp/a") }
+        for _ in 0..<200 where entered.calls.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(entered.calls.count, 2)
+        store.reset(client: clientB)
+        let newKind = StartKind.resume(sessionId: "s1")
+        store.pendingStarts.insert(newKind)
+        reqRelease.signal()
+        await resumeTask.value
+        XCTAssertTrue(store.starts.isEmpty)
+        XCTAssertNil(store.errors["s1"])
+        // Old defer must NOT remove new Host's pendingStarts entry.
+        XCTAssertTrue(store.pendingStarts.contains(newKind))
+
+        // 3. fork success in-flight across reset → does not write starts or remove new Host's pendingStarts.
+        StubURLProtocol.handler = { _ in
+            entered.record("fork")
+            _ = reqRelease.wait(timeout: .now() + 5)
+            return (200, Data(#"{"result":"conn-fork-old"}"#.utf8), [:])
+        }
+        store.reset(client: clientA)
+        let forkTask = Task { await store.fork(sessionId: "s1", cwd: "/tmp/a", title: "Fork") }
+        for _ in 0..<200 where entered.calls.count < 3 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(entered.calls.count, 3)
+        store.reset(client: clientB)
+        let newForkKind = StartKind.fork(origin: "s1")
+        store.pendingStarts.insert(newForkKind)
+        reqRelease.signal()
+        await forkTask.value
+        XCTAssertTrue(store.starts.isEmpty)
+        XCTAssertNil(store.errors["s1"])
+        XCTAssertTrue(store.pendingStarts.contains(newForkKind))
+    }
+
+    // MARK: Presentation Helpers (URL Classification, URL Confirm, Setup Notice & OfflineCard)
+
+    func testClassifyOpenURLHandlesMalformedPairAndIgnoresOtherLinks() throws {
+        let validURL = URL(string: "codeck://pair?h=192.168.1.20&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)")!
+        if case .pairingLink(let link) = PairingPresentation.classifyOpenURL(validURL) {
+            XCTAssertEqual(link.firstHost, "192.168.1.20")
+        } else {
+            XCTFail("Expected .pairingLink")
+        }
+
+        for bad in [
+            "codeck://pair",
+            "codeck://pair?h=192.168.1.20&p=38471&fp=\(Self.validFP)",
+            "codeck://pair/extra?h=192.168.1.20&p=38471&fp=\(Self.validFP)&k=\(Self.validKey)",
+        ] {
+            XCTAssertEqual(
+                PairingPresentation.classifyOpenURL(URL(string: bad)!),
+                .invalidPairingLink("这不是 CoDeck 的配对二维码。"),
+                bad
+            )
+        }
+
+        for ignored in [
+            "codeck://open?sessionId=s1",
+            "codeck://connect",
+            "https://example.com/pair",
+        ] {
+            XCTAssertEqual(
+                PairingPresentation.classifyOpenURL(URL(string: ignored)!),
+                .ignore,
+                ignored
+            )
+        }
+    }
+
+    func testOpenURLConfirmMessageAndSetupNotice() {
+        let address = HostAddress(host: "192.168.1.20", port: 38471)
+        XCTAssertEqual(
+            PairingPresentation.openURLConfirmMessage(for: address, hasCurrentHost: false),
+            "与 Host 192.168.1.20:38471 配对？"
         )
         XCTAssertEqual(
-            PairingPresentation.openURLConfirmMessage(for: link, hasCurrentHost: true),
-            "与 Host 192.168.1.20 配对？会替换当前的 Host。"
+            PairingPresentation.openURLConfirmMessage(for: address, hasCurrentHost: true),
+            "与 Host 192.168.1.20:38471 配对？会替换当前的 Host。"
+        )
+        XCTAssertNil(PairingPresentation.setupReplacementNotice(hasCurrentHost: false))
+        XCTAssertEqual(
+            PairingPresentation.setupReplacementNotice(hasCurrentHost: true),
+            "扫码后会替换当前的 Host。"
         )
     }
 
-    func testOfflineCardShowsRetryRule() {
+    func testOfflineCardShowsRetryAndReturnToListRules() {
         XCTAssertTrue(PairingPresentation.showsRetryInOfflineCard(needsPairing: false))
         XCTAssertFalse(PairingPresentation.showsRetryInOfflineCard(needsPairing: true))
+        XCTAssertFalse(PairingPresentation.shouldReturnToSessionList(needsPairing: false))
+        XCTAssertTrue(PairingPresentation.shouldReturnToSessionList(needsPairing: true))
     }
 }
 
@@ -673,7 +1084,10 @@ final class PairingTests: XCTestCase {
 private final class MemoryKeychain: KeychainStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [String: String] = [:]
+    private var writes = 0
     var failNextWrite: Error?
+
+    var writeCount: Int { lock.withLock { writes } }
 
     func read(service: String, account: String) -> String? {
         lock.withLock { storage["\(service):\(account)"] }
@@ -685,6 +1099,7 @@ private final class MemoryKeychain: KeychainStoring, @unchecked Sendable {
                 failNextWrite = nil
                 throw error
             }
+            writes += 1
             storage["\(service):\(account)"] = value
         }
     }
@@ -725,6 +1140,21 @@ private final class StubURLProtocol: URLProtocol {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         return URLSession(configuration: config)
+    }
+
+    static func body(of request: URLRequest) -> Data {
+        if let data = request.httpBody { return data }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var out = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            out.append(buffer, count: count)
+        }
+        return out
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }

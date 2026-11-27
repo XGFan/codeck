@@ -14,6 +14,7 @@ struct HostSetupView: View {
     @State private var cameraState: CameraState = .checking
     @State private var scanning = true
     @State private var pairing = false
+    @State private var pairTask: Task<Void, Never>?
     @State private var error: String?
     @State private var lastInvalid: (code: String, at: Date)?
 
@@ -56,6 +57,12 @@ struct HostSetupView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                if let notice = PairingPresentation.setupReplacementNotice(hasCurrentHost: current != nil) {
+                    Text(notice)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
 
                 scannerCard
                     .padding(.top, 6)
@@ -84,13 +91,19 @@ struct HostSetupView: View {
         .toolbar {
             if current != nil {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                    Button("取消", systemImage: "xmark") {
+                        cancelPairing()
+                        dismiss()
+                    }.labelStyle(.iconOnly)
                 }
             }
         }
         .sensoryFeedback(.error, trigger: error) { _, new in new != nil }
         .task { await prepareCamera() }
-        .onDisappear { scanning = false }
+        .onDisappear {
+            scanning = false
+            cancelPairing()
+        }
     }
 
     @ViewBuilder
@@ -193,21 +206,34 @@ struct HostSetupView: View {
         error = nil
         scanning = false
         pairing = true
-        Task {
-            defer { pairing = false }
+        pairTask?.cancel()
+        pairTask = Task {
+            defer {
+                pairing = false
+                pairTask = nil
+            }
             do {
                 let paired = try await model.pair(with: link)
+                guard !Task.isCancelled else { return }
                 if paired {
                     onPaired?()
                     dismiss()
                 } else {
                     scanning = true
                 }
+            } catch is CancellationError {
+                // Sheet was dismissed while pairing was in flight; stop silently.
             } catch {
+                guard !Task.isCancelled else { return }
                 self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 scanning = true
             }
         }
+    }
+
+    private func cancelPairing() {
+        pairTask?.cancel()
+        pairTask = nil
     }
 
     #if DEBUG

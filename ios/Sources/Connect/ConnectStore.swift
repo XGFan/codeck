@@ -51,7 +51,7 @@ final class ConnectStore {
     /// The latest snapshot asked for; an older one's answer is dropped.
     @ObservationIgnored private var syncRound = 0
     /// Incremented on every `reset(client:)` so in-flight calls from an older Host generation are dropped.
-    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private(set) var generation = 0
     @ObservationIgnored private(set) var client: HostClient?
 
     /// A new Host: everything from the old one goes.
@@ -189,7 +189,9 @@ final class ConnectStore {
     /// Before a Resume: ended Connects of this Session go (one whose ccrpc has not ended yet, its Session just over,
     /// is disconnected: its end is then not kept as one that ended by itself).
     func dropEnded(of sessionId: String) async {
-        for c in conns.values where c.sessionId == sessionId && !c.isLive {
+        let gen = generation
+        for c in Array(conns.values) where c.sessionId == sessionId && !c.isLive {
+            guard generation == gen else { return }
             if c.procExit == nil {
                 await disconnect(c)
             } else {
@@ -257,7 +259,7 @@ final class ConnectStore {
         let gen = generation
         connecting.insert(sessionId)
         errors[sessionId] = nil
-        defer { connecting.remove(sessionId) }
+        defer { if generation == gen { connecting.remove(sessionId) } }
         do {
             let conn = try await client.call("connect_shared", args: ["holderId": entry.holderId], as: String.self)
             guard generation == gen else { return }
@@ -269,16 +271,19 @@ final class ConnectStore {
                 store(c)
             }
         } catch {
+            guard generation == gen else { return }
             errors[sessionId] = "连接失败：\(Self.text(error))"
         }
     }
 
     func disconnect(_ c: ConnState) async {
         guard let client else { return }
+        let gen = generation
         ending.insert(c.conn)
         do {
             _ = try await client.call("ccrpc_disconnect", args: ["conn": c.conn], as: JSONValue.self)
         } catch {
+            guard generation == gen else { return }
             ending.remove(c.conn)
             if let id = c.sessionId { errors[id] = "Disconnect 失败：\(Self.text(error))" }
         }

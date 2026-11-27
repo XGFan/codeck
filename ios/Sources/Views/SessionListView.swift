@@ -29,7 +29,11 @@ struct SessionListView: View {
             }
             .navigationDestination(for: StartingRoute.self) { StartingView(route: $0) }
             .sheet(isPresented: $creating) {
-                NewSessionSheet { conn, cwd in path.append(StartingRoute(conn: conn, cwd: cwd)) }
+                let gen = model.generation
+                NewSessionSheet(hostGeneration: gen) { conn, cwd in
+                    guard model.generation == gen else { return }
+                    path.append(StartingRoute(conn: conn, cwd: cwd))
+                }
             }
             .onChange(of: model.connect.openRequest) { _, request in
                 // A Fork got its Session: open it over the Origin's page.
@@ -38,7 +42,14 @@ struct SessionListView: View {
                 path.append(SessionRoute(id: request.sessionId))
             }
             .onChange(of: model.generation) { _, _ in
+                creating = false
                 path = NavigationPath()
+            }
+            .onChange(of: model.needsPairing) { _, needsPairing in
+                if PairingPresentation.shouldReturnToSessionList(needsPairing: needsPairing) {
+                    creating = false
+                    path = NavigationPath()
+                }
             }
             .sheet(isPresented: $changingHost) {
                 NavigationStack {
@@ -159,8 +170,8 @@ struct SessionListView: View {
                 .background(Palette.accent, in: Circle())
                 .shadow(color: Palette.accent.opacity(0.35), radius: 10, y: 6)
         }
-        .disabled(!model.hasLoaded)
-        .opacity(model.hasLoaded ? 1 : 0.5)
+        .disabled(!model.hasLoaded || model.needsPairing)
+        .opacity(model.hasLoaded && !model.needsPairing ? 1 : 0.5)
         .padding(.trailing, 16)
         .padding(.bottom, 16)
         .accessibilityLabel("新建 Session")

@@ -67,6 +67,8 @@ struct TranscriptWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // Isolate WebKit cache/storage per WebView/Host generation.
+        config.websiteDataStore = .nonPersistent()
         config.setURLSchemeHandler(context.coordinator.schemeHandler, forURLScheme: HostWebBridge.scheme)
         config.userContentController.add(WeakHandler(context.coordinator), contentWorld: .page, name: Self.handlerName)
         config.userContentController.addScriptMessageHandler(
@@ -100,11 +102,12 @@ struct TranscriptWebView: UIViewRepresentable {
 
     func updateUIView(_ web: WKWebView, context: Context) {
         context.coordinator.parent = self
-        if context.coordinator.loadedHostGeneration != model.generation {
-            context.coordinator.schemeHandler.cancelAll()
-            context.coordinator.eventBridge.stop()
-            context.coordinator.load(web, url: url, token: reloadToken)
-        } else if context.coordinator.loadedURL != url || context.coordinator.loadedToken != reloadToken {
+        guard context.coordinator.boundGeneration == model.generation else {
+            // Host changed: revoke this WebView; SessionDetailView recreates a fresh one via `.id(model.generation)`.
+            context.coordinator.teardown()
+            return
+        }
+        if context.coordinator.loadedURL != url || context.coordinator.loadedToken != reloadToken {
             context.coordinator.load(web, url: url, token: reloadToken)
         }
         context.coordinator.writeInsets(web)
@@ -123,20 +126,44 @@ struct TranscriptWebView: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIGestureRecognizerDelegate {
         var parent: TranscriptWebView
+        let boundGeneration: Int
         var loadedURL: URL?
         var loadedToken = 0
-        var loadedHostGeneration = 0
         var readyFallback: Task<Void, Never>?
         let schemeHandler: HostSchemeHandler
         let rpcHandler: HostRPCMessageHandler
-        private(set) lazy var eventBridge = TranscriptEventBridge(
-            currentHostGeneration: { [weak self] in self?.parent.model.generation ?? -1 },
-            subscribe: { [weak self] handler in
-                guard let model = self?.parent.model else { return {} }
-                return model.subscribeRawEvents(handler)
-            },
-            push: { [weak self] text in
-                self?.webView?.callAsyncJavaScript(
+        let eventBridge: TranscriptEventBridge
+
+        private weak var webView: WKWebView?
+        private var activeNavigation: WKNavigation?
+        private var committedURL: URL?
+        private var ready = false
+        private var writtenInsets: [CGFloat]?
+        private var writtenConnect: PageConnect?
+
+        init(parent: TranscriptWebView) {
+            let model = parent.model
+            let boundGen = model.generation
+            self.parent = parent
+            self.boundGeneration = boundGen
+            self.schemeHandler = HostSchemeHandler(model: model)
+            self.rpcHandler = HostRPCMessageHandler(model: model)
+            var pushRef: ((String) -> Void)?
+            self.eventBridge = TranscriptEventBridge(
+                boundHostGeneration: boundGen,
+                currentHostGeneration: { [weak model] in model?.generation ?? -1 },
+                subscribe: { [weak model] handler in
+                    guard let model, model.generation == boundGen else { return {} }
+                    return model.subscribeRawEvents(handler)
+                },
+                push: { text in
+                    pushRef?(text)
+                }
+            )
+            super.init()
+            pushRef = { [weak self] text in
+                guard let self, self.parent.model.generation == self.boundGeneration else { return }
+                self.webView?.callAsyncJavaScript(
                     "window.codeckPage?.event?.(e)",
                     arguments: ["e": text],
                     in: nil,
@@ -144,46 +171,41 @@ struct TranscriptWebView: UIViewRepresentable {
                     completionHandler: nil
                 )
             }
-        )
-
-        private weak var webView: WKWebView?
-        private var ready = false
-        private var writtenInsets: [CGFloat]?
-        private var writtenConnect: PageConnect?
-
-        init(parent: TranscriptWebView) {
-            self.parent = parent
-            self.schemeHandler = HostSchemeHandler(model: parent.model)
-            self.rpcHandler = HostRPCMessageHandler(model: parent.model)
-            super.init()
         }
 
         func attach(_ web: WKWebView) {
             self.webView = web
+            self.rpcHandler.expectedWebView = web
         }
 
         func teardown() {
             readyFallback?.cancel()
             readyFallback = nil
+            committedURL = nil
+            activeNavigation = nil
             schemeHandler.cancelAll()
-            eventBridge.stop()
+            eventBridge.didStartNavigation()
         }
 
         func load(_ web: WKWebView, url: URL, token: Int) {
-            let hostGen = parent.model.generation
+            guard parent.model.generation == boundGeneration else {
+                teardown()
+                return
+            }
             loadedURL = url
             loadedToken = token
-            loadedHostGeneration = hostGen
             ready = false
+            committedURL = nil
             writtenInsets = nil
             writtenConnect = nil
             readyFallback?.cancel()
-            eventBridge.beginLoad(hostGeneration: hostGen)
-            web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20))
+            eventBridge.didStartNavigation()
+            activeNavigation = web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20))
         }
 
         /// Sets the page's two CSS variables when they changed; a new page starts without them (`force`).
         func writeInsets(_ web: WKWebView, force: Bool = false) {
+            guard parent.model.generation == boundGeneration else { return }
             let insets = [parent.bottomInset, parent.topInset].map { $0.rounded() }
             guard force || insets != writtenInsets else { return }
             writtenInsets = insets
@@ -196,6 +218,7 @@ struct TranscriptWebView: UIViewRepresentable {
         /// Tells the page what its 「回退」 and 「Fork」 buttons show, when that changed; a page takes it only once it
         /// said `ready` (it has `window.codeckPage` from then on), which writes it again (`force`).
         func writeConnect(_ web: WKWebView, force: Bool = false) {
+            guard parent.model.generation == boundGeneration else { return }
             guard force || parent.connect != writtenConnect, let json = try? JSONEncoder().encode(parent.connect) else { return }
             writtenConnect = parent.connect
             web.evaluateJavaScript("window.codeckPage?.setConnect(\(String(decoding: json, as: UTF8.self)))", completionHandler: nil)
@@ -210,7 +233,7 @@ struct TranscriptWebView: UIViewRepresentable {
         }
 
         private func markReady() {
-            guard !ready else { return }
+            guard parent.model.generation == boundGeneration, !ready else { return }
             ready = true
             readyFallback?.cancel()
             parent.onReady()
@@ -219,33 +242,63 @@ struct TranscriptWebView: UIViewRepresentable {
         // MARK: WKScriptMessageHandler
 
         func userContentController(_: WKUserContentController, didReceive message: WKScriptMessage) {
+            if let webView, message.webView !== webView { return }
+            guard parent.model.generation == boundGeneration else { return }
             let frame = message.frameInfo
             guard HostWebBridge.isAllowedOrigin(
                 isMainFrame: frame.isMainFrame,
                 protocol: frame.securityOrigin.protocol,
-                host: frame.securityOrigin.host
+                host: frame.securityOrigin.host,
+                port: frame.securityOrigin.port
             ) else { return }
 
             guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             switch type {
             case "ready":
+                // Only accept `ready` after `didCommit` for the current committed page URL.
+                guard eventBridge.pageDidReady(frameURL: frame.request.url) else { return }
                 if let web = message.webView {
                     writeInsets(web, force: true)
                     writeConnect(web, force: true)
                 }
                 markReady()
-                // Only a genuine `ready` (after page subscriptions are mounted) starts event pushing.
-                eventBridge.pageDidReady()
-            case "rewind": if let id = body["nodeId"] as? String { parent.onRewind(id) }
-            case "fork": if let id = body["nodeId"] as? String { parent.onFork(id) }
-            case "copyText": if let text = body["text"] as? String { parent.onCopy(text) }
+            case "rewind":
+                guard HostWebBridge.matchesPageURL(frame.request.url, expected: committedURL) else { return }
+                if let id = body["nodeId"] as? String { parent.onRewind(id) }
+            case "fork":
+                guard HostWebBridge.matchesPageURL(frame.request.url, expected: committedURL) else { return }
+                if let id = body["nodeId"] as? String { parent.onFork(id) }
+            case "copyText":
+                guard HostWebBridge.matchesPageURL(frame.request.url, expected: committedURL) else { return }
+                if let text = body["text"] as? String { parent.onCopy(text) }
             default: break
             }
         }
 
         // MARK: WKNavigationDelegate
 
-        func webView(_ web: WKWebView, didFinish _: WKNavigation!) {
+        func webView(_: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            ready = false
+            committedURL = nil
+            readyFallback?.cancel()
+            activeNavigation = navigation
+            eventBridge.didStartNavigation()
+        }
+
+        func webView(_ web: WKWebView, didCommit navigation: WKNavigation!) {
+            guard parent.model.generation == boundGeneration else {
+                teardown()
+                return
+            }
+            guard activeNavigation == nil || activeNavigation === navigation else { return }
+            let url = web.url ?? loadedURL
+            committedURL = url
+            eventBridge.didCommit(url: url)
+        }
+
+        func webView(_ web: WKWebView, didFinish navigation: WKNavigation!) {
+            guard parent.model.generation == boundGeneration else { return }
+            guard activeNavigation == nil || activeNavigation === navigation else { return }
             writeInsets(web, force: true)
             // A page that never posts `ready` is shown shortly after it loads, but does NOT start event pushing.
             readyFallback?.cancel()
@@ -267,7 +320,9 @@ struct TranscriptWebView: UIViewRepresentable {
         private func fail(_ error: Error) {
             if (error as NSError).code == NSURLErrorCancelled { return }
             readyFallback?.cancel()
-            eventBridge.stop()
+            eventBridge.didStartNavigation()
+            committedURL = nil
+            guard parent.model.generation == boundGeneration else { return }
             parent.onFailure("Transcript 加载失败：\(error.localizedDescription)")
         }
 
@@ -275,8 +330,10 @@ struct TranscriptWebView: UIViewRepresentable {
             _: WKWebView,
             decidePolicyFor response: WKNavigationResponse
         ) async -> WKNavigationResponsePolicy {
+            guard parent.model.generation == boundGeneration else { return .cancel }
             if response.isForMainFrame, let http = response.response as? HTTPURLResponse, http.statusCode >= 400 {
-                eventBridge.stop()
+                eventBridge.didStartNavigation()
+                committedURL = nil
                 parent.onFailure("Host 没有返回 Transcript 页面（HTTP \(http.statusCode)）。")
                 return .cancel
             }
@@ -287,6 +344,7 @@ struct TranscriptWebView: UIViewRepresentable {
             _: WKWebView,
             decidePolicyFor action: WKNavigationAction
         ) async -> WKNavigationActionPolicy {
+            guard parent.model.generation == boundGeneration else { return .cancel }
             let decision = HostWebBridge.navigationDecision(
                 url: action.request.url,
                 isMainFrame: action.targetFrame?.isMainFrame ?? true,
@@ -304,6 +362,7 @@ struct TranscriptWebView: UIViewRepresentable {
         }
 
         func webViewWebContentProcessDidTerminate(_ web: WKWebView) {
+            guard parent.model.generation == boundGeneration else { return }
             if let loadedURL { load(web, url: loadedURL, token: loadedToken) }
         }
     }

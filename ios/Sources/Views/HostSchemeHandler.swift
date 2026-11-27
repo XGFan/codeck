@@ -67,12 +67,26 @@ enum HostWebBridge {
             }
         }
 
-        return SchemeTarget(path: decodedPath, query: components.percentEncodedQuery)
+        return SchemeTarget(path: rawPath, query: components.percentEncodedQuery)
     }
 
     /// Message handlers (`codeck` and `codeckRpc`) only trust the main frame of `codeck-web://host`.
-    static func isAllowedOrigin(isMainFrame: Bool, protocol proto: String, host: String) -> Bool {
-        isMainFrame && proto.lowercased() == scheme && host.lowercased() == authority
+    static func isAllowedOrigin(isMainFrame: Bool, protocol proto: String, host: String, port: Int = 0) -> Bool {
+        isMainFrame && proto.lowercased() == scheme && host.lowercased() == authority && port == 0
+    }
+
+    /// Compares a script message frame URL against the current committed page URL (scheme, host, port,
+    /// percent-encoded path and query; ignores fragment).
+    static func matchesPageURL(_ candidate: URL?, expected: URL?) -> Bool {
+        guard let candidate, let expected,
+              let c = URLComponents(url: candidate, resolvingAgainstBaseURL: false),
+              let e = URLComponents(url: expected, resolvingAgainstBaseURL: false)
+        else { return false }
+        return c.scheme?.lowercased() == e.scheme?.lowercased()
+            && c.host?.lowercased() == e.host?.lowercased()
+            && c.port == e.port
+            && c.percentEncodedPath == e.percentEncodedPath
+            && c.percentEncodedQuery == e.percentEncodedQuery
     }
 
     /// Navigation lock: main frame only loads `/web/transcript.html` (external http/https links open in
@@ -107,7 +121,8 @@ enum HostWebBridge {
         }
     }
 
-    /// Copies only the allowed response headers from the Host response and sets Content-Length.
+    /// Copies only the allowed response headers from the Host response, sets Content-Length,
+    /// and unconditionally forces `Cache-Control: no-store` to prevent WebKit caching.
     static func forwardedHeaders(from response: HTTPURLResponse, bodyLength: Int) -> [String: String] {
         var headers: [String: String] = ["Content-Length": "\(bodyLength)"]
         for name in forwardedHeaderNames {
@@ -115,38 +130,52 @@ enum HostWebBridge {
                 headers[name] = value
             }
         }
+        headers["Cache-Control"] = "no-store"
         return headers
     }
 }
 
-/// Proxies `codeck-web://host/web/*` GET requests through `HostClient` (TLS pinned + Bearer token,
-/// no redirects, no caching) and returns responses constructed with the original custom URL.
+/// Proxies `codeck-web://host/web/*` GET requests through the creation-time `HostClient` (TLS pinned
+/// + Bearer token, no redirects, no caching) and returns responses constructed with the original custom URL.
+/// Bound to a single Host generation: once the Host changes, every entry and in-flight callback returns 404.
 @MainActor
 final class HostSchemeHandler: NSObject, WKURLSchemeHandler {
     typealias Fetcher = @Sendable (_ path: String, _ query: String?) async throws -> (Data, HTTPURLResponse)
 
+    let boundGeneration: Int
     private let currentGeneration: @MainActor () -> Int
-    private let makeFetcher: @MainActor () -> Fetcher?
+    private let fetcher: Fetcher?
+    private let onUnauthorized: @MainActor () -> Void
     private var activeTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     convenience init(model: HostModel) {
+        let boundGen = model.generation
+        let boundClient = model.client
+        let fetcher: Fetcher? = boundClient.map { client in
+            { @Sendable path, query in
+                try await client.get(path: path, query: query)
+            }
+        }
         self.init(
+            boundGeneration: boundGen,
             currentGeneration: { [weak model] in model?.generation ?? -1 },
-            makeFetcher: { [weak model] in
-                guard let client = model?.client else { return nil }
-                return { path, query in
-                    try await client.get(path: path, query: query)
-                }
+            fetcher: fetcher,
+            onUnauthorized: { [weak model] in
+                model?.handleBridgeUnauthorized(generation: boundGen)
             }
         )
     }
 
     init(
+        boundGeneration: Int,
         currentGeneration: @escaping @MainActor () -> Int,
-        makeFetcher: @escaping @MainActor () -> Fetcher?
+        fetcher: Fetcher?,
+        onUnauthorized: @escaping @MainActor () -> Void = {}
     ) {
+        self.boundGeneration = boundGeneration
         self.currentGeneration = currentGeneration
-        self.makeFetcher = makeFetcher
+        self.fetcher = fetcher
+        self.onUnauthorized = onUnauthorized
         super.init()
     }
 
@@ -160,24 +189,30 @@ final class HostSchemeHandler: NSObject, WKURLSchemeHandler {
             urlSchemeTask.didFailWithError(URLError(.badURL))
             return
         }
+        guard currentGeneration() == boundGeneration else {
+            respond404(to: urlSchemeTask, url: originalURL)
+            return
+        }
         guard let target = HostWebBridge.resolveSchemeRequest(urlSchemeTask.request) else {
             respond404(to: urlSchemeTask, url: originalURL)
             return
         }
-        guard let fetcher = makeFetcher() else {
+        guard let fetcher else {
             urlSchemeTask.didFailWithError(URLError(.cannotConnectToHost))
             return
         }
 
         let key = ObjectIdentifier(urlSchemeTask as AnyObject)
-        let startGen = currentGeneration()
         let task = Task { [weak self] in
             do {
                 let (data, http) = try await fetcher(target.path, target.query)
                 guard let self, self.activeTasks.removeValue(forKey: key) != nil else { return }
-                guard self.currentGeneration() == startGen else {
-                    urlSchemeTask.didFailWithError(URLError(.cancelled))
+                guard self.currentGeneration() == self.boundGeneration else {
+                    self.respond404(to: urlSchemeTask, url: originalURL)
                     return
+                }
+                if http.statusCode == 401 {
+                    self.onUnauthorized()
                 }
                 let headers = HostWebBridge.forwardedHeaders(from: http, bodyLength: data.count)
                 guard let response = HTTPURLResponse(
@@ -194,7 +229,11 @@ final class HostSchemeHandler: NSObject, WKURLSchemeHandler {
                 urlSchemeTask.didFinish()
             } catch {
                 guard let self, self.activeTasks.removeValue(forKey: key) != nil else { return }
-                urlSchemeTask.didFailWithError(error)
+                if self.currentGeneration() != self.boundGeneration {
+                    self.respond404(to: urlSchemeTask, url: originalURL)
+                } else {
+                    urlSchemeTask.didFailWithError(error)
+                }
             }
         }
         activeTasks[key] = task
@@ -214,6 +253,7 @@ final class HostSchemeHandler: NSObject, WKURLSchemeHandler {
             headerFields: [
                 "Content-Type": "text/plain; charset=utf-8",
                 "Content-Length": "\(body.count)",
+                "Cache-Control": "no-store",
             ]
         )!
         task.didReceive(response)
@@ -223,38 +263,55 @@ final class HostSchemeHandler: NSObject, WKURLSchemeHandler {
 }
 
 /// Handles `window.webkit.messageHandlers.codeckRpc.postMessage({ method, args })` for the Transcript page.
+/// Bound to the creation-time Host generation and client: rejects requests once the Host changes.
 @MainActor
 final class HostRPCMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
-    typealias Forwarder = @Sendable (_ method: String, _ args: JSONValue) async throws -> Data
+    typealias Forwarder = @Sendable (_ method: String, _ args: JSONValue) async throws -> (Data, HTTPURLResponse)
 
     private static let forbiddenReply: [String: Any] = [
         "error": ["code": "forbidden", "message": "不接受这个来源"],
+    ]
+    private static let hostChangedReply: [String: Any] = [
+        "error": ["code": "forbidden", "message": "Host 已更换"],
     ]
     private static let httpErrorReply: [String: Any] = [
         "error": ["code": "http", "message": "连不上 Host"],
     ]
 
+    let boundGeneration: Int
+    weak var expectedWebView: WKWebView?
     private let currentGeneration: @MainActor () -> Int
-    private let makeForwarder: @MainActor () -> Forwarder?
+    private let forwarder: Forwarder?
+    private let onUnauthorized: @MainActor () -> Void
 
     convenience init(model: HostModel) {
+        let boundGen = model.generation
+        let boundClient = model.client
+        let forwarder: Forwarder? = boundClient.map { client in
+            { @Sendable method, args in
+                try await client.forwardRPC(method: method, args: args)
+            }
+        }
         self.init(
+            boundGeneration: boundGen,
             currentGeneration: { [weak model] in model?.generation ?? -1 },
-            makeForwarder: { [weak model] in
-                guard let client = model?.client else { return nil }
-                return { method, args in
-                    try await client.forwardRPC(method: method, args: args)
-                }
+            forwarder: forwarder,
+            onUnauthorized: { [weak model] in
+                model?.handleBridgeUnauthorized(generation: boundGen)
             }
         )
     }
 
     init(
+        boundGeneration: Int,
         currentGeneration: @escaping @MainActor () -> Int,
-        makeForwarder: @escaping @MainActor () -> Forwarder?
+        forwarder: Forwarder?,
+        onUnauthorized: @escaping @MainActor () -> Void = {}
     ) {
+        self.boundGeneration = boundGeneration
         self.currentGeneration = currentGeneration
-        self.makeForwarder = makeForwarder
+        self.forwarder = forwarder
+        self.onUnauthorized = onUnauthorized
         super.init()
     }
 
@@ -263,13 +320,23 @@ final class HostRPCMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
         didReceive message: WKScriptMessage,
         replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void
     ) {
+        if let expectedWebView, message.webView !== expectedWebView {
+            replyHandler(Self.forbiddenReply, nil)
+            return
+        }
         let frame = message.frameInfo
         guard HostWebBridge.isAllowedOrigin(
             isMainFrame: frame.isMainFrame,
             protocol: frame.securityOrigin.protocol,
-            host: frame.securityOrigin.host
+            host: frame.securityOrigin.host,
+            port: frame.securityOrigin.port
         ) else {
             replyHandler(Self.forbiddenReply, nil)
+            return
+        }
+
+        guard currentGeneration() == boundGeneration else {
+            replyHandler(Self.hostChangedReply, nil)
             return
         }
 
@@ -281,18 +348,20 @@ final class HostRPCMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
             return
         }
 
-        guard let forwarder = makeForwarder() else {
+        guard let forwarder else {
             replyHandler(Self.httpErrorReply, nil)
             return
         }
 
-        let startGen = currentGeneration()
         Task { [weak self] in
             do {
-                let data = try await forwarder(method, argsValue)
-                guard let self, self.currentGeneration() == startGen else {
-                    replyHandler(Self.httpErrorReply, nil)
+                let (data, http) = try await forwarder(method, argsValue)
+                guard let self, self.currentGeneration() == self.boundGeneration else {
+                    replyHandler(Self.hostChangedReply, nil)
                     return
+                }
+                if http.statusCode == 401 {
+                    self.onUnauthorized()
                 }
                 if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     replyHandler(obj, nil)
@@ -300,6 +369,10 @@ final class HostRPCMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
                     replyHandler(Self.httpErrorReply, nil)
                 }
             } catch {
+                guard let self, self.currentGeneration() == self.boundGeneration else {
+                    replyHandler(Self.hostChangedReply, nil)
+                    return
+                }
                 replyHandler(Self.httpErrorReply, nil)
             }
         }
@@ -317,41 +390,58 @@ final class HostRPCMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-/// Manages pushing raw Host events into a Transcript page after it posts a real `ready` message.
-/// Tracks both page reload generation and Host generation so stale pages never receive events.
+/// Manages pushing raw Host events into a Transcript page after `didCommit` and a matching `ready` message.
+/// Bound to a single Host generation and tracks committed page URL + reload generation so stale pages
+/// never receive events.
 @MainActor
 final class TranscriptEventBridge {
+    let boundHostGeneration: Int
     private let currentHostGeneration: () -> Int
     private let subscribe: (@escaping (String) -> Void) -> () -> Void
     private let push: (String) -> Void
 
     private var pageGeneration = 0
-    private var expectedHostGeneration: Int?
+    private var committedURL: URL?
     private var ready = false
     private var unsubscribe: (() -> Void)?
 
     init(
+        boundHostGeneration: Int,
         currentHostGeneration: @escaping () -> Int,
         subscribe: @escaping (@escaping (String) -> Void) -> () -> Void,
         push: @escaping (String) -> Void
     ) {
+        self.boundHostGeneration = boundHostGeneration
         self.currentHostGeneration = currentHostGeneration
         self.subscribe = subscribe
         self.push = push
     }
 
-    /// Resets state for a new page load; stops any previous subscription until the new page posts `ready`.
-    func beginLoad(hostGeneration: Int) {
+    /// Stops forwarding immediately when a new provisional navigation begins and clears the committed page.
+    func didStartNavigation() {
         stop()
-        expectedHostGeneration = hostGeneration
+        committedURL = nil
+    }
+
+    /// Marks the current main-frame navigation as committed for `url` if the Host generation still matches.
+    func didCommit(url: URL?) {
+        stop()
+        guard currentHostGeneration() == boundHostGeneration else {
+            committedURL = nil
+            return
+        }
+        committedURL = url
     }
 
     /// Called only on a real `{ type: "ready" }` message from the page (never on the 1.5s display fallback).
-    func pageDidReady() {
+    /// Accepted only after `didCommit`, when `frameURL` matches the committed page and Host generation matches.
+    @discardableResult
+    func pageDidReady(frameURL: URL?) -> Bool {
         guard !ready,
-              let hostGen = expectedHostGeneration,
-              currentHostGeneration() == hostGen
-        else { return }
+              let committedURL,
+              currentHostGeneration() == boundHostGeneration,
+              HostWebBridge.matchesPageURL(frameURL, expected: committedURL)
+        else { return false }
         ready = true
         let pageGen = pageGeneration
         // Push a synthetic hello first so the page runs its initial resync after mounting subscriptions.
@@ -360,13 +450,14 @@ final class TranscriptEventBridge {
             guard let self else { return }
             guard self.ready,
                   self.pageGeneration == pageGen,
-                  self.currentHostGeneration() == hostGen
+                  self.currentHostGeneration() == self.boundHostGeneration
             else {
                 self.stop()
                 return
             }
             self.push(text)
         }
+        return true
     }
 
     /// Stops forwarding events and invalidates the current page generation.

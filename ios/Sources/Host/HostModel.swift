@@ -60,6 +60,8 @@ final class HostModel {
     @ObservationIgnored private var helloCount = 0
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var attributionTask: Task<Void, Never>?
+    /// Monotonic token per disconnect/reconnect cycle; valid `hello` increments it to invalidate in-flight probes.
+    @ObservationIgnored private var disconnectEpoch = 0
     @ObservationIgnored private var refreshAgain = false
     @ObservationIgnored private var checkHealthNext = false
     /// Changes come a few times a second while a Session writes; each refetch is the whole list.
@@ -107,59 +109,115 @@ final class HostModel {
         use(loopback)
     }
 
-    /// Pairs with a Host from a `codeck://pair` link. Calls while pairing is in progress are ignored.
+    /// Probes `link.addresses` sequentially with unauthenticated pinned `/health` (3s each) and returns
+    /// the first reachable address without sending any credentials.
+    func resolve(_ link: PairingLink, dependencies: PairingDependencies? = nil) async throws -> HostAddress {
+        let deps = dependencies ?? .live(store: store)
+        return try await Self.resolveAddress(for: link, dependencies: deps)
+    }
+
+    /// Pairs with `link` at a previously resolved `address`. Calls while pairing is in progress are ignored.
     @discardableResult
-    func pair(with link: PairingLink, dependencies: PairingDependencies? = nil) async throws -> Bool {
+    func pair(with link: PairingLink, at address: HostAddress, dependencies: PairingDependencies? = nil) async throws -> Bool {
         guard !isPairing else { return false }
         isPairing = true
         defer { isPairing = false }
         let deps = dependencies ?? .live(store: store)
         let paired = try await Self.executePairing(
             link: link,
+            at: address,
             existing: host,
             deviceName: UIDevice.current.name,
             dependencies: deps
         )
+        try Task.checkCancellation()
         use(paired)
         return true
     }
 
-    /// Runs the pairing state machine with injectable dependencies:
-    /// 1. Probe `link.addresses` sequentially with 3s `/health` (pinned to `link.fingerprint`).
-    /// 2. If the saved Host has the same fingerprint, verify its token via `get_app_info`:
-    ///    - success → update address only (skip `/v1/pair`);
+    /// Pairs with a Host from a `codeck://pair` link (in-app QR scan path: resolves then pairs directly).
+    /// Calls while pairing is in progress are ignored.
+    @discardableResult
+    func pair(with link: PairingLink, dependencies: PairingDependencies? = nil) async throws -> Bool {
+        guard !isPairing else { return false }
+        isPairing = true
+        defer { isPairing = false }
+        let deps = dependencies ?? .live(store: store)
+        let address = try await Self.resolveAddress(for: link, dependencies: deps)
+        try Task.checkCancellation()
+        let paired = try await Self.executePairing(
+            link: link,
+            at: address,
+            existing: host,
+            deviceName: UIDevice.current.name,
+            dependencies: deps
+        )
+        try Task.checkCancellation()
+        use(paired)
+        return true
+    }
+
+    /// Step 1 of pairing: probe `link.addresses` sequentially with 3s unauthenticated pinned `/health`.
+    static func resolveAddress(
+        for link: PairingLink,
+        dependencies deps: PairingDependencies
+    ) async throws -> HostAddress {
+        var versionError: HostError?
+        for candidate in link.addresses {
+            try Task.checkCancellation()
+            do {
+                _ = try await deps.checkHealth(candidate, link.fingerprint, 3)
+                return candidate
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as HostError {
+                if Task.isCancelled { throw CancellationError() }
+                if case .versionMismatch = error, versionError == nil {
+                    versionError = error
+                }
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+            }
+        }
+        throw versionError ?? HostError.pairingUnreachable
+    }
+
+    /// Steps 2–3 of pairing against a previously resolved `address`:
+    /// 1. If the saved Host has the same fingerprint, verify its token via `get_app_info`:
+    ///    - success → persist updated address only (skip `/v1/pair`; save error propagates as-is);
     ///    - explicit 401 (`.removed`) → proceed to `/v1/pair`;
     ///    - any other failure → fail with `.pairingUnreachable` without consuming the key.
-    /// 3. Otherwise call `/v1/pair`, persist via `save`, and return the new `PairedHost`.
+    /// 2. Otherwise call `/v1/pair`, persist via `save`, and return the new `PairedHost`.
+    /// Checks `Task.isCancelled` before `/v1/pair` and before `save`.
     static func executePairing(
         link: PairingLink,
+        at address: HostAddress,
         existing: PairedHost?,
         deviceName: String,
         dependencies deps: PairingDependencies
     ) async throws -> PairedHost {
-        var reachable: HostAddress?
-        var versionError: HostError?
-        for candidate in link.addresses {
-            do {
-                _ = try await deps.checkHealth(candidate, link.fingerprint, 3)
-                reachable = candidate
-                break
-            } catch let error as HostError {
-                if case .versionMismatch = error, versionError == nil {
-                    versionError = error
-                }
-            } catch {}
-        }
-        guard let address = reachable else {
-            throw versionError ?? HostError.pairingUnreachable
-        }
+        try Task.checkCancellation()
 
         if let existing,
            existing.fingerprint == link.fingerprint,
            let existingDeviceId = existing.deviceId,
            let existingToken = existing.token {
+            let tokenValid: Bool
             do {
                 try await deps.checkToken(address, link.fingerprint, existingToken)
+                tokenValid = true
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch HostError.removed {
+                // Token was revoked on the Host: fall through to fresh pairing.
+                tokenValid = false
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                // Transient or unexpected error: do not consume the one-time pairing key.
+                throw HostError.pairingUnreachable
+            }
+            if tokenValid {
+                try Task.checkCancellation()
                 let updated = PairedHost(
                     address: address,
                     fingerprint: link.fingerprint,
@@ -168,15 +226,12 @@ final class HostModel {
                 )
                 try deps.save(updated)
                 return updated
-            } catch HostError.removed {
-                // Token was revoked on the Host: fall through to fresh pairing.
-            } catch {
-                // Transient or unexpected error: do not consume the one-time pairing key.
-                throw HostError.pairingUnreachable
             }
         }
 
+        try Task.checkCancellation()
         let credentials = try await deps.pair(address, link.fingerprint, link.key, deviceName)
+        try Task.checkCancellation()
         let paired = PairedHost(
             address: address,
             fingerprint: link.fingerprint,
@@ -187,9 +242,27 @@ final class HostModel {
         return paired
     }
 
+    /// Runs the full pairing state machine (`resolveAddress` + `executePairing(link:at:...)`).
+    static func executePairing(
+        link: PairingLink,
+        existing: PairedHost?,
+        deviceName: String,
+        dependencies deps: PairingDependencies
+    ) async throws -> PairedHost {
+        let address = try await resolveAddress(for: link, dependencies: deps)
+        return try await executePairing(
+            link: link,
+            at: address,
+            existing: existing,
+            deviceName: deviceName,
+            dependencies: deps
+        )
+    }
+
     private func use(_ paired: PairedHost) {
         generation += 1
         let gen = generation
+        disconnectEpoch += 1
         stream?.stop()
         eventRefresh.cancel()
         refreshTask?.cancel()
@@ -230,6 +303,12 @@ final class HostModel {
         Task { await refresh() }
     }
 
+    /// Called when the Transcript web bridge observes an HTTP 401 from the bound Host.
+    func handleBridgeUnauthorized(generation gen: Int) {
+        guard generation == gen, !needsPairing else { return }
+        enterNeedsPairing(.removed, generation: gen)
+    }
+
     /// Attributes consecutive WebSocket disconnects via `get_app_info` (401 vs cert change vs unreachable).
     func handleDisconnect(attempt: Int, certMismatch: Bool, generation gen: Int, client: HostClient) {
         guard generation == gen, !needsPairing else { return }
@@ -239,15 +318,19 @@ final class HostModel {
         }
         // A single drop reconnects within a second; only probe and report one that keeps failing.
         guard attempt >= 1 else { return }
+        disconnectEpoch += 1
+        let epoch = disconnectEpoch
         attributionTask?.cancel()
         attributionTask = Task { [weak self] in
             guard let self else { return }
             do {
                 try await client.checkAuth(timeout: 5)
-                guard self.generation == gen, !self.needsPairing else { return }
+                guard !Task.isCancelled, self.generation == gen, self.disconnectEpoch == epoch, !self.needsPairing else { return }
                 self.problem = HostError.unreachable(client.address.display).errorDescription
+            } catch is CancellationError {
+                return
             } catch let error as HostError {
-                guard self.generation == gen, !self.needsPairing else { return }
+                guard !Task.isCancelled, self.generation == gen, self.disconnectEpoch == epoch, !self.needsPairing else { return }
                 switch error {
                 case .removed:
                     self.enterNeedsPairing(.removed, generation: gen)
@@ -257,7 +340,7 @@ final class HostModel {
                     self.problem = HostError.unreachable(client.address.display).errorDescription
                 }
             } catch {
-                guard self.generation == gen, !self.needsPairing else { return }
+                guard !Task.isCancelled, self.generation == gen, self.disconnectEpoch == epoch, !self.needsPairing else { return }
                 self.problem = HostError.unreachable(client.address.display).errorDescription
             }
         }
@@ -265,6 +348,7 @@ final class HostModel {
 
     private func enterNeedsPairing(_ error: HostError, generation gen: Int) {
         guard generation == gen else { return }
+        disconnectEpoch += 1
         needsPairing = true
         problem = error.errorDescription
         stream?.stop()
@@ -359,10 +443,17 @@ final class HostModel {
         switch event {
         case .hello(let apiVersion):
             guard apiVersion == HostClient.apiVersion else {
+                disconnectEpoch += 1
+                attributionTask?.cancel()
+                attributionTask = nil
                 stream?.stop()
                 problem = HostError.versionMismatch(host: apiVersion).errorDescription
                 return
             }
+            // Valid reconnect supersedes any in-flight disconnect attribution probe.
+            disconnectEpoch += 1
+            attributionTask?.cancel()
+            attributionTask = nil
             helloCount += 1
             if helloCount > 1 { resyncGeneration += 1 }
             Task { await refresh() }

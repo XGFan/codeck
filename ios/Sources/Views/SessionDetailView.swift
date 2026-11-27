@@ -96,6 +96,7 @@ struct SessionDetailView: View {
                     onFork: { forkAt = $0 },
                     onTouch: hideKeyboard
                 )
+                .id(model.generation)
                 .ignoresSafeArea()
                 .opacity(phase == .ready ? 1 : 0)
             }
@@ -196,6 +197,12 @@ struct SessionDetailView: View {
             phase = .loading
             sessionId = next
         }
+        .onChange(of: model.needsPairing) { _, needs in
+            if needs {
+                showingInfo = false
+                forkAt = nil
+            }
+        }
     }
 
     private var transcriptURL: URL? {
@@ -205,9 +212,13 @@ struct SessionDetailView: View {
 
     private func loadDetail() async {
         guard let client = model.client else { return }
+        let gen = model.generation
         let requested = sessionId
-        // The page may have moved on (`/clear`) while this was on its way.
-        guard let d = try? await client.getSession(requested), requested == sessionId else { return }
+        // The page may have moved on (`/clear`) or Host may have switched while this was on its way.
+        guard let d = try? await client.getSession(requested),
+              model.generation == gen,
+              requested == sessionId
+        else { return }
         // A Session carried on in another one opens that one, as on the desktop.
         if let next = d.supersededBy, next != sessionId {
             phase = .loading

@@ -165,10 +165,23 @@ struct HostStore: @unchecked Sendable {
         return PairedHost(address: address, fingerprint: fingerprint, deviceId: deviceId, token: token)
     }
 
-    /// Saves a new Host: writes the new Keychain token first (aborting without touching existing
+    /// Saves a Host: for new credentials writes Keychain first (aborting without touching existing
     /// state on failure), then updates UserDefaults, then deletes any superseded Keychain item.
+    /// Reusing the same fingerprint/deviceId/token updates only the address metadata in UserDefaults.
     func save(_ host: PairedHost) throws {
-        let previousDeviceId = loadRecord()?.deviceId
+        let previousRecord = loadRecord()
+        let previousDeviceId = previousRecord?.deviceId
+        let reusingSameCredentials: Bool
+        if host.fingerprint != nil,
+           previousRecord?.fingerprint == host.fingerprint,
+           let deviceId = host.deviceId, !deviceId.isEmpty,
+           previousDeviceId == deviceId,
+           let token = host.token, !token.isEmpty,
+           keychain.read(service: Self.keychainService, account: deviceId) == token {
+            reusingSameCredentials = true
+        } else {
+            reusingSameCredentials = false
+        }
 
         if host.fingerprint != nil {
             guard let deviceId = host.deviceId, !deviceId.isEmpty,
@@ -176,7 +189,9 @@ struct HostStore: @unchecked Sendable {
             else {
                 throw KeychainError.failed("缺少设备凭据。")
             }
-            try keychain.write(token, service: Self.keychainService, account: deviceId)
+            if !reusingSameCredentials {
+                try keychain.write(token, service: Self.keychainService, account: deviceId)
+            }
         } else {
             guard allowLoopback, host.address.host == "127.0.0.1" else {
                 throw KeychainError.failed("非回环地址必须先完成配对。")
