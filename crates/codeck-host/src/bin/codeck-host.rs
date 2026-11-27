@@ -214,8 +214,13 @@ fn resolve_state_dir(raw: Option<PathBuf>) -> PathBuf {
 }
 
 fn connect_control(state_dir: &Path) -> UnixStream {
-    control::verify_state_dir_ancestors(state_dir).unwrap_or_else(|e| fail(e));
-    let sock_path = control::check_socket_path_len(state_dir).unwrap_or_else(|e| fail(e));
+    let canonical = control::resolve_trusted_state_dir(state_dir).unwrap_or_else(|e| fail(e));
+    if let Ok(meta) = std::fs::symlink_metadata(&canonical)
+        && meta.file_type().is_symlink()
+    {
+        fail(format!("状态目录不能是符号链接（{}）", state_dir.display()));
+    }
+    let sock_path = control::check_socket_path_len(&canonical).unwrap_or_else(|e| fail(e));
     let stream = UnixStream::connect(&sock_path).unwrap_or_else(|_| {
         eprintln!("codeck-host 没有在运行（{}）", state_dir.display());
         std::process::exit(1);
@@ -374,11 +379,15 @@ fn run_daemon(args: Args) {
         }
     }
     let web_dir = args.web_dir.unwrap_or_else(default_web_dir);
-    // Check control.sock path length before locking or binding listeners.
-    control::check_socket_path_len(&state_dir).unwrap_or_else(|e| fail(e));
+    // Validate ancestors hop-by-hop and check control.sock path length before locking or binding.
+    let canonical_state_dir =
+        control::resolve_trusted_state_dir(&state_dir).unwrap_or_else(|e| fail(e));
+    control::check_socket_path_len(&canonical_state_dir).unwrap_or_else(|e| fail(e));
 
     // Validates ancestors & state_dir (lstat, 0700, owner), acquires daemon.lock, and loads devices.json.
-    let sec = Arc::new(security::LanSecurity::open(state_dir.clone()).unwrap_or_else(|e| fail(e)));
+    let sec = Arc::new(security::LanSecurity::open(state_dir).unwrap_or_else(|e| fail(e)));
+    // Use the verified symlink-free canonical path for all subsequent filesystem operations.
+    let state_dir = sec.dir().to_path_buf();
     let settings_path = state_dir.join(codeck_host::settings::SETTINGS_FILE);
     codeck_host::settings::verify_file_trust(&settings_path).unwrap_or_else(|e| fail(e));
     let serving_security = if needs_tls_cert(follow_network, &subnets) {

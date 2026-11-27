@@ -1,6 +1,6 @@
 //! Combined TLS certificate, paired device table, and active pairing offer for non-loopback LAN listeners.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use rustls::ServerConfig;
 
-use super::control::{DaemonLock, lock_state_dir, normalize_state_dir};
-use super::devices::{DeviceRevoke, Devices, PairedDevice, save_snapshot};
+use super::control::{DaemonLock, lock_state_dir};
+use super::devices::{DeviceRevoke, Devices, PairedDevice, StagedSnapshot, save_snapshot};
 use super::pairing::{PAIRING_TTL, Pairing, StartedOffer};
 use super::tls::HostCert;
 
@@ -50,17 +50,20 @@ pub struct LanSecurity {
     state: Mutex<SecurityState>,
     #[cfg(test)]
     before_save_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    before_publish_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl LanSecurity {
-    /// Validates `dir` (non-empty, non-root, trusted ancestors, 0700), acquires `<dir>/daemon.lock`,
-    /// and opens the device table without loading or generating the TLS certificate.
+    /// Validates `dir` (non-empty, non-root, hop-by-hop trusted ancestors, 0700), acquires
+    /// `<dir>/daemon.lock`, and opens the device table without loading or generating the TLS
+    /// certificate. Subsequent file I/O uses the verified symlink-free canonical path.
     pub fn open(dir: PathBuf) -> Result<Self, String> {
-        let dir = normalize_state_dir(&dir)?;
         let lock = lock_state_dir(&dir)?;
-        let devices = Devices::load(&dir)?;
+        let canonical_dir = lock.dir().to_path_buf();
+        let devices = Devices::load(&canonical_dir)?;
         Ok(Self {
-            dir,
+            dir: canonical_dir,
             _lock: lock,
             cert: Mutex::new(None),
             io_lock: Mutex::new(()),
@@ -70,7 +73,14 @@ impl LanSecurity {
             }),
             #[cfg(test)]
             before_save_hook: Mutex::new(None),
+            #[cfg(test)]
+            before_publish_hook: Mutex::new(None),
         })
+    }
+
+    /// Returns the verified symlink-free canonical state directory held by this instance.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     #[cfg(test)]
@@ -81,6 +91,19 @@ impl LanSecurity {
     #[cfg(test)]
     fn run_before_save_hook(&self) {
         let hook = self.before_save_hook.lock().clone();
+        if let Some(f) = hook {
+            f();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_before_publish_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.before_publish_hook.lock() = hook;
+    }
+
+    #[cfg(test)]
+    fn run_before_publish_hook(&self) {
+        let hook = self.before_publish_hook.lock().clone();
         if let Some(f) = hook {
             f();
         }
@@ -192,35 +215,36 @@ impl LanSecurity {
         #[cfg(test)]
         self.run_before_save_hook();
 
-        // Persist outside `self.state` so `verify` / `devices` never block on disk writes.
-        save_snapshot(&path, &pending.next).map_err(RedeemError::SaveFailed)?;
+        // Stage the snapshot to a temp file outside `self.state` so `verify` / `devices` never
+        // block on file I/O; `devices.json` stays untouched until final checks pass under `state`.
+        let staged =
+            StagedSnapshot::stage(&path, &pending.next).map_err(RedeemError::SaveFailed)?;
 
-        let committed = {
-            let mut st = self.state.lock();
-            if let Some(id) = st.pairing.complete_if_id(&offer_id, pending.public.clone()) {
-                st.devices.commit_add(pending.next, pending.id);
-                let devices = st.devices.list();
-                Some(RedeemSuccess {
-                    offer_id: id,
-                    device: pending.public,
-                    token: pending.token,
-                    devices,
-                })
-            } else {
-                None
-            }
-        };
+        #[cfg(test)]
+        self.run_before_publish_hook();
 
-        if let Some(success) = committed {
-            Ok(success)
-        } else {
-            // Offer was cancelled or superseded while `devices.json` was written; restore on-disk
-            // snapshot while still holding `io_lock`.
-            if let Err(e) = save_snapshot(&path, &pending.prev) {
-                tracing::warn!("failed to roll back devices.json after offer cancellation: {e}");
-            }
-            Err(RedeemError::Expired)
+        let mut st = self.state.lock();
+        if cancelled.is_some_and(|c| c.load(Ordering::Acquire)) {
+            drop(staged);
+            return Err(RedeemError::Aborted);
         }
+        if !st.pairing.is_active_id(&offer_id) {
+            drop(staged);
+            return Err(RedeemError::Expired);
+        }
+        staged.publish().map_err(RedeemError::SaveFailed)?;
+        let id = st
+            .pairing
+            .complete_if_id(&offer_id, pending.public.clone())
+            .expect("offer id verified under state lock");
+        st.devices.commit_add(pending.next, pending.id);
+        let devices = st.devices.list();
+        Ok(RedeemSuccess {
+            offer_id: id,
+            device: pending.public,
+            token: pending.token,
+            devices,
+        })
     }
 
     /// Verifies a bearer token and returns `(device_id, revoke_signal)` without waiting on disk I/O.
@@ -409,15 +433,24 @@ mod tests {
     }
 
     #[test]
-    fn cancel_during_slow_redeem_rolls_back_disk_and_returns_expired() {
+    fn cancel_before_publish_leaves_devices_file_untouched_and_cleans_temp() {
+        use std::os::unix::fs::MetadataExt;
+
         let dir = tempfile::tempdir().unwrap();
         let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
-        let offer = sec.start_pairing().unwrap();
 
+        // Seed an existing device so we can prove `devices.json` itself is never replaced/rolled back.
+        let o0 = sec.start_pairing().unwrap();
+        let dev0 = sec.redeem(&o0.key, "Existing Phone").unwrap();
+        let devices_path = sec.dir().join("devices.json");
+        let orig_ino = std::fs::symlink_metadata(&devices_path).unwrap().ino();
+
+        // Case 1: offer is cancelled after temp file is staged, right before publish.
+        let offer = sec.start_pairing().unwrap();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let release_rx = Mutex::new(release_rx);
-        sec.set_before_save_hook(Some(Arc::new(move || {
+        sec.set_before_publish_hook(Some(Arc::new(move || {
             let _ = entered_tx.send(());
             let _ = release_rx.lock().recv();
         })));
@@ -429,12 +462,59 @@ mod tests {
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         // Cancel runs without blocking on disk I/O.
         assert!(sec.cancel_pairing(&offer.id));
-        sec.set_before_save_hook(None);
+        sec.set_before_publish_hook(None);
         release_tx.send(()).unwrap();
 
         assert!(matches!(writer.join().unwrap(), Err(RedeemError::Expired)));
-        assert!(sec.devices().is_empty());
-        // On-disk `devices.json` was also rolled back to empty.
-        assert!(Devices::load(dir.path()).unwrap().list().is_empty());
+        assert_eq!(sec.devices().len(), 1);
+        assert_eq!(sec.devices()[0].id, dev0.device.id);
+        // `devices.json` was never renamed over (same inode) and no `.tmp-*` file leaked.
+        assert_eq!(
+            std::fs::symlink_metadata(&devices_path).unwrap().ino(),
+            orig_ino
+        );
+        let leaked_tmps: Vec<_> = std::fs::read_dir(sec.dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .collect();
+        assert!(leaked_tmps.is_empty(), "leaked temp files: {leaked_tmps:?}");
+
+        // Case 2: client disconnect (`cancelled` flag) set after staging, before publish -> Aborted,
+        // offer stays active, `devices.json` stays untouched.
+        let offer2 = sec.start_pairing().unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        sec.set_before_publish_hook(Some(Arc::new(move || {
+            let _ = entered_tx.send(());
+            let _ = release_rx.lock().recv();
+        })));
+
+        let sec_bg = Arc::clone(&sec);
+        let key2 = offer2.key.clone();
+        let cancelled_bg = Arc::clone(&cancelled);
+        let writer2 = std::thread::spawn(move || {
+            sec_bg.redeem_cancellable(&key2, "Disconnected Phone", &cancelled_bg)
+        });
+
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        cancelled.store(true, Ordering::Release);
+        sec.set_before_publish_hook(None);
+        release_tx.send(()).unwrap();
+
+        assert!(matches!(writer2.join().unwrap(), Err(RedeemError::Aborted)));
+        assert!(sec.has_active_pairing());
+        assert_eq!(
+            std::fs::symlink_metadata(&devices_path).unwrap().ino(),
+            orig_ino
+        );
+
+        // Reopening from disk still contains only the original device.
+        drop(sec);
+        let reopened = LanSecurity::open(dir.path().to_path_buf()).unwrap();
+        assert_eq!(reopened.devices().len(), 1);
+        assert_eq!(reopened.devices()[0].id, dev0.device.id);
     }
 }

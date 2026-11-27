@@ -12,6 +12,8 @@ use super::security::LanSecurity;
 
 /// How long a pairing QR code / key remains valid.
 pub const PAIRING_TTL: Duration = Duration::from_secs(5 * 60);
+/// Maximum number of candidate LAN addresses included in a pairing URL (matches iOS parser limit).
+pub const MAX_PAIRING_HOSTS: usize = 4;
 
 /// A freshly generated pairing offer for the desktop settings modal.
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
@@ -43,8 +45,9 @@ pub fn private_ipv4_addrs(addresses: &[String]) -> Vec<Ipv4Addr> {
     out
 }
 
-/// Builds `codeck://pair?h=<IPv4>[,…]&p=<port>&fp=<fingerprint>&k=<key>`, keeping only RFC 1918
-/// addresses in their given order. Returns `None` when no RFC 1918 address is available.
+/// Builds `codeck://pair?h=<IPv4>[,…]&p=<port>&fp=<fingerprint>&k=<key>`, keeping at most
+/// [`MAX_PAIRING_HOSTS`] distinct RFC 1918 addresses in their given order. Returns `None` when no
+/// RFC 1918 address is available.
 pub fn build_pairing_url(
     hosts: &[Ipv4Addr],
     port: u16,
@@ -55,6 +58,9 @@ pub fn build_pairing_url(
     for &ip in hosts {
         if ip.is_private() && !private.contains(&ip) {
             private.push(ip);
+            if private.len() == MAX_PAIRING_HOSTS {
+                break;
+            }
         }
     }
     if private.is_empty() {
@@ -229,13 +235,18 @@ impl Pairing {
         Some(offer.id)
     }
 
+    /// Returns whether `expected_id` is still the active offer.
+    pub(crate) fn is_active_id(&self, expected_id: &str) -> bool {
+        self.current.as_ref().is_some_and(|o| o.id == expected_id)
+    }
+
     /// Consumes the active offer only if its id still matches `expected_id`.
     pub(crate) fn complete_if_id(
         &mut self,
         expected_id: &str,
         device: PairedDevice,
     ) -> Option<String> {
-        if self.current.as_ref().is_some_and(|o| o.id == expected_id) {
+        if self.is_active_id(expected_id) {
             self.complete(device)
         } else {
             None
@@ -339,5 +350,23 @@ mod tests {
         assert!(svg.starts_with("<svg"), "{svg}");
         assert!(svg.contains("viewBox="), "{svg}");
         assert!(svg.ends_with("</svg>"), "{svg}");
+    }
+
+    #[test]
+    fn pairing_url_caps_hosts_at_four_preserving_interface_order() {
+        let hosts = [
+            Ipv4Addr::LOCALHOST,
+            Ipv4Addr::new(192, 168, 10, 1),
+            Ipv4Addr::new(10, 0, 0, 2),
+            Ipv4Addr::new(192, 168, 10, 1), // duplicate
+            Ipv4Addr::new(172, 16, 0, 3),
+            Ipv4Addr::new(192, 168, 20, 4),
+            Ipv4Addr::new(10, 1, 2, 5), // 5th distinct private address -> dropped
+        ];
+        let url = build_pairing_url(&hosts, 38471, "fp_43", "key_22").unwrap();
+        assert_eq!(
+            url,
+            "codeck://pair?h=192.168.10.1,10.0.0.2,172.16.0.3,192.168.20.4&p=38471&fp=fp_43&k=key_22"
+        );
     }
 }

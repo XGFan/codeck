@@ -120,11 +120,43 @@ async fn desktop_pairing_commands_lifecycle() {
     let key = params.get("k").unwrap();
     assert_eq!(key.len(), 22);
 
+    // Five private listening addresses are capped to the first four in interface order.
+    let offer_capped = create_pairing_offer(
+        &sec,
+        port,
+        &[
+            format!("192.168.1.20:{port}"),
+            format!("10.0.0.5:{port}"),
+            format!("172.16.0.9:{port}"),
+            format!("192.168.50.2:{port}"),
+            format!("10.2.3.4:{port}"),
+        ],
+    )
+    .unwrap();
+    let capped_params = parse_query(&offer_capped.url);
+    assert_eq!(
+        capped_params.get("h").map(String::as_str),
+        Some("192.168.1.20,10.0.0.5,172.16.0.9,192.168.50.2")
+    );
+    // Re-create the original offer so step 5 tests cancelling `offer.id`.
+    let offer = create_pairing_offer(
+        &sec,
+        port,
+        &[
+            "127.0.0.1:38471".into(),
+            "100.64.0.2:38471".into(),
+            format!("192.168.1.20:{port}"),
+            format!("10.0.0.5:{port}"),
+        ],
+    )
+    .unwrap();
+    let key = parse_query(&offer.url).remove("k").unwrap();
+
     // 5. `lan_pair_cancel` with a wrong id does NOT cancel; with the matching id it DOES cancel.
     host.lan_pair_cancel("wrong-id".into()).await.unwrap();
     host.lan_pair_cancel(offer.id.clone()).await.unwrap();
     assert!(matches!(
-        sec.redeem(key, "iPhone"),
+        sec.redeem(&key, "iPhone"),
         Err(RedeemError::Expired)
     ));
 

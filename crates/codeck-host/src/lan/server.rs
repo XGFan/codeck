@@ -14,7 +14,6 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::serve::ListenerExt;
 use axum::{Json, Router};
 use codeck_core::model::{AppError, ErrorCode};
 use futures_util::StreamExt;
@@ -27,7 +26,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use super::devices::DeviceRevoke;
 use super::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
 use super::security::{LanSecurity, RedeemError};
-use super::tls::TlsListener;
+use super::tls::{self, TlsListener};
 use crate::{EventSink, Host, HostEvent};
 
 /// Bumped only on incompatible changes to the methods, events or envelopes.
@@ -202,16 +201,17 @@ impl Serving {
             subnet.addr,
             subnet.prefix_len()
         );
-        let app = (self.router)(subnet, route_security)
-            .into_make_service_with_connect_info::<SocketAddr>();
+        let router = (self.router)(subnet, route_security);
         let task = tokio::spawn(async move {
             let res = match tls {
                 Some(cfg) => {
-                    // `tap_io` supplies `Connected<IncomingStream<TapIo<L, _>>> for SocketAddr` in axum 0.8.
-                    let listener = TlsListener::new(listener, cfg).tap_io(|_| ());
+                    let listener = TlsListener::new(listener, cfg);
+                    axum::serve(listener, tls::into_make_service(router)).await
+                }
+                None => {
+                    let app = router.into_make_service_with_connect_info::<SocketAddr>();
                     axum::serve(listener, app).await
                 }
-                None => axum::serve(listener, app).await,
             };
             if let Err(e) = res {
                 tracing::error!("serve {}: {e}", subnet.addr);

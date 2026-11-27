@@ -45,7 +45,6 @@ pub(crate) struct StoredDevice {
 /// Prepared device addition awaiting atomic persistence before committing in memory.
 pub(crate) struct PendingAdd {
     pub next: Vec<StoredDevice>,
-    pub prev: Vec<StoredDevice>,
     pub id: String,
     pub public: PairedDevice,
     pub token: String,
@@ -176,13 +175,11 @@ impl Devices {
             last_seen_at: None,
             token_sha256: sha256_hex(token.as_bytes()),
         };
-        let prev = self.devices.clone();
-        let mut next = prev.clone();
+        let mut next = self.devices.clone();
         let public = record.to_public();
         next.push(record);
         Ok(PendingAdd {
             next,
-            prev,
             id,
             public,
             token,
@@ -314,40 +311,73 @@ fn read_devices_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
     Ok(Some(bytes))
 }
 
+/// A serialized `devices.json` written to a sibling temporary file, ready to be published via
+/// atomic `rename` or discarded automatically on drop.
+pub(crate) struct StagedSnapshot {
+    tmp: PathBuf,
+    target: PathBuf,
+    published: bool,
+}
+
+impl StagedSnapshot {
+    pub(crate) fn stage(path: &Path, devices: &[StoredDevice]) -> Result<Self, String> {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建设备列表目录失败（{}）：{e}", parent.display()))?;
+        let bytes = serde_json::to_vec_pretty(&DevicesFile {
+            devices: devices.to_vec(),
+        })
+        .map_err(|e| format!("序列化设备列表失败：{e}"))?;
+
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = parent.join(format!("{DEVICES_FILE}.tmp-{}-{seq}", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let write_res = (|| -> io::Result<()> {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(&bytes)?;
+            Ok(())
+        })();
+        if let Err(e) = write_res {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("写入临时设备列表失败（{}）：{e}", tmp.display()));
+        }
+        Ok(Self {
+            tmp,
+            target: path.to_path_buf(),
+            published: false,
+        })
+    }
+
+    pub(crate) fn publish(mut self) -> Result<(), String> {
+        if let Err(e) = std::fs::rename(&self.tmp, &self.target) {
+            return Err(format!(
+                "替换设备列表失败（{}）：{e}",
+                self.target.display()
+            ));
+        }
+        self.published = true;
+        Ok(())
+    }
+}
+
+impl Drop for StagedSnapshot {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = std::fs::remove_file(&self.tmp);
+        }
+    }
+}
+
 pub(crate) fn save_snapshot(path: &Path, devices: &[StoredDevice]) -> Result<(), String> {
     save_atomic(path, devices)
 }
 
 fn save_atomic(path: &Path, devices: &[StoredDevice]) -> Result<(), String> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)
-        .map_err(|e| format!("创建设备列表目录失败（{}）：{e}", parent.display()))?;
-    let bytes = serde_json::to_vec_pretty(&DevicesFile {
-        devices: devices.to_vec(),
-    })
-    .map_err(|e| format!("序列化设备列表失败：{e}"))?;
-
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = parent.join(format!("{DEVICES_FILE}.tmp-{}-{seq}", std::process::id()));
-    let _ = std::fs::remove_file(&tmp);
-    let write_res = (|| -> io::Result<()> {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        f.write_all(&bytes)?;
-        Ok(())
-    })();
-    if let Err(e) = write_res {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("写入临时设备列表失败（{}）：{e}", tmp.display()));
-    }
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("替换设备列表失败（{}）：{e}", path.display()));
-    }
-    Ok(())
+    StagedSnapshot::stage(path, devices)?.publish()
 }
 
 #[cfg(test)]

@@ -7,15 +7,22 @@ use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use axum::Router;
+use axum::body::{Body, BodyDataStream, Bytes, HttpBody};
+use axum::extract::connect_info::{Connected, IntoMakeServiceWithConnectInfo};
+use axum::extract::{ConnectInfo, Request};
+use axum::middleware::{self, Next};
+use axum::response::Response;
+use axum::serve::IncomingStream;
 use base64::Engine;
 use chrono::Datelike;
-use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use futures_util::{Stream, StreamExt};
 use parking_lot::Mutex;
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
@@ -37,8 +44,10 @@ const MAX_HANDSHAKES: usize = 64;
 pub const MAX_CONNECTIONS: usize = 128;
 /// Cap active TLS connections (handshaking + established) from one source IP across all listeners in this process.
 pub const MAX_CONNECTIONS_PER_IP: usize = 16;
-/// Close established TLS connections that receive no incoming bytes for this duration (iPhone WebSockets ping every 20s).
-pub const IDLE_READ_TIMEOUT: Duration = Duration::from_secs(75);
+/// Close idle TLS connections that receive no incoming bytes for this duration (paused while an
+/// HTTP request with a completed body is awaiting its handler). Set above the longest RPC wait
+/// (`connect_command` 150s) and iPhone's 160s timeout; iPhone WebSockets ping every 20s.
+pub const IDLE_READ_TIMEOUT: Duration = Duration::from_secs(180);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -327,13 +336,187 @@ impl Drop for ConnGuard {
     }
 }
 
+struct IdleState {
+    /// Number of HTTP requests on this connection whose request body has completed and whose
+    /// handler is still executing (0 or 1 on HTTP/1.1).
+    in_flight: AtomicUsize,
+    /// Set when `in_flight` transitions back to 0 so `TrackedTlsStream::poll_read` resets the
+    /// idle deadline before checking expiration.
+    reset_deadline: AtomicBool,
+    /// Waker saved when `poll_read` returned `Pending` while paused, so `resume` re-polls
+    /// `poll_read` and arms `idle_sleep` even if hyper doesn't issue a fresh read after writing.
+    read_waker: Mutex<Option<std::task::Waker>>,
+}
+
+/// Shared handle allowing HTTP middleware to pause a connection's idle read timer while a
+/// complete request is waiting for its handler to respond.
+#[derive(Clone)]
+pub struct IdleControl(Arc<IdleState>);
+
+impl IdleControl {
+    fn new() -> Self {
+        Self(Arc::new(IdleState {
+            in_flight: AtomicUsize::new(0),
+            reset_deadline: AtomicBool::new(false),
+            read_waker: Mutex::new(None),
+        }))
+    }
+
+    fn pause(&self) {
+        self.0.in_flight.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn resume(&self) {
+        if self.0.in_flight.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.reset_deadline.store(true, Ordering::Release);
+            if let Some(waker) = self.0.read_waker.lock().take() {
+                waker.wake();
+            }
+        }
+    }
+
+    fn register_waker(&self, waker: &std::task::Waker) {
+        let mut slot = self.0.read_waker.lock();
+        if !slot.as_ref().is_some_and(|w| w.will_wake(waker)) {
+            *slot = Some(waker.clone());
+        }
+    }
+
+    fn is_paused(&self) -> bool {
+        self.0.in_flight.load(Ordering::Acquire) > 0
+    }
+
+    fn take_reset(&self) -> bool {
+        self.0.reset_deadline.swap(false, Ordering::AcqRel)
+    }
+
+    fn clear_reset(&self) {
+        self.0.reset_deadline.store(false, Ordering::Release);
+    }
+}
+
+/// Per-connection info extracted by [`into_make_service`] from [`TlsListener`].
+#[derive(Clone)]
+pub struct TlsConnInfo {
+    pub peer: SocketAddr,
+    pub idle: IdleControl,
+}
+
+impl<'a> Connected<IncomingStream<'a, TlsListener>> for TlsConnInfo {
+    fn connect_info(stream: IncomingStream<'a, TlsListener>) -> Self {
+        Self {
+            peer: *stream.remote_addr(),
+            idle: stream.io().idle_control(),
+        }
+    }
+}
+
+const GUARD_WAITING: u8 = 0;
+const GUARD_PAUSED: u8 = 1;
+const GUARD_FINISHED: u8 = 2;
+
+struct RequestIdleGuard {
+    idle: IdleControl,
+    state: AtomicU8,
+}
+
+impl RequestIdleGuard {
+    fn new(idle: IdleControl) -> Arc<Self> {
+        Arc::new(Self {
+            idle,
+            state: AtomicU8::new(GUARD_WAITING),
+        })
+    }
+
+    fn activate(&self) {
+        if self
+            .state
+            .compare_exchange(
+                GUARD_WAITING,
+                GUARD_PAUSED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            self.idle.pause();
+        }
+    }
+
+    fn finish(&self) {
+        if self.state.swap(GUARD_FINISHED, Ordering::AcqRel) == GUARD_PAUSED {
+            self.idle.resume();
+        }
+    }
+}
+
+struct FinishOnDrop(Arc<RequestIdleGuard>);
+
+impl Drop for FinishOnDrop {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
+struct IdleBodyStream {
+    inner: BodyDataStream,
+    guard: Arc<RequestIdleGuard>,
+}
+
+impl Stream for IdleBodyStream {
+    type Item = Result<Bytes, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let res = Pin::new(&mut self.inner).poll_next(cx);
+        if matches!(res, Poll::Ready(None)) {
+            self.guard.activate();
+        }
+        res
+    }
+}
+
+async fn tls_idle_middleware(
+    ConnectInfo(info): ConnectInfo<TlsConnInfo>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    // Re-insert `ConnectInfo<SocketAddr>` so downstream middleware and handlers keep extracting it.
+    req.extensions_mut().insert(ConnectInfo(info.peer));
+    let guard = RequestIdleGuard::new(info.idle);
+    let (parts, body) = req.into_parts();
+    let body = if body.is_end_stream() {
+        guard.activate();
+        body
+    } else {
+        let stream = IdleBodyStream {
+            inner: body.into_data_stream(),
+            guard: Arc::clone(&guard),
+        };
+        Body::from_stream(stream)
+    };
+    let req = Request::from_parts(parts, body);
+    let _drop_guard = FinishOnDrop(guard);
+    next.run(req).await
+}
+
+/// Wraps a [`Router`] for [`axum::serve`] with [`TlsListener`]: injects `ConnectInfo<SocketAddr>`
+/// and pauses each connection's idle read timer while an HTTP request (once its body is read) is
+/// waiting for its handler to respond.
+pub fn into_make_service(router: Router) -> IntoMakeServiceWithConnectInfo<Router, TlsConnInfo> {
+    router
+        .layer(middleware::from_fn(tls_idle_middleware))
+        .into_make_service_with_connect_info::<TlsConnInfo>()
+}
+
 /// A [`TlsStream`] whose lifetime holds a connection-limit permit until dropped and enforces an
-/// idle read deadline reset whenever any decrypted byte is read.
+/// idle read deadline reset whenever any decrypted byte is read (paused during in-flight HTTP
+/// handlers via [`into_make_service`]).
 pub struct TrackedTlsStream {
     inner: TlsStream<TcpStream>,
     _guard: ConnGuard,
     idle_timeout: Duration,
     idle_sleep: Pin<Box<tokio::time::Sleep>>,
+    idle: IdleControl,
 }
 
 impl TrackedTlsStream {
@@ -343,7 +526,12 @@ impl TrackedTlsStream {
             _guard: guard,
             idle_timeout,
             idle_sleep: Box::pin(tokio::time::sleep(idle_timeout)),
+            idle: IdleControl::new(),
         }
+    }
+
+    pub fn idle_control(&self) -> IdleControl {
+        self.idle.clone()
     }
 }
 
@@ -359,17 +547,30 @@ impl AsyncRead for TrackedTlsStream {
                 if buf.filled().len() > before {
                     let deadline = tokio::time::Instant::now() + self.idle_timeout;
                     self.idle_sleep.as_mut().reset(deadline);
+                    self.idle.clear_reset();
                 }
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => match self.idle_sleep.as_mut().poll(cx) {
-                Poll::Ready(()) => Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "TLS connection idle read timeout",
-                ))),
-                Poll::Pending => Poll::Pending,
-            },
+            Poll::Pending => {
+                if self.idle.is_paused() {
+                    self.idle.register_waker(cx.waker());
+                    if self.idle.is_paused() {
+                        return Poll::Pending;
+                    }
+                }
+                if self.idle.take_reset() {
+                    let deadline = tokio::time::Instant::now() + self.idle_timeout;
+                    self.idle_sleep.as_mut().reset(deadline);
+                }
+                match self.idle_sleep.as_mut().poll(cx) {
+                    Poll::Ready(()) => Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "TLS connection idle read timeout",
+                    ))),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
         }
     }
 }
