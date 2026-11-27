@@ -64,7 +64,7 @@ agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有
 - Rust 1.91+（`rustup`）、Xcode Command Line Tools
 - Node 22+ 与 pnpm
 - Connect（可选）：ToH（clay 后端）与 ccrpc；ccrpc 依次取 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`，插件用 `ccrpc plugin install` 安装（见 [crates/ccrpc](crates/ccrpc)）
-- haa（可选）：装了 haa 时，Live 或已连接的 Session 在输入区上方显示它名下的 haa Worker；haa 依次取 `CODECK_HAA`、`~/.local/bin/haa`、PATH 里的 `haa`，需要支持 `haa ls --all --json --watch` 的版本
+- haa（可选）：装了 haa 时，Live 或已连接的 Session 在输入区上方显示它名下的 haa Worker，agy 的 Worker 点开在右侧看它的对话；haa 依次取 `CODECK_HAA`、`~/.local/bin/haa`、PATH 里的 `haa`，需要支持 `haa ls --all --json --watch` 的版本
 
 ## 开发
 

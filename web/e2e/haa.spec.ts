@@ -6,6 +6,7 @@ import { RICH_TITLE } from "./helpers";
 const REDIS_TITLE = "排查 Redis 连接池泄漏";
 const REDIS_ID = "91d5be38-0004-4000-8000-000000000004";
 const RICH_ID = "7f3a9c10-0001-4000-8000-000000000001";
+const AGY_WORKER_WEB_ID = "a6a10003-0014-4000-8000-000000000014";
 
 const haaProbe = (page: Page) =>
   page.evaluate(() => {
@@ -328,6 +329,63 @@ test("已 Connect：状态条在请求与输入框之上，焦点在状态条上
       ),
     )
     .toEqual(["allow"]);
+});
+
+test("agy Worker 的行点开右侧面板看它的对话、再点收起；对话不在列表里的行不能点", async ({ page }) => {
+  await page.goto("/");
+  await open(page, RICH_TITLE);
+  await expect.poll(() => haaProbe(page)).toMatchObject({ watching: true, watchStarts: 1 });
+  await emitWorkers(page, [
+    {
+      id: "w-1",
+      owner: RICH_ID,
+      name: "agy-web",
+      state: "running",
+      model: "agy/gemini-4-neon-high",
+      tokens: 500,
+      title: "补齐侧栏与 E2E",
+      startedAt: Date.now() - 5_000,
+      sessionId: AGY_WORKER_WEB_ID,
+    },
+    {
+      id: "w-2",
+      owner: RICH_ID,
+      name: "codex-review",
+      state: "idle",
+      model: "codex/gpt-6.2-sol:high",
+      tokens: 0,
+      tasks: 1,
+      sessionId: "thr-1",
+    },
+  ]);
+
+  const agyRow = page.getByTestId("haa-worker").filter({ hasText: "agy-web" });
+  const codexRow = page.getByTestId("haa-worker").filter({ hasText: "codex-review" });
+  await expect(agyRow).toHaveAttribute("role", "button");
+  await expect(codexRow).not.toHaveAttribute("role", "button");
+
+  await agyRow.click();
+  const panel = page.getByTestId("worker-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("crumb")).toHaveText("haa Worker · agy-web");
+  await expect(panel.getByTestId("panel-transcript")).toContainText(
+    "已完成侧栏分组、头部返回行与 E2E 用例，所有测试通过。",
+  );
+  await expect(agyRow).toHaveAttribute("data-open", "true");
+  await expect(agyRow).toHaveAttribute("aria-pressed", "true");
+  await assertAlignedNoOverflow(page);
+
+  // A row whose conversation is not listed does nothing; the open row closes the panel again.
+  await codexRow.click();
+  await expect(panel).toBeVisible();
+  await agyRow.click();
+  await expect(panel).toHaveCount(0);
+  await expect(agyRow).not.toHaveAttribute("data-open");
+
+  // Keyboard: Enter on the focused row opens it.
+  await agyRow.focus();
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeVisible();
 });
 
 test("Ended 之后状态条消失且不再启动", async ({ page }) => {

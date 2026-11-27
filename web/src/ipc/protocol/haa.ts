@@ -33,6 +33,8 @@ export interface HaaWorker {
   activity?: string;
   startedAt?: number;
   pending?: string;
+  /** The backend's session id (agy conversation id, codex thread id, pi session id); absent until assigned. */
+  sessionId?: string;
 }
 
 const optStr = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
@@ -86,6 +88,8 @@ export function parseHaaWorkers(raw: string): HaaWorker[] | null {
     if (startedAt !== undefined) w.startedAt = startedAt;
     const pending = optStr(r.pending);
     if (pending !== undefined) w.pending = pending;
+    const sessionId = optStr(r.sessionId);
+    if (sessionId !== undefined) w.sessionId = sessionId;
     out.push(w);
   }
   return out;

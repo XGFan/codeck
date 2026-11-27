@@ -1,8 +1,9 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
-import { useUi } from "@/state/ui";
+import { useAllSessions } from "@/queries";
+import { parseWorkerPanelId, useUi, workerPanelId } from "@/state/ui";
 import { HAA_KEY } from "@/features/transcript/keys";
 import type { HaaWorker, HaaWorkerState } from "@/ipc/protocol/haa";
 import { useHaa } from "./store";
@@ -105,14 +106,50 @@ function ToggleButton({
   );
 }
 
-function WorkerRow({ w, now }: { w: HaaWorker; now: number }) {
+/** One Worker's row; with `onOpen` (its conversation is in the Session list) the row toggles it in the right panel. */
+function WorkerRow({
+  w,
+  now,
+  onOpen,
+  open,
+}: {
+  w: HaaWorker;
+  now: number;
+  onOpen?: () => void;
+  /** The right panel shows this Worker's conversation. */
+  open: boolean;
+}) {
   const active = isActiveState(w.state);
   const taskCell = formatTaskCell(w);
   const taskTooltip = formatTaskTooltip(w);
   const modelShort = shortModelName(w.model);
 
   return (
-    <div data-testid="haa-worker" data-state={w.state} className={cn(GRID_CLASS, "h-[24px] overflow-hidden")}>
+    <div
+      data-testid="haa-worker"
+      data-state={w.state}
+      data-open={open || undefined}
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      aria-pressed={onOpen ? open : undefined}
+      onClick={onOpen}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              onOpen();
+            }
+          : undefined
+      }
+      className={cn(
+        GRID_CLASS,
+        "h-[24px] overflow-hidden rounded-[5px] px-1.5",
+        onOpen &&
+          "cursor-pointer hover:bg-selection/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent",
+        open && "bg-selection hover:bg-selection",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-[6px] overflow-hidden whitespace-nowrap">
         <span className={cn("size-[6px] shrink-0 rounded-full", DOT_CLASS[w.state])} aria-hidden />
         <span
@@ -153,8 +190,8 @@ function WorkerRow({ w, now }: { w: HaaWorker; now: number }) {
 }
 
 /**
- * Read-only aligned status table for the haa Workers owned by `sessionId`.
- * Renders nothing when the Session has no haa Workers.
+ * Aligned status table for the haa Workers owned by `sessionId`; an agy Worker's row opens its conversation in the
+ * right panel. Renders nothing when the Session has no haa Workers.
  */
 export function HaaBar({ sessionId }: { sessionId: string | null }) {
   const workers = useHaa((s) => s.workers);
@@ -165,6 +202,17 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
   const open = useUi((s) => s.expanded[HAA_KEY] ?? false);
   const toggleExpanded = useUi((s) => s.toggleExpanded);
   const toggle = () => toggleExpanded(HAA_KEY);
+
+  // Only agy Workers' conversations are read (pi and codex ones are not), so a row opens when its id is listed.
+  const panelWorker = useUi((s) => parseWorkerPanelId(s.panelStack[s.panelStack.length - 1]));
+  const setPanelStack = useUi((s) => s.setPanelStack);
+  const { data: allSessions } = useAllSessions(own.some((w) => w.sessionId != null));
+  const listed = useMemo(() => new Set(allSessions?.map((s) => s.id)), [allSessions]);
+  const onOpenFor = (w: HaaWorker) => {
+    const sid = w.sessionId;
+    if (sid == null || !listed.has(sid)) return undefined;
+    return () => setPanelStack(panelWorker === sid ? [] : [workerPanelId(sid)]);
+  };
 
   const total = own.length;
   const collapsible = total > 2;
@@ -227,9 +275,16 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
             <div className="min-w-0 truncate text-right">上下文</div>
             <div className="min-w-0 truncate text-right">token</div>
           </div>
-          <div className="max-h-[45vh] overflow-x-hidden overflow-y-auto">
+          {/* Rows pad themselves by as much as this reaches out, so a row's highlight clears its text. */}
+          <div className="-mx-1.5 max-h-[45vh] overflow-x-hidden overflow-y-auto">
             {visible.map((w) => (
-              <WorkerRow key={w.id} w={w} now={now} />
+              <WorkerRow
+                key={w.id}
+                w={w}
+                now={now}
+                onOpen={onOpenFor(w)}
+                open={w.sessionId != null && w.sessionId === panelWorker}
+              />
             ))}
           </div>
         </>

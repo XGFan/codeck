@@ -16,6 +16,7 @@ describe("parseHaaWorkers", () => {
         activity: "vitest run",
         startedAt: 1700000000000,
         pending: "继续吗？",
+        sessionId: "agy-conv-1",
       },
       {
         owner: "s-2",
@@ -36,6 +37,7 @@ describe("parseHaaWorkers", () => {
         activity: "vitest run",
         startedAt: 1700000000000,
         pending: "继续吗？",
+        sessionId: "agy-conv-1",
       },
       {
         id: "s-2:worker-b",
