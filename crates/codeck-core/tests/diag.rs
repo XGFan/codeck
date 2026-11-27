@@ -246,6 +246,8 @@ fn real_root_diagnostics() {
     let engine = codeck_core::Engine::open(codeck_core::EngineConfig {
         data_root: PathBuf::from(root),
         data_root_source: codeck_core::model::DataRootSource::Settings,
+        agy_root: tmp.path().join("__agy"),
+        haa_home: tmp.path().join("__haa"),
         cache_dir: tmp.path().to_path_buf(),
     })
     .unwrap();

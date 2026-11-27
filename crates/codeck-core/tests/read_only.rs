@@ -30,6 +30,8 @@ fn read_only(root: &Path, cache: &Path) -> Result<Engine, CoreError> {
     Engine::open_read_only(EngineConfig {
         data_root: root.to_path_buf(),
         data_root_source: DataRootSource::Settings,
+        agy_root: common::engine::test_agy_root(cache),
+        haa_home: common::engine::test_haa_home(cache),
         cache_dir: cache.to_path_buf(),
     })
 }

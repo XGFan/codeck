@@ -1,6 +1,6 @@
 //! SQLite index: a disposable mirror cache in the app's Caches folder (ADR-0003).
 //! Opened with WAL and `synchronous=NORMAL`; rebuilt (never migrated) when
-//! `PRAGMA user_version` or `meta.data_root` differ.
+//! `PRAGMA user_version`, `meta.data_root` or `meta.agy_root` differ.
 
 pub mod reader;
 pub mod schema;
@@ -32,21 +32,23 @@ pub struct Index {
 }
 
 impl Index {
-    /// Opens (or recreates) the index at `path` for `data_root`. A schema-version or data-root
-    /// mismatch, or an unreadable file, deletes `index.sqlite*` and starts over (ADR-0003).
+    /// Opens (or recreates) the index at `path` for `(data_root, agy_root)`. A schema-version or
+    /// root mismatch, or an unreadable file, deletes `index.sqlite*` and starts over (ADR-0003).
     /// `prices` backs the `cv_cost` SQL function on the writer connection.
     pub fn open(
         path: &Path,
         data_root: &Path,
+        agy_root: &Path,
         prices: Arc<RwLock<PriceTable>>,
     ) -> CoreResult<Self> {
         let root = data_root.display().to_string();
-        let conn = match open_valid(path, &root) {
+        let agy = agy_root.display().to_string();
+        let conn = match open_valid(path, &root, &agy) {
             Ok(Some(conn)) => conn,
             Ok(None) | Err(_) => {
                 delete_db_files(path);
                 let conn = open_conn(path)?;
-                create(&conn, &root)?;
+                create(&conn, &root, &agy)?;
                 conn
             }
         };
@@ -61,8 +63,8 @@ impl Index {
 
     /// Opens an existing index without changing anything: no directory, database, journal mode
     /// or `user_version` is created or written, and a missing index or one built by another
-    /// version or for another data root is an error, not a rebuild.
-    pub fn open_read_only(path: &Path, data_root: &Path) -> CoreResult<Self> {
+    /// version or for another data root / agy root is an error, not a rebuild.
+    pub fn open_read_only(path: &Path, data_root: &Path, agy_root: &Path) -> CoreResult<Self> {
         if !path.is_file() {
             return Err(CoreError::IndexUnavailable("索引不存在".into()));
         }
@@ -73,12 +75,11 @@ impl Index {
                 "索引版本与 CLI 不一致，请升级 CoDeck".into(),
             ));
         }
-        let stored: Option<String> = conn
-            .query_row("SELECT value FROM meta WHERE key='data_root'", [], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        if stored.as_deref() != Some(data_root.display().to_string().as_str()) {
+        let stored_root = meta_value(&conn, "data_root")?;
+        let stored_agy = meta_value(&conn, "agy_root")?;
+        if stored_root.as_deref() != Some(data_root.display().to_string().as_str())
+            || stored_agy.as_deref() != Some(agy_root.display().to_string().as_str())
+        {
             return Err(CoreError::IndexUnavailable(
                 "索引对应的数据目录与当前不一致".into(),
             ));
@@ -120,14 +121,10 @@ impl Index {
     /// Drops every table and recreates the schema in place (readers keep working).
     pub fn reset(&self) -> CoreResult<()> {
         self.write(|conn| {
-            let root: String = conn
-                .query_row("SELECT value FROM meta WHERE key='data_root'", [], |r| {
-                    r.get(0)
-                })
-                .optional()?
-                .unwrap_or_default();
+            let root = meta_value(conn, "data_root")?.unwrap_or_default();
+            let agy = meta_value(conn, "agy_root")?.unwrap_or_default();
             conn.execute_batch(&format!("BEGIN; {DROP_ALL} COMMIT;"))?;
-            create(conn, &root)?;
+            create(conn, &root, &agy)?;
             conn.execute_batch("VACUUM;")?;
             Ok(())
         })
@@ -185,8 +182,14 @@ fn open_read_only_conn(path: &Path) -> CoreResult<Connection> {
     Ok(conn)
 }
 
-/// Opens an existing index and returns it only if its version and data root match.
-fn open_valid(path: &Path, root: &str) -> CoreResult<Option<Connection>> {
+fn meta_value(conn: &Connection, key: &str) -> CoreResult<Option<String>> {
+    Ok(conn
+        .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0))
+        .optional()?)
+}
+
+/// Opens an existing index and returns it only if its version and both roots match.
+fn open_valid(path: &Path, root: &str, agy: &str) -> CoreResult<Option<Connection>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -195,19 +198,19 @@ fn open_valid(path: &Path, root: &str) -> CoreResult<Option<Connection>> {
     if version != SCHEMA_VERSION {
         return Ok(None);
     }
-    let stored: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key='data_root'", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    Ok((stored.as_deref() == Some(root)).then_some(conn))
+    let stored_root = meta_value(&conn, "data_root")?;
+    let stored_agy = meta_value(&conn, "agy_root")?;
+    Ok(
+        (stored_root.as_deref() == Some(root) && stored_agy.as_deref() == Some(agy))
+            .then_some(conn),
+    )
 }
 
-fn create(conn: &Connection, root: &str) -> CoreResult<()> {
+fn create(conn: &Connection, root: &str, agy: &str) -> CoreResult<()> {
     conn.execute_batch(&format!("BEGIN; {DDL} COMMIT;"))?;
     conn.execute(
-        "INSERT INTO meta(key, value) VALUES ('data_root', ?1)",
-        [root],
+        "INSERT INTO meta(key, value) VALUES ('data_root', ?1), ('agy_root', ?2)",
+        [root, agy],
     )?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())

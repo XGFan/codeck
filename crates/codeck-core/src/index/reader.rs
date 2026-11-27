@@ -7,12 +7,13 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
 use super::schema::MSG_PROMPT;
-use super::writer::{role_from_db, title_source_from_db};
+use super::writer::{role_from_db, source_from_db, title_source_from_db};
 use crate::error::CoreResult;
 use crate::model::{
     Drill, FileRole, ForkChild, ForkOrigin, ModelCost, ProjectSummary, SessionQuery, SessionSort,
     SessionSummary, TokenTotals,
 };
+use crate::scan::FileSource;
 use crate::stats::{self, billed_tokens_sql};
 use transcript::assemble::AgentStats;
 
@@ -23,6 +24,7 @@ pub struct FileRecord {
     pub path: String,
     pub dev: u64,
     pub ino: u64,
+    pub source: FileSource,
     pub role: FileRole,
     pub session_id: String,
     pub agent_id: Option<String>,
@@ -36,26 +38,28 @@ pub struct FileRecord {
     pub first_error: Option<String>,
 }
 
-const FILE_COLS: &str = "id, path, dev, ino, role, session_id, agent_id, size, mtime_ns, head, \
-    parsed_offset, text_offset, line_count, failed_lines, first_error";
+const FILE_COLS: &str = "id, path, dev, ino, source, role, session_id, agent_id, size, mtime_ns, \
+    head, parsed_offset, text_offset, line_count, failed_lines, first_error";
 
 fn file_from_row(r: &Row) -> rusqlite::Result<FileRecord> {
+    let source: String = r.get(4)?;
     Ok(FileRecord {
         id: r.get(0)?,
         path: r.get(1)?,
         dev: r.get::<_, i64>(2)? as u64,
         ino: r.get::<_, i64>(3)? as u64,
-        role: role_from_db(r.get(4)?),
-        session_id: r.get(5)?,
-        agent_id: r.get(6)?,
-        size: r.get::<_, i64>(7)? as u64,
-        mtime_ns: r.get(8)?,
-        head: r.get(9)?,
-        parsed_offset: r.get::<_, i64>(10)? as u64,
-        text_offset: r.get::<_, i64>(11)? as u64,
-        line_count: r.get::<_, i64>(12)? as u64,
-        failed_lines: r.get::<_, i64>(13)? as u64,
-        first_error: r.get(14)?,
+        source: source_from_db(&source),
+        role: role_from_db(r.get(5)?),
+        session_id: r.get(6)?,
+        agent_id: r.get(7)?,
+        size: r.get::<_, i64>(8)? as u64,
+        mtime_ns: r.get(9)?,
+        head: r.get(10)?,
+        parsed_offset: r.get::<_, i64>(11)? as u64,
+        text_offset: r.get::<_, i64>(12)? as u64,
+        line_count: r.get::<_, i64>(13)? as u64,
+        failed_lines: r.get::<_, i64>(14)? as u64,
+        first_error: r.get(15)?,
     })
 }
 

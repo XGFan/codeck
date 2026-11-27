@@ -93,7 +93,7 @@ impl Engine {
                 (scan, db, Some(s))
             }
             None => (
-                scan::scan_root(&self.cfg.data_root),
+                scan::scan_roots(&self.cfg.data_root, &self.cfg.agy_root),
                 self.index.read(reader::all_files)?,
                 None,
             ),
@@ -301,7 +301,8 @@ impl Engine {
         let mut scope = self.index.read(|c| reader::with_continued(c, scope))?;
         let mut tries = 0;
         loop {
-            let found = scan::scan_sessions(&self.cfg.data_root, &scope);
+            let found =
+                scan::scan_sessions_in_roots(&self.cfg.data_root, &self.cfg.agy_root, &scope);
             let db = self.index.read(|c| reader::files_of_sessions(c, &scope))?;
             let scanned: HashSet<&std::path::Path> =
                 found.files.iter().map(|f| f.path.as_path()).collect();

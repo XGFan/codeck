@@ -270,7 +270,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::scan::SidecarKind;
+    use crate::scan::{FileSource, SidecarKind};
 
     fn file(sid: &str, name: &str, size: u64) -> ScannedFile {
         ScannedFile {
@@ -279,6 +279,7 @@ mod tests {
             ino: size,
             size,
             mtime_ns: 10,
+            source: FileSource::Claude,
             role: FileRole::Main,
             session_id: sid.into(),
             agent_id: None,
@@ -292,6 +293,7 @@ mod tests {
             path: f.path.to_string_lossy().into_owned(),
             dev: f.dev,
             ino: f.ino,
+            source: f.source,
             role: f.role,
             session_id: f.session_id.clone(),
             agent_id: None,

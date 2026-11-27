@@ -99,6 +99,7 @@ pub(super) fn write_work(
                 path: &path,
                 dev: f.file.dev,
                 ino: f.file.ino,
+                source: f.file.source,
                 role: f.file.role,
                 session_id: &w.sid,
                 agent_id: f.file.agent_id.as_deref(),

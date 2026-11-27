@@ -52,6 +52,10 @@ pub struct EngineConfig {
     /// Read-only Claude Code data root (ADR-0002).
     pub data_root: PathBuf,
     pub data_root_source: DataRootSource,
+    /// Read-only agy data root (ADR-0002, ADR-0018); recorded even when absent.
+    pub agy_root: PathBuf,
+    /// Read-only haa home directory (`~/.haa`), for haa Worker detection and ownership.
+    pub haa_home: PathBuf,
     /// App-owned cache dir holding `index.sqlite` (ADR-0003).
     pub cache_dir: PathBuf,
 }
@@ -144,6 +148,7 @@ impl Engine {
         let index = Index::open(
             &index_db_path(&cfg.cache_dir),
             &cfg.data_root,
+            &cfg.agy_root,
             prices.clone(),
         )?;
         Self::over(cfg, index, prices)
@@ -153,7 +158,11 @@ impl Engine {
     /// (see [`Index::open_read_only`]). No sync, watcher or price download: the index stays as the
     /// last writer left it. A Session it does not know is read straight from its file.
     pub fn open_read_only(cfg: EngineConfig) -> CoreResult<Self> {
-        let index = Index::open_read_only(&index_db_path(&cfg.cache_dir), &cfg.data_root)?;
+        let index = Index::open_read_only(
+            &index_db_path(&cfg.cache_dir),
+            &cfg.data_root,
+            &cfg.agy_root,
+        )?;
         let prices = Arc::new(RwLock::new(PriceTable::embedded()));
         Self::over(cfg, index, prices)
     }
@@ -584,6 +593,8 @@ mod tests {
         let engine = Engine::open(EngineConfig {
             data_root: tmp.path().join("missing-root"),
             data_root_source: DataRootSource::Default,
+            agy_root: tmp.path().join("missing-agy"),
+            haa_home: tmp.path().join("missing-haa"),
             cache_dir: cache_dir.clone(),
         })
         .unwrap();
@@ -601,6 +612,8 @@ mod tests {
         let engine = Engine::open(EngineConfig {
             data_root: root,
             data_root_source: DataRootSource::Settings,
+            agy_root: tmp.path().join("__agy"),
+            haa_home: tmp.path().join("__haa"),
             cache_dir: tmp.path().to_path_buf(),
         })
         .unwrap();
@@ -676,6 +689,8 @@ mod tests {
         let engine = Engine::open(EngineConfig {
             data_root: root,
             data_root_source: DataRootSource::Settings,
+            agy_root: tmp.path().join("__agy"),
+            haa_home: tmp.path().join("__haa"),
             cache_dir: tmp.path().to_path_buf(),
         })
         .unwrap();
@@ -768,6 +783,8 @@ mod tests {
         let engine = Engine::open(EngineConfig {
             data_root,
             data_root_source: DataRootSource::Settings,
+            agy_root: tmp.path().join("__agy"),
+            haa_home: tmp.path().join("__haa"),
             cache_dir,
         })
         .unwrap()

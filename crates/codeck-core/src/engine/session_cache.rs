@@ -17,7 +17,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::index::reader;
 use crate::index::schema::HEAD_LEN;
 use crate::model::{FileRole, TranscriptScope};
-use crate::scan::{self, ScannedFile, SessionDirListing, SidecarKind};
+use crate::scan::{self, FileSource, ScannedFile, SessionDirListing, SidecarKind};
 
 impl Engine {
     /// The Main Line set of a session, from its main files.
@@ -64,6 +64,7 @@ impl Engine {
                     ino: md.ino(),
                     size: md.size(),
                     mtime_ns: scan::mtime_ns(&md),
+                    source: f.source,
                     role: FileRole::Main,
                     session_id: sid.to_owned(),
                     agent_id: None,
@@ -73,7 +74,8 @@ impl Engine {
             .collect();
         if main.is_empty() && self.index.is_read_only() {
             // Nothing keeps this index up to date: a Session too new for it is read from its file.
-            main = scan::scan_sessions(&self.cfg.data_root, &BTreeSet::from([sid.to_owned()]))
+            let sids = BTreeSet::from([sid.to_owned()]);
+            main = scan::scan_sessions_in_roots(&self.cfg.data_root, &self.cfg.agy_root, &sids)
                 .files
                 .into_iter()
                 .filter(|f| f.role == FileRole::Main)
@@ -83,64 +85,71 @@ impl Engine {
             return Err(CoreError::NotFound("该 Session".into()));
         }
         sort_main(&mut main);
+        // agy Sessions have no `<project dir>/<sid>/` sidecar or Subagent directory.
         let mut dirs: Vec<PathBuf> = Vec::new();
-        for f in &main {
+        for f in main.iter().filter(|f| f.source == FileSource::Claude) {
             if let Some(d) = f.path.parent().map(|p| p.join(sid))
                 && !dirs.contains(&d)
             {
                 dirs.push(d);
             }
         }
-        let session_dir = dirs.iter().find(|d| d.is_dir()).unwrap_or(&dirs[0]).clone();
-        let mut seen = HashSet::new();
         let mut listing = SessionDirListing::default();
-        for d in &dirs {
-            let l = scan::list_session_dir(d, sid, &mut seen);
-            listing.agent_files.extend(l.agent_files);
-            listing.sidecars.extend(l.sidecars);
-        }
-        // The Sessions this one carries on: the agent files and sidecars it lacks come from their
-        // directories, as the index has them (`scan::adopt`, same precedence: nearest first), and so
-        // do their `tool-results/`.
-        let olds = self.index.read(|c| {
-            let mut out = Vec::new();
-            // Only the listed session at the end of the chain adopts (as the index does).
-            let olds = if reader::superseded_by(c, sid)?.is_none() {
-                reader::superseded_into(c, sid)?
-            } else {
-                Vec::new()
-            };
-            for old in &olds {
-                for f in reader::session_files(c, old)? {
-                    if f.role == FileRole::Main
-                        && let Some(d) = Path::new(&f.path).parent().map(|p| p.join(old))
-                    {
-                        out.push((old.clone(), d));
-                    }
-                }
-            }
-            Ok(out)
-        })?;
         let mut inherited_dirs = Vec::new();
-        if !olds.is_empty() {
-            let mut adopt: Vec<(String, String)> = Vec::new();
-            for (old, _) in &olds {
-                if !adopt.iter().any(|(o, _)| o == old) {
-                    adopt.push((old.clone(), sid.to_owned()));
-                }
-            }
-            for (old, d) in &olds {
-                let l = scan::list_session_dir(d, old, &mut seen);
+        let session_dir = if dirs.is_empty() {
+            PathBuf::new()
+        } else {
+            let session_dir = dirs.iter().find(|d| d.is_dir()).unwrap_or(&dirs[0]).clone();
+            let mut seen = HashSet::new();
+            for d in &dirs {
+                let l = scan::list_session_dir(d, sid, &mut seen);
                 listing.agent_files.extend(l.agent_files);
                 listing.sidecars.extend(l.sidecars);
-                if d.is_dir() && !inherited_dirs.contains(d) {
-                    inherited_dirs.push(d.clone());
-                }
             }
-            scan::adopt(&mut listing.agent_files, &mut listing.sidecars, &adopt);
-            listing.agent_files.retain(|f| f.session_id == sid);
-            listing.sidecars.retain(|s| s.session_id == sid);
-        }
+            // The Sessions this one carries on: the agent files and sidecars it lacks come from
+            // their directories, as the index has them (`scan::adopt`, same precedence: nearest
+            // first), and so do their `tool-results/`.
+            let olds = self.index.read(|c| {
+                let mut out = Vec::new();
+                // Only the listed session at the end of the chain adopts (as the index does).
+                let olds = if reader::superseded_by(c, sid)?.is_none() {
+                    reader::superseded_into(c, sid)?
+                } else {
+                    Vec::new()
+                };
+                for old in &olds {
+                    for f in reader::session_files(c, old)? {
+                        if f.role == FileRole::Main
+                            && f.source == FileSource::Claude
+                            && let Some(d) = Path::new(&f.path).parent().map(|p| p.join(old))
+                        {
+                            out.push((old.clone(), d));
+                        }
+                    }
+                }
+                Ok(out)
+            })?;
+            if !olds.is_empty() {
+                let mut adopt: Vec<(String, String)> = Vec::new();
+                for (old, _) in &olds {
+                    if !adopt.iter().any(|(o, _)| o == old) {
+                        adopt.push((old.clone(), sid.to_owned()));
+                    }
+                }
+                for (old, d) in &olds {
+                    let l = scan::list_session_dir(d, old, &mut seen);
+                    listing.agent_files.extend(l.agent_files);
+                    listing.sidecars.extend(l.sidecars);
+                    if d.is_dir() && !inherited_dirs.contains(d) {
+                        inherited_dirs.push(d.clone());
+                    }
+                }
+                scan::adopt(&mut listing.agent_files, &mut listing.sidecars, &adopt);
+                listing.agent_files.retain(|f| f.session_id == sid);
+                listing.sidecars.retain(|s| s.session_id == sid);
+            }
+            session_dir
+        };
         let mut h = Fnv::new();
         for f in &main {
             h.file(&f.path, f.size, f.mtime_ns);
@@ -232,7 +241,11 @@ impl Engine {
             Some(c) if c.assembled_revision() == Some(ctx.revision) => c,
             other => {
                 let (states, files) = load_main(&ctx.main, other.map(CachedSession::into_parts))?;
-                let sidecar = self.build_sidecar(sid, &ctx.listing)?;
+                let sidecar = if ctx.main.iter().all(|f| f.source == FileSource::Agy) {
+                    SessionSidecar::default()
+                } else {
+                    self.build_sidecar(sid, &ctx.listing)?
+                };
                 let mut a = assemble::assemble(sid, &ctx.session_dir, files, sidecar);
                 a.inherited_dirs = ctx.inherited_dirs.clone();
                 a.revision = ctx.revision;
@@ -316,7 +329,17 @@ impl<K: PartialEq, V> Lru<K, V> {
     }
 }
 
-/// Parse state of one cached file (extended in place while the file only grows).
+/// Extra facts produced when adapting an agy transcript (diagnostics and haa Worker detection).
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct AgyLoad {
+    /// Unrecognized agy step types and tool names (by original agy name) with occurrence counts.
+    pub(super) unknown: Vec<(transcript::agy::UnknownKind, String, u32)>,
+    /// `true` when any tool call used an `mcp_haa_*` or `mcp_paaa_*` tool.
+    pub(super) uses_haa_tools: bool,
+}
+
+/// Parse state of one cached file (extended in place while a Claude Code file only grows).
 #[derive(Clone, Debug)]
 pub(super) struct FileState {
     pub(super) path: PathBuf,
@@ -330,6 +353,9 @@ pub(super) struct FileState {
     pub(super) first_error: Option<String>,
     /// First ≤ [`HEAD_LEN`] bytes, to detect an in-place rewrite.
     pub(super) head: Vec<u8>,
+    /// Populated when the file was loaded from an agy transcript.
+    #[allow(dead_code)]
+    pub(super) agy: Option<AgyLoad>,
 }
 
 impl FileState {
@@ -446,25 +472,56 @@ pub(super) fn read_text(path: &Path) -> Option<String> {
 
 pub(super) fn load_fresh(f: &ScannedFile) -> io::Result<(FileState, LoadedFile)> {
     let head = read_head(&f.path, HEAD_LEN)?;
-    let (chunk, lines) = read_chunk(&f.path, 0)?;
-    Ok((
-        FileState {
-            path: f.path.clone(),
-            dev: f.dev,
-            ino: f.ino,
-            consumed: chunk.consumed_to,
-            lines,
-            failed: chunk.failed,
-            first_error: chunk.first_error,
-            head,
-        },
-        LoadedFile {
-            path: f.path.clone(),
-            role: f.role,
-            agent_id: f.agent_id.clone(),
-            records: chunk.records,
-        },
-    ))
+    match f.source {
+        FileSource::Claude => {
+            let (chunk, lines) = read_chunk(&f.path, 0)?;
+            Ok((
+                FileState {
+                    path: f.path.clone(),
+                    dev: f.dev,
+                    ino: f.ino,
+                    consumed: chunk.consumed_to,
+                    lines,
+                    failed: chunk.failed,
+                    first_error: chunk.first_error,
+                    head,
+                    agy: None,
+                },
+                LoadedFile {
+                    path: f.path.clone(),
+                    role: f.role,
+                    agent_id: f.agent_id.clone(),
+                    records: chunk.records,
+                },
+            ))
+        }
+        FileSource::Agy => {
+            let parsed = transcript::agy::read(&f.path)?;
+            let adapted = transcript::agy::adapt(&f.session_id, &parsed);
+            Ok((
+                FileState {
+                    path: f.path.clone(),
+                    dev: f.dev,
+                    ino: f.ino,
+                    consumed: parsed.consumed_to,
+                    lines: parsed.lines,
+                    failed: parsed.failed,
+                    first_error: parsed.first_error,
+                    head,
+                    agy: Some(AgyLoad {
+                        unknown: adapted.unknown,
+                        uses_haa_tools: adapted.uses_haa_tools,
+                    }),
+                },
+                LoadedFile {
+                    path: f.path.clone(),
+                    role: f.role,
+                    agent_id: None,
+                    records: adapted.records,
+                },
+            ))
+        }
+    }
 }
 
 /// Appends records written since `st.consumed`.
@@ -500,11 +557,16 @@ pub(super) fn cached_files(cached: Option<(Vec<FileState>, Vec<LoadedFile>)>) ->
         .unwrap_or_default()
 }
 
-/// Parses `f`, extending its cached parse when the file only grew.
+/// Parses `f`, extending its cached parse when a Claude Code file only grew.
+/// agy files are always re-read in full because an earlier `step_index` can be overwritten later
+/// in the file.
 pub(super) fn load_one(
     f: &ScannedFile,
     cached: Option<(FileState, LoadedFile)>,
 ) -> io::Result<(FileState, LoadedFile)> {
+    if f.source == FileSource::Agy {
+        return load_fresh(f);
+    }
     match cached {
         Some((mut st, mut lf)) if st.matches(f) => {
             extend_loaded(&mut st, &mut lf)?;
@@ -569,5 +631,60 @@ mod tests {
         assert_eq!(l.take(&3), None);
         assert_eq!(l.take(&2), Some("b"));
         assert_eq!(l.take(&1), Some("a"));
+    }
+
+    #[test]
+    fn agy_load_one_returns_extras_and_always_rereads_in_full() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("transcript_full.jsonl");
+        let initial = concat!(
+            r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-27T00:00:00Z","content":"<USER_REQUEST>first prompt</USER_REQUEST>"}"#,
+            "\n",
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-27T00:00:01Z","content":"hi","tool_calls":[{"name":"mcp_haa_report","args":{"status":"done"}},{"name":"brand_new_tool","args":{}}]}"#,
+            "\n",
+        );
+        std::fs::write(&path, initial).unwrap();
+        let make_scanned = || {
+            let md = std::fs::metadata(&path).unwrap();
+            ScannedFile {
+                path: path.clone(),
+                dev: md.dev(),
+                ino: md.ino(),
+                size: md.size(),
+                mtime_ns: scan::mtime_ns(&md),
+                source: FileSource::Agy,
+                role: FileRole::Main,
+                session_id: "agy-conv-1".to_owned(),
+                agent_id: None,
+                workflow_run_id: None,
+            }
+        };
+
+        let (st1, lf1) = load_one(&make_scanned(), None).unwrap();
+        assert_eq!(lf1.records.len(), 2);
+        let agy1 = st1.agy.as_ref().expect("agy load info");
+        assert!(agy1.uses_haa_tools);
+        assert_eq!(
+            agy1.unknown,
+            vec![(
+                transcript::agy::UnknownKind::Tool,
+                "brand_new_tool".to_owned(),
+                1
+            )]
+        );
+
+        // Append a line overriding step_index 0: agy must re-read in full rather than extend_loaded.
+        let appended = format!(
+            "{initial}{}\n",
+            r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-27T00:00:00Z","content":"<USER_REQUEST>revised prompt</USER_REQUEST>"}"#
+        );
+        std::fs::write(&path, appended).unwrap();
+        let (st2, lf2) = load_one(&make_scanned(), Some((st1, lf1))).unwrap();
+        assert_eq!(lf2.records.len(), 2);
+        assert_eq!(
+            transcript::assemble::prompt::user_text(&lf2.records[0].entry),
+            "revised prompt"
+        );
+        assert_eq!(st2.lines, 3);
     }
 }

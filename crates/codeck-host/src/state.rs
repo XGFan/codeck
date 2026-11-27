@@ -25,6 +25,8 @@ pub fn open_engine(
     let engine = Engine::open(EngineConfig {
         data_root: root.path,
         data_root_source: root.source,
+        agy_root: paths::resolve_agy_root(),
+        haa_home: paths::resolve_haa_home(),
         cache_dir,
     })?;
     Ok(engine.with_ignored_live_cwd(ignore_live_cwd))

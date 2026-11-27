@@ -77,6 +77,8 @@ impl Context {
         Ok(Engine::open_read_only(EngineConfig {
             data_root: root.path,
             data_root_source: root.source,
+            agy_root: paths::resolve_agy_root(),
+            haa_home: paths::resolve_haa_home(),
             cache_dir,
         })?)
     }

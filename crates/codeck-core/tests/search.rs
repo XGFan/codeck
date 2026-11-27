@@ -536,6 +536,8 @@ fn measure_real_root() {
     let engine = Engine::open(EngineConfig {
         data_root: root.clone(),
         data_root_source: DataRootSource::Settings,
+        agy_root: cache_dir.join("__agy"),
+        haa_home: cache_dir.join("__haa"),
         cache_dir: cache_dir.clone(),
     })
     .unwrap();

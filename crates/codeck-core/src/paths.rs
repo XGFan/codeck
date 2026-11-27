@@ -11,6 +11,8 @@ use crate::model::DataRootSource;
 /// Bundle identifier; also the name of the app's cache and settings folders.
 pub const BUNDLE_ID: &str = "dev.joy.codeck";
 pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
+pub const AGY_ROOT_ENV: &str = "CODECK_AGY_ROOT";
+pub const HAA_HOME_ENV: &str = "CODECK_HAA_HOME";
 pub const INDEX_FILE_NAME: &str = "index.sqlite";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +54,35 @@ pub fn resolve_data_root_with(
         path: home.join(".claude"),
         source: DataRootSource::Default,
     }
+}
+
+/// Resolves the agy data root: `$CODECK_AGY_ROOT`, else `~/.gemini/antigravity-cli`.
+pub fn resolve_agy_root() -> PathBuf {
+    resolve_agy_root_with(std::env::var_os(AGY_ROOT_ENV), dirs::home_dir())
+}
+
+/// Pure resolution of the agy data root: non-empty `env` (expanding `~/`), else
+/// `<home>/.gemini/antigravity-cli`.
+pub fn resolve_agy_root_with(env: Option<OsString>, home: Option<PathBuf>) -> PathBuf {
+    if let Some(v) = env.filter(|v| !v.is_empty()) {
+        return expand_tilde(Path::new(&v), home.as_deref());
+    }
+    home.unwrap_or_else(|| PathBuf::from("/"))
+        .join(".gemini")
+        .join("antigravity-cli")
+}
+
+/// Resolves the haa home directory: `$CODECK_HAA_HOME`, else `~/.haa`.
+pub fn resolve_haa_home() -> PathBuf {
+    resolve_haa_home_with(std::env::var_os(HAA_HOME_ENV), dirs::home_dir())
+}
+
+/// Pure resolution of the haa home directory: non-empty `env` (expanding `~/`), else `<home>/.haa`.
+pub fn resolve_haa_home_with(env: Option<OsString>, home: Option<PathBuf>) -> PathBuf {
+    if let Some(v) = env.filter(|v| !v.is_empty()) {
+        return expand_tilde(Path::new(&v), home.as_deref());
+    }
+    home.unwrap_or_else(|| PathBuf::from("/")).join(".haa")
 }
 
 fn expand_tilde(p: &Path, home: Option<&Path>) -> PathBuf {
@@ -130,6 +161,35 @@ mod tests {
                 path: "/Users/dev/.claude".into(),
                 source: DataRootSource::Default
             }
+        );
+    }
+
+    #[test]
+    fn agy_root_and_haa_home_resolution() {
+        let home = Some(PathBuf::from("/Users/dev"));
+        assert_eq!(
+            resolve_agy_root_with(None, home.clone()),
+            PathBuf::from("/Users/dev/.gemini/antigravity-cli")
+        );
+        assert_eq!(
+            resolve_agy_root_with(Some("".into()), home.clone()),
+            PathBuf::from("/Users/dev/.gemini/antigravity-cli")
+        );
+        assert_eq!(
+            resolve_agy_root_with(Some("~/custom-agy".into()), home.clone()),
+            PathBuf::from("/Users/dev/custom-agy")
+        );
+        assert_eq!(
+            resolve_haa_home_with(None, home.clone()),
+            PathBuf::from("/Users/dev/.haa")
+        );
+        assert_eq!(
+            resolve_haa_home_with(Some("".into()), home.clone()),
+            PathBuf::from("/Users/dev/.haa")
+        );
+        assert_eq!(
+            resolve_haa_home_with(Some("~/custom-haa".into()), home),
+            PathBuf::from("/Users/dev/custom-haa")
         );
     }
 }

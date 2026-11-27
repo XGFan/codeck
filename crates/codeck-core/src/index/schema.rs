@@ -1,7 +1,11 @@
 //! DDL and schema version.
 
 /// `PRAGMA user_version`; any mismatch deletes and recreates the index.
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
+
+/// `files.source` and `sessions.agent`.
+pub const SOURCE_CLAUDE: &str = "claude";
+pub const SOURCE_AGY: &str = "agy";
 
 /// `files.role`.
 pub const ROLE_MAIN: i64 = 0;
@@ -29,7 +33,7 @@ pub const DDL: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE files (
   id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE,
-  dev INTEGER NOT NULL, ino INTEGER NOT NULL, role INTEGER NOT NULL,
+  dev INTEGER NOT NULL, ino INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'claude', role INTEGER NOT NULL,
   session_id TEXT NOT NULL, agent_id TEXT,
   size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
   head BLOB NOT NULL,
@@ -47,7 +51,8 @@ CREATE TABLE sessions (
   git_branch TEXT, primary_model TEXT, models_json TEXT NOT NULL DEFAULT '[]', versions_json TEXT NOT NULL DEFAULT '[]',
   leaf_uuid TEXT, root_uuid TEXT, fork_origin_id TEXT, fork_point_uuid TEXT, is_empty INTEGER NOT NULL DEFAULT 0,
   dup_uuids INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, unpriced INTEGER NOT NULL DEFAULT 0,
-  continued_in_id TEXT, superseded INTEGER NOT NULL DEFAULT 0);
+  continued_in_id TEXT, superseded INTEGER NOT NULL DEFAULT 0,
+  agent TEXT NOT NULL DEFAULT 'claude', haa_worker INTEGER NOT NULL DEFAULT 0, agy_meta INTEGER);
 CREATE INDEX sessions_project_active ON sessions(project_id, last_active_ms DESC);
 CREATE INDEX sessions_root ON sessions(root_uuid);
 CREATE INDEX sessions_continued_in ON sessions(continued_in_id) WHERE continued_in_id IS NOT NULL;

@@ -21,6 +21,14 @@ fn run(env: &Env, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_codeck"))
         .env("HOME", home.path())
         .env("CLAUDE_CONFIG_DIR", env.root.path())
+        .env(
+            "CODECK_AGY_ROOT",
+            common::engine::test_agy_root(env.cache.path()),
+        )
+        .env(
+            "CODECK_HAA_HOME",
+            common::engine::test_haa_home(env.cache.path()),
+        )
         .arg("--cache-dir")
         .arg(env.cache.path())
         .args(args)

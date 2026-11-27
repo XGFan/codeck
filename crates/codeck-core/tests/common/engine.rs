@@ -1,7 +1,7 @@
 //! Engine setup for the codeck-core integration tests (the `transcript` tests do not include
 //! this: it depends on codeck-core).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use codeck_core::model::DataRootSource;
@@ -11,11 +11,29 @@ use tempfile::TempDir;
 
 use super::{copy_dir_all, fixture_dir, fixture_root};
 
+/// Isolated (absent) agy root tied to `cache`, so tests never read the host's `~/.gemini/antigravity-cli`
+/// while reopens against the same `cache` agree on `meta.agy_root`.
+pub fn test_agy_root(cache: &Path) -> PathBuf {
+    cache.join("__agy")
+}
+
+/// Isolated (absent) haa home tied to `cache`, so tests never read the host's `~/.haa`.
+pub fn test_haa_home(cache: &Path) -> PathBuf {
+    cache.join("__haa")
+}
+
 /// An engine over the data root `root` with its index under `cache`.
 pub fn open_engine(root: &Path, cache: &Path) -> Engine {
+    open_engine_with_agy(root, &test_agy_root(cache), cache)
+}
+
+/// An engine over `(root, agy_root)` with its index under `cache`.
+pub fn open_engine_with_agy(root: &Path, agy_root: &Path, cache: &Path) -> Engine {
     Engine::open(EngineConfig {
         data_root: root.to_path_buf(),
         data_root_source: DataRootSource::Settings,
+        agy_root: agy_root.to_path_buf(),
+        haa_home: test_haa_home(cache),
         cache_dir: cache.to_path_buf(),
     })
     .expect("open engine")

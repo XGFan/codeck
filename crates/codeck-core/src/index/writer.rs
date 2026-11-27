@@ -14,14 +14,29 @@ use serde::Deserialize;
 
 use super::schema::{
     DIAG_BLOCK, DIAG_ENTRY, DIAG_MESSAGE, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL, MSG_ASSISTANT,
-    MSG_PROMPT, ROLE_MAIN, ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT,
+    MSG_PROMPT, ROLE_MAIN, ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT, SOURCE_AGY, SOURCE_CLAUDE,
 };
 use crate::error::CoreResult;
 use crate::model::{FileRole, TitleSource, TokenTotals};
 use crate::project;
+use crate::scan::FileSource;
 use transcript::known;
 use transcript::parse::EntryRecord;
 use transcript::raw::{RawEntry, decode_str, lenient};
+
+pub fn source_to_db(source: FileSource) -> &'static str {
+    match source {
+        FileSource::Claude => SOURCE_CLAUDE,
+        FileSource::Agy => SOURCE_AGY,
+    }
+}
+
+pub fn source_from_db(v: &str) -> FileSource {
+    match v {
+        SOURCE_AGY => FileSource::Agy,
+        _ => FileSource::Claude,
+    }
+}
 
 pub fn role_to_db(role: FileRole) -> i64 {
     match role {
@@ -511,6 +526,7 @@ pub struct FileWrite<'a> {
     pub path: &'a str,
     pub dev: u64,
     pub ino: u64,
+    pub source: FileSource,
     pub role: FileRole,
     pub session_id: &'a str,
     pub agent_id: Option<&'a str>,
@@ -528,12 +544,13 @@ pub struct FileWrite<'a> {
 pub fn write_file(conn: &Connection, f: &FileWrite) -> CoreResult<i64> {
     let id = conn
         .prepare_cached(
-            "INSERT INTO files(path, dev, ino, role, session_id, agent_id, size, mtime_ns, head,
-                parsed_offset, line_count, failed_lines, first_error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-             ON CONFLICT(path) DO UPDATE SET dev=excluded.dev, ino=excluded.ino, role=excluded.role,
-                session_id=excluded.session_id, agent_id=excluded.agent_id, size=excluded.size,
-                mtime_ns=excluded.mtime_ns, head=excluded.head, parsed_offset=excluded.parsed_offset,
+            "INSERT INTO files(path, dev, ino, source, role, session_id, agent_id, size, mtime_ns,
+                head, parsed_offset, line_count, failed_lines, first_error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(path) DO UPDATE SET dev=excluded.dev, ino=excluded.ino,
+                source=excluded.source, role=excluded.role, session_id=excluded.session_id,
+                agent_id=excluded.agent_id, size=excluded.size, mtime_ns=excluded.mtime_ns,
+                head=excluded.head, parsed_offset=excluded.parsed_offset,
                 line_count=excluded.line_count, failed_lines=excluded.failed_lines,
                 first_error=excluded.first_error
              RETURNING id",
@@ -543,6 +560,7 @@ pub fn write_file(conn: &Connection, f: &FileWrite) -> CoreResult<i64> {
                 f.path,
                 f.dev as i64,
                 f.ino as i64,
+                source_to_db(f.source),
                 role_to_db(f.role),
                 f.session_id,
                 f.agent_id,
