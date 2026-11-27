@@ -13,6 +13,15 @@ export const AGY_LIVE_TITLE = "agy：检查限流中间件的边界用例";
 export const AGY_ENDED_ID = "a6a10002-0013-4000-8000-000000000013";
 export const AGY_ENDED_TITLE = "agy：整理 Flux 部署清单说明";
 
+export const AGY_WORKER_WEB_ID = "a6a10003-0014-4000-8000-000000000014";
+export const AGY_WORKER_WEB_TITLE = "Agy Session Frontend And E2E";
+
+export const AGY_WORKER_LIVE_ID = "a6a10004-0015-4000-8000-000000000015";
+export const AGY_WORKER_LIVE_TITLE = "Agy Live And Haa Integration";
+
+export const AGY_WORKER_UNLINKED_ID = "a6a10005-0016-4000-8000-000000000016";
+export const AGY_WORKER_UNLINKED_TITLE = "Agy Standalone Log Audit";
+
 const RATE_LIMIT_PATH = "/Users/dev/Developer/lumen-api/src/middleware/rate_limit.rs";
 
 export function agyLiveNodes(start: number): Node[] {
@@ -142,5 +151,56 @@ export function agyEndedNodes(start: number): Node[] {
     ),
     userNode("agy-e-u1", at(5), "好的，这样就够了。"),
     asstNode("agy-e-a1", at(5.3), [text("收到，有需要再处理。")], { model: "gemini-4-neon-high" }),
+  ];
+}
+
+export function agyWorkerWebNodes(start: number): Node[] {
+  const at = (m: number) => start + m * MIN;
+  return [
+    userNode("agy-ww-u0", at(0), "把侧栏的 Worker 收进派活的 Session，补上单测与 E2E。"),
+    asstNode(
+      "agy-ww-a0",
+      at(0.6),
+      [
+        agyCall(
+          "agy-ww-tu1",
+          "Bash",
+          {
+            command: "pnpm test web/src/features/sessions/groups.test.ts",
+            description: "Run sidebar groups unit tests",
+            agyOriginal: {
+              name: "run_command",
+              args: { CommandLine: "pnpm test web/src/features/sessions/groups.test.ts", WaitMsBeforeAsync: 5000 },
+            },
+          },
+          { text: "12 passed" },
+        ),
+        text("已完成侧栏分组、头部返回行与 E2E 用例，所有测试通过。"),
+      ],
+      { model: "gemini-4-neon-high" },
+    ),
+  ];
+}
+
+export function agyWorkerLiveNodes(start: number): Node[] {
+  const at = (m: number) => start + m * MIN;
+  return [
+    userNode("agy-wl-u0", at(0), "核对 Live 面板和 haa Worker 关联逻辑的边界情况。"),
+    asstNode(
+      "agy-wl-a0",
+      at(0.5),
+      [text("已确认 Live Worker 保留在 Live 区块中，未关联且非 Live 的 Worker 收进 Recent 末尾。")],
+      { model: "gemini-4-neon-high" },
+    ),
+  ];
+}
+
+export function agyWorkerUnlinkedNodes(start: number): Node[] {
+  const at = (m: number) => start + m * MIN;
+  return [
+    userNode("agy-wu-u0", at(0), "独立排查索引日志里的超时记录。"),
+    asstNode("agy-wu-a0", at(0.5), [text("已扫描最近 7 天的索引日志，未发现异常超时。")], {
+      model: "gemini-4-neon-high",
+    }),
   ];
 }

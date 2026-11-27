@@ -1,5 +1,5 @@
 import type { LiveDotState } from "@/components/LiveDot";
-import type { ProjectSummary, SessionSummary, SidebarProject } from "@/ipc/bindings";
+import type { Agent, ProjectSummary, SessionSummary, SidebarProject } from "@/ipc/bindings";
 import { projectOfCwd, type PendingSession } from "./pending";
 
 /** A row of the sidebar: an indexed Session, or one in `ccrpc ls` not indexed yet (`pending`). */
@@ -14,6 +14,12 @@ export interface SideSession {
   projectId: string | null;
   /** A pending Session's cwd. */
   cwd: string | null;
+  agent: Agent;
+  /** The haa Worker's name; non-null only for haa Worker Sessions that carry one. */
+  workerName: string | null;
+  isWorker: boolean;
+  /** Linked haa Workers owned by this Session, latest first; empty for pending and non-owner Sessions. */
+  workers: SideSession[];
 }
 
 /** The Sessions of one Project gathered into a nesting group (「收拢子 Project」). */
@@ -50,8 +56,10 @@ export interface Sidebar {
   live: SideSession[];
   /** The added Projects, in their order. */
   groups: Group[];
-  /** Every indexed Session that is not Live, in an added Project or not, latest first: the 「Recent」 list. */
+  /** Every non-Worker indexed Session that is not Live, in an added Project or not, latest first: the 「Recent」 list. */
   recent: SideSession[];
+  /** Unlinked haa Workers that are not Live, latest first. */
+  unlinked: SideSession[];
 }
 
 const ACTIVE_MS = 30 * 24 * 3600 * 1000;
@@ -94,7 +102,7 @@ export function buildSidebar(
   now: number,
 ): Sidebar {
   const byId = new Map(projects.map((p) => [p.id, p]));
-  const rows: { s: SideSession; path: string | null }[] = [
+  const rows: { s: SideSession; path: string | null; ownerSessionId: string | null }[] = [
     ...pending.map((p) => {
       const projectId = projectOfCwd(p.cwd, projects);
       return {
@@ -106,8 +114,13 @@ export function buildSidebar(
           pending: true,
           projectId,
           cwd: p.cwd,
+          agent: "claude" as const,
+          workerName: null,
+          isWorker: false,
+          workers: [],
         },
         path: (projectId ? byId.get(projectId)?.path : null) ?? p.cwd,
+        ownerSessionId: null,
       };
     }),
     ...sessions.map((s) => ({
@@ -119,10 +132,32 @@ export function buildSidebar(
         pending: false,
         projectId: s.projectId,
         cwd: null,
+        agent: s.agent,
+        workerName: s.haaWorker?.name ?? null,
+        isWorker: s.haaWorker != null,
+        workers: [],
       },
       path: byId.get(s.projectId)?.path ?? null,
+      ownerSessionId: s.haaWorker?.ownerSessionId ?? null,
     })),
   ];
+
+  // A haa Worker links to its owner when that owner is an indexed non-Worker Session in this list.
+  const owners = new Map<string, SideSession>();
+  for (const { s } of rows) {
+    if (!s.pending && !s.isWorker) owners.set(s.id, s);
+  }
+  const unlinked: SideSession[] = [];
+  for (const { s, ownerSessionId } of rows) {
+    if (!s.isWorker) continue;
+    const owner = ownerSessionId ? owners.get(ownerSessionId) : undefined;
+    if (owner) owner.workers.push(s);
+    else if (!s.live) unlinked.push(s);
+  }
+  for (const owner of owners.values()) {
+    if (owner.workers.length > 1) owner.workers.sort(byTime);
+  }
+  unlinked.sort(byTime);
 
   const groups = new Map<string, Group & { subMap: Map<string, SubGroup> }>(
     entries.map((e) => [
@@ -142,6 +177,7 @@ export function buildSidebar(
     ]),
   );
   for (const { s, path } of rows) {
+    if (s.isWorker) continue;
     const e = path ? entryFor(path, entries) : null;
     const g = e && groups.get(e.path);
     if (!g || !path) continue;
@@ -182,7 +218,8 @@ export function buildSidebar(
   return {
     live: all.filter((s) => s.live).sort(byTime),
     groups: list,
-    recent: all.filter((s) => !s.live && !s.pending).sort(byTime),
+    recent: all.filter((s) => !s.live && !s.pending && !s.isWorker).sort(byTime),
+    unlinked,
   };
 }
 
@@ -237,16 +274,20 @@ export const MORE_ROWS = 20;
 export const groupKey = (path: string) => `g:${path}`;
 export const subKey = (path: string, projectId: string) => `s:${path}\n${projectId}`;
 export const restKey = (path: string) => `r:${path}`;
+export const workerKey = (id: string) => `w:${id}`;
 /** 「Recent」 open or collapsed (in the same remembered map as the groups). */
 export const RECENT_KEY = "recent";
+/** Unlinked haa Workers row in 「Recent」, collapsed by default. */
+export const RECENT_UNLINKED_KEY = "recent:unlinked";
 
-/** Groups and 「Recent」 start open; sub-groups and 「其他 N 个子 Project」 start closed. */
+/** Groups and 「Recent」 start open; sub-groups, 「其他 N 个子 Project」, workers and unlinked workers start closed. */
 export const isOpen = (expanded: Record<string, boolean>, key: string) =>
   expanded[key] ?? (key.startsWith("g:") || key === RECENT_KEY);
 
 export type Item =
   | { kind: "group"; key: string; g: Group; open: boolean; index: number }
   | { kind: "row"; key: string; s: SideSession; depth: 1 | 2 }
+  | { kind: "worker"; key: string; s: SideSession; depth: 1 | 2 }
   | { kind: "more"; key: string; list: string; rest: number; depth: 1 | 2 }
   | { kind: "sub"; key: string; sub: SubGroup; open: boolean }
   | { kind: "subsRest"; key: string; count: number; open: boolean };
@@ -264,7 +305,12 @@ export function flatten(
   const out: Item[] = [];
   const list = (key: string, rows: SideSession[], depth: 1 | 2) => {
     const n = limits[key] ?? FIRST_ROWS;
-    for (const s of rows.slice(0, n)) out.push({ kind: "row", key: `${key}\n${s.id}`, s, depth });
+    for (const s of rows.slice(0, n)) {
+      out.push({ kind: "row", key: `${key}\n${s.id}`, s, depth });
+      if (s.workers.length > 0 && isOpen(expanded, workerKey(s.id))) {
+        for (const w of s.workers) out.push({ kind: "worker", key: `${key}\n${s.id}\n${w.id}`, s: w, depth });
+      }
+    }
     if (rows.length > n) out.push({ kind: "more", key: `${key}\nmore`, list: key, rest: rows.length - n, depth });
   };
 
@@ -306,7 +352,9 @@ export function reveal(
   const where = (): { open: string[]; key: string; index: number } | null => {
     const at = (open: string[], key: string, rows: SideSession[]) => {
       const index = rows.findIndex((s) => s.id === id);
-      return index < 0 ? null : { open, key, index };
+      if (index >= 0) return { open, key, index };
+      const ownerIndex = rows.findIndex((s) => s.workers.some((w) => w.id === id));
+      return ownerIndex < 0 ? null : { open: [...open, workerKey(rows[ownerIndex]!.id)], key, index: ownerIndex };
     };
     for (const g of sb.groups) {
       const gk = groupKey(g.path);

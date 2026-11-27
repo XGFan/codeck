@@ -29,6 +29,9 @@
   --color-tag: #fff1dd;
   --color-tag-border: #f5d4a6;
   --color-tag-text: #7a3e00;
+  --color-agy: #5a3d9e;
+  --color-agy-bg: #f1ecfb;
+  --color-agy-border: #d9cdf2;
   --color-accent-border: #b9cdee;
   /* Quota bar deepened segments when usage runs ahead of elapsed time. */
   --color-quota-ahead: #083f8a;
@@ -61,6 +64,9 @@
   --color-tag: #3a2c18;
   --color-tag-border: #6b4c22;
   --color-tag-text: #f2c27c;
+  --color-agy: #c7b5f2;
+  --color-agy-bg: #2c2440;
+  --color-agy-border: #4a3d6b;
   --color-accent-border: #34507a;
   --color-quota-ahead: #1f58b8;
   --color-quota-ahead-warn: #a3680c;

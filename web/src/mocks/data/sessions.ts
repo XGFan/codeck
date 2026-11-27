@@ -1,6 +1,22 @@
 import type { Agent, HaaWorker, LiveState, Node, SessionSummary, TitleSource, TokenTotals } from "@/ipc/bindings";
 import { asstNode, call, costOf, DAY, HOUR, MIN, NOW, sumTok, tok, userNode } from "./builders";
-import { AGY_ENDED_ID, AGY_ENDED_TITLE, AGY_LIVE_ID, AGY_LIVE_TITLE, agyEndedNodes, agyLiveNodes } from "./agy";
+import {
+  AGY_ENDED_ID,
+  AGY_ENDED_TITLE,
+  AGY_LIVE_ID,
+  AGY_LIVE_TITLE,
+  AGY_WORKER_LIVE_ID,
+  AGY_WORKER_LIVE_TITLE,
+  AGY_WORKER_UNLINKED_ID,
+  AGY_WORKER_UNLINKED_TITLE,
+  AGY_WORKER_WEB_ID,
+  AGY_WORKER_WEB_TITLE,
+  agyEndedNodes,
+  agyLiveNodes,
+  agyWorkerLiveNodes,
+  agyWorkerUnlinkedNodes,
+  agyWorkerWebNodes,
+} from "./agy";
 import { HOMELAB, LUMEN, ORBIT } from "./projects";
 import { CODE_MODE_ID, CODE_MODE_TITLE, codeModeNodes } from "./codeMode";
 import { RICH_ID, richMain, richSubagents } from "./rich";
@@ -22,6 +38,9 @@ export const IDS = {
   codeMode: CODE_MODE_ID,
   agyLive: AGY_LIVE_ID,
   agyEnded: AGY_ENDED_ID,
+  agyWorkerWeb: AGY_WORKER_WEB_ID,
+  agyWorkerLive: AGY_WORKER_LIVE_ID,
+  agyWorkerUnlinked: AGY_WORKER_UNLINKED_ID,
 };
 
 interface Turn {
@@ -328,6 +347,63 @@ const defs: Def[] = [
     tokens: tok(6_200, 1_900, 0, 0),
     turns: [],
   },
+  {
+    id: IDS.agyWorkerWeb,
+    agent: "agy",
+    haaWorker: {
+      ownerSessionId: IDS.forkOrigin,
+      name: "agy-web",
+      taskTitle: "补齐侧栏与 E2E",
+    },
+    projectId: LUMEN,
+    title: AGY_WORKER_WEB_TITLE,
+    titleSource: "firstPrompt",
+    createdAgo: 2 * DAY - 15 * MIN,
+    lastActiveAgo: 2 * DAY - 25 * MIN,
+    gitBranch: "refactor/auth",
+    live: null,
+    model: "gemini-4-neon-high",
+    tokens: tok(4_100, 1_200, 0, 0),
+    turns: [],
+  },
+  {
+    id: IDS.agyWorkerLive,
+    agent: "agy",
+    haaWorker: {
+      ownerSessionId: IDS.forkOrigin,
+      name: "agy-live",
+      taskTitle: "联调 Live 与 haa 集成",
+    },
+    projectId: LUMEN,
+    title: AGY_WORKER_LIVE_TITLE,
+    titleSource: "firstPrompt",
+    createdAgo: 2 * DAY - 5 * MIN,
+    lastActiveAgo: 2 * DAY - 12 * MIN,
+    gitBranch: "refactor/auth",
+    live: null,
+    model: "gemini-4-neon-high",
+    tokens: tok(3_500, 980, 0, 0),
+    turns: [],
+  },
+  {
+    id: IDS.agyWorkerUnlinked,
+    agent: "agy",
+    haaWorker: {
+      ownerSessionId: null,
+      name: "agy-solo",
+      taskTitle: "独立排查索引日志",
+    },
+    projectId: HOMELAB,
+    title: AGY_WORKER_UNLINKED_TITLE,
+    titleSource: "firstPrompt",
+    createdAgo: 7 * DAY,
+    lastActiveAgo: 7 * DAY - 15 * MIN,
+    gitBranch: "main",
+    live: null,
+    model: "gemini-4-neon-high",
+    tokens: tok(2_800, 820, 0, 0),
+    turns: [],
+  },
 ];
 
 /** Main + Subagent cost of the rich session (each run at its own model's rate). */
@@ -401,6 +477,12 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     nodes = agyLiveNodes(created);
   } else if (d.id === IDS.agyEnded) {
     nodes = agyEndedNodes(created);
+  } else if (d.id === IDS.agyWorkerWeb) {
+    nodes = agyWorkerWebNodes(created);
+  } else if (d.id === IDS.agyWorkerLive) {
+    nodes = agyWorkerLiveNodes(created);
+  } else if (d.id === IDS.agyWorkerUnlinked) {
+    nodes = agyWorkerUnlinkedNodes(created);
   } else if (d.forkOf) {
     const inheritedNodes = turnNodes("fo", NOW - originDef.createdAgo, originDef.turns).slice(
       0,

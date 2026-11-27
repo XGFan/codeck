@@ -275,7 +275,7 @@ test("ccrpc ls --watch 只在有 Live Session 或连接时运行，恢复时立�
   await inMenu(page, "connect-button", (b) => expect(b).toBeVisible());
   const ids = await page.evaluate(() =>
     // Indexed rows only: the clay-new placeholder is Live through `ccrpc ls`, not the mock data.
-    [...document.querySelectorAll("[data-testid=session-row]:not([data-pending]) [data-testid=live-dot]")].map((d) =>
+    [...document.querySelectorAll("[data-testid=live-row]:not([data-pending]) [data-testid=live-dot]")].map((d) =>
       d.closest("[data-session-id]")!.getAttribute("data-session-id")!,
     ),
   );

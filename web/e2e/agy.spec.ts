@@ -1,10 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openApp, openSession, revealTranscript as reveal } from "./helpers";
+import { unfoldAll } from "./unfold";
 
 const AGY_LIVE_TITLE = "agy：检查限流中间件的边界用例";
 const AGY_LIVE_ID = "a6a10001-0012-4000-8000-000000000012";
 const AGY_ENDED_TITLE = "agy：整理 Flux 部署清单说明";
 const AGY_ENDED_ID = "a6a10002-0013-4000-8000-000000000013";
+const FORK_ORIGIN_TITLE = "重构认证模块：拆分 token 校验与会话存储";
+const WORKER_WEB_TITLE = "Agy Session Frontend And E2E";
+const WORKER_LIVE_TITLE = "Agy Live And Haa Integration";
+const WORKER_UNLINKED_TITLE = "Agy Standalone Log Audit";
+
+async function openLiveSession(page: Page, title: string, { folded = false } = {}) {
+  await page.goto("/");
+  const row = page.getByTestId("live-row").filter({ hasText: title });
+  await row.click();
+  await expect(page.getByTestId("header").getByRole("heading", { name: title })).toBeVisible();
+  if (!folded) await unfoldAll(page);
+}
 
 async function assertReadOnlyAgySession(page: Page, expectedId: string) {
   const header = page.getByTestId("header");
@@ -34,7 +47,7 @@ async function assertReadOnlyAgySession(page: Page, expectedId: string) {
 }
 
 test("agy 译过的工具调用显示为命令 / 读文件 / 编辑行，展开详情看到原工具名与参数", async ({ page }) => {
-  await openSession(page, AGY_LIVE_TITLE);
+  await openLiveSession(page, AGY_LIVE_TITLE);
 
   const read = page.locator('[data-tool="Read"]').filter({ hasText: "rate_limit.rs" }).first();
   await reveal(page, read);
@@ -73,13 +86,93 @@ test("agy 译过的工具调用显示为命令 / 读文件 / 编辑行，展开�
 test("Live 与已结束的 agy Session 都没有 Connect / Resume / Fork 入口，保留复制 Resume 命令，Cost 写未记录", async ({
   page,
 }) => {
-  await openSession(page, AGY_LIVE_TITLE);
+  await openLiveSession(page, AGY_LIVE_TITLE);
   // Auto-connect is on by default: stay open longer than AUTO_CONNECT_DELAY_MS and verify no connection starts.
   await page.waitForTimeout(500);
   await assertReadOnlyAgySession(page, AGY_LIVE_ID);
 
   await openSession(page, AGY_ENDED_TITLE);
   await assertReadOnlyAgySession(page, AGY_ENDED_ID);
+});
+
+test("侧栏把已关联的 haa Worker 收进 owner，展开打开后头部可返回 owner", async ({ page }) => {
+  await openApp(page);
+
+  const ownerRow = page.getByTestId("session-row").filter({ hasText: FORK_ORIGIN_TITLE });
+  const toggle = ownerRow.getByTestId("worker-toggle");
+  await expect(toggle).toHaveText("2");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toHaveAttribute("aria-label", "显示 2 个 haa Worker");
+  await expect(page.getByTestId("worker-row")).toHaveCount(0);
+
+  // Clicking the Worker count expands its Workers without opening the owner Session.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toHaveAttribute("aria-label", "收起 haa Worker");
+  await expect(page.getByTestId("header")).toHaveCount(0);
+
+  const workers = page.getByTestId("worker-row");
+  await expect(workers).toHaveCount(2);
+  await expect(workers.nth(0)).toContainText("agy-web");
+  await expect(workers.nth(0)).toContainText(WORKER_WEB_TITLE);
+  await expect(workers.nth(1)).toContainText("agy-live");
+  await expect(workers.nth(1)).toContainText(WORKER_LIVE_TITLE);
+  // Worker rows do not repeat the agy tag.
+  await expect(workers.nth(0).getByTestId("agy-tag")).toHaveCount(0);
+
+  await workers.nth(0).click();
+  const header = page.getByTestId("header");
+  await expect(header.getByRole("heading", { name: WORKER_WEB_TITLE })).toBeVisible();
+  await expect(header).toContainText("agy · gemini-4-neon-high");
+  const crumb = header.getByTestId("worker-crumb");
+  await expect(crumb).toContainText(FORK_ORIGIN_TITLE);
+  await expect(crumb).toContainText("haa Worker");
+  await expect(crumb).toContainText("agy-web");
+
+  // Clicking the owner link in the crumb navigates back to the owner Session.
+  await crumb.getByRole("button", { name: FORK_ORIGIN_TITLE }).click();
+  await expect(header.getByRole("heading", { name: FORK_ORIGIN_TITLE })).toBeVisible();
+  await expect(header.getByTestId("worker-crumb")).toHaveCount(0);
+});
+
+test("Recent 不列 Worker，末尾可展开未关联的 haa Worker；非 Worker 的 agy 行带 agy 标记", async ({ page }) => {
+  await openApp(page);
+
+  // Non-worker agy Session has agy-tag in both Project and Recent.
+  const agyProjectRow = page.getByTestId("session-row").filter({ hasText: AGY_ENDED_TITLE });
+  await expect(agyProjectRow.getByTestId("agy-tag")).toHaveText("agy");
+  const recent = page.getByTestId("recent");
+  await expect(recent.getByTestId("recent-row").filter({ hasText: AGY_ENDED_TITLE }).getByTestId("agy-tag")).toHaveText(
+    "agy",
+  );
+  // Recent does not list Worker rows directly.
+  await expect(recent.getByTestId("worker-row")).toHaveCount(0);
+  await expect(recent.getByTestId("recent-row").filter({ hasText: WORKER_WEB_TITLE })).toHaveCount(0);
+  await expect(recent.getByTestId("recent-row").filter({ hasText: WORKER_UNLINKED_TITLE })).toHaveCount(0);
+
+  // Scroll Recent to the end to reveal 「未关联的 haa Worker（1）」 and expand it.
+  const recentList = recent.getByRole("listbox", { name: "Recent Session" });
+  await recentList.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  const unlinkedToggle = recent.getByTestId("unlinked-toggle");
+  await expect(unlinkedToggle).toContainText("未关联的 haa Worker（1）");
+  await expect(unlinkedToggle).toHaveAttribute("aria-expanded", "false");
+
+  await unlinkedToggle.click();
+  await expect(unlinkedToggle).toHaveAttribute("aria-expanded", "true");
+  await recentList.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  const unlinkedRow = recent.getByTestId("worker-row").filter({ hasText: WORKER_UNLINKED_TITLE });
+  await expect(unlinkedRow).toBeVisible();
+  await expect(unlinkedRow).toContainText("agy-solo");
+  await expect(unlinkedRow).toContainText("homelab-infra");
+  await expect(unlinkedRow.getByTestId("agy-tag")).toHaveCount(0);
+
+  await unlinkedRow.click();
+  const header = page.getByTestId("header");
+  await expect(header.getByRole("heading", { name: WORKER_UNLINKED_TITLE })).toBeVisible();
+  const crumb = header.getByTestId("worker-crumb");
+  await expect(crumb).toContainText("haa Worker");
+  await expect(crumb).toContainText("agy-solo");
+  await expect(crumb.getByRole("button")).toHaveCount(0);
 });
 
 test("设置 › 数据显示 agy 数据目录", async ({ page }) => {
