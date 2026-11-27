@@ -442,7 +442,10 @@ async fn check(
     if g.gate.is_closed() {
         return gate_closed();
     }
-    if !peer_allowed(peer.ip(), &g.subnet) {
+    // A TLS listener authenticates every request but `/health` and `/v1/pair` with a device token, so it
+    // answers any source that can reach it: a phone coming back over a WireGuard tunnel arrives from an address
+    // outside this subnet. A plain (loopback) listener has no auth, so its subnet stays the boundary.
+    if g.security.is_none() && !peer_allowed(peer.ip(), &g.subnet) {
         return forbidden("来源地址不在本网段");
     }
     // A header that is not text matches nothing.

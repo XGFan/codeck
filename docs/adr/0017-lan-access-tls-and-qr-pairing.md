@@ -4,7 +4,7 @@ ADR-0011、ADR-0012 让 iPhone 经局域网连 Host，暂不鉴权：同一网�
 
 - **证书**：Host 自签一张证书（ECDSA P-256，10 年），存在 settings.json 旁的 `tls/` 里，不随重启变。iPhone 固定的是证书 DER 的 SHA-256，不走系统的信任链。
 - **配对**：桌面在「局域网访问」里点「配对新设备」、daemon 运行 `codeck-host pair`，生成一个 5 分钟内只能用一次的配对密钥（只在内存里，单调钟计时，兑换成功、写盘之后才作废）。二维码是 `codeck://pair?h=<地址>&p=<端口>&fp=<指纹>&k=<密钥>`：指纹随码带过去，iPhone 不用信任首次连接，配对时也不怕被中间人截获。`POST /v1/pair` 用密钥换回这台设备的 token（32 字节随机数，Host 只存它的 SHA-256）。
-- **鉴权**：除 `/health` 与 `/v1/pair` 外都要 `Authorization: Bearer`。每台设备一份 token，可以在 Host 上单独移除，移除时立即断开它的连接。子网、Host 头、Origin 的校验照旧。
+- **鉴权**：除 `/health` 与 `/v1/pair` 外都要 `Authorization: Bearer`。每台设备一份 token，可以在 Host 上单独移除，移除时立即断开它的连接。Host 头与 Origin 的校验照旧；来源不再要求与监听地址同网段（有了 token，这一层不再是防线），所以在外经 WireGuard 等隧道转进家里局域网的手机也能连。回环监听没有鉴权，仍只接受本机来源。
 - **找 Host**：iPhone 只存一台 Host、只记地址；地址变了就重新扫码，证书没变且 token 还有效时只更新地址，不新增设备。
 - **回环**：显式 `--listen 127.x` 照旧明文、不鉴权，留给开发、真实后端 E2E 与模拟器联调，只有本机连得到。桌面的「局域网访问」从不监听回环。
 - **Transcript 页经 App 中转**：WKWebView 对页面自己发起的 WebSocket 不能放行自签证书（Apple DTS 确认，rdar 25491679），所以页面不直接连 Host：App 用自定义 scheme（`WKURLSchemeHandler`）代取 `/web/*`，RPC 走带应答的消息处理器，事件由 App 的 WebSocket 推给页面。token 不进网页，WKWebView 接触不到证书。

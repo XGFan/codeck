@@ -250,6 +250,7 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
     let tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = tcp.local_addr().unwrap();
     let listener = TlsListener::new(tcp, cert.server_config()).tap_io(|_| ());
+    let ctx_far = ctx.clone();
     let app = router(ctx, subnet)
         .route(
             "/test-peer",
@@ -269,6 +270,78 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
 
     let (status, _, body) = https_req(addr, &fp, "HEAD /health HTTP/1.1", "").await;
     assert_eq!((status, body.as_str()), (200, ""));
+
+    // A TLS listener answers sources outside its subnet (a phone back over a WireGuard tunnel); the token
+    // still guards everything but /health and /v1/pair. A plain listener keeps the subnet as its boundary.
+    // Both listen on 127.0.0.1 but are told their address is 192.0.2.1/32, so this peer is "outside".
+    let far = Subnet {
+        addr: Ipv4Addr::new(192, 0, 2, 1),
+        mask: Ipv4Addr::new(255, 255, 255, 255),
+    };
+    let far_tls = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let far_tls_addr = far_tls.local_addr().unwrap();
+    let far_plain_ctx = Ctx {
+        security: None,
+        ..ctx_far.clone()
+    };
+    let far_tls_app = router(ctx_far, far).into_make_service_with_connect_info::<SocketAddr>();
+    let far_tls_task = tokio::spawn({
+        let listener = TlsListener::new(far_tls, cert.server_config()).tap_io(|_| ());
+        async move {
+            let _ = axum::serve(listener, far_tls_app).await;
+        }
+    });
+    let far_plain = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let far_plain_addr = far_plain.local_addr().unwrap();
+    let far_plain_app =
+        router(far_plain_ctx, far).into_make_service_with_connect_info::<SocketAddr>();
+    let far_plain_task = tokio::spawn(async move {
+        let _ = axum::serve(far_plain, far_plain_app).await;
+    });
+    let far_req = |path: &str| {
+        format!(
+            "{path} HTTP/1.1\r\nHost: 192.0.2.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        )
+    };
+    let status_of = |out: &str| out[9..12].parse::<u16>().unwrap();
+    let mut tls = connect_tls(far_tls_addr, &fp).await.unwrap();
+    tls.write_all(far_req("GET /health").as_bytes())
+        .await
+        .unwrap();
+    let mut out = String::new();
+    tls.read_to_string(&mut out).await.unwrap();
+    assert_eq!(
+        status_of(&out),
+        200,
+        "TLS listener answers a source outside its subnet"
+    );
+    let mut tls = connect_tls(far_tls_addr, &fp).await.unwrap();
+    tls.write_all(far_req("GET /web/index.html").as_bytes())
+        .await
+        .unwrap();
+    let mut out = String::new();
+    tls.read_to_string(&mut out).await.unwrap();
+    assert_eq!(
+        status_of(&out),
+        401,
+        "outside the subnet still needs a token"
+    );
+    let mut plain = TcpStream::connect(far_plain_addr).await.unwrap();
+    plain
+        .write_all(far_req("GET /health").as_bytes())
+        .await
+        .unwrap();
+    let mut out = String::new();
+    plain.read_to_string(&mut out).await.unwrap();
+    assert_eq!(
+        status_of(&out),
+        403,
+        "a plain listener keeps the subnet check"
+    );
+    far_tls_task.abort();
+    far_plain_task.abort();
+    let _ = far_tls_task.await;
+    let _ = far_plain_task.await;
 
     let (status, ..) = https_req(
         addr,
