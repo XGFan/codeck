@@ -27,7 +27,7 @@ test("局域网访问：默认关闭，打开后显示地址，再关闭；切�
   const addresses = page.getByTestId("lan-addresses");
   await expect(page.getByTestId("lan-access-false")).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("set-lan-access")).toContainText(
-    "开启后，同一网络的设备无需验证即可连接这台 Mac 并操作 Session；关闭窗口不退出应用。",
+    "开启后，配对过的设备可以经局域网连接这台 Mac 并操作 Session；关闭窗口不退出应用。",
   );
   await expect(addresses).toHaveCount(0);
 
@@ -69,6 +69,110 @@ test("局域网访问：端口被占用时写明原因，之后的状态每 5 �
   await setLan(page, { enabled: true, addresses: [], error: null });
   await page.clock.fastForward(5000);
   await expect(page.getByTestId("lan-addresses")).toHaveText("没有可用的局域网地址。");
+});
+
+test("局域网配对：扫码弹层显示二维码与倒计时，兑换后提示已配对并自动关闭、列表出现设备", async ({ page }) => {
+  await openGeneral(page);
+  await expect(page.getByTestId("lan-pair-button")).toHaveCount(0);
+  await expect(page.getByTestId("lan-devices")).toHaveCount(0);
+
+  await page.getByTestId("lan-access-true").click();
+  await expect(page.getByTestId("lan-pair-button")).toBeVisible();
+
+  await page.getByTestId("lan-pair-button").click();
+  const modal = page.getByTestId("lan-pair-dialog");
+  await expect(modal).toBeVisible();
+  await expect(modal.getByTestId("lan-pair-qr")).toHaveAttribute("src", /^data:image\/svg\+xml;charset=utf-8,/);
+  await expect(modal.getByTestId("lan-pair-url")).toContainText("codeck://pair?h=");
+  await expect(modal.getByTestId("lan-pair-countdown")).toHaveText(/^[45]:\d{2} 后失效$/);
+
+  await modal.getByTestId("lan-pair-copy").click();
+  await expect(modal.getByTestId("lan-pair-copy")).toHaveText("已复制");
+
+  await page.evaluate(() => window.__cvCcrpc!.lanRedeem("客厅的 iPhone"));
+  await expect(modal.getByTestId("lan-pair-success")).toHaveText("已配对 客厅的 iPhone");
+  await expect(modal).toHaveCount(0, { timeout: 5000 });
+
+  // Paired offer must not be cancelled when the modal closes after success.
+  expect(await page.evaluate(() => window.__cvCcrpc!.lanCancelled)).toEqual([]);
+
+  const rows = page.getByTestId("lan-device-row");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("客厅的 iPhone");
+  await expect(rows.first()).toContainText(/配对于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+  await expect(rows.first()).toContainText("从未连接");
+});
+
+test("局域网配对：关闭弹层取消当前报价；过期后显示已过期并可重新生成", async ({ page }) => {
+  await openGeneral(page);
+  await page.getByTestId("lan-access-true").click();
+  await page.getByTestId("lan-pair-button").click();
+
+  const modal = page.getByTestId("lan-pair-dialog");
+  await expect(modal.getByTestId("lan-pair-qr")).toBeVisible();
+  const firstId = await page.evaluate(() => window.__cvCcrpc!.lanOffer?.id);
+  expect(firstId).toBeTruthy();
+
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await expect(page.getByTestId("settings")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__cvCcrpc!.lanCancelled)).toEqual([firstId]);
+  expect(await page.evaluate(() => window.__cvCcrpc!.lanOffer)).toBeNull();
+
+  // Next offer expires quickly: shows expired state and lets the user regenerate a fresh one.
+  await page.evaluate(() => void (window.__cvCcrpc!.lanOfferTtlMs = 350));
+  await page.getByTestId("lan-pair-button").click();
+  await expect(modal.getByTestId("lan-pair-qr")).toBeVisible();
+  const shortId = await page.evaluate(() => window.__cvCcrpc!.lanOffer?.id);
+  expect(shortId).not.toBe(firstId);
+
+  await expect(modal.getByTestId("lan-pair-expired")).toHaveText("配对码已过期");
+  await expect(modal.getByTestId("lan-pair-qr")).toHaveClass(/opacity-30/);
+
+  await modal.getByTestId("lan-pair-regenerate").click();
+  await expect(modal.getByTestId("lan-pair-expired")).toHaveCount(0);
+  await expect(modal.getByTestId("lan-pair-countdown")).toHaveText(/^[45]:\d{2} 后失效$/);
+  const regenId = await page.evaluate(() => window.__cvCcrpc!.lanOffer?.id);
+  expect(regenId).toBeTruthy();
+  expect(regenId).not.toBe(shortId);
+
+  await modal.getByTestId("lan-pair-close").click();
+  await expect(modal).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__cvCcrpc!.lanCancelled)).toEqual([firstId, regenId]);
+});
+
+test("局域网已配对设备：开关关着也列出已有设备，移除需确认", async ({ page }) => {
+  const now = Date.now();
+  await page.addInitScript(
+    (lanDevices) => {
+      window.__cvCcrpcPreset = { lanDevices };
+    },
+    [
+      { id: "dev000000001", name: "工作 iPhone", pairedAt: now - 3 * 3_600_000, lastSeenAt: now - 5 * 60_000 },
+      { id: "dev000000002", name: "备用 iPhone", pairedAt: now - 24 * 3_600_000, lastSeenAt: null },
+    ],
+  );
+  await openGeneral(page);
+  await expect(page.getByTestId("lan-access-false")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("lan-pair-button")).toHaveCount(0);
+
+  const rows = page.getByTestId("lan-device-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("工作 iPhone");
+  await expect(rows.nth(0)).toContainText("最近连接 5 分钟前");
+  await expect(rows.nth(1)).toContainText("备用 iPhone");
+  await expect(rows.nth(1)).toContainText("从未连接");
+
+  // Cancel keeps the row; confirming removes it.
+  await rows.nth(0).getByTestId("lan-device-remove").click();
+  await expect(rows.nth(0).getByTestId("lan-device-confirm-remove")).toBeVisible();
+  await rows.nth(0).getByTestId("lan-device-cancel-remove").click();
+  await expect(rows).toHaveCount(2);
+
+  await rows.nth(0).getByTestId("lan-device-remove").click();
+  await rows.nth(0).getByTestId("lan-device-confirm-remove").click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("备用 iPhone");
 });
 
 test("界面主题：自动跟随系统，浅色 / 暗色固定，选择会被记住", async ({ page }) => {

@@ -18,7 +18,16 @@
 
 import type { InMsg, LsEntry, ModelInfo, QueueItem, RequestEvent, Task } from "@/ipc/protocol/ccrpc";
 import type { Api, Unlisten } from "@/ipc/api";
-import type { AnalyzerInfo, AppError, LanStatus, LaunchRule, Notice } from "@/ipc/bindings";
+import type {
+  AnalyzerInfo,
+  AppError,
+  LanDevicesEvent,
+  LanStatus,
+  LaunchRule,
+  Notice,
+  PairedDevice,
+  PairingOffer,
+} from "@/ipc/bindings";
 
 /** A rejected IPC call as the backend rejects it (`AppError`, not an `Error`). */
 export const appError = (code: AppError["code"], message: string): AppError => ({ code, message });
@@ -133,6 +142,7 @@ const remoteConnCbs = new Set<(conn: string, holderId: string | null) => void>()
 const closingCbs = new Set<(conn: string) => void>();
 const notificationCbs = new Set<(url: string) => void>();
 const keepAliveCbs = new Set<(e: { sessionId: string; active: boolean; error: string | null }) => void>();
+const lanDevicesCbs = new Set<(e: LanDevicesEvent) => void>();
 const conns = new Map<string, Conn>();
 /** Holders whose Pane ended (`exit` with `close_pane`): gone from `ccrpc ls`. */
 const closedPanes = new Set<string>();
@@ -194,6 +204,20 @@ export interface CcrpcProbe {
   lan: LanStatus;
   /** Set by a test: the next `lanSetEnabled` is refused with this. */
   lanFails?: string;
+  /** Paired LAN devices in the mock Host (presettable via `__cvCcrpcPreset`). */
+  lanDevices: PairedDevice[];
+  /** Current active pairing offer in the mock Host (null when none, cancelled, or redeemed). */
+  lanOffer: PairingOffer | null;
+  /** Offer ids passed to `lanPairCancel`, in order. */
+  lanCancelled: string[];
+  /** Set by a test: the next `lanPairStart` is refused with this. */
+  lanPairFails?: string;
+  /** Set by a test: the next `lanRemoveDevice` is refused with this. */
+  lanRemoveFails?: string;
+  /** Set by a test: lifetime in ms for the next `lanPairStart` offer (consumed once). */
+  lanOfferTtlMs?: number;
+  /** Simulates a phone redeeming the active pairing offer: adds a device, clears the offer, emits `lan-devices-event`. */
+  lanRedeem: (name?: string) => PairedDevice;
   /** What `connectSnapshot` lists: the Host's connections, as `HostConn`s. */
   snapshot: Record<string, unknown>[];
   /** A client on the LAN starts a connection replaying the recording `name`; returns its id. */
@@ -231,6 +255,23 @@ const probe: CcrpcProbe = {
     for (const id of conns.keys()) emit(id, msg as unknown as InMsg);
   },
   lan: { enabled: false, addresses: [], error: null },
+  lanDevices: [],
+  lanOffer: null,
+  lanCancelled: [],
+  lanRedeem: (name = "iPhone") => {
+    const offer = probe.lanOffer;
+    if (!offer) throw new Error("没有待配对的报价");
+    const device: PairedDevice = {
+      id: `dev${String(++lanDeviceSeq).padStart(9, "0")}`,
+      name,
+      pairedAt: Date.now(),
+      lastSeenAt: null,
+    };
+    probe.lanOffer = null;
+    probe.lanDevices = [...probe.lanDevices, device];
+    emitLanDevices(offer.id, device.id);
+    return device;
+  },
   snapshot: [],
   remoteConn: (name) => {
     const fx = fixtures.find((f) => f.name === name);
@@ -527,6 +568,11 @@ type CcrpcApi = Pick<
   | "onCcrpcClosing"
   | "lanStatus"
   | "lanSetEnabled"
+  | "lanPairStart"
+  | "lanPairCancel"
+  | "lanDevices"
+  | "lanRemoveDevice"
+  | "onLanDevices"
 >;
 
 /** The Session whose Resume fails in the mock: claude cannot find it (`resume-failed.jsonl`). */
@@ -559,6 +605,17 @@ const ANALYSES_DIR = "/mock/.local/share/ccrpc/analyses";
 
 /** Where the mock app listens with 「局域网访问」 on. */
 const MOCK_LAN_ADDRESS = "192.168.2.50:38471";
+const MOCK_PAIR_TTL_MS = 5 * 60_000;
+const MOCK_PAIR_FP = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const MOCK_PAIR_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21" shape-rendering="crispEdges"><rect width="21" height="21" fill="#fff"/><path d="M1 1h7v7H1zM2 2v5h5V2zM3 3h3v3H3zM13 1h7v7h-7zM14 2v5h5V2zM15 3h3v3h-3zM1 13h7v7H1zM2 14v5h5v-5zM3 15h3v3H3zM11 11h3v3h-3zM16 15h4v4h-4z" fill="#000"/></svg>';
+let lanOfferSeq = 0;
+let lanDeviceSeq = 0;
+
+function emitLanDevices(pairedOffer: string | null, pairedDevice: string | null) {
+  const event: LanDevicesEvent = { devices: [...probe.lanDevices], pairedOffer, pairedDevice };
+  for (const cb of lanDevicesCbs) cb(event);
+}
 
 export function createMockCcrpc(): CcrpcApi {
   window.__cvCcrpc = Object.assign(probe, window.__cvCcrpcPreset);
@@ -743,7 +800,49 @@ export function createMockCcrpc(): CcrpcApi {
         probe.lanFails = undefined;
         throw appError("internal", why);
       }
+      if (!on) probe.lanOffer = null;
       return (probe.lan = { enabled: on, addresses: on ? [MOCK_LAN_ADDRESS] : [], error: null });
     },
+    lanPairStart: async () => {
+      if (probe.lanPairFails) {
+        const why = probe.lanPairFails;
+        probe.lanPairFails = undefined;
+        throw appError("internal", why);
+      }
+      if (!probe.lan.enabled) throw appError("invalidQuery", "先打开局域网访问。");
+      if (probe.lan.addresses.length === 0) throw appError("invalidQuery", "没有可用的局域网地址。");
+      const n = ++lanOfferSeq;
+      const ttl = probe.lanOfferTtlMs ?? MOCK_PAIR_TTL_MS;
+      probe.lanOfferTtlMs = undefined;
+      const hosts = probe.lan.addresses.map((a) => a.split(":")[0]).join(",");
+      const port = probe.lan.addresses[0]!.split(":")[1] ?? "38471";
+      const key = `mockkey${String(n).padStart(15, "0")}`;
+      const offer: PairingOffer = {
+        id: `offer-${n}`,
+        url: `codeck://pair?h=${hosts}&p=${port}&fp=${MOCK_PAIR_FP}&k=${key}`,
+        svg: MOCK_PAIR_SVG,
+        expiresAt: Date.now() + ttl,
+      };
+      probe.lanOffer = offer;
+      return offer;
+    },
+    lanPairCancel: async (id) => {
+      probe.lanCancelled.push(id);
+      if (probe.lanOffer?.id === id) probe.lanOffer = null;
+    },
+    lanDevices: async () => [...probe.lanDevices],
+    lanRemoveDevice: async (id) => {
+      if (probe.lanRemoveFails) {
+        const why = probe.lanRemoveFails;
+        probe.lanRemoveFails = undefined;
+        throw appError("internal", why);
+      }
+      const next = probe.lanDevices.filter((d) => d.id !== id);
+      if (next.length !== probe.lanDevices.length) {
+        probe.lanDevices = next;
+        emitLanDevices(null, null);
+      }
+    },
+    onLanDevices: (cb) => subscribe(lanDevicesCbs, cb),
   };
 }

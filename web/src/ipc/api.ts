@@ -15,9 +15,12 @@ import type {
   LaunchRule,
   SidebarProject,
   JumpTarget,
+  LanDevicesEvent,
   LanStatus,
   LiveChanged,
   Notice,
+  PairedDevice,
+  PairingOffer,
   PlanUsage,
   ProjectSummary,
   SearchRequest,
@@ -161,6 +164,16 @@ export interface Api {
   lanStatus(): Promise<LanStatus>;
   /** Turns 「局域网访问」 on or off at once and saves it. */
   lanSetEnabled(on: boolean): Promise<LanStatus>;
+  /** Starts a 5-minute LAN pairing offer (QR code SVG and `codeck://pair` link), replacing any previous one. */
+  lanPairStart(): Promise<PairingOffer>;
+  /** Cancels the active LAN pairing offer if its id matches `id`. */
+  lanPairCancel(id: string): Promise<void>;
+  /** Paired LAN devices (readable even when LAN access is off). */
+  lanDevices(): Promise<PairedDevice[]>;
+  /** Removes a paired LAN device and closes its active connections; missing ids are ignored. */
+  lanRemoveDevice(id: string): Promise<void>;
+  /** The paired LAN device list changed (a device paired or was removed). */
+  onLanDevices(cb: (e: LanDevicesEvent) => void): Promise<Unlisten>;
 
   /**
    * Starts (`on = true`) a `haa ls --all --json --watch` tagged with `id` (replacing any existing watch),

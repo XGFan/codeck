@@ -100,6 +100,11 @@ export function createRealApi(): Api {
     onCcrpcClosing: (cb) => events.ccrpcClosingEvent.listen(({ payload }) => cb(payload.conn)),
     lanStatus: commands.lanStatus,
     lanSetEnabled: commands.lanSetEnabled,
+    lanPairStart: commands.lanPairStart,
+    lanPairCancel: async (id) => void (await commands.lanPairCancel(id)),
+    lanDevices: commands.lanDevices,
+    lanRemoveDevice: async (id) => void (await commands.lanRemoveDevice(id)),
+    onLanDevices: (cb) => events.lanDevicesEvent.listen(({ payload }) => cb(payload)),
     haaWatch: async (on, id) => void (await commands.haaWatch(on, id)),
     onHaaWorkers: (cb) =>
       events.haaWorkersEvent.listen(({ payload }) => {

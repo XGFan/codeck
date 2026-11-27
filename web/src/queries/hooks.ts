@@ -30,6 +30,7 @@ export const queryKeys = {
   planUsage: ["planUsage"] as const,
   diagnostics: ["diagnostics"] as const,
   lanStatus: ["lanStatus"] as const,
+  lanDevices: ["lanDevices"] as const,
   slashCommands: (cwd: string | null) => ["slashCommands", cwd] as const,
   pathCompletions: (cwd: string | null, partial: string, files: boolean) =>
     ["pathCompletions", cwd, partial, files] as const,

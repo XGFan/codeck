@@ -19,6 +19,7 @@ import { CONV_WIDTH, useUi } from "@/state/ui";
 import { errorText } from "@/lib/errors";
 import { cn } from "@/lib/cn";
 import { setThemePref, type ThemePref, useThemePref } from "@/lib/theme";
+import { PairDeviceDialog, PairedDevicesList } from "./LanPairing";
 
 const SOURCE_LABEL: Record<DataRootSource, string> = {
   settings: "设置",
@@ -165,6 +166,7 @@ const THEMES: { value: ThemePref; label: string }[] = [
 /** 「局域网访问」: this Mac as a Host on the LAN. What it listens on follows the network: read again while shown. */
 function LanAccessField() {
   const qc = useQueryClient();
+  const [pairOpen, setPairOpen] = useState(false);
   const { data: status } = useQuery({
     queryKey: queryKeys.lanStatus,
     queryFn: () => api.lanStatus(),
@@ -194,7 +196,7 @@ function LanAccessField() {
         }}
         testId="lan-access"
       />
-      <div className={note}>开启后，同一网络的设备无需验证即可连接这台 Mac 并操作 Session；关闭窗口不退出应用。</div>
+      <div className={note}>开启后，配对过的设备可以经局域网连接这台 Mac 并操作 Session；关闭窗口不退出应用。</div>
       {status?.enabled && (status.addresses.length > 0 || !status.error) && (
         <div data-testid="lan-addresses" className={note}>
           {status.addresses.length > 0 ? `地址：${status.addresses.join("、")}` : "没有可用的局域网地址。"}
@@ -210,6 +212,21 @@ function LanAccessField() {
           {errorText(toggle.error)}
         </div>
       )}
+      {enabled && status?.enabled && (
+        <div className="pt-1">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-8"
+            data-testid="lan-pair-button"
+            onClick={() => setPairOpen(true)}
+          >
+            配对新设备
+          </Button>
+        </div>
+      )}
+      <PairedDevicesList />
+      <PairDeviceDialog open={pairOpen} onOpenChange={setPairOpen} />
     </div>
   );
 }
