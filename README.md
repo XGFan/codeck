@@ -5,7 +5,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 - **侧栏按 Project 分组**：顶部固定的 Live 列出正在运行的 Session；中间只列你添加的 Project，顺序由你拖动排定，组里的 Session 按你最后一次输入排序，AI 回复不会让它们跳动；像 `~/Project/<公司>` 这样装着多个仓库的目录可以「收拢子 Project」，子仓库成为它下面的子组；底部固定的 Recent 按时间列出其余所有 Session，没添加的 Project 的也在这里。
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
 - **读得舒服**：参考 Codex 的排版，每轮的过程折叠成「已处理 1 分 50 秒」一行、只露出回答，展开后每次工具调用是一行字（Subagent 面板里、以及进行中的那一轮里连续的合成「读取 1 个文件、编辑 2 个文件、运行 1 条命令」一行，进行中的组头写正在跑的那次与用时），Bash 终端输出、Edit diff、代码高亮按需展开；Subagent 在右侧面板查看完整过程；Branch 切换、Fork 折叠、compact 分隔；⌘F 会话内查找、`j`/`k` 按轮次跳转、轮次大纲；Session 列表可收起，竖屏也有宽敞的对话记录；对话列宽度在设置里调，侧栏宽度与 Recent 的高度拖动即可调节。
-- **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。CoDeck 启动的 Session 空闲时自动保活提示词缓存（默认空闲 40 分钟时发一条不进对话的 `/btw`，1 小时缓存过期前续上，回来接着聊不用整段重新写缓存；这些 Session 同时关掉 Claude Code 自己的空闲压缩，大上下文空闲久了也不会被自动压缩）。一轮结束时没在看的 Session 在侧栏标「已完成」；等待作答或已完成几分钟（设置里调，也可关掉）还没去看的，发 macOS 通知，点通知直接打开它。
+- **实时**：监听文件变化，新 Session 自动出现；正在进行的 Session 实时追随。CoDeck 启动的 Session 空闲时自动保活提示词缓存（默认空闲 40 分钟时发一条不进对话的 `/btw`，1 小时缓存过期前续上，回来接着聊不用整段重新写缓存；这些 Session 同时关掉 Claude Code 自己的空闲压缩，大上下文空闲久了也不会被自动压缩）。一轮结束时没在看的 Session 在侧栏标「已完成」；等待作答或已完成几分钟（设置里调，也可关掉）还没去看的发通知：有人在用 Mac 时发 macOS 通知，没人在用时推到 iPhone（经 Bark），点通知直接打开它；在 Mac 或 iPhone 上看过，两边都不再提醒。
 - **Cost**：参照 ccusage 的算法按 API 单价估算每个 Session 的花费（含 Subagent，resume / Fork / 转入后台复制的历史不重复计算），统计页按时间范围汇总。
 - **Connect**：ToH clay 里装了 ccrpc 插件的 Session，打开时自动 Connect（可在设置里关掉），或在标题栏的「···」菜单里点「Connect」，之后可以直接发提示词（可粘贴截图，图片作为一整块留在光标处，可拖动换位置、悬停预览）和斜杠命令（输入 `/` 补全内置、自定义、插件的命令与 skill，输入框里的命令高亮，`/add-dir` 补全目录、`@` 补全文件，支持 `../`）、忙时插话（和终端里一样进 Claude Code 的队列）、回复前按 Esc 撤回刚发的提示词（和终端里一样从对话里拿掉、文字回到输入框）、作答审批 / 提问（也可「先聊聊」）/ 选择、切换权限模式、模型与思考等级、停止后台任务、回退到 Main Line 上某条提示词之前（悬停提示词点「回退」或输入 `/rewind`（`/checkpoint`），可选恢复代码与对话、只恢复对话或只恢复代码）；在侧栏的 Session 行上右键重命名（发送 `/rename`，空闲时可用）；「关闭」结束 Session 并关掉它的 Pane；也可以在侧栏组头点「+」、在 Project 或子 Project 上右键或按 ⌘N 选 Project 新建 Session，或把已结束的 Session 在新 Pane 里 Resume（`claude --resume`）后接着 Connect，或从任一 Session 的某条提示词之前（或整个 Session）Fork 出新 Session（悬停提示词点「Fork」或「···」菜单里的「Fork」，可选只恢复对话或恢复代码与对话），并按目录给 claude 追加参数（如 `--add-dir`）。对话内容仍来自本应用的索引与实时追随，ccrpc 只提供状态与控制（见 [crates/ccrpc](crates/ccrpc)）。
 - **统计**：订阅额度（当前 5 小时、本周全部模型、按模型的周额度，侧栏左下角的统计按钮点开就能看）、用量（Cost / 输入 / 输出，按模型堆叠，缓存命中率）、使用频率（一周以内按小时，更长的范围按天）与一周内的用量走势；看某一天时是按小时的用量、当天各 Session 在什么时候跑、以及对照前一天或上周期同一天的走势。默认看本周期（跟随订阅的每周重置，账号没有订阅额度时用自定义的重置时间），可切到某一天、月份、最近 7 / 30 / 90 天或全部，天、周期和月份可前后翻，在图上点一天就进到那一天；可下钻到 Session 列表。
@@ -23,7 +23,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | ⌘N | 新建 Session（选已添加的 Project，⌘O 选其他目录） |
 | ↑ / ↓ | 在 Session 列表中切换（列表获得焦点时） |
 | ⌃⌘L | 收起 / 展开 Session 列表 |
-| ⌘, | 设置（界面主题、自动 Connect、等待作答与已完成的系统通知、缓存保活、局域网访问、对话宽度、数据目录、ccrpc、格式兼容性诊断、重建索引） |
+| ⌘, | 设置（界面主题、自动 Connect、等待作答与已完成的通知（含推到 iPhone）、缓存保活、局域网访问、对话宽度、数据目录、ccrpc、格式兼容性诊断、重建索引） |
 | Esc | 关闭搜索、查找或 Subagent 面板；Connect 后选回退点时（没有这些要关）退出选回退点 |
 | Enter / ⌘Enter | Connect 后：空闲发送；忙时插话（当前工具调用结束后送达）/ 中断本轮立即发送（同终端里的 ctrl+enter）；等待作答时把焦点移到请求卡片 |
 | ↑（光标在输入框第一行） | Connect 后：忙时把排队的消息取回输入框编辑（同终端里的 ↑），放在已有内容前面；从 CoDeck 插话时带的图片一并取回 |
@@ -44,7 +44,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 | ccrpc 日志（按连接分目录，保留 14 天） | `~/Library/Logs/dev.joy.codeck/ccrpc/` |
 | 输入区粘贴的图片 | `~/Library/Caches/dev.joy.codeck/images/` |
 
-应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 Cost；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）。默认不监听任何端口，只有打开「局域网访问」时才在局域网地址上接受连接（见「iPhone 与 Host」）。
+应用唯一的联网请求是在后台下载 LiteLLM 的公开价格表（缓存超过一天才重新下载），用来计算 Cost；不发送任何本机数据，下载失败时使用内置快照（[ADR-0005](docs/adr/0005-fetch-litellm-prices.md)）；另外只在设置里填了 Bark 的 Device Key 时，通知经 Bark 的服务器推到 iPhone（[ADR-0019](docs/adr/0019-host-decides-notifications-iphone-via-bark.md)）。默认不监听任何端口，只有打开「局域网访问」时才在局域网地址上接受连接（见「iPhone 与 Host」）。
 
 索引只镜像数据目录当前内容：源文件被删，对应 Session 也随之消失；升级后索引格式变化会自动重建（[ADR-0003](docs/adr/0003-index-is-disposable-mirror.md)）。索引放在 Caches 中，不进入 Time Machine 备份。
 
@@ -130,7 +130,9 @@ cargo build --release -p codeck-host             # → target/release/codeck-hos
 target/release/codeck-host --web-dir web/dist-web    # 默认端口 38471；--listen <IP> 指定网卡，--data-root、--state-dir 可覆盖
 ```
 
-目前的限制：没有推送通知；回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；没有请求频率的限制（连接数的上限见上）；在外只能经 WireGuard 等转进家里局域网的隧道连，隧道直接连到 Host 本机（utun 网卡）或用 Tailscale 的 100.x 地址都连不上（Host 不监听那类网卡，iPhone 只收 RFC 1918 地址）。
+**通知**：在 iPhone 上装 Bark（App Store），把它首页推送地址里的 key 填进桌面版「设置 › 通用 › iPhone 推送（Bark）」的 Device Key（自建了 bark-server 的同时改服务器），点「发送测试推送」确认能收到；再在 iPhone 的设置里给 Bark 打开「后台 App 刷新」，处理完的通知才会从手机上删掉。点 Bark 的通知会打开 CoDeck 的这个 Session。有人在用 Mac 时只发 Mac 通知；离开 Mac、或过了「补推到 iPhone」的时长还没处理，再推到 iPhone；只跑 daemon 时总是推到 iPhone，在它状态目录的 `settings.json` 里写 `"notify": {"bark": {"deviceKey": "<key>"}}`（[ADR-0019](docs/adr/0019-host-decides-notifications-iphone-via-bark.md)）。
+
+目前的限制：回复前撤回的提示词（ADR-0010）在 iPhone 的对话记录里仍然显示；没有请求频率的限制（连接数的上限见上）；在外只能经 WireGuard 等转进家里局域网的隧道连，隧道直接连到 Host 本机（utun 网卡）或用 Tailscale 的 100.x 地址都连不上（Host 不监听那类网卡，iPhone 只收 RFC 1918 地址）。
 
 daemon 的设置（启动参数、新开的 Pane 等）读状态目录里的 `settings.json`，格式同桌面版，客户端不能修改。iPhone App：`cd ios && xcodegen generate && open CoDeck.xcodeproj`，选自己的设备与 Team 后运行；首次启动扫 Host 上的配对二维码，iOS 会询问是否允许使用相机与访问本地网络。
 
