@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Extension, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -16,12 +17,12 @@ use axum::routing::{get, post};
 use axum::serve::ListenerExt;
 use axum::{Json, Router};
 use codeck_core::model::{AppError, ErrorCode};
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tower_http::timeout::TimeoutLayer;
 
 use super::devices::DeviceRevoke;
 use super::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
@@ -33,7 +34,7 @@ use crate::{EventSink, Host, HostEvent};
 pub const API_VERSION: u32 = 2;
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
 const PAIR_BODY_LIMIT: usize = 4 * 1024;
-/// Overall timeout for `POST /v1/pair` so slow request bodies cannot hold TLS connections open.
+/// Timeout for reading and parsing the `POST /v1/pair` request body; does not interrupt redemption.
 const PAIR_TIMEOUT: Duration = Duration::from_secs(10);
 /// Events a slow client may fall behind by before it is dropped (it resyncs on reconnect).
 const EVENT_BACKLOG: usize = 1024;
@@ -227,14 +228,21 @@ impl Serving {
     /// Serves exactly `wanted`: listeners no longer wanted stop, new ones start. One that cannot be bound now
     /// is tried again at the next call.
     pub async fn follow(&mut self, wanted: &[Subnet]) {
+        let mut removed = false;
         self.tasks.retain(|s, task| {
             let keep = wanted.contains(s);
             if !keep {
                 task.abort();
                 tracing::info!("stopped listening on {}", s.addr);
+                removed = true;
             }
             keep
         });
+        // Drop stopped listeners from the pairing snapshot immediately before awaiting new binds.
+        if removed {
+            self.order.retain(|s| self.tasks.contains_key(s));
+            self.sync_snapshot();
+        }
         self.failed.retain(|s, _| wanted.contains(s));
         for &s in wanted {
             if self.tasks.contains_key(&s) {
@@ -321,12 +329,16 @@ struct AuthedDevice {
     revoke: DeviceRevoke,
 }
 
+/// Request body read timeout for `POST /v1/pair`, injected via router extension.
+#[derive(Clone, Copy)]
+struct PairTimeout(Duration);
+
 /// The routes for one listener, whose peers must come from `subnet`.
 pub fn router(ctx: Ctx, subnet: Subnet) -> Router {
     router_with_pair_timeout(ctx, subnet, PAIR_TIMEOUT)
 }
 
-/// Same as [`router`], with a custom overall timeout for `POST /v1/pair`.
+/// Same as [`router`], with a custom body-read timeout for `POST /v1/pair`.
 pub fn router_with_pair_timeout(ctx: Ctx, subnet: Subnet, pair_timeout: Duration) -> Router {
     let guard = Guard {
         subnet,
@@ -347,11 +359,7 @@ pub fn router_with_pair_timeout(ctx: Ctx, subnet: Subnet, pair_timeout: Duration
         r = r.merge(
             Router::new()
                 .route("/v1/pair", post(pair))
-                .layer(DefaultBodyLimit::max(PAIR_BODY_LIMIT))
-                .layer(TimeoutLayer::with_status_code(
-                    StatusCode::REQUEST_TIMEOUT,
-                    pair_timeout,
-                )),
+                .layer(Extension(PairTimeout(pair_timeout))),
         );
     }
     r.with_state(ctx)
@@ -621,9 +629,73 @@ struct PairRequest {
     name: String,
 }
 
+enum ReadBodyError {
+    TooLarge,
+    TimedOut,
+    ReadFailed(String),
+}
+
+async fn read_body_limited_timed(
+    body: Body,
+    limit: usize,
+    timeout: Duration,
+) -> Result<Vec<u8>, ReadBodyError> {
+    tokio::time::timeout(timeout, async move {
+        let mut stream = body.into_data_stream();
+        let mut buf = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| ReadBodyError::ReadFailed(e.to_string()))?;
+            if buf.len().saturating_add(chunk.len()) > limit {
+                return Err(ReadBodyError::TooLarge);
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
+    })
+    .await
+    .map_err(|_| ReadBodyError::TimedOut)?
+}
+
+/// Marks a queued `spawn_blocking` redemption as aborted if the HTTP future is dropped before
+/// redemption finishes (e.g. client disconnect or gate close).
+struct CancelOnDrop {
+    flag: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl CancelOnDrop {
+    fn new() -> (Self, Arc<AtomicBool>) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = Self {
+            flag: Arc::clone(&flag),
+            armed: true,
+        };
+        (guard, flag)
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.flag.store(true, Ordering::Release);
+        }
+    }
+}
+
 /// Exchanges a single-use pairing key for a device id and bearer token (only mounted on non-loopback listeners).
-async fn pair(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Response {
-    if !is_json(&headers) {
+///
+/// The timeout covers reading and parsing the request body only; once redemption starts, it runs to
+/// completion so a slow disk write never returns 408 while still registering the device.
+async fn pair(
+    State(ctx): State<Ctx>,
+    Extension(PairTimeout(body_timeout)): Extension<PairTimeout>,
+    req: Request,
+) -> Response {
+    if !is_json(req.headers()) {
         return (
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "请求须是 application/json",
@@ -632,6 +704,34 @@ async fn pair(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respon
     }
     let Some(security) = &ctx.security else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(len) = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+        && len > PAIR_BODY_LIMIT
+    {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let body = match read_body_limited_timed(req.into_body(), PAIR_BODY_LIMIT, body_timeout).await {
+        Ok(b) => b,
+        Err(ReadBodyError::TooLarge) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(ReadBodyError::TimedOut) => {
+            return (StatusCode::REQUEST_TIMEOUT, "请求超时").into_response();
+        }
+        Err(ReadBodyError::ReadFailed(e)) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "invalid_request",
+                        "message": format!("读取请求体失败：{e}"),
+                    }
+                })),
+            )
+                .into_response();
+        }
     };
     let req: PairRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -651,10 +751,15 @@ async fn pair(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respon
     let sec = Arc::clone(security);
     let key = req.key;
     let name = req.name;
-    let redeemed = match tokio::task::spawn_blocking(move || sec.redeem(&key, &name)).await {
-        Ok(r) => r,
-        Err(e) => Err(RedeemError::SaveFailed(e.to_string())),
-    };
+    let (mut cancel_guard, cancelled) = CancelOnDrop::new();
+    let redeemed =
+        match tokio::task::spawn_blocking(move || sec.redeem_cancellable(&key, &name, &cancelled))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => Err(RedeemError::SaveFailed(e.to_string())),
+        };
+    cancel_guard.disarm();
     match redeemed {
         Ok(res) => {
             ctx.host.emit_event(HostEvent::LanDevices {
@@ -680,6 +785,7 @@ async fn pair(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respon
             })),
         )
             .into_response(),
+        Err(RedeemError::Aborted) => StatusCode::REQUEST_TIMEOUT.into_response(),
         Err(RedeemError::SaveFailed(why)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
@@ -715,30 +821,34 @@ async fn run_ws_session(
     rx: broadcast::Receiver<Utf8Bytes>,
     authed: Option<AuthedDevice>,
 ) {
-    let revoke = if let Some(a) = authed {
-        // Re-check after upgrade completes in case the device was removed in the gap.
-        if a.revoke.is_revoked() {
-            drop(socket);
-            return;
-        }
-        if let Some(sec) = &ctx.security {
-            let sec = Arc::clone(sec);
-            let id = a.id.clone();
-            if let Ok(Some(devices)) = tokio::task::spawn_blocking(move || sec.touch(&id)).await {
-                ctx.host.emit_event(HostEvent::LanDevices {
-                    devices,
-                    paired_offer: None,
-                    paired_device: None,
-                });
+    let revoke = authed.as_ref().map(|a| a.revoke.clone());
+    // Wrap the entire post-upgrade session (including `touch`) inside the revocation select so a
+    // device revoked while `touch` is writing to disk drops its WebSocket immediately.
+    let session = async move {
+        if let Some(a) = authed {
+            if a.revoke.is_revoked() {
+                drop(socket);
+                return;
+            }
+            if let Some(sec) = &ctx.security {
+                let sec = Arc::clone(sec);
+                let id = a.id.clone();
+                if let Ok(Some(devices)) = tokio::task::spawn_blocking(move || sec.touch(&id)).await
+                    && !a.revoke.is_revoked()
+                {
+                    ctx.host.emit_event(HostEvent::LanDevices {
+                        devices,
+                        paired_offer: None,
+                        paired_device: None,
+                    });
+                }
+            }
+            if a.revoke.is_revoked() {
+                drop(socket);
+                return;
             }
         }
-        if a.revoke.is_revoked() {
-            drop(socket);
-            return;
-        }
-        Some(a.revoke)
-    } else {
-        None
+        relay(socket, rx, ctx.gate).await;
     };
     tokio::select! {
         biased;
@@ -748,7 +858,7 @@ async fn run_ws_session(
                 None => std::future::pending().await,
             }
         } => {}
-        _ = relay(socket, rx, ctx.gate) => {}
+        _ = session => {}
     }
 }
 
@@ -1409,5 +1519,288 @@ mod tests {
         serving.stop().await;
         assert!(serving.listening_in_order().is_empty());
         assert!(handle.lock().is_empty());
+    }
+
+    /// Regression (Item 6): when interfaces change, stopped listeners disappear from the pairing
+    /// snapshot immediately, before new listeners finish binding.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn follow_removes_stopped_listeners_from_snapshot_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+        let old_sub = Subnet {
+            addr: Ipv4Addr::new(192, 168, 1, 20),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+        let new_sub = Subnet {
+            addr: Ipv4Addr::new(10, 0, 0, 5),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+        let port = 38471;
+        let mut serving =
+            Serving::new(port, Box::new(|_, _| Router::new()), Some(Arc::clone(&sec)));
+        let handle = serving.listening_handle();
+        let seen_during_bind: Arc<parking_lot::Mutex<Option<Vec<String>>>> = Arc::default();
+        let handle_for_bind = Arc::clone(&handle);
+        let seen_for_bind = Arc::clone(&seen_during_bind);
+        serving.bind_override = Some(Box::new(move |s| {
+            if s == new_sub {
+                *seen_for_bind.lock() = Some(handle_for_bind.lock().clone());
+            }
+            std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        }));
+
+        serving.follow(&[old_sub]).await;
+        assert_eq!(*handle.lock(), [format!("192.168.1.20:{port}")]);
+
+        serving.follow(&[new_sub]).await;
+        assert_eq!(
+            seen_during_bind.lock().as_deref(),
+            Some(&[][..]),
+            "stopped listener was still in pairing snapshot while new listener was binding"
+        );
+        assert_eq!(*handle.lock(), [format!("10.0.0.5:{port}")]);
+        serving.stop().await;
+    }
+
+    /// Regression (Item 3 & 7): `/v1/pair` timeout applies only to body reading; a slow disk write
+    /// in `redeem` beyond `pair_timeout` returns the real 200 result without returning 408, while a
+    /// stalled body returns 408 without consuming the offer or registering a device.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pair_body_timeout_does_not_abort_slow_redeem() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().join("sec")).unwrap());
+        let (events_tx, lan_sink) = event_channel();
+        let captured: Arc<parking_lot::Mutex<Vec<HostEvent>>> = Arc::default();
+        let sink = {
+            let captured = Arc::clone(&captured);
+            Arc::new(move |e: HostEvent| {
+                lan_sink(e.clone());
+                captured.lock().push(e);
+            })
+        };
+        let host = Host::start(
+            HostConfig {
+                cache_dir: dir.path().join("cache"),
+                settings_path: dir.path().join("settings.json"),
+                ccrpc_logs: Some(dir.path().join("logs")),
+                images: Some(dir.path().join("images")),
+                data_root: Some(dir.path().join("root")),
+                refresh_prices: false,
+                ..HostConfig::desktop()
+            },
+            sink,
+        )
+        .unwrap();
+        let ctx = Ctx {
+            host,
+            events: events_tx,
+            allowed_origins: Arc::default(),
+            web_dir: dir.path().join("web"),
+            gate: Gate::default(),
+            security: Some(Arc::clone(&sec)),
+        };
+        let subnet = Subnet {
+            addr: Ipv4Addr::LOCALHOST,
+            mask: Ipv4Addr::new(255, 0, 0, 0),
+        };
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let pair_timeout = Duration::from_millis(150);
+        let app = router_with_pair_timeout(ctx, subnet, pair_timeout)
+            .into_make_service_with_connect_info::<SocketAddr>();
+        let srv = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        // 1. Slow disk write exceeding `pair_timeout` still completes and returns 200 with token.
+        let mut offer = sec.start_pairing().unwrap();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let entered_tx = parking_lot::Mutex::new(Some(entered_tx));
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = parking_lot::Mutex::new(release_rx);
+        sec.set_before_save_hook(Some(Arc::new(move || {
+            if let Some(tx) = entered_tx.lock().take() {
+                let _ = tx.send(());
+            }
+            let _ = release_rx.lock().recv();
+        })));
+
+        let body = json!({ "key": offer.key, "name": "Slow Disk iPhone" }).to_string();
+        let req_task = tokio::spawn(async move {
+            http(
+                addr,
+                "POST /v1/pair HTTP/1.1\r\nContent-Type: application/json",
+                &body,
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), entered_rx)
+            .await
+            .expect("redeem did not reach disk write")
+            .unwrap();
+        // Wait well past `pair_timeout` while disk write is still blocked.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !req_task.is_finished(),
+            "slow redeem must not time out with 408"
+        );
+        // Verify read queries remain unblocked during slow disk write.
+        assert!(sec.devices().is_empty());
+
+        sec.set_before_save_hook(None);
+        release_tx.send(()).unwrap();
+
+        let (status, head, resp_body) = tokio::time::timeout(Duration::from_secs(2), req_task)
+            .await
+            .expect("pair request did not finish")
+            .unwrap();
+        assert_eq!(status, 200, "{resp_body}");
+        assert!(head.contains("cache-control: no-store"), "{head}");
+        let v: Value = serde_json::from_str(&resp_body).unwrap();
+        let token = v["result"]["token"].as_str().unwrap();
+        let dev_id = v["result"]["deviceId"].as_str().unwrap();
+        assert_eq!(sec.verify(token).unwrap().0, dev_id);
+        assert!(matches!(
+            offer.outcome.try_recv().unwrap(),
+            crate::lan::pairing::PairOutcome::Paired(_)
+        ));
+        assert!(captured.lock().iter().any(|e| matches!(
+            e,
+            HostEvent::LanDevices {
+                paired_offer: Some(id),
+                ..
+            } if id == &offer.id
+        )));
+
+        // 2. Slow body (stalled before body completes) still returns 408 and does NOT consume offer.
+        let offer2 = sec.start_pairing().unwrap();
+        let mut slow = tokio::net::TcpStream::connect(addr).await.unwrap();
+        slow.write_all(
+            format!(
+                "POST /v1/pair HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{{\"key\":\"{}",
+                &offer2.key[..4]
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        slow.flush().await.unwrap();
+        let mut out = String::new();
+        tokio::time::timeout(Duration::from_secs(2), slow.read_to_string(&mut out))
+            .await
+            .expect("stalled body was not timed out")
+            .unwrap();
+        assert!(out.starts_with("HTTP/1.1 408"), "{out}");
+        assert!(
+            out.to_ascii_lowercase().contains("connection: close"),
+            "{out}"
+        );
+        assert!(
+            sec.has_active_pairing(),
+            "timed-out body must not consume offer"
+        );
+        assert_eq!(sec.devices().len(), 1);
+
+        srv.abort();
+        let _ = srv.await;
+    }
+
+    /// Regression (Item 5): revoking a device while post-upgrade `touch` is blocked on disk I/O
+    /// immediately closes its WebSocket without waiting for `touch` or sending `hello`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ws_revoked_during_slow_touch_closes_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+        let offer = sec.start_pairing().unwrap();
+        let paired = sec.redeem(&offer.key, "iPhone").unwrap();
+        let (dev_id, revoke) = sec.verify(&paired.token).unwrap();
+
+        let (events_tx, sink) = event_channel();
+        let host = Host::start(
+            HostConfig {
+                cache_dir: dir.path().join("cache"),
+                settings_path: dir.path().join("settings.json"),
+                ccrpc_logs: Some(dir.path().join("logs")),
+                images: Some(dir.path().join("images")),
+                data_root: Some(dir.path().join("root")),
+                refresh_prices: false,
+                ..HostConfig::desktop()
+            },
+            sink,
+        )
+        .unwrap();
+        let ctx = Ctx {
+            host,
+            events: events_tx,
+            allowed_origins: Arc::default(),
+            web_dir: dir.path().join("web"),
+            gate: Gate::default(),
+            security: Some(Arc::clone(&sec)),
+        };
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let entered_tx = parking_lot::Mutex::new(Some(entered_tx));
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = parking_lot::Mutex::new(release_rx);
+        sec.set_before_save_hook(Some(Arc::new(move || {
+            if let Some(tx) = entered_tx.lock().take() {
+                let _ = tx.send(());
+            }
+            let _ = release_rx.lock().recv();
+        })));
+
+        let authed = AuthedDevice {
+            id: dev_id,
+            revoke: revoke.clone(),
+        };
+        let app = Router::new()
+            .route(
+                "/v1/events",
+                get(move |ws: WebSocketUpgrade, State(ctx): State<Ctx>| {
+                    let authed = authed.clone();
+                    async move {
+                        let rx = ctx.events.subscribe();
+                        ws.on_upgrade(move |socket| run_ws_session(socket, ctx, rx, Some(authed)))
+                    }
+                }),
+            )
+            .with_state(ctx);
+
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let srv = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let (mut ws, resp) = tokio_tungstenite::connect_async(format!("ws://{addr}/v1/events"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SWITCHING_PROTOCOLS);
+
+        // Wait until `run_ws_session` is blocked inside `sec.touch`.
+        tokio::time::timeout(Duration::from_secs(2), entered_rx)
+            .await
+            .expect("touch did not start")
+            .unwrap();
+
+        // Revoke while `touch` is still blocked; the WebSocket must drop immediately without `hello`.
+        revoke.revoke();
+        match tokio::time::timeout(Duration::from_secs(1), ws.next())
+            .await
+            .expect("ws did not close immediately when revoked during touch")
+        {
+            None | Some(Err(_)) => {}
+            Some(Ok(msg)) => panic!("revoked ws unexpectedly sent frame: {msg:?}"),
+        }
+
+        sec.set_before_save_hook(None);
+        let _ = release_tx.send(());
+        srv.abort();
+        let _ = srv.await;
     }
 }

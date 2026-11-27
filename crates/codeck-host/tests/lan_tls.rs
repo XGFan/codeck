@@ -12,7 +12,10 @@ use codeck_host::lan::net::Subnet;
 use codeck_host::lan::pairing::PairOutcome;
 use codeck_host::lan::security::LanSecurity;
 use codeck_host::lan::server::{Ctx, Gate, event_channel, router, router_with_pair_timeout};
-use codeck_host::lan::tls::{TlsListener, cert_fingerprint};
+use codeck_host::lan::tls::{
+    ConnLimits, IDLE_READ_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, TlsListener,
+    cert_fingerprint,
+};
 use codeck_host::{Host, HostConfig, HostEvent};
 use futures_util::StreamExt;
 use parking_lot::Mutex;
@@ -858,4 +861,186 @@ async fn tls_per_ip_connection_limit_and_slow_pair_body_timeout() {
 
     pair_srv.abort();
     let _ = pair_srv.await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tls_shared_quota_across_two_listeners_and_idle_read_timeout() {
+    assert_eq!(MAX_CONNECTIONS, 128);
+    assert_eq!(MAX_CONNECTIONS_PER_IP, 16);
+    assert_eq!(IDLE_READ_TIMEOUT, Duration::from_secs(75));
+
+    let dir = tempfile::tempdir().unwrap();
+    let sec = Arc::new(LanSecurity::open(dir.path().join("sec")).unwrap());
+    let cert = sec.ensure_cert().unwrap();
+    let fp = cert.fingerprint.clone();
+
+    // 1. Two listeners sharing one ConnLimits budget (total 3, per-IP 2).
+    let shared = ConnLimits::new(3, 2);
+    let tcp1 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr1 = tcp1.local_addr().unwrap();
+    let tcp2 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr2 = tcp2.local_addr().unwrap();
+
+    let l1 = TlsListener::with_shared_limits(
+        tcp1,
+        cert.server_config(),
+        Arc::clone(&shared),
+        IDLE_READ_TIMEOUT,
+    );
+    let l2 = TlsListener::with_shared_limits(
+        tcp2,
+        cert.server_config(),
+        Arc::clone(&shared),
+        IDLE_READ_TIMEOUT,
+    );
+    let srv1 = tokio::spawn(async move {
+        let app = axum::Router::new().route("/ping", get(|| async { "ok1" }));
+        let _ = axum::serve(l1, app).await;
+    });
+    let srv2 = tokio::spawn(async move {
+        let app = axum::Router::new().route("/ping", get(|| async { "ok2" }));
+        let _ = axum::serve(l2, app).await;
+    });
+
+    // 1st connection on listener 1 + 2nd on listener 2 exhaust the shared per-IP quota (2).
+    let c1 = connect_tls(addr1, &fp).await.unwrap();
+    let c2 = connect_tls(addr2, &fp).await.unwrap();
+    let third_on_1 = tokio::time::timeout(Duration::from_secs(2), connect_tls(addr1, &fp))
+        .await
+        .expect("3rd connection on listener 1 should fail promptly");
+    assert!(third_on_1.is_err());
+    let third_on_2 = tokio::time::timeout(Duration::from_secs(2), connect_tls(addr2, &fp))
+        .await
+        .expect("3rd connection on listener 2 should fail promptly");
+    assert!(third_on_2.is_err());
+
+    // Dropping the connection on listener 1 frees budget for listener 2.
+    drop(c1);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Ok(_c3) = connect_tls(addr2, &fp).await {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "shared permit was not released across listeners"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(c2);
+    srv1.abort();
+    srv2.abort();
+    let _ = srv1.await;
+    let _ = srv2.await;
+
+    // 2. Idle read timeout (short injectable 250ms): silent connection is closed; active reads reset it.
+    let idle_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let idle_addr = idle_tcp.local_addr().unwrap();
+    let idle_listener = TlsListener::with_shared_limits(
+        idle_tcp,
+        cert.server_config(),
+        ConnLimits::new(16, 16),
+        Duration::from_millis(250),
+    );
+    let idle_srv = tokio::spawn(async move {
+        let app = axum::Router::new().route("/ping", get(|| async { "ok" }));
+        let _ = axum::serve(idle_listener, app).await;
+    });
+
+    // Case A: connection sends nothing after TLS handshake -> closed by server after idle timeout.
+    let mut silent = connect_tls(idle_addr, &fp).await.unwrap();
+    let mut buf = [0u8; 16];
+    let n = tokio::time::timeout(Duration::from_secs(2), silent.read(&mut buf))
+        .await
+        .expect("idle TLS connection was not closed after idle read timeout");
+    assert!(
+        matches!(n, Ok(0) | Err(_)),
+        "expected EOF or error on idle close, got {n:?}"
+    );
+
+    // Case B: periodic reads (< 250ms apart) keep the connection alive past 250ms, then idling closes it.
+    let mut active = connect_tls(idle_addr, &fp).await.unwrap();
+    let req = format!("GET /ping HTTP/1.1\r\nHost: {idle_addr}\r\nConnection: keep-alive\r\n\r\n");
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        active.write_all(req.as_bytes()).await.unwrap();
+        active.flush().await.unwrap();
+        let mut resp = [0u8; 256];
+        let n = tokio::time::timeout(Duration::from_secs(2), active.read(&mut resp))
+            .await
+            .expect("active connection timed out unexpectedly")
+            .unwrap();
+        let text = String::from_utf8_lossy(&resp[..n]);
+        assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+    }
+    // Now stop sending; server must close the idle keep-alive connection.
+    let n = tokio::time::timeout(Duration::from_secs(2), active.read(&mut buf))
+        .await
+        .expect("keep-alive connection was not closed after going idle");
+    assert!(
+        matches!(n, Ok(0) | Err(_)),
+        "expected EOF or error after going idle, got {n:?}"
+    );
+
+    idle_srv.abort();
+    let _ = idle_srv.await;
+}
+
+#[test]
+fn cli_rejects_empty_root_and_untrusted_state_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let bin = env!("CARGO_BIN_EXE_codeck-host");
+
+    // Empty, `/`, and `//` must fail with exit code 1 for daemon and all CLI subcommands.
+    let cases: &[&[&str]] = &[
+        &["--state-dir", ""],
+        &["--state-dir", "/"],
+        &["--state-dir", "//"],
+        &["pair", "--state-dir", ""],
+        &["devices", "--state-dir", "/"],
+        &["unpair", "abc123", "--state-dir", "//"],
+    ];
+    for args in cases {
+        let out = Command::new(bin).args(*args).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "args={args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("状态目录不能是空路径或根目录"),
+            "args={args:?}, stderr={stderr}"
+        );
+    }
+
+    // 0777 ancestor without sticky bit must be rejected with exit code 1 naming that ancestor.
+    let dir = tempfile::tempdir().unwrap();
+    let shared = dir.path().join("world");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let bad_state = shared.join("state");
+    let out = Command::new(bin)
+        .args(["--listen", "127.0.0.1", "--state-dir"])
+        .arg(&bad_state)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("sticky"), "{stderr}");
+    assert!(stderr.contains(&shared.display().to_string()), "{stderr}");
+    assert!(!bad_state.exists());
+
+    // Group-writable settings.json in daemon state dir must be rejected with exit code 1.
+    let ok_state = dir.path().join("daemon-state");
+    std::fs::create_dir(&ok_state).unwrap();
+    let settings = ok_state.join("settings.json");
+    std::fs::write(&settings, "{}").unwrap();
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o660)).unwrap();
+    let out = Command::new(bin)
+        .args(["--listen", "127.0.0.1", "--state-dir"])
+        .arg(&ok_state)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("组或其他用户写入"), "{stderr}");
 }

@@ -208,7 +208,13 @@ fn fail(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
+fn resolve_state_dir(raw: Option<PathBuf>) -> PathBuf {
+    let raw = raw.unwrap_or_else(default_state_dir);
+    control::normalize_state_dir(&raw).unwrap_or_else(|e| fail(e))
+}
+
 fn connect_control(state_dir: &Path) -> UnixStream {
+    control::verify_state_dir_ancestors(state_dir).unwrap_or_else(|e| fail(e));
     let sock_path = control::check_socket_path_len(state_dir).unwrap_or_else(|e| fail(e));
     let stream = UnixStream::connect(&sock_path).unwrap_or_else(|_| {
         eprintln!("codeck-host 没有在运行（{}）", state_dir.display());
@@ -329,16 +335,15 @@ fn main() {
         }
     };
     match cmd {
-        Command::Pair { state_dir } => run_pair(state_dir.unwrap_or_else(default_state_dir)),
-        Command::Devices { state_dir } => run_devices(state_dir.unwrap_or_else(default_state_dir)),
-        Command::Unpair { id, state_dir } => {
-            run_unpair(state_dir.unwrap_or_else(default_state_dir), id)
-        }
+        Command::Pair { state_dir } => run_pair(resolve_state_dir(state_dir)),
+        Command::Devices { state_dir } => run_devices(resolve_state_dir(state_dir)),
+        Command::Unpair { id, state_dir } => run_unpair(resolve_state_dir(state_dir), id),
         Command::Daemon(args) => run_daemon(args),
     }
 }
 
 fn run_daemon(args: Args) {
+    let state_dir = resolve_state_dir(args.state_dir);
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
@@ -368,13 +373,14 @@ fn run_daemon(args: Args) {
             );
         }
     }
-    let state_dir = args.state_dir.unwrap_or_else(default_state_dir);
     let web_dir = args.web_dir.unwrap_or_else(default_web_dir);
     // Check control.sock path length before locking or binding listeners.
     control::check_socket_path_len(&state_dir).unwrap_or_else(|e| fail(e));
 
-    // Validates state_dir (lstat, 0700, owner), acquires daemon.lock, and loads devices.json.
+    // Validates ancestors & state_dir (lstat, 0700, owner), acquires daemon.lock, and loads devices.json.
     let sec = Arc::new(security::LanSecurity::open(state_dir.clone()).unwrap_or_else(|e| fail(e)));
+    let settings_path = state_dir.join(codeck_host::settings::SETTINGS_FILE);
+    codeck_host::settings::verify_file_trust(&settings_path).unwrap_or_else(|e| fail(e));
     let serving_security = if needs_tls_cert(follow_network, &subnets) {
         let cert = sec
             .ensure_cert()
@@ -389,7 +395,7 @@ fn run_daemon(args: Args) {
     let host = Host::start(
         HostConfig {
             cache_dir: state_dir.join("cache"),
-            settings_path: state_dir.join(codeck_host::settings::SETTINGS_FILE),
+            settings_path,
             ccrpc_logs: Some(state_dir.join("logs/ccrpc")),
             images: Some(state_dir.join("images")),
             data_root: args.data_root,

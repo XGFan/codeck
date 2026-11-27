@@ -7,8 +7,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -33,10 +33,12 @@ const KEY_FILE: &str = "key.pem";
 const CERT_VALID_DAYS: u64 = 3653;
 /// Cap concurrent in-flight TLS handshakes so stalled peers cannot exhaust file descriptors.
 const MAX_HANDSHAKES: usize = 64;
-/// Cap total active connections (handshaking + established) on a TLS listener.
-pub const MAX_CONNECTIONS: usize = 256;
-/// Cap active connections (handshaking + established) from one source IP on a TLS listener.
-pub const MAX_CONNECTIONS_PER_IP: usize = 32;
+/// Cap total active TLS connections (handshaking + established) shared across all listeners in this process.
+pub const MAX_CONNECTIONS: usize = 128;
+/// Cap active TLS connections (handshaking + established) from one source IP across all listeners in this process.
+pub const MAX_CONNECTIONS_PER_IP: usize = 16;
+/// Close established TLS connections that receive no incoming bytes for this duration (iPhone WebSockets ping every 20s).
+pub const IDLE_READ_TIMEOUT: Duration = Duration::from_secs(75);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -259,7 +261,8 @@ fn build_server_config(
     Ok(Arc::new(cfg))
 }
 
-struct ConnLimits {
+/// Shared connection budget across TLS listeners (total and per-source-IP).
+pub struct ConnLimits {
     max_total: usize,
     max_per_ip: usize,
     counts: Mutex<ConnCounts>,
@@ -276,8 +279,18 @@ struct ConnGuard {
     ip: IpAddr,
 }
 
+static PROCESS_CONN_LIMITS: OnceLock<Arc<ConnLimits>> = OnceLock::new();
+
+/// Process-wide shared TLS connection quota (`MAX_CONNECTIONS` total, `MAX_CONNECTIONS_PER_IP` per source IP).
+pub fn process_conn_limits() -> Arc<ConnLimits> {
+    Arc::clone(
+        PROCESS_CONN_LIMITS
+            .get_or_init(|| ConnLimits::new(MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP)),
+    )
+}
+
 impl ConnLimits {
-    fn new(max_total: usize, max_per_ip: usize) -> Arc<Self> {
+    pub fn new(max_total: usize, max_per_ip: usize) -> Arc<Self> {
         Arc::new(Self {
             max_total,
             max_per_ip,
@@ -314,10 +327,24 @@ impl Drop for ConnGuard {
     }
 }
 
-/// A [`TlsStream`] whose lifetime holds a connection-limit permit until dropped.
+/// A [`TlsStream`] whose lifetime holds a connection-limit permit until dropped and enforces an
+/// idle read deadline reset whenever any decrypted byte is read.
 pub struct TrackedTlsStream {
     inner: TlsStream<TcpStream>,
     _guard: ConnGuard,
+    idle_timeout: Duration,
+    idle_sleep: Pin<Box<tokio::time::Sleep>>,
+}
+
+impl TrackedTlsStream {
+    fn new(inner: TlsStream<TcpStream>, guard: ConnGuard, idle_timeout: Duration) -> Self {
+        Self {
+            inner,
+            _guard: guard,
+            idle_timeout,
+            idle_sleep: Box::pin(tokio::time::sleep(idle_timeout)),
+        }
+    }
 }
 
 impl AsyncRead for TrackedTlsStream {
@@ -326,7 +353,24 @@ impl AsyncRead for TrackedTlsStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_read(cx, buf)
+        let before = buf.filled().len();
+        match Pin::new(&mut self.inner).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                if buf.filled().len() > before {
+                    let deadline = tokio::time::Instant::now() + self.idle_timeout;
+                    self.idle_sleep.as_mut().reset(deadline);
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => match self.idle_sleep.as_mut().poll(cx) {
+                Poll::Ready(()) => Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "TLS connection idle read timeout",
+                ))),
+                Poll::Pending => Poll::Pending,
+            },
+        }
     }
 }
 
@@ -369,11 +413,12 @@ pub struct TlsListener {
     acceptor: TlsAcceptor,
     handshakes: FuturesUnordered<HandshakeFuture>,
     limits: Arc<ConnLimits>,
+    idle_read_timeout: Duration,
 }
 
 impl TlsListener {
     pub fn new(tcp: TcpListener, config: Arc<ServerConfig>) -> Self {
-        Self::with_limits(tcp, config, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP)
+        Self::with_shared_limits(tcp, config, process_conn_limits(), IDLE_READ_TIMEOUT)
     }
 
     pub fn with_limits(
@@ -382,11 +427,26 @@ impl TlsListener {
         max_connections: usize,
         max_per_ip: usize,
     ) -> Self {
+        Self::with_shared_limits(
+            tcp,
+            config,
+            ConnLimits::new(max_connections, max_per_ip),
+            IDLE_READ_TIMEOUT,
+        )
+    }
+
+    pub fn with_shared_limits(
+        tcp: TcpListener,
+        config: Arc<ServerConfig>,
+        limits: Arc<ConnLimits>,
+        idle_read_timeout: Duration,
+    ) -> Self {
         Self {
             tcp,
             acceptor: TlsAcceptor::from(config),
             handshakes: FuturesUnordered::new(),
-            limits: ConnLimits::new(max_connections, max_per_ip),
+            limits,
+            idle_read_timeout,
         }
     }
 }
@@ -413,9 +473,10 @@ impl axum::serve::Listener for TlsListener {
                                 continue;
                             };
                             let acceptor = self.acceptor.clone();
+                            let idle_timeout = self.idle_read_timeout;
                             self.handshakes.push(Box::pin(async move {
                                 match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
-                                    Ok(Ok(tls)) => Some((TrackedTlsStream { inner: tls, _guard: guard }, peer)),
+                                    Ok(Ok(tls)) => Some((TrackedTlsStream::new(tls, guard, idle_timeout), peer)),
                                     Ok(Err(e)) => {
                                         tracing::debug!("tls handshake from {peer} failed: {e}");
                                         None

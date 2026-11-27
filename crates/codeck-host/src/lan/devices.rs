@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -34,12 +34,21 @@ pub struct PairedDevice {
 /// On-disk record including the hashed bearer token; kept separate from [`PairedDevice`].
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-struct StoredDevice {
+pub(crate) struct StoredDevice {
     id: String,
     name: String,
     paired_at: i64,
     last_seen_at: Option<i64>,
     token_sha256: String,
+}
+
+/// Prepared device addition awaiting atomic persistence before committing in memory.
+pub(crate) struct PendingAdd {
+    pub next: Vec<StoredDevice>,
+    pub prev: Vec<StoredDevice>,
+    pub id: String,
+    pub public: PairedDevice,
+    pub token: String,
 }
 
 impl StoredDevice {
@@ -146,9 +155,12 @@ impl Devices {
         self.devices.iter().map(StoredDevice::to_public).collect()
     }
 
-    /// Generates a new device id + bearer token, persists `devices.json` atomically, and only then
-    /// commits the entry in memory.
-    pub fn add(&mut self, name: &str, now_ms: i64) -> Result<(PairedDevice, String), String> {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Generates a new device id + bearer token and builds the next snapshot without mutating `self`.
+    pub(crate) fn prepare_add(&self, name: &str, now_ms: i64) -> Result<PendingAdd, String> {
         let id = loop {
             let candidate = hex_lower(&random_bytes::<6>()?);
             if !self.devices.iter().any(|d| d.id == candidate) {
@@ -164,15 +176,61 @@ impl Devices {
             last_seen_at: None,
             token_sha256: sha256_hex(token.as_bytes()),
         };
-
-        let mut next = self.devices.clone();
-        next.push(record.clone());
-        save_atomic(&self.path, &next)?;
-
+        let prev = self.devices.clone();
+        let mut next = prev.clone();
         let public = record.to_public();
+        next.push(record);
+        Ok(PendingAdd {
+            next,
+            prev,
+            id,
+            public,
+            token,
+        })
+    }
+
+    /// Commits a previously prepared addition after `save_snapshot` succeeded.
+    pub(crate) fn commit_add(&mut self, next: Vec<StoredDevice>, id: String) {
         self.devices = next;
         self.revokes.insert(id, DeviceRevoke::default());
-        Ok((public, token))
+    }
+
+    /// Builds the next snapshot with `id` removed without mutating `self`.
+    pub(crate) fn prepare_remove(&self, id: &str) -> Option<(PairedDevice, Vec<StoredDevice>)> {
+        let pos = self.devices.iter().position(|d| d.id == id)?;
+        let mut next = self.devices.clone();
+        let removed = next.remove(pos).to_public();
+        Some((removed, next))
+    }
+
+    /// Commits a previously prepared removal and fires its revocation signal.
+    pub(crate) fn commit_remove(&mut self, id: &str, next: Vec<StoredDevice>) {
+        self.devices = next;
+        if let Some(revoke) = self.revokes.remove(id) {
+            revoke.revoke();
+        }
+    }
+
+    /// Builds the next snapshot with updated `lastSeenAt` without mutating `self`.
+    pub(crate) fn prepare_touch(&self, id: &str, now_ms: i64) -> Option<Vec<StoredDevice>> {
+        let pos = self.devices.iter().position(|d| d.id == id)?;
+        let mut next = self.devices.clone();
+        next[pos].last_seen_at = Some(now_ms);
+        Some(next)
+    }
+
+    /// Commits a previously prepared touch after `save_snapshot` succeeded.
+    pub(crate) fn commit_touch(&mut self, next: Vec<StoredDevice>) {
+        self.devices = next;
+    }
+
+    /// Generates a new device id + bearer token, persists `devices.json` atomically, and only then
+    /// commits the entry in memory.
+    pub fn add(&mut self, name: &str, now_ms: i64) -> Result<(PairedDevice, String), String> {
+        let pending = self.prepare_add(name, now_ms)?;
+        save_atomic(&self.path, &pending.next)?;
+        self.commit_add(pending.next, pending.id);
+        Ok((pending.public, pending.token))
     }
 
     /// Verifies a bearer token, returning the device id and its revocation handle.
@@ -189,17 +247,11 @@ impl Devices {
     /// Removes a device, persisting first and then firing its revocation signal. Returns `Ok(None)`
     /// when `id` is not present.
     pub fn remove_device(&mut self, id: &str) -> Result<Option<PairedDevice>, String> {
-        let Some(pos) = self.devices.iter().position(|d| d.id == id) else {
+        let Some((removed, next)) = self.prepare_remove(id) else {
             return Ok(None);
         };
-        let mut next = self.devices.clone();
-        let removed = next.remove(pos).to_public();
         save_atomic(&self.path, &next)?;
-
-        self.devices = next;
-        if let Some(revoke) = self.revokes.remove(id) {
-            revoke.revoke();
-        }
+        self.commit_remove(id, next);
         Ok(Some(removed))
     }
 
@@ -212,16 +264,14 @@ impl Devices {
     /// Updates `lastSeenAt` for `id`, committing only after persistence succeeds; write failures
     /// are logged and ignored so connections stay up.
     pub fn touch(&mut self, id: &str, now_ms: i64) -> bool {
-        let Some(pos) = self.devices.iter().position(|d| d.id == id) else {
+        let Some(next) = self.prepare_touch(id, now_ms) else {
             return false;
         };
-        let mut next = self.devices.clone();
-        next[pos].last_seen_at = Some(now_ms);
         if let Err(e) = save_atomic(&self.path, &next) {
             tracing::warn!("failed to persist devices.json after touch: {e}");
             return false;
         }
-        self.devices = next;
+        self.commit_touch(next);
         true
     }
 }
@@ -250,10 +300,22 @@ fn read_devices_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
     if meta.uid() != euid {
         return Err(format!("设备列表的属主不是当前用户（{}）", path.display()));
     }
+    let mode = meta.permissions().mode() & 0o777;
+    if (mode & 0o022) != 0 {
+        return Err(format!(
+            "设备列表可被组或其他用户写入（当前 {:04o}）：{}",
+            mode,
+            path.display()
+        ));
+    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|e| format!("读取设备列表失败（{}）：{e}", path.display()))?;
     Ok(Some(bytes))
+}
+
+pub(crate) fn save_snapshot(path: &Path, devices: &[StoredDevice]) -> Result<(), String> {
+    save_atomic(path, devices)
 }
 
 fn save_atomic(path: &Path, devices: &[StoredDevice]) -> Result<(), String> {
@@ -349,5 +411,23 @@ mod tests {
 
         let err = Devices::load(dir.path()).err().unwrap();
         assert!(err.contains("符号链接"), "{err}");
+    }
+
+    #[test]
+    fn load_rejects_group_or_other_writable_devices_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DEVICES_FILE);
+        std::fs::write(&path, r#"{"devices":[]}"#).unwrap();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o660)).unwrap();
+        let err = Devices::load(dir.path()).err().unwrap();
+        assert!(err.contains("组或其他用户写入"), "{err}");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o602)).unwrap();
+        let err = Devices::load(dir.path()).err().unwrap();
+        assert!(err.contains("组或其他用户写入"), "{err}");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(Devices::load(dir.path()).unwrap().list().is_empty());
     }
 }

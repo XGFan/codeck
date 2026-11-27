@@ -203,16 +203,20 @@ impl Pairing {
     /// Checks whether `key` matches the current unexpired offer without consuming it yet, so the
     /// caller can persist `devices.json` before committing the redemption.
     pub fn check(&mut self, key: &str, now: Instant) -> bool {
-        let Some(offer) = self.current.as_ref() else {
-            return false;
-        };
+        self.check_offer_id(key, now).is_some()
+    }
+
+    /// Like [`Self::check`], returning the matching active offer's id so the caller can commit only
+    /// that exact offer after releasing the lock for disk I/O.
+    pub(crate) fn check_offer_id(&mut self, key: &str, now: Instant) -> Option<String> {
+        let offer = self.current.as_ref()?;
         if now >= offer.deadline {
             if let Some(expired) = self.current.take() {
                 expired.expire();
             }
-            return false;
+            return None;
         }
-        eq_fixed_bytes(offer.key.as_bytes(), key.as_bytes())
+        eq_fixed_bytes(offer.key.as_bytes(), key.as_bytes()).then(|| offer.id.clone())
     }
 
     /// Consumes the active offer after device persistence succeeded, notifying its waiter and
@@ -223,6 +227,19 @@ impl Pairing {
             let _ = tx.send(PairOutcome::Paired(device));
         }
         Some(offer.id)
+    }
+
+    /// Consumes the active offer only if its id still matches `expected_id`.
+    pub(crate) fn complete_if_id(
+        &mut self,
+        expected_id: &str,
+        device: PairedDevice,
+    ) -> Option<String> {
+        if self.current.as_ref().is_some_and(|o| o.id == expected_id) {
+            self.complete(device)
+        } else {
+            None
+        }
     }
 }
 
