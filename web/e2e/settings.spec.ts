@@ -204,6 +204,110 @@ test("局域网已配对设备：开关关着也列出已有设备，移除需�
   await expect(rows.first()).toContainText("备用 iPhone");
 });
 
+test("局域网已配对设备：首次读取延迟返回旧列表期间收到事件，最终显示新列表", async ({ page }) => {
+  const now = Date.now();
+  await page.addInitScript(
+    (lanDevices) => {
+      window.__cvCcrpcPreset = { lanDevices, holdLanDevices: true };
+    },
+    [{ id: "dev000000001", name: "旧 iPhone", pairedAt: now - 3_600_000, lastSeenAt: null }],
+  );
+  await openGeneral(page);
+
+  // Wait until both the mount fetch and post-subscribe refresh are held with the stale snapshot,
+  // while TanStack Query still has no cached data.
+  await expect.poll(() => page.evaluate(() => window.__cvCcrpc!.heldLanDevices)).toBe(2);
+  await expect(page.getByTestId("lan-devices")).toHaveCount(0);
+
+  // Allow subsequent reads to succeed immediately, mutate the device list, and emit the event
+  // while the initial stale reads are still in flight.
+  await page.evaluate(() => {
+    const p = window.__cvCcrpc!;
+    p.holdLanDevices = false;
+    p.lanDevices = [...p.lanDevices, { id: "dev000000002", name: "新 iPhone", pairedAt: Date.now(), lastSeenAt: null }];
+    p.lanTouchDevice("dev000000001");
+  });
+
+  const rows = page.getByTestId("lan-device-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("旧 iPhone");
+  await expect(rows.nth(0)).toContainText(/最近连接 \S+/);
+  await expect(rows.nth(1)).toContainText("新 iPhone");
+
+  // Releasing the delayed stale fetches afterwards must not clobber the newer list.
+  await page.evaluate(async () => {
+    window.__cvCcrpc!.releaseLanDevices();
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText(/最近连接 \S+/);
+  await expect(rows.nth(1)).toContainText("新 iPhone");
+});
+
+test("局域网已配对设备：订阅建立前漏掉的事件在订阅完成后补刷出来", async ({ page }) => {
+  const now = Date.now();
+  await page.addInitScript(
+    (lanDevices) => {
+      window.__cvCcrpcPreset = { lanDevices, holdLanSubscribe: true };
+    },
+    [{ id: "dev000000001", name: "旧 iPhone", pairedAt: now - 3_600_000, lastSeenAt: null }],
+  );
+  await openGeneral(page);
+
+  const rows = page.getByTestId("lan-device-row");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("从未连接");
+
+  // Event fires before `onLanDevices` finishes registering, so the listener misses it.
+  await page.evaluate(() => {
+    const p = window.__cvCcrpc!;
+    p.lanDevices = [
+      ...p.lanDevices,
+      { id: "dev000000002", name: "订阅前配对的 iPhone", pairedAt: Date.now(), lastSeenAt: null },
+    ];
+    p.lanTouchDevice("dev000000001");
+  });
+  await expect(rows).toHaveCount(1);
+
+  // Once subscription completes, the post-subscribe refresh picks up the missed update.
+  await page.evaluate(() => window.__cvCcrpc!.releaseLanSubscribe());
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText(/最近连接 \S+/);
+  await expect(rows.nth(1)).toContainText("订阅前配对的 iPhone");
+});
+
+test("局域网配对：订阅失败后重新生成先重连订阅，持续失败显示原因，恢复后可完成配对", async ({ page }) => {
+  await openGeneral(page);
+  await page.getByTestId("lan-access-true").click();
+  await expect(page.getByTestId("lan-pair-button")).toBeVisible();
+
+  await page.evaluate(() => void (window.__cvCcrpc!.lanSubscribeFails = "订阅设备事件失败"));
+  await page.getByTestId("lan-pair-button").click();
+
+  const modal = page.getByTestId("lan-pair-dialog");
+  await expect(modal.getByTestId("lan-pair-error")).toHaveText("订阅设备事件失败");
+  await expect(modal.getByTestId("lan-pair-qr")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__cvCcrpc!.lanOffer)).toBeNull();
+
+  // Retry while subscription still fails: must not call `lanPairStart`, and shows the latest error.
+  await page.evaluate(() => void (window.__cvCcrpc!.lanSubscribeFails = "事件通道仍不可用"));
+  await modal.getByTestId("lan-pair-regenerate").click();
+  await expect(modal.getByTestId("lan-pair-error")).toHaveText("事件通道仍不可用");
+  await expect(modal.getByTestId("lan-pair-qr")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__cvCcrpc!.lanOffer)).toBeNull();
+
+  // Subscription recovers: regenerate subscribes first, then fetches offer and receives the redeem event.
+  await page.evaluate(() => void (window.__cvCcrpc!.lanSubscribeFails = undefined));
+  await modal.getByTestId("lan-pair-regenerate").click();
+  await expect(modal.getByTestId("lan-pair-error")).toHaveCount(0);
+  await expect(modal.getByTestId("lan-pair-qr")).toBeVisible();
+
+  await page.evaluate(() => window.__cvCcrpc!.lanRedeem("恢复后的 iPhone"));
+  await expect(modal.getByTestId("lan-pair-success")).toHaveText("已配对 恢复后的 iPhone");
+  await expect(modal).toHaveCount(0, { timeout: 5000 });
+  await expect(page.getByTestId("lan-device-row").first()).toContainText("恢复后的 iPhone");
+});
+
 test("界面主题：自动跟随系统，浅色 / 暗色固定，选择会被记住", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");

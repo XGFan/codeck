@@ -214,6 +214,18 @@ export interface CcrpcProbe {
   lanPairFails?: string;
   /** Set by a test: the next `lanRemoveDevice` is refused with this. */
   lanRemoveFails?: string;
+  /** Set by a test: `onLanDevices` rejects with this message until cleared. */
+  lanSubscribeFails?: string;
+  /** Set by a test: while true, `lanDevices()` holds its captured snapshot until `releaseLanDevices()`. */
+  holdLanDevices?: boolean;
+  /** Number of `lanDevices()` calls currently waiting on `releaseLanDevices()`. */
+  heldLanDevices: number;
+  /** Resolves all held `lanDevices()` calls with their captured snapshots and clears `holdLanDevices`. */
+  releaseLanDevices: () => void;
+  /** Set by a test: while true, `onLanDevices()` waits until `releaseLanSubscribe()`. */
+  holdLanSubscribe?: boolean;
+  /** Resolves all held `onLanDevices()` registrations and clears `holdLanSubscribe`. */
+  releaseLanSubscribe: () => void;
   /** Set by a test: lifetime in ms for the next `lanPairStart` offer (consumed once). */
   lanOfferTtlMs?: number;
   /** Set by a test: next `lanPairStart` emits a redeem event for this device name before resolving (consumed once). */
@@ -262,6 +274,20 @@ const probe: CcrpcProbe = {
   lanDevices: [],
   lanOffer: null,
   lanCancelled: [],
+  heldLanDevices: 0,
+  releaseLanDevices: () => {
+    probe.holdLanDevices = false;
+    const pending = lanDevicesResolvers;
+    lanDevicesResolvers = [];
+    probe.heldLanDevices = 0;
+    for (const resolve of pending) resolve();
+  },
+  releaseLanSubscribe: () => {
+    probe.holdLanSubscribe = false;
+    const pending = lanSubscribeResolvers;
+    lanSubscribeResolvers = [];
+    for (const resolve of pending) resolve();
+  },
   lanRedeem: (name = "iPhone") => {
     const offer = probe.lanOffer;
     if (!offer) throw new Error("没有待配对的报价");
@@ -627,6 +653,8 @@ const MOCK_PAIR_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21" shape-rendering="crispEdges"><rect width="21" height="21" fill="#fff"/><path d="M1 1h7v7H1zM2 2v5h5V2zM3 3h3v3H3zM13 1h7v7h-7zM14 2v5h5V2zM15 3h3v3h-3zM1 13h7v7H1zM2 14v5h5v-5zM3 15h3v3H3zM11 11h3v3h-3zM16 15h4v4h-4z" fill="#000"/></svg>';
 let lanOfferSeq = 0;
 let lanDeviceSeq = 0;
+let lanDevicesResolvers: (() => void)[] = [];
+let lanSubscribeResolvers: (() => void)[] = [];
 
 function emitLanDevices(pairedOffer: string | null, pairedDevice: string | null) {
   const event: LanDevicesEvent = { devices: [...probe.lanDevices], pairedOffer, pairedDevice };
@@ -853,7 +881,14 @@ export function createMockCcrpc(): CcrpcApi {
       probe.lanCancelled.push(id);
       if (probe.lanOffer?.id === id) probe.lanOffer = null;
     },
-    lanDevices: async () => [...probe.lanDevices],
+    lanDevices: async () => {
+      const snapshot = [...probe.lanDevices];
+      if (probe.holdLanDevices) {
+        probe.heldLanDevices++;
+        await new Promise<void>((resolve) => lanDevicesResolvers.push(resolve));
+      }
+      return snapshot;
+    },
     lanRemoveDevice: async (id) => {
       if (probe.lanRemoveFails) {
         const why = probe.lanRemoveFails;
@@ -866,6 +901,12 @@ export function createMockCcrpc(): CcrpcApi {
         emitLanDevices(null, null);
       }
     },
-    onLanDevices: (cb) => subscribe(lanDevicesCbs, cb),
+    onLanDevices: async (cb) => {
+      if (probe.holdLanSubscribe) {
+        await new Promise<void>((resolve) => lanSubscribeResolvers.push(resolve));
+      }
+      if (probe.lanSubscribeFails) throw appError("internal", probe.lanSubscribeFails);
+      return subscribe(lanDevicesCbs, cb);
+    },
   };
 }

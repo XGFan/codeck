@@ -84,6 +84,25 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
       setError(null);
       setCopied(false);
       try {
+        if (!session.unlisten) {
+          // Subscribe to `lan-devices-event` before calling `lanPairStart` so a fast redeem is never
+          // missed, and so retrying after a subscription failure re-establishes the listener first.
+          const off = await api.onLanDevices((e) => {
+            if (!session.alive || session.paired || !e.pairedOffer) return;
+            const name = e.devices.find((d) => d.id === e.pairedDevice)?.name ?? "设备";
+            if (session.offerId != null) {
+              if (e.pairedOffer === session.offerId) markPaired(session, name);
+            } else {
+              // `lanPairStart` has not resolved yet: buffer until we learn the offer id.
+              session.pendingPaired.set(e.pairedOffer, name);
+            }
+          });
+          if (!session.alive || session.reqSeq !== seq) {
+            off();
+            return;
+          }
+          session.unlisten = off;
+        }
         const next = await api.lanPairStart();
         if (!session.alive || session.reqSeq !== seq) {
           // Closed or superseded while the RPC was in flight: drop the stale offer unless already redeemed.
@@ -119,31 +138,7 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
     setPairedName(null);
     setCopied(false);
 
-    // Subscribe to `lan-devices-event` before calling `lanPairStart` so a fast redeem is never missed.
-    void (async () => {
-      try {
-        const off = await api.onLanDevices((e) => {
-          if (!session.alive || session.paired || !e.pairedOffer) return;
-          const name = e.devices.find((d) => d.id === e.pairedDevice)?.name ?? "设备";
-          if (session.offerId != null) {
-            if (e.pairedOffer === session.offerId) markPaired(session, name);
-          } else {
-            // `lanPairStart` has not resolved yet: buffer until we learn the offer id.
-            session.pendingPaired.set(e.pairedOffer, name);
-          }
-        });
-        if (!session.alive) {
-          off();
-          return;
-        }
-        session.unlisten = off;
-        await requestOffer(session);
-      } catch (e) {
-        if (!session.alive) return;
-        setError(errorText(e));
-        setLoading(false);
-      }
-    })();
+    void requestOffer(session);
 
     return () => {
       session.alive = false;
@@ -155,7 +150,7 @@ export function PairDeviceDialog({ open, onOpenChange }: { open: boolean; onOpen
       session.offerId = null;
       if (id) void api.lanPairCancel(id);
     };
-  }, [open, markPaired, requestOffer]);
+  }, [open, requestOffer]);
 
   const remainingMs = offer ? Math.max(0, offer.expiresAt - now) : 0;
   const expired = offer != null && pairedName == null && remainingMs <= 0;
@@ -299,32 +294,54 @@ export function PairedDevicesList() {
     refetchOnMount: "always",
   });
 
+  const refreshDevices = useCallback(
+    async (isAlive?: () => boolean) => {
+      // Cancel before refetching: while the initial query has no cached data yet, TanStack Query
+      // ignores `cancelRefetch` and reuses the in-flight promise, which could settle with a stale
+      // snapshot taken before the event.
+      await qc.cancelQueries({ queryKey: queryKeys.lanDevices });
+      if (isAlive && !isAlive()) return;
+      await qc.refetchQueries({ queryKey: queryKeys.lanDevices });
+    },
+    [qc],
+  );
+
   useEffect(() => {
     let alive = true;
     let unlisten: (() => void) | null = null;
+    const isAlive = () => alive;
     void api
       .onLanDevices(() => {
         if (!alive) return;
         // Treat the event as an invalidation signal instead of writing its snapshot directly,
         // so an out-of-order event from a concurrent mutation cannot overwrite newer state.
-        void qc.invalidateQueries({ queryKey: queryKeys.lanDevices }, { cancelRefetch: true });
+        void refreshDevices(isAlive);
       })
       .then((off) => {
-        if (alive) unlisten = off;
-        else off();
+        if (!alive) {
+          off();
+          return;
+        }
+        unlisten = off;
+        // Refresh once after subscribing so changes racing between the initial mount fetch and
+        // listener registration are never missed.
+        void refreshDevices(isAlive);
+      })
+      .catch(() => {
+        // Subscription errors are non-fatal here; the initial query still renders the mount snapshot.
       });
     return () => {
       alive = false;
       unlisten?.();
     };
-  }, [qc]);
+  }, [refreshDevices]);
 
   const remove = useMutation({
     mutationFn: (id: string) => api.lanRemoveDevice(id),
     onSuccess: () => {
       setConfirmId(null);
       setRemoveError(null);
-      void qc.invalidateQueries({ queryKey: queryKeys.lanDevices }, { cancelRefetch: true });
+      void refreshDevices();
     },
     onError: (e) => setRemoveError(errorText(e)),
   });
