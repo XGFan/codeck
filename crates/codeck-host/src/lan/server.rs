@@ -27,6 +27,7 @@ use super::devices::DeviceRevoke;
 use super::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
 use super::security::{LanSecurity, RedeemError};
 use super::tls::TlsListener;
+use crate::attention::{CALLER, Viewer};
 use crate::{EventSink, Host, HostEvent};
 
 /// Bumped only on incompatible changes to the methods, events or envelopes.
@@ -103,6 +104,7 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
                     | HostEvent::HaaWorkers { .. }
                     | HostEvent::HaaWatchEnded { .. }
                     | HostEvent::KeepAlive { .. }
+                    | HostEvent::Attention { .. }
                     | HostEvent::LanDevices { .. }
             )
         {
@@ -612,12 +614,14 @@ async fn rpc(
         }
     };
     // Re-check after reading the body and right before dispatching side effects.
-    if let Some(Extension(a)) = authed
+    if let Some(Extension(a)) = &authed
         && a.revoke.is_revoked()
     {
         return unauthorized(true);
     }
-    Json(match ctx.host.remote_call(&req.method, req.args).await {
+    let caller = authed.map_or(Viewer::Loopback, |Extension(a)| Viewer::Device(a.id));
+    let call = ctx.host.remote_call(&req.method, req.args);
+    Json(match CALLER.scope(caller, call).await {
         Ok(result) => json!({ "result": result }),
         Err(e) => json!({ "error": e }),
     })
@@ -788,6 +792,12 @@ async fn run_ws_session(
     authed: Option<AuthedDevice>,
 ) {
     let revoke = authed.as_ref().map(|a| a.revoke.clone());
+    // While it is open, what this device looks at counts as seen (`attention`).
+    let _viewer = ctx.host.viewer_stream(
+        authed
+            .as_ref()
+            .map_or(Viewer::Loopback, |a| Viewer::Device(a.id.clone())),
+    );
     // Wrap the entire post-upgrade session (including `touch`) inside the revocation select so a
     // device revoked while `touch` is writing to disk drops its WebSocket immediately.
     let session = async move {

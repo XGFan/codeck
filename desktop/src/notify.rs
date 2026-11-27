@@ -5,27 +5,13 @@
 //! take (asking for it there raises), so there nothing is sent.
 
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use serde::Deserialize;
-use specta::Type;
+use codeck_host::attention::{Notice, Notifier};
 
-/// A notification to show.
-#[derive(Deserialize, Type, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Notice {
-    /// Names it: a later one with the same `id` takes its place, and `remove` finds it by this.
-    pub id: String,
-    pub title: String,
-    pub body: String,
-    /// Reported when it is clicked (a `codeck://` link).
-    pub url: String,
-    /// Notification Center keeps the notifications of one thread together.
-    pub thread: Option<String>,
-    /// Time-sensitive: shown during a Focus that lets such notifications through. It takes the entitlement
-    /// `com.apple.developer.usernotifications.time-sensitive`; an app signed without it has it shown as a plain one.
-    pub time_sensitive: bool,
-}
+/// Someone uses the Mac when the keyboard or mouse was used this lately (and the screen is not locked); otherwise the
+/// Host pushes to the iPhone instead (ADR-0019).
+const PRESENT_WITHIN_SECS: f64 = 120.0;
 
 /// The executable sits in an app bundle (`<name>.app/Contents/MacOS/<executable>`).
 fn bundled(exe: &Path) -> bool {
@@ -77,6 +63,37 @@ pub fn remove(ids: Vec<String>) {
     macos::remove(ids);
 }
 
+/// Someone uses the Mac now: input within [`PRESENT_WITHIN_SECS`] and the screen not locked.
+fn present() -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::idle_secs() < PRESENT_WITHIN_SECS && !macos::screen_locked();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+/// The Mac's notifications for the Host. Time-sensitive ones take the entitlement
+/// `com.apple.developer.usernotifications.time-sensitive`; an app signed without it has them shown as plain ones.
+struct MacNotifier;
+
+impl Notifier for MacNotifier {
+    fn present(&self) -> bool {
+        present()
+    }
+
+    fn send(&self, notice: Notice) {
+        send(notice)
+    }
+
+    fn remove(&self, ids: Vec<String>) {
+        remove(ids)
+    }
+}
+
+/// The Host's way to the Mac's notifications; `None` outside an app bundle.
+pub fn notifier() -> Option<Arc<dyn Notifier>> {
+    available().then(|| Arc::new(MacNotifier) as Arc<dyn Notifier>)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use block2::{DynBlock, RcBlock};
@@ -92,6 +109,37 @@ mod macos {
     };
 
     use super::Notice;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceSecondsSinceLastEventType(source: i32, event_type: u32) -> f64;
+        fn CGSessionCopyCurrentDictionary() -> *mut AnyObject;
+    }
+    /// `kCGEventSourceStateCombinedSessionState`.
+    const COMBINED_SESSION_STATE: i32 = 0;
+    /// `kCGAnyInputEventType`.
+    const ANY_INPUT: u32 = u32::MAX;
+
+    /// Seconds since the last keyboard or mouse input in this login session.
+    pub fn idle_secs() -> f64 {
+        // SAFETY: a plain C function taking two integers.
+        unsafe { CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION_STATE, ANY_INPUT) }
+    }
+
+    /// The login session's screen is locked (`CGSSessionScreenIsLocked`, present only while it is).
+    pub fn screen_locked() -> bool {
+        // SAFETY: returns a CFDictionary we own (or null); CFDictionary is toll-free bridged to NSDictionary, so
+        // `Retained` takes over that reference and releases it.
+        let Some(dict) = (unsafe { Retained::from_raw(CGSessionCopyCurrentDictionary()) }) else {
+            return false;
+        };
+        // SAFETY: `objectForKey:` takes any object and returns an object or nil.
+        let locked: Option<Retained<AnyObject>> = unsafe {
+            msg_send![&*dict, objectForKey: &*NSString::from_str("CGSSessionScreenIsLocked")]
+        };
+        // SAFETY: its value is a CFBoolean, bridged to NSNumber, which answers `boolValue`.
+        locked.is_some_and(|v| unsafe { msg_send![&*v, boolValue] })
+    }
 
     /// Where a notification's `userInfo` keeps its link.
     const URL: &str = "url";

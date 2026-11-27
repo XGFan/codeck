@@ -86,7 +86,13 @@ pub struct HaaWatchEndedEvent {
     pub message: String,
 }
 
-/// A system notification was clicked: the `url` it was sent with (`commands::notify`).
+/// The 「已完成」 Sessions changed (the Host's `attention`).
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+pub struct AttentionEvent {
+    pub done: Vec<String>,
+}
+
+/// A system notification was clicked: the `url` it was sent with (the Host's `attention`).
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
 pub struct NotificationClickEvent {
     pub url: String,

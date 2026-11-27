@@ -50,6 +50,17 @@ macro_rules! for_each_method {
             local fn keep_alive_minutes() -> u32;
             /// Saves 「缓存保活」 (minutes, 0 = off); returns what was saved.
             local fn set_keep_alive_minutes(minutes: u32) -> u32;
+            /// Tells the Host which Session this caller looks at (`None`: none): the desktop window while in front, the
+            /// iPhone's Session page while the app is (ADR-0019).
+            remote fn set_viewing(session_id: Option<String>) -> ();
+            /// The 「已完成」 Sessions now (a reloaded window; later ones come as `AttentionEvent`).
+            local fn attention_done() -> Vec<String>;
+            /// 「设置 › 通用」 的通知 and how the last push to the iPhone went.
+            local fn notify_settings() -> $crate::types::NotifyInfo;
+            /// Saves 「设置 › 通用」 的通知; returns what was saved.
+            local fn set_notify_settings(settings: $crate::types::NotifySettings) -> $crate::types::NotifyInfo;
+            /// Pushes a test notification to Bark with these values (not saved).
+            local fn test_bark(server: String, device_key: String) -> ();
             local fn ccrpc_info() -> $crate::types::CcrpcInfo;
             /// Saves the analyzer's settings (blank = not set here). `api_key: None` keeps the saved key; `Some("")`
             /// removes it. Applies to the connections made from now on.

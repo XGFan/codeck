@@ -2,6 +2,7 @@
 //! polling, settings, prices, ccrpc) and the one method table both the desktop app and the daemon serve.
 //! No tauri here: events go to an `EventSink`, paths come from `HostConfig`.
 
+pub mod attention;
 pub mod ccrpc;
 pub mod commands;
 pub mod connect;
@@ -32,10 +33,11 @@ use crate::state::{AppState, open_engine};
 
 /// The types the method table names (`for_each_method!` expands to `$crate::types::…`).
 pub mod types {
+    pub use crate::attention::NotifyInfo;
     pub use crate::ccrpc::relay::{AnalyzerRecords, AnalyzerTest};
     pub use crate::ccrpc::{AnalyzerInfo, CcrpcInfo};
     pub use crate::lan::{LanStatus, PairedDevice, PairingOffer};
-    pub use crate::settings::{LaunchRule, SidebarProject};
+    pub use crate::settings::{LaunchRule, NotifySettings, SidebarProject};
     pub use codeck_core::model::*;
 }
 
@@ -73,6 +75,9 @@ pub struct HostConfig {
     pub lan: Option<lan::LanConfig>,
     /// Download LiteLLM's price list at start (tests turn it off); the periodic refresh runs regardless.
     pub refresh_prices: bool,
+    /// The Mac's notifications (the desktop app as a bundle); `None`: this Host has none, it only pushes to the
+    /// iPhone (ADR-0019).
+    pub notifier: Option<Arc<dyn attention::Notifier>>,
 }
 
 impl HostConfig {
@@ -92,6 +97,7 @@ impl HostConfig {
             keep_ls_watch: false,
             lan: None,
             refresh_prices: true,
+            notifier: None,
         }
     }
 }
@@ -109,6 +115,7 @@ pub struct Host {
     events: EventSink,
     config: HostConfig,
     keep_alive: keepalive::KeepAliveState,
+    attention: Arc<attention::Attention>,
 }
 
 impl Host {
@@ -116,6 +123,17 @@ impl Host {
     /// refresh. One Host per process: the settings path is process-wide.
     pub fn start(config: HostConfig, events: EventSink) -> CoreResult<Arc<Host>> {
         settings::set_path(config.settings_path.clone());
+        // The notifications follow the Live Sessions as they are reported.
+        let attention = Arc::new(attention::Attention::new(config.notifier.clone()));
+        let events: EventSink = {
+            let (a, events) = (attention.clone(), events);
+            Arc::new(move |e: HostEvent| {
+                if let HostEvent::LiveChanged(l) = &e {
+                    a.on_live(l);
+                }
+                events(e)
+            })
+        };
         let data_root = config
             .data_root
             .clone()
@@ -173,8 +191,10 @@ impl Host {
             events,
             config,
             keep_alive,
+            attention: attention.clone(),
         });
         keepalive::spawn(Arc::downgrade(&host));
+        attention::spawn(Arc::downgrade(&host), attention.woken());
         Ok(host)
     }
 

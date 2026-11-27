@@ -54,6 +54,8 @@ pub enum HostEvent {
         active: bool,
         error: Option<String>,
     },
+    /// The 「已完成」 Sessions changed (`attention`). Only for the desktop window; never forwarded to LAN clients.
+    Attention { done: Vec<String> },
     /// The paired LAN device list changed (a device paired or was removed). Only for the desktop window; never
     /// forwarded to LAN clients.
     LanDevices {
@@ -86,6 +88,7 @@ impl HostEvent {
             HostEvent::HaaWorkers { .. } => "haa-workers-event",
             HostEvent::HaaWatchEnded { .. } => "haa-watch-ended-event",
             HostEvent::KeepAlive { .. } => "keep-alive-event",
+            HostEvent::Attention { .. } => "attention-event",
             HostEvent::LanDevices { .. } => "lan-devices-event",
         }
     }
@@ -119,6 +122,7 @@ impl HostEvent {
                 active,
                 error,
             } => Ok(json!({ "sessionId": session_id, "active": active, "error": error })),
+            HostEvent::Attention { done } => Ok(json!({ "done": done })),
             HostEvent::LanDevices {
                 devices,
                 paired_offer,

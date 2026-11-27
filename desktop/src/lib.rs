@@ -13,9 +13,9 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_specta::{Builder, ErrorHandlingMode, Event, collect_events};
 
 use crate::events::{
-    CcrpcClosingEvent, CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent, CcrpcLsEvent,
-    CcrpcRemoteConnEvent, HaaWatchEndedEvent, HaaWorkersEvent, IndexStatusEvent, KeepAliveEvent,
-    LanDevicesEvent, LiveChangedEvent, NotificationClickEvent, PricesChangedEvent,
+    AttentionEvent, CcrpcClosingEvent, CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent,
+    CcrpcLsEvent, CcrpcRemoteConnEvent, HaaWatchEndedEvent, HaaWorkersEvent, IndexStatusEvent,
+    KeepAliveEvent, LanDevicesEvent, LiveChangedEvent, NotificationClickEvent, PricesChangedEvent,
     SessionsChangedEvent,
 };
 
@@ -38,6 +38,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             HaaWatchEndedEvent,
             KeepAliveEvent,
             LanDevicesEvent,
+            AttentionEvent,
             NotificationClickEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
@@ -86,6 +87,7 @@ pub fn run() {
                 })),
                 // The window's front end keeps its own state, but LAN access needs the connections it already has.
                 track_connect: true,
+                notifier: notify::notifier(),
                 lan: Some(LanConfig::new(
                     lan_events,
                     app.path().resource_dir()?.join("web"),
@@ -189,6 +191,7 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
                 error,
             }
             .emit(&handle),
+            HostEvent::Attention { done } => AttentionEvent { done }.emit(&handle),
             HostEvent::LanDevices {
                 devices,
                 paired_offer,
@@ -323,6 +326,14 @@ fn host_events_match_the_typed_events() {
             session_id: "s".into(),
             active: false,
             error: Some("e".into()),
+        },
+    );
+    same(
+        HostEvent::Attention {
+            done: vec!["s".into()],
+        },
+        AttentionEvent {
+            done: vec!["s".into()],
         },
     );
     let dev = codeck_host::lan::PairedDevice {

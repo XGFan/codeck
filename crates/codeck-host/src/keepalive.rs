@@ -194,6 +194,11 @@ impl KeepAliveState {
         self.save(&r);
     }
 
+    /// The Sessions whose cache is being refreshed now (their `/btw` panel may be open).
+    pub(crate) fn refreshing(&self) -> HashSet<String> {
+        self.running.lock().clone()
+    }
+
     /// Sessions no longer Live are forgotten.
     fn keep_only(&self, live: &HashSet<&str>) {
         let mut r = self.refreshed.lock();
