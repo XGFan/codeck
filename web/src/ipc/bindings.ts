@@ -143,6 +143,9 @@ export const events = {
 };
 
 /* Types */
+/**  Which coding agent produced a Session. */
+export type Agent = "claude" | "agy";
+
 /**
  *  ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › ccrpc」 saved, and what the next
  *  ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
@@ -806,7 +809,7 @@ export type SessionDetail = {
 	 */
 	supersededBy: string | null,
 	failedLines: number,
-	/**  `claude --resume <id>`. */
+	/**  `claude --resume <id>` or `agy --conversation <id>`. */
 	resumeCommand: string,
 };
 
@@ -827,6 +830,7 @@ export type SessionSort = "lastActive" | "created" | "messages" |
 
 export type SessionSummary = {
 	id: string,
+	agent: Agent,
 	projectId: string,
 	title: string,
 	titleSource: TitleSource,

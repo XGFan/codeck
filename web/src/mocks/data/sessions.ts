@@ -381,6 +381,7 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
       : nodes.filter((n) => !(n.body.kind === "userPrompt" && n.body.origin.kind === "commandOutput")).length;
   const summary: SessionSummary = {
     id: d.id,
+    agent: "claude",
     projectId: d.projectId,
     title: d.title,
     titleSource: d.titleSource,

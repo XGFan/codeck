@@ -33,6 +33,7 @@ const session = (
   extra: Partial<SessionSummary> = {},
 ): SessionSummary => ({
   id,
+  agent: "claude",
   projectId,
   title: id,
   titleSource: "ai",
