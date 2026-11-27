@@ -166,8 +166,11 @@ function parseAgyOriginal(input: Record<string, unknown> | null): AgyOriginalDat
 /** Original agy tool name and arguments attached by the backend on translated tool calls. */
 function AgyOriginal({ nodeId, call }: { nodeId: string; call: ToolCall }) {
   const ctx = useToolCtx(nodeId);
-  const { input } = useFullInput(call, ctx, true);
-  const orig = parseAgyOriginal(input);
+  // serde sorts keys, so a translated agy call's (possibly truncated) input starts with this key:
+  // other tools never fetch their full input here.
+  const isAgy = call.inputJson.startsWith('{"agyOriginal"');
+  const { input } = useFullInput(call, ctx, isAgy);
+  const orig = isAgy ? parseAgyOriginal(input) : null;
   const origArgs = orig?.args;
   const pretty = useMemo(() => (origArgs !== undefined ? prettyJson(JSON.stringify(origArgs)) : ""), [origArgs]);
   if (!orig) return null;

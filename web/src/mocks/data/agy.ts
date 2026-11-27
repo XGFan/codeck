@@ -1,6 +1,12 @@
 import type { Node } from "@/ipc/bindings";
 import { asstNode, call, MIN, text, userNode } from "./builders";
 
+/** Like the backend, which serializes tool input with sorted keys: `agyOriginal` comes first. */
+const agyCall: typeof call = (toolUseId, name, input, result, o) => {
+  const { agyOriginal, ...rest } = input as Record<string, unknown>;
+  return call(toolUseId, name, agyOriginal === undefined ? rest : { agyOriginal, ...rest }, result, o);
+};
+
 export const AGY_LIVE_ID = "a6a10001-0012-4000-8000-000000000012";
 export const AGY_LIVE_TITLE = "agy：检查限流中间件的边界用例";
 
@@ -18,7 +24,7 @@ export function agyLiveNodes(start: number): Node[] {
       at(0.5),
       [
         text("先读一下限流中间件的实现。"),
-        call(
+        agyCall(
           "agy-l-tu1",
           "Read",
           {
@@ -41,7 +47,7 @@ export function agyLiveNodes(start: number): Node[] {
             ].join("\n"),
           },
         ),
-        call(
+        agyCall(
           "agy-l-tu2",
           "Edit",
           {
@@ -59,7 +65,7 @@ export function agyLiveNodes(start: number): Node[] {
           },
           { text: "Edited file" },
         ),
-        call(
+        agyCall(
           "agy-l-tu3",
           "Bash",
           {
@@ -85,7 +91,7 @@ export function agyLiveNodes(start: number): Node[] {
       "agy-l-a1",
       at(3.2),
       [
-        call("agy-l-tu4", "manage_task", { Action: "list" }, { text: "No running tasks" }),
+        agyCall("agy-l-tu4", "manage_task", { Action: "list" }, { text: "No running tasks" }),
         text("当前没有运行中的后台任务。"),
       ],
       { model: "gemini-4-neon-high" },
@@ -101,7 +107,7 @@ export function agyEndedNodes(start: number): Node[] {
       "agy-e-a0",
       at(0.5),
       [
-        call(
+        agyCall(
           "agy-e-tu1",
           "Read",
           {
@@ -113,7 +119,7 @@ export function agyEndedNodes(start: number): Node[] {
           },
           { text: "     1\tapiVersion: image.toolkit.fluxcd.io/v1beta2\n     2\tkind: ImagePolicy" },
         ),
-        call(
+        agyCall(
           "agy-e-tu2",
           "Bash",
           {

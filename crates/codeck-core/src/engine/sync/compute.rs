@@ -126,7 +126,11 @@ pub(super) fn compute_session(
                 rows,
                 head,
                 parsed_offset: st.consumed,
-                line_count: lf.records.len() as u64 + u64::from(st.failed),
+                // agy records are deduplicated by step index: count physical lines instead.
+                line_count: match f.source {
+                    FileSource::Agy => u64::from(st.lines),
+                    FileSource::Claude => lf.records.len() as u64 + u64::from(st.failed),
+                },
                 failed_lines: u64::from(st.failed),
                 first_error: st.first_error.clone(),
             });

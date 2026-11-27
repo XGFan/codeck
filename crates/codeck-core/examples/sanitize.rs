@@ -781,10 +781,22 @@ fn run_agy(mut args: impl Iterator<Item = String>) {
         );
     }
     // Never write into the data root being read.
+    // The output may not exist yet: resolve its nearest existing ancestor (symlinks such as
+    // `/tmp` -> `/private/tmp` included) and append the rest.
     let resolved = |p: &std::path::Path| {
-        p.canonicalize()
-            .or_else(|_| std::path::absolute(p))
-            .unwrap_or_else(|_| p.to_path_buf())
+        let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+        let mut base = abs.as_path();
+        let mut rest = Vec::new();
+        while !base.exists() {
+            let (Some(parent), Some(name)) = (base.parent(), base.file_name()) else {
+                break;
+            };
+            rest.push(name.to_owned());
+            base = parent;
+        }
+        let mut out = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+        out.extend(rest.into_iter().rev());
+        out
     };
     assert!(
         !resolved(&out_dir).starts_with(resolved(&source)),

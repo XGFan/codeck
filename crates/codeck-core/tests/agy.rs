@@ -13,8 +13,8 @@ use codeck_core::index::schema::{
     DIAG_ENTRY, DIAG_TOOL, ROLE_MAIN, SCHEMA_VERSION, SOURCE_AGY, SOURCE_CLAUDE,
 };
 use codeck_core::model::{
-    Agent, DataRootSource, Drill, FindRequest, NodeBody, SearchRequest, SessionQuery, StatsRequest,
-    TimeRange, TitleSource, TranscriptRequest, TranscriptScope,
+    Agent, AssistantBlock, DataRootSource, Drill, FindRequest, NodeBody, SearchRequest,
+    SessionQuery, StatsRequest, TimeRange, TitleSource, TranscriptRequest, TranscriptScope,
 };
 use codeck_core::{ChangeSet, CoreError, Engine, EngineConfig};
 use common::engine::{open_engine, open_engine_with_agy, test_haa_home};
@@ -179,6 +179,30 @@ fn indexes_claude_and_agy_roots_together_and_opens_after_reopen() {
             .iter()
             .any(|n| matches!(n.body, NodeBody::Assistant { .. }))
     );
+
+    // Translated tools come out of the Engine with their results attached.
+    let worker = engine
+        .get_transcript(&main_transcript_req(AGY_HAA_WORKER))
+        .unwrap();
+    let calls: Vec<_> = worker
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.body {
+            NodeBody::Assistant { blocks, .. } => Some(blocks),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|b| match b {
+            AssistantBlock::ToolCall(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    for name in ["Bash", "Read", "Edit"] {
+        assert!(
+            calls.iter().any(|c| c.name == name && c.result.is_some()),
+            "{name} call with its result"
+        );
+    }
 
     let short = engine
         .get_transcript(&main_transcript_req(AGY_SHORT))
