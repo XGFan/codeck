@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use rustls::ServerConfig;
 
+use super::control::{DaemonLock, lock_state_dir};
 use super::devices::{DeviceRevoke, Devices, PairedDevice};
 use super::pairing::{PAIRING_TTL, Pairing, StartedOffer};
 use super::tls::HostCert;
@@ -30,9 +31,10 @@ struct SecurityState {
 }
 
 /// Holds the Host's lazily loaded TLS certificate alongside a single-lock state covering the paired
-/// device table and active pairing offer.
+/// device table and active pairing offer, guarded by an exclusive `flock` on `<dir>/daemon.lock`.
 pub struct LanSecurity {
     dir: PathBuf,
+    _lock: DaemonLock,
     /// Lazily loaded on first TLS start; errors are not cached so fixing `tls/` and retrying works.
     cert: Mutex<Option<Arc<HostCert>>>,
     /// Single lock serializing all device-table and pairing mutations and lookups.
@@ -40,11 +42,14 @@ pub struct LanSecurity {
 }
 
 impl LanSecurity {
-    /// Opens the device table in `dir` without loading or generating the TLS certificate.
+    /// Validates `dir`, acquires `<dir>/daemon.lock`, and opens the device table without loading or
+    /// generating the TLS certificate.
     pub fn open(dir: PathBuf) -> Result<Self, String> {
+        let lock = lock_state_dir(&dir)?;
         let devices = Devices::load(&dir)?;
         Ok(Self {
             dir,
+            _lock: lock,
             cert: Mutex::new(None),
             inner: Mutex::new(SecurityState {
                 devices,
@@ -73,7 +78,12 @@ impl LanSecurity {
     }
 
     pub fn start_pairing(&self) -> Result<StartedOffer, String> {
-        self.start_pairing_with_ttl(Instant::now(), now_ms(), PAIRING_TTL)
+        self.start_pairing_ttl(PAIRING_TTL)
+    }
+
+    pub fn start_pairing_ttl(&self, ttl: Duration) -> Result<StartedOffer, String> {
+        let mut st = self.inner.lock();
+        st.pairing.start(Instant::now(), now_ms(), ttl)
     }
 
     pub fn start_pairing_with_ttl(
@@ -99,7 +109,9 @@ impl LanSecurity {
     }
 
     pub fn redeem(&self, key: &str, name: &str) -> Result<RedeemSuccess, RedeemError> {
-        self.redeem_at(key, name, Instant::now(), now_ms())
+        // Sample the clock only after acquiring the state lock so contention cannot extend TTL.
+        let mut st = self.inner.lock();
+        redeem_locked(&mut st, key, name, Instant::now(), now_ms())
     }
 
     /// Validates the offer, persists `devices.json` atomically, and only consumes the offer once the
@@ -112,24 +124,7 @@ impl LanSecurity {
         now_ms: i64,
     ) -> Result<RedeemSuccess, RedeemError> {
         let mut st = self.inner.lock();
-        if !st.pairing.check(key, now) {
-            return Err(RedeemError::Expired);
-        }
-        let (device, token) = st
-            .devices
-            .add(name, now_ms)
-            .map_err(RedeemError::SaveFailed)?;
-        let offer_id = st
-            .pairing
-            .complete(device.clone())
-            .expect("offer was checked under the same lock");
-        let devices = st.devices.list();
-        Ok(RedeemSuccess {
-            offer_id,
-            device,
-            token,
-            devices,
-        })
+        redeem_locked(&mut st, key, name, now, now_ms)
     }
 
     /// Verifies a bearer token and returns `(device_id, revoke_signal)` under the same lock.
@@ -154,13 +149,43 @@ impl LanSecurity {
         Ok((removed.is_some(), devices))
     }
 
-    pub fn touch(&self, id: &str) {
-        self.touch_at(id, now_ms());
+    /// Updates `lastSeenAt` for `id`, returning the updated device list when persisted.
+    pub fn touch(&self, id: &str) -> Option<Vec<PairedDevice>> {
+        let mut st = self.inner.lock();
+        st.devices.touch(id, now_ms()).then(|| st.devices.list())
     }
 
-    pub fn touch_at(&self, id: &str, now_ms: i64) {
-        self.inner.lock().devices.touch(id, now_ms);
+    pub fn touch_at(&self, id: &str, now_ms: i64) -> Option<Vec<PairedDevice>> {
+        let mut st = self.inner.lock();
+        st.devices.touch(id, now_ms).then(|| st.devices.list())
     }
+}
+
+fn redeem_locked(
+    st: &mut SecurityState,
+    key: &str,
+    name: &str,
+    now: Instant,
+    now_ms: i64,
+) -> Result<RedeemSuccess, RedeemError> {
+    if !st.pairing.check(key, now) {
+        return Err(RedeemError::Expired);
+    }
+    let (device, token) = st
+        .devices
+        .add(name, now_ms)
+        .map_err(RedeemError::SaveFailed)?;
+    let offer_id = st
+        .pairing
+        .complete(device.clone())
+        .expect("offer was checked under the same lock");
+    let devices = st.devices.list();
+    Ok(RedeemSuccess {
+        offer_id,
+        device,
+        token,
+        devices,
+    })
 }
 
 fn now_ms() -> i64 {

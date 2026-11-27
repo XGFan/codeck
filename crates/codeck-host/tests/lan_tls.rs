@@ -1,6 +1,6 @@
 //! End-to-end TLS + auth + pairing + revocation tests for [`TlsListener`], [`LanSecurity`], and [`router`].
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,7 +11,7 @@ use codeck_host::lan::LanConfig;
 use codeck_host::lan::net::Subnet;
 use codeck_host::lan::pairing::PairOutcome;
 use codeck_host::lan::security::LanSecurity;
-use codeck_host::lan::server::{Ctx, Gate, event_channel, router};
+use codeck_host::lan::server::{Ctx, Gate, event_channel, router, router_with_pair_timeout};
 use codeck_host::lan::tls::{TlsListener, cert_fingerprint};
 use codeck_host::{Host, HostConfig, HostEvent};
 use futures_util::StreamExt;
@@ -295,9 +295,10 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
     assert_eq!(status, 204);
     assert!(head.contains("access-control-allow-origin: http://localhost:1420"));
 
-    // 2. Unauthenticated or bad-token requests to every protected endpoint return 401 `unauthorized`.
+    // 2. Unauthenticated or bad-token requests to every protected endpoint return 401 `unauthorized`,
+    //    and `/v1/rpc` / `/v1/pair` always carry `Cache-Control: no-store` even on middleware rejections.
     for auth in ["", "\r\nAuthorization: Bearer invalid-token"] {
-        let (status, _, body) = https_req(
+        let (status, head, body) = https_req(
             addr,
             &fp,
             &format!("POST /v1/rpc HTTP/1.1\r\nContent-Type: application/json{auth}"),
@@ -305,6 +306,7 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
         )
         .await;
         assert_unauthorized(status, &body);
+        assert!(head.contains("cache-control: no-store"), "{head}");
 
         for req in [
             "GET /web/transcript.html HTTP/1.1",
@@ -321,6 +323,21 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
                 assert_unauthorized(status, &body);
             }
         }
+    }
+
+    // Forbidden Origin on `/v1/pair` and `/v1/rpc` still carries `Cache-Control: no-store`.
+    for path in ["/v1/pair", "/v1/rpc"] {
+        let (status, head, _) = https_req(
+            addr,
+            &fp,
+            &format!(
+                "POST {path} HTTP/1.1\r\nOrigin: https://evil.example\r\nContent-Type: application/json"
+            ),
+            "{}",
+        )
+        .await;
+        assert_eq!(status, 403, "{path}");
+        assert!(head.contains("cache-control: no-store"), "{path}: {head}");
     }
 
     // WSS without token or with wrong token is rejected with HTTP 401 before upgrade.
@@ -513,6 +530,7 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
     let token_b = v["result"]["token"].as_str().unwrap().to_owned();
 
     // Device A opens two WSS connections (one idle, one stalled on reads while flooded) + one slow HTTP body.
+    captured.lock().clear();
     let (mut ws_a1, resp) = connect_wss(addr, &fp, Some(&token_a)).await.unwrap();
     assert_eq!(resp.status(), 101);
     let first = ws_a1.next().await.unwrap().unwrap();
@@ -520,10 +538,33 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
         serde_json::from_str::<Value>(first.to_text().unwrap()).unwrap(),
         json!({ "event": "hello", "payload": { "apiVersion": 2 } })
     );
-    // Connecting WSS touched `lastSeenAt`.
+    // Connecting WSS touched `lastSeenAt` and emitted `HostEvent::LanDevices` with null pair fields.
     assert!(
         security
             .devices()
+            .iter()
+            .find(|d| d.id == dev_a_id)
+            .unwrap()
+            .last_seen_at
+            .is_some()
+    );
+    let touch_ev = captured
+        .lock()
+        .iter()
+        .find_map(|e| match e {
+            HostEvent::LanDevices {
+                devices,
+                paired_offer,
+                paired_device,
+            } => Some((devices.clone(), paired_offer.clone(), paired_device.clone())),
+            _ => None,
+        })
+        .expect("HostEvent::LanDevices was not emitted on WS touch");
+    assert_eq!(touch_ev.1, None);
+    assert_eq!(touch_ev.2, None);
+    assert!(
+        touch_ev
+            .0
             .iter()
             .find(|d| d.id == dev_a_id)
             .unwrap()
@@ -570,7 +611,7 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, dev_b_id);
 
-    // Slow HTTP body receives 401 and server closes the connection.
+    // Slow HTTP body receives 401 with `Cache-Control: no-store` and server closes the connection.
     let mut slow_out = String::new();
     tokio::time::timeout(Duration::from_secs(3), slow_a.read_to_string(&mut slow_out))
         .await
@@ -578,6 +619,12 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
         .unwrap();
     let (slow_head, slow_body) = slow_out.split_once("\r\n\r\n").unwrap();
     assert!(slow_head.starts_with("HTTP/1.1 401"), "{slow_head}");
+    assert!(
+        slow_head
+            .to_ascii_lowercase()
+            .contains("cache-control: no-store"),
+        "{slow_head}"
+    );
     assert_unauthorized(401, slow_body);
 
     // Both A WebSockets terminate promptly (after draining any already-buffered frames).
@@ -652,15 +699,24 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
     .expect("stalled peer blocked concurrent TLS client");
     assert_eq!(status, 200);
 
-    // 7. Reloading LanSecurity preserves certificate fingerprint and Device B, and rejects removed Device A.
+    // 7. Opening a second LanSecurity on the same directory fails while the first holds `daemon.lock`.
+    let lock_err = LanSecurity::open(sec_dir.clone()).err().unwrap();
+    assert!(
+        lock_err.contains("另一个 codeck-host 正在使用"),
+        "{lock_err}"
+    );
+
+    // 8. Dropping the server task frees the port; once `security` drops, reloading preserves
+    //    certificate fingerprint and Device B and rejects removed Device A.
+    server_task.abort();
+    let _ = server_task.await;
+    drop(security);
+
     let reloaded = LanSecurity::open(sec_dir).unwrap();
     assert_eq!(reloaded.ensure_cert().unwrap().fingerprint, fp);
     assert_eq!(reloaded.verify(&token_b).unwrap().0, dev_b_id);
     assert!(reloaded.verify(&token_a).is_none());
 
-    // 8. Dropping the server task frees the port.
-    server_task.abort();
-    let _ = server_task.await;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if TcpListener::bind(addr).await.is_ok() {
@@ -669,4 +725,137 @@ async fn tls_pairing_auth_revocation_and_reload_end_to_end() {
         assert!(Instant::now() < deadline, "port {addr} was not freed");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tls_per_ip_connection_limit_and_slow_pair_body_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let sec = Arc::new(LanSecurity::open(dir.path().join("sec")).unwrap());
+    let cert = sec.ensure_cert().unwrap();
+    let fp = cert.fingerprint.clone();
+
+    // 1. Per-IP limit (2) rejects a 3rd connection from 127.0.0.1 while another source IP (::1)
+    //    still connects and succeeds, and dropping a held connection frees the slot.
+    let dual_tcp = TcpListener::bind((Ipv6Addr::UNSPECIFIED, 0)).await.unwrap();
+    let port = dual_tcp.local_addr().unwrap().port();
+    let v4_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let v6_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port);
+
+    let limited_listener = TlsListener::with_limits(dual_tcp, cert.server_config(), 16, 2);
+    let app = axum::Router::new().route("/ping", get(|| async { "ok" }));
+    let limit_srv = tokio::spawn(async move {
+        let _ = axum::serve(limited_listener, app).await;
+    });
+
+    // Hold 2 TLS connections open from 127.0.0.1.
+    let c1 = connect_tls(v4_addr, &fp).await.unwrap();
+    let c2 = connect_tls(v4_addr, &fp).await.unwrap();
+
+    // 3rd connection from the same source IP is dropped before handshake.
+    let third = tokio::time::timeout(Duration::from_secs(2), connect_tls(v4_addr, &fp))
+        .await
+        .expect("3rd connection should be rejected promptly");
+    assert!(
+        third.is_err(),
+        "expected 3rd connection from same IP to fail"
+    );
+
+    // A different source IP (::1) still completes TLS handshake and HTTP request normally.
+    let mut other_ip = {
+        let tcp = TcpStream::connect(v6_addr).await.unwrap();
+        let name = ServerName::IpAddress(IpAddr::V6(Ipv6Addr::LOCALHOST).into());
+        tls_connector(&fp).connect(name, tcp).await.unwrap()
+    };
+    other_ip
+        .write_all(
+            format!("GET /ping HTTP/1.1\r\nHost: [::1]:{port}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut resp = String::new();
+    other_ip.read_to_string(&mut resp).await.unwrap();
+    assert!(
+        resp.starts_with("HTTP/1.1 200") && resp.ends_with("ok"),
+        "{resp}"
+    );
+    drop(other_ip);
+
+    // Closing one held 127.0.0.1 connection releases its permit so a new one succeeds.
+    drop(c1);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Ok(_c3) = connect_tls(v4_addr, &fp).await {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "permit was not released after drop"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(c2);
+    limit_srv.abort();
+    let _ = limit_srv.await;
+
+    // 2. Slow `/v1/pair` request body is timed out with 408 + `Cache-Control: no-store` and disconnected.
+    let (events, sink) = event_channel();
+    let host_state = dir.path().join("host-state");
+    let host = Host::start(
+        HostConfig {
+            cache_dir: host_state.join("cache"),
+            settings_path: host_state.join("settings.json"),
+            ccrpc_logs: Some(host_state.join("logs")),
+            images: Some(host_state.join("images")),
+            data_root: Some(dir.path().join("root")),
+            refresh_prices: false,
+            ..HostConfig::desktop()
+        },
+        sink,
+    )
+    .unwrap();
+    let ctx = Ctx {
+        host,
+        events,
+        allowed_origins: Arc::default(),
+        web_dir: dir.path().join("web"),
+        gate: Gate::default(),
+        security: Some(Arc::clone(&sec)),
+    };
+    let subnet = Subnet {
+        addr: Ipv4Addr::LOCALHOST,
+        mask: Ipv4Addr::new(255, 0, 0, 0),
+    };
+    let tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let pair_addr = tcp.local_addr().unwrap();
+    let listener = TlsListener::new(tcp, cert.server_config()).tap_io(|_| ());
+    let pair_app = router_with_pair_timeout(ctx, subnet, Duration::from_millis(250))
+        .into_make_service_with_connect_info::<SocketAddr>();
+    let pair_srv = tokio::spawn(async move {
+        let _ = axum::serve(listener, pair_app).await;
+    });
+
+    let mut slow = connect_tls(pair_addr, &fp).await.unwrap();
+    slow.write_all(
+        format!(
+            "POST /v1/pair HTTP/1.1\r\nHost: {pair_addr}\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{{\"key"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    slow.flush().await.unwrap();
+
+    let mut out = String::new();
+    tokio::time::timeout(Duration::from_secs(3), slow.read_to_string(&mut out))
+        .await
+        .expect("slow /v1/pair body was not timed out and closed")
+        .unwrap();
+    let lower = out.to_ascii_lowercase();
+    assert!(out.starts_with("HTTP/1.1 408"), "{out}");
+    assert!(lower.contains("cache-control: no-store"), "{out}");
+    assert!(lower.contains("connection: close"), "{out}");
+
+    pair_srv.abort();
+    let _ = pair_srv.await;
 }

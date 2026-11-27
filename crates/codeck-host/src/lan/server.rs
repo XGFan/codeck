@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
@@ -20,6 +21,7 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::timeout::TimeoutLayer;
 
 use super::devices::DeviceRevoke;
 use super::net::{OriginCheck, Subnet, check_origin, host_allowed, peer_allowed};
@@ -31,6 +33,8 @@ use crate::{EventSink, Host, HostEvent};
 pub const API_VERSION: u32 = 2;
 const BODY_LIMIT: usize = 32 * 1024 * 1024;
 const PAIR_BODY_LIMIT: usize = 4 * 1024;
+/// Overall timeout for `POST /v1/pair` so slow request bodies cannot hold TLS connections open.
+const PAIR_TIMEOUT: Duration = Duration::from_secs(10);
 /// Events a slow client may fall behind by before it is dropped (it resyncs on reconnect).
 const EVENT_BACKLOG: usize = 1024;
 /// The Transcript page's policy: only this Host's scripts, styles, images and connections (the Shiki
@@ -117,16 +121,23 @@ pub fn needs_tls(subnet: &Subnet) -> bool {
 
 type RouterFactory = Box<dyn Fn(Subnet, Option<Arc<LanSecurity>>) -> Router + Send>;
 
+#[cfg(test)]
+type BindOverride = Box<dyn Fn(Subnet) -> std::io::Result<std::net::TcpListener> + Send>;
+
 /// The listeners being served, one per [`Subnet`].
 pub struct Serving {
     port: u16,
     router: RouterFactory,
     security: Option<Arc<LanSecurity>>,
     tasks: HashMap<Subnet, JoinHandle<()>>,
+    /// Active listeners in interface/wanted order (never numerically sorted).
+    order: Vec<Subnet>,
     /// Could not be bound at the last look, and why: logged once, tried again at each.
     failed: HashMap<Subnet, String>,
-    /// Live mirror of `self.listening()` updated on every `start` / `follow` / `stop`.
+    /// Live mirror of `self.listening_in_order()` updated on every `start` / `follow` / `stop`.
     snapshot: Arc<parking_lot::Mutex<Vec<String>>>,
+    #[cfg(test)]
+    bind_override: Option<BindOverride>,
 }
 
 impl Serving {
@@ -136,18 +147,22 @@ impl Serving {
             router,
             security,
             tasks: HashMap::new(),
+            order: Vec::new(),
             failed: HashMap::new(),
             snapshot: Arc::default(),
+            #[cfg(test)]
+            bind_override: None,
         }
     }
 
-    /// Shared live view of the `address:port`s currently bound by this [`Serving`].
+    /// Shared live view of the `address:port`s currently bound by this [`Serving`], in listening
+    /// (interface enumeration) order for pairing links.
     pub fn listening_handle(&self) -> Arc<parking_lot::Mutex<Vec<String>>> {
         Arc::clone(&self.snapshot)
     }
 
     fn sync_snapshot(&self) {
-        *self.snapshot.lock() = self.listening();
+        *self.snapshot.lock() = self.listening_in_order();
     }
 
     pub async fn start(&mut self, subnet: Subnet) -> std::io::Result<()> {
@@ -158,11 +173,24 @@ impl Serving {
                     subnet.addr
                 )));
             };
-            let cfg = sec.server_config().map_err(std::io::Error::other)?;
+            let sec_for_cfg = Arc::clone(&sec);
+            let cfg = tokio::task::spawn_blocking(move || sec_for_cfg.server_config())
+                .await
+                .map_err(std::io::Error::other)?
+                .map_err(std::io::Error::other)?;
             (Some(cfg), Some(sec))
         } else {
             (None, None)
         };
+        #[cfg(test)]
+        let listener = if let Some(binder) = &self.bind_override {
+            let std_listener = binder(subnet)?;
+            std_listener.set_nonblocking(true)?;
+            tokio::net::TcpListener::from_std(std_listener)?
+        } else {
+            tokio::net::TcpListener::bind((subnet.addr, self.port)).await?
+        };
+        #[cfg(not(test))]
         let listener = tokio::net::TcpListener::bind((subnet.addr, self.port)).await?;
         let scheme = if tls.is_some() { "https" } else { "http" };
         tracing::info!(
@@ -189,6 +217,9 @@ impl Serving {
             }
         });
         self.tasks.insert(subnet, task);
+        if !self.order.contains(&subnet) {
+            self.order.push(subnet);
+        }
         self.sync_snapshot();
         Ok(())
     }
@@ -227,12 +258,19 @@ impl Serving {
                 }
             }
         }
+        self.order.clear();
+        for &s in wanted {
+            if self.tasks.contains_key(&s) && !self.order.contains(&s) {
+                self.order.push(s);
+            }
+        }
         self.sync_snapshot();
     }
 
     /// Stops every listener; their port is free when this returns.
     pub async fn stop(&mut self) {
         let tasks: Vec<_> = self.tasks.drain().map(|(_, task)| task).collect();
+        self.order.clear();
         self.sync_snapshot();
         for task in &tasks {
             task.abort();
@@ -242,13 +280,21 @@ impl Serving {
         }
     }
 
-    /// The `address:port`s being listened on.
+    /// The `address:port`s being listened on, sorted for stable settings UI display.
     pub fn listening(&self) -> Vec<String> {
         let mut addrs: Vec<_> = self.tasks.keys().map(|s| s.addr).collect();
         addrs.sort();
         addrs
             .into_iter()
             .map(|a| format!("{a}:{}", self.port))
+            .collect()
+    }
+
+    /// The `address:port`s being listened on, preserving interface/listening order for pairing offers.
+    pub fn listening_in_order(&self) -> Vec<String> {
+        self.order
+            .iter()
+            .map(|s| format!("{}:{}", s.addr, self.port))
             .collect()
     }
 
@@ -277,25 +323,23 @@ struct AuthedDevice {
 
 /// The routes for one listener, whose peers must come from `subnet`.
 pub fn router(ctx: Ctx, subnet: Subnet) -> Router {
+    router_with_pair_timeout(ctx, subnet, PAIR_TIMEOUT)
+}
+
+/// Same as [`router`], with a custom overall timeout for `POST /v1/pair`.
+pub fn router_with_pair_timeout(ctx: Ctx, subnet: Subnet, pair_timeout: Duration) -> Router {
     let guard = Guard {
         subnet,
         allowed_origins: ctx.allowed_origins.clone(),
         gate: ctx.gate.clone(),
         security: ctx.security.clone(),
     };
-    let no_store = || {
-        SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
-        )
-    };
     let mut r = Router::new()
         .route("/health", get(health))
         .merge(
             Router::new()
                 .route("/v1/rpc", post(rpc))
-                .layer(DefaultBodyLimit::max(BODY_LIMIT))
-                .layer(no_store()),
+                .layer(DefaultBodyLimit::max(BODY_LIMIT)),
         )
         .route("/v1/events", get(events))
         .nest_service("/web", web(&ctx.web_dir));
@@ -304,11 +348,31 @@ pub fn router(ctx: Ctx, subnet: Subnet) -> Router {
             Router::new()
                 .route("/v1/pair", post(pair))
                 .layer(DefaultBodyLimit::max(PAIR_BODY_LIMIT))
-                .layer(no_store()),
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    pair_timeout,
+                )),
         );
     }
     r.with_state(ctx)
         .layer(middleware::from_fn_with_state(guard, check))
+        .layer(middleware::from_fn(no_store_sensitive))
+}
+
+/// Ensures every response for `/v1/rpc` and `/v1/pair` (including early auth/origin/limit/timeout
+/// rejections) carries `Cache-Control: no-store`, and closes connections on `408 Request Timeout`.
+async fn no_store_sensitive(req: Request, next: Next) -> Response {
+    let sensitive = matches!(req.uri().path(), "/v1/rpc" | "/v1/pair");
+    let mut res = next.run(req).await;
+    if res.status() == StatusCode::REQUEST_TIMEOUT {
+        res.headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
+    if sensitive {
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    res
 }
 
 /// The static files under `/web/`, with the page's security headers.
@@ -444,7 +508,7 @@ fn gate_closed() -> Response {
 /// sending its body, and would otherwise run whenever that arrives.
 async fn gated(gate: &Gate, revoke: Option<&DeviceRevoke>, next: Next, req: Request) -> Response {
     tokio::select! {
-        res = next.run(req) => res,
+        biased;
         _ = gate.closed() => gate_closed(),
         _ = async {
             match revoke {
@@ -452,6 +516,17 @@ async fn gated(gate: &Gate, revoke: Option<&DeviceRevoke>, next: Next, req: Requ
                 None => std::future::pending().await,
             }
         } => unauthorized(true),
+        res = next.run(req) => {
+            // Re-check before handing the response out in case revocation or gate close happened
+            // synchronously while the handler was finishing.
+            if gate.is_closed() {
+                gate_closed()
+            } else if revoke.is_some_and(DeviceRevoke::is_revoked) {
+                unauthorized(true)
+            } else {
+                res
+            }
+        }
     }
 }
 
@@ -573,7 +648,14 @@ async fn pair(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) -> Respon
                 .into_response();
         }
     };
-    match security.redeem(&req.key, &req.name) {
+    let sec = Arc::clone(security);
+    let key = req.key;
+    let name = req.name;
+    let redeemed = match tokio::task::spawn_blocking(move || sec.redeem(&key, &name)).await {
+        Ok(r) => r,
+        Err(e) => Err(RedeemError::SaveFailed(e.to_string())),
+    };
+    match redeemed {
         Ok(res) => {
             ctx.host.emit_event(HostEvent::LanDevices {
                 devices: res.devices,
@@ -640,20 +722,33 @@ async fn run_ws_session(
             return;
         }
         if let Some(sec) = &ctx.security {
-            sec.touch(&a.id);
+            let sec = Arc::clone(sec);
+            let id = a.id.clone();
+            if let Ok(Some(devices)) = tokio::task::spawn_blocking(move || sec.touch(&id)).await {
+                ctx.host.emit_event(HostEvent::LanDevices {
+                    devices,
+                    paired_offer: None,
+                    paired_device: None,
+                });
+            }
+        }
+        if a.revoke.is_revoked() {
+            drop(socket);
+            return;
         }
         Some(a.revoke)
     } else {
         None
     };
     tokio::select! {
-        _ = relay(socket, rx, ctx.gate) => {}
+        biased;
         _ = async {
             match revoke {
                 Some(r) => r.revoked().await,
                 None => std::future::pending().await,
             }
         } => {}
+        _ = relay(socket, rx, ctx.gate) => {}
     }
 }
 
@@ -664,6 +759,16 @@ async fn relay(mut socket: WebSocket, mut rx: broadcast::Receiver<Utf8Bytes>, ga
     }
     loop {
         tokio::select! {
+            biased;
+            _ = gate.closed() => {
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: 1001,
+                        reason: "closed".into(),
+                    })))
+                    .await;
+                break;
+            }
             ev = rx.recv() => match ev {
                 Ok(text) => {
                     if socket.send(Message::Text(text)).await.is_err() {
@@ -686,15 +791,6 @@ async fn relay(mut socket: WebSocket, mut rx: broadcast::Receiver<Utf8Bytes>, ga
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
-            _ = gate.closed() => {
-                let _ = socket
-                    .send(Message::Close(Some(CloseFrame {
-                        code: 1001,
-                        reason: "closed".into(),
-                    })))
-                    .await;
-                break;
-            }
         }
     }
 }
@@ -1164,5 +1260,154 @@ mod tests {
             None | Some(Err(_)) => {}
             Some(Ok(msg)) => panic!("revoked ws unexpectedly sent frame: {msg:?}"),
         }
+    }
+
+    /// Regression: when a handler revokes the device and becomes ready on the same poll (or yields
+    /// so both `select!` arms are ready simultaneously), `gated` must still return 401 + `no-store`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gated_prefers_revocation_when_handler_finishes_simultaneously() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+
+        let subnet = Subnet {
+            addr: Ipv4Addr::LOCALHOST,
+            mask: Ipv4Addr::new(255, 0, 0, 0),
+        };
+        let guard = Guard {
+            subnet,
+            allowed_origins: Arc::default(),
+            gate: Gate::default(),
+            security: Some(Arc::clone(&sec)),
+        };
+
+        let sec_sync = Arc::clone(&sec);
+        let sec_yield = Arc::clone(&sec);
+        let app = Router::new()
+            // Handler revokes and returns 200 synchronously without awaiting -> hits post-`next.run` check.
+            .route(
+                "/v1/rpc",
+                post(move |Extension(authed): Extension<AuthedDevice>| {
+                    let sec = Arc::clone(&sec_sync);
+                    async move {
+                        sec.remove(&authed.id).unwrap();
+                        (StatusCode::OK, "should-not-leak")
+                    }
+                }),
+            )
+            // Handler revokes then yields once so both `revoke.revoked()` and `next.run()` are ready
+            // on the next poll -> hits `biased;` select priority.
+            .route(
+                "/yield-revoke",
+                post(move |Extension(authed): Extension<AuthedDevice>| {
+                    let sec = Arc::clone(&sec_yield);
+                    async move {
+                        sec.remove(&authed.id).unwrap();
+                        tokio::task::yield_now().await;
+                        (StatusCode::OK, "should-not-leak")
+                    }
+                }),
+            )
+            .layer(middleware::from_fn_with_state(guard, check))
+            .layer(middleware::from_fn(no_store_sensitive))
+            .into_make_service_with_connect_info::<SocketAddr>();
+
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let srv = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        for (path, expect_no_store) in [("/v1/rpc", true), ("/yield-revoke", false)] {
+            let offer = sec.start_pairing().unwrap();
+            let paired = sec.redeem(&offer.key, "iPhone").unwrap();
+            let (status, head, body) = http(
+                addr,
+                &format!(
+                    "POST {path} HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Type: application/json",
+                    paired.token
+                ),
+                "{}",
+            )
+            .await;
+            assert_eq!(status, 401, "{path}: {body}");
+            assert!(head.contains("connection: close"), "{path}: {head}");
+            assert!(!body.contains("should-not-leak"), "{path}: {body}");
+            if expect_no_store {
+                assert!(head.contains("cache-control: no-store"), "{path}: {head}");
+            }
+        }
+
+        srv.abort();
+        let _ = srv.await;
+    }
+
+    /// Regression: pairing addresses keep `listeners()` / `wanted` order (not numerically sorted)
+    /// and exclude addresses that failed to bind, while `listening()` stays sorted for settings UI.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn serving_preserves_listening_order_and_excludes_failed_binds() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+        let first = Subnet {
+            addr: Ipv4Addr::new(192, 168, 1, 20),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+        let failing = Subnet {
+            addr: Ipv4Addr::new(172, 16, 0, 5),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+        let second = Subnet {
+            addr: Ipv4Addr::new(10, 0, 0, 5),
+            mask: Ipv4Addr::new(255, 255, 255, 0),
+        };
+
+        let port = 38471;
+        let mut serving =
+            Serving::new(port, Box::new(|_, _| Router::new()), Some(Arc::clone(&sec)));
+        serving.bind_override = Some(Box::new(move |s| {
+            if s == failing {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrNotAvailable,
+                    "simulated bind failure",
+                ))
+            } else {
+                std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            }
+        }));
+        let handle = serving.listening_handle();
+
+        serving.follow(&[first, failing, second]).await;
+        // UI display list stays numerically sorted.
+        assert_eq!(
+            serving.listening(),
+            [format!("10.0.0.5:{port}"), format!("192.168.1.20:{port}")]
+        );
+        // Pairing snapshot preserves wanted order and excludes the failed bind.
+        let ordered = serving.listening_in_order();
+        assert_eq!(
+            ordered,
+            [format!("192.168.1.20:{port}"), format!("10.0.0.5:{port}")]
+        );
+        assert_eq!(*handle.lock(), ordered);
+        assert_eq!(serving.errors().len(), 1);
+        assert!(
+            serving.errors()[0].contains("172.16.0.5"),
+            "{:?}",
+            serving.errors()
+        );
+
+        let offer = crate::lan::pairing::create_pairing_offer(&sec, port, &ordered).unwrap();
+        assert!(
+            offer
+                .url
+                .starts_with(&format!("codeck://pair?h=192.168.1.20,10.0.0.5&p={port}&")),
+            "{}",
+            offer.url
+        );
+
+        serving.stop().await;
+        assert!(serving.listening_in_order().is_empty());
+        assert!(handle.lock().is_empty());
     }
 }

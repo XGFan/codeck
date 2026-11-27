@@ -1,8 +1,8 @@
 //! Paired LAN devices persisted in `devices.json`, with per-device revocation signals.
 
 use std::collections::HashMap;
-use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -123,14 +123,13 @@ impl Devices {
     /// Loads `<dir>/devices.json`; a missing file is treated as an empty list without creating anything.
     pub fn load(dir: &Path) -> Result<Self, String> {
         let path = dir.join(DEVICES_FILE);
-        let devices = match std::fs::read(&path) {
-            Ok(bytes) => {
+        let devices = match read_devices_file(&path)? {
+            Some(bytes) => {
                 let file: DevicesFile = serde_json::from_slice(&bytes)
                     .map_err(|e| format!("解析设备列表失败（{}）：{e}", path.display()))?;
                 file.devices
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(format!("读取设备列表失败（{}）：{e}", path.display())),
+            None => Vec::new(),
         };
         let revokes = devices
             .iter()
@@ -210,16 +209,51 @@ impl Devices {
         Ok(self.remove_device(id)?.is_some())
     }
 
-    /// Updates `lastSeenAt` for `id`; write failures are logged and ignored so connections stay up.
-    pub fn touch(&mut self, id: &str, now_ms: i64) {
-        let Some(dev) = self.devices.iter_mut().find(|d| d.id == id) else {
-            return;
+    /// Updates `lastSeenAt` for `id`, committing only after persistence succeeds; write failures
+    /// are logged and ignored so connections stay up.
+    pub fn touch(&mut self, id: &str, now_ms: i64) -> bool {
+        let Some(pos) = self.devices.iter().position(|d| d.id == id) else {
+            return false;
         };
-        dev.last_seen_at = Some(now_ms);
-        if let Err(e) = save_atomic(&self.path, &self.devices) {
+        let mut next = self.devices.clone();
+        next[pos].last_seen_at = Some(now_ms);
+        if let Err(e) = save_atomic(&self.path, &next) {
             tracing::warn!("failed to persist devices.json after touch: {e}");
+            return false;
         }
+        self.devices = next;
+        true
     }
+}
+
+fn read_devices_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let mut file = match std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(format!("设备列表不能是符号链接（{}）", path.display()));
+        }
+        Err(e) => return Err(format!("读取设备列表失败（{}）：{e}", path.display())),
+    };
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("检查设备列表失败（{}）：{e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("设备列表不是普通文件（{}）", path.display()));
+    }
+    // SAFETY: `geteuid` has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    if meta.uid() != euid {
+        return Err(format!("设备列表的属主不是当前用户（{}）", path.display()));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| format!("读取设备列表失败（{}）：{e}", path.display()))?;
+    Ok(Some(bytes))
 }
 
 fn save_atomic(path: &Path, devices: &[StoredDevice]) -> Result<(), String> {
@@ -291,7 +325,7 @@ mod tests {
         assert!(!revoke.is_revoked());
         assert!(devices.verify("wrong").is_none());
 
-        devices.touch(&dev.id, 1_700_000_005_000);
+        assert!(devices.touch(&dev.id, 1_700_000_005_000));
         let reloaded = Devices::load(dir.path()).unwrap();
         assert_eq!(reloaded.list()[0].last_seen_at, Some(1_700_000_005_000.0));
         assert_eq!(reloaded.verify(&token).unwrap().0, dev.id);
@@ -304,5 +338,16 @@ mod tests {
         let reloaded = Devices::load(dir.path()).unwrap();
         assert!(reloaded.list().is_empty());
         assert!(reloaded.verify(&token).is_none());
+    }
+
+    #[test]
+    fn load_rejects_symlink_devices_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.json");
+        std::fs::write(&target, r#"{"devices":[]}"#).unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join(DEVICES_FILE)).unwrap();
+
+        let err = Devices::load(dir.path()).err().unwrap();
+        assert!(err.contains("符号链接"), "{err}");
     }
 }

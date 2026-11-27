@@ -195,3 +195,64 @@ async fn desktop_pairing_commands_lifecycle() {
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn desktop_lan_reports_lock_conflict_and_does_not_listen() {
+    let dir = tempfile::tempdir().unwrap();
+    let web = dir.path().join("web");
+    std::fs::create_dir_all(&web).unwrap();
+
+    let free = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = free.local_addr().unwrap().port();
+    drop(free);
+
+    // Simulate another `codeck-host` instance holding `daemon.lock` on the same directory.
+    let other_lock = codeck_host::lan::control::lock_state_dir(dir.path()).unwrap();
+
+    let (events, sink) = event_channel();
+    let host = Host::start(
+        HostConfig {
+            cache_dir: dir.path().join("cache"),
+            settings_path: dir.path().join("settings.json"),
+            ccrpc_logs: Some(dir.path().join("logs")),
+            images: Some(dir.path().join("images")),
+            data_root: Some(dir.path().join("root")),
+            refresh_prices: false,
+            lan: Some(LanConfig {
+                events,
+                web_dir: web,
+                port,
+                subnets: Arc::new(|| {
+                    Ok(vec![Subnet {
+                        addr: Ipv4Addr::LOCALHOST,
+                        mask: Ipv4Addr::new(255, 0, 0, 0),
+                    }])
+                }),
+            }),
+            ..HostConfig::desktop()
+        },
+        sink,
+    )
+    .unwrap();
+
+    let status = host.lan_set_enabled(true).await.unwrap();
+    assert!(status.enabled);
+    assert!(status.addresses.is_empty());
+    assert_eq!(
+        status.error.as_deref(),
+        Some(format!("另一个 codeck-host 正在使用 {}", dir.path().display()).as_str())
+    );
+    assert!(
+        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_err()
+    );
+
+    // Once the other instance releases the lock, turning LAN access off and on succeeds.
+    drop(other_lock);
+    host.lan_set_enabled(false).await.unwrap();
+    let ok = host.lan_set_enabled(true).await.unwrap();
+    assert_eq!(ok.error, None);
+    assert_eq!(ok.addresses, [format!("127.0.0.1:{port}")]);
+    host.lan_set_enabled(false).await.unwrap();
+}

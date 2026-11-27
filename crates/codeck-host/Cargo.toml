@@ -31,7 +31,7 @@ rustls.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "net", "macros", "rt", "rt-multi-thread", "signal", "io-util"] }
 tokio-rustls.workspace = true
-tower-http = { workspace = true, features = ["fs", "set-header"] }
+tower-http = { workspace = true, features = ["fs", "set-header", "timeout"] }
 # Only the daemon (src/bin/codeck-host.rs) uses these two.
 tracing-subscriber.workspace = true
 dirs.workspace = true

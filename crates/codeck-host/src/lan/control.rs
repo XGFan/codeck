@@ -1,19 +1,22 @@
 //! Daemon control socket (`<state-dir>/control.sock`), single-instance lock (`daemon.lock`), and
 //! CLI formatting helpers for `codeck-host pair / devices / unpair`.
 
-use std::fs::{File, OpenOptions, Permissions};
+use std::ffi::OsStr;
+use std::fs::{DirBuilder, File, Metadata, OpenOptions, Permissions};
 use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{Local, TimeZone};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::oneshot;
 
 use super::devices::PairedDevice;
 use super::pairing::{PAIRING_TTL, PairOutcome, build_pairing_url, private_ipv4_addrs};
@@ -23,29 +26,173 @@ pub const LOCK_FILE: &str = "daemon.lock";
 pub const SOCKET_FILE: &str = "control.sock";
 pub const MAX_REQUEST_LINE_BYTES: usize = 4 * 1024;
 pub const FIRST_LINE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Maximum usable byte length for a Unix domain socket path (`sun_path` minus the NUL terminator).
+pub const MAX_SOCKET_PATH_BYTES: usize = {
+    // SAFETY: `sockaddr_un` is a POD C struct; only the length of its fixed `sun_path` array is read.
+    let dummy: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    dummy.sun_path.len() - 1
+};
 
-/// Holds an exclusive `flock` on `<state-dir>/daemon.lock` for the lifetime of the daemon.
+fn current_euid() -> u32 {
+    // SAFETY: `geteuid` has no preconditions.
+    unsafe { libc::geteuid() }
+}
+
+fn trim_trailing_slashes(path: &Path) -> &Path {
+    let bytes = path.as_os_str().as_bytes();
+    let trimmed = bytes.len() - bytes.iter().rev().take_while(|&&b| b == b'/').count();
+    if trimmed == 0 {
+        Path::new("/")
+    } else {
+        Path::new(OsStr::from_bytes(&bytes[..trimmed]))
+    }
+}
+
+/// Validates that `<state_dir>/control.sock` fits within the platform's Unix socket path limit.
+pub fn check_socket_path_len(state_dir: &Path) -> Result<PathBuf, String> {
+    let path = state_dir.join(SOCKET_FILE);
+    if path.as_os_str().as_bytes().len() > MAX_SOCKET_PATH_BYTES {
+        return Err(format!(
+            "状态目录的路径太长：control.sock 的路径超过 {MAX_SOCKET_PATH_BYTES} 字节（{}），请换一个短一点的 --state-dir",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+/// Verifies that the connected Unix socket peer runs with the same effective UID as this process.
+pub fn verify_peer_euid(stream: &std::os::unix::net::UnixStream) -> Result<(), String> {
+    let uid = peer_uid_raw(stream.as_raw_fd())
+        .map_err(|e| format!("核对控制 socket 对端身份失败：{e}"))?;
+    if uid != current_euid() {
+        return Err("控制 socket 对端用户与当前用户不一致".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+))]
+fn peer_uid_raw(fd: std::os::fd::RawFd) -> io::Result<u32> {
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: `fd` is a live Unix socket descriptor and both out-pointers are valid.
+    let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(uid)
+}
+
+#[cfg(target_os = "linux")]
+fn peer_uid_raw(fd: std::os::fd::RawFd) -> io::Result<u32> {
+    // SAFETY: `ucred` is a POD C struct.
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: `fd` is a live Unix socket descriptor and `cred`/`len` match `SO_PEERCRED`.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(cred.uid)
+}
+
+fn verify_state_dir_meta(dir: &Path, meta: &Metadata) -> Result<(), String> {
+    if meta.file_type().is_symlink() {
+        return Err(format!("状态目录不能是符号链接（{}）", dir.display()));
+    }
+    if !meta.is_dir() {
+        return Err(format!("状态路径不是目录（{}）", dir.display()));
+    }
+    if meta.uid() != current_euid() {
+        return Err(format!("状态目录的属主不是当前用户（{}）", dir.display()));
+    }
+    Ok(())
+}
+
+/// Holds an exclusive `flock` on `<state-dir>/daemon.lock` for the lifetime of the owner.
 pub struct DaemonLock {
     _file: File,
 }
 
-/// Ensures `state_dir` exists with mode `0700` and acquires a non-blocking exclusive `flock` on
+/// Ensures `state_dir` is a trusted directory owned by the current user with mode `0700` (not a
+/// symlink, re-checked after `chmod`), and acquires a non-blocking exclusive `flock` on
 /// `<state-dir>/daemon.lock`.
 pub fn lock_state_dir(state_dir: &Path) -> Result<DaemonLock, String> {
-    std::fs::create_dir_all(state_dir)
-        .map_err(|e| format!("创建状态目录失败（{}）：{e}", state_dir.display()))?;
-    std::fs::set_permissions(state_dir, Permissions::from_mode(0o700))
-        .map_err(|e| format!("设置状态目录权限失败（{}）：{e}", state_dir.display()))?;
+    let dir = trim_trailing_slashes(state_dir);
+    let meta_before = match std::fs::symlink_metadata(dir) {
+        Ok(meta) => {
+            verify_state_dir_meta(dir, &meta)?;
+            meta
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)
+                .map_err(|e| format!("创建状态目录失败（{}）：{e}", dir.display()))?;
+            let meta = std::fs::symlink_metadata(dir)
+                .map_err(|e| format!("检查状态目录失败（{}）：{e}", dir.display()))?;
+            verify_state_dir_meta(dir, &meta)?;
+            meta
+        }
+        Err(e) => return Err(format!("检查状态目录失败（{}）：{e}", dir.display())),
+    };
 
-    let lock_path = state_dir.join(LOCK_FILE);
+    std::fs::set_permissions(dir, Permissions::from_mode(0o700))
+        .map_err(|e| format!("设置状态目录权限失败（{}）：{e}", dir.display()))?;
+
+    // Re-check after chmod so a concurrent swap on the parent directory cannot slip past.
+    let meta_after = std::fs::symlink_metadata(dir)
+        .map_err(|e| format!("检查状态目录失败（{}）：{e}", dir.display()))?;
+    verify_state_dir_meta(dir, &meta_after)?;
+    if meta_after.dev() != meta_before.dev() || meta_after.ino() != meta_before.ino() {
+        return Err(format!("状态目录在检查期间发生变化（{}）", dir.display()));
+    }
+    if (meta_after.permissions().mode() & 0o777) != 0o700 {
+        return Err(format!("状态目录权限不是 0700（{}）", dir.display()));
+    }
+
+    let lock_path = dir.join(LOCK_FILE);
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&lock_path)
-        .map_err(|e| format!("打开锁文件失败（{}）：{e}", lock_path.display()))?;
+        .map_err(|e| {
+            if e.raw_os_error() == Some(libc::ELOOP) {
+                format!("锁文件不能是符号链接（{}）", lock_path.display())
+            } else {
+                format!("打开锁文件失败（{}）：{e}", lock_path.display())
+            }
+        })?;
+    let lock_meta = file
+        .metadata()
+        .map_err(|e| format!("检查锁文件失败（{}）：{e}", lock_path.display()))?;
+    if !lock_meta.is_file() {
+        return Err(format!("锁文件不是普通文件（{}）", lock_path.display()));
+    }
+    if lock_meta.uid() != current_euid() {
+        return Err(format!(
+            "锁文件的属主不是当前用户（{}）",
+            lock_path.display()
+        ));
+    }
 
     // SAFETY: `file.as_raw_fd()` is a valid open file descriptor owned by `file`.
     let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
@@ -65,21 +212,26 @@ pub fn lock_state_dir(state_dir: &Path) -> Result<DaemonLock, String> {
     Ok(DaemonLock { _file: file })
 }
 
-/// Bound `<state-dir>/control.sock`; removes the socket file when dropped.
+/// Bound `<state-dir>/control.sock`; removes only the socket bound by this instance when dropped.
 pub struct ControlSocket {
     listener: UnixListener,
     path: PathBuf,
+    dev: u64,
+    ino: u64,
 }
 
 impl ControlSocket {
-    /// Removes a stale socket file if present (refusing non-socket files), binds `control.sock`, and
-    /// restricts its permissions to `0600`. Call only after holding [`DaemonLock`].
+    /// Removes a stale socket file if present (refusing non-socket files or foreign-owned sockets),
+    /// binds `control.sock`, and restricts its permissions to `0600`. Call only after holding [`DaemonLock`].
     pub fn bind(state_dir: &Path) -> Result<Self, String> {
-        let path = state_dir.join(SOCKET_FILE);
+        let path = check_socket_path_len(state_dir)?;
         match std::fs::symlink_metadata(&path) {
             Ok(meta) => {
                 if !meta.file_type().is_socket() {
                     return Err(format!("{} 已存在且不是 socket 文件", path.display()));
+                }
+                if meta.uid() != current_euid() {
+                    return Err(format!("{} 的属主不是当前用户", path.display()));
                 }
                 std::fs::remove_file(&path)
                     .map_err(|e| format!("删除残留 socket 失败（{}）：{e}", path.display()))?;
@@ -90,9 +242,23 @@ impl ControlSocket {
 
         let listener = UnixListener::bind(&path)
             .map_err(|e| format!("监听控制 socket 失败（{}）：{e}", path.display()))?;
-        std::fs::set_permissions(&path, Permissions::from_mode(0o600))
-            .map_err(|e| format!("设置控制 socket 权限失败（{}）：{e}", path.display()))?;
-        Ok(Self { listener, path })
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                let _ = std::fs::remove_file(&path);
+                return Err(format!("检查控制 socket 失败（{}）：{e}", path.display()));
+            }
+        };
+        // Construct `Self` before `chmod` so any chmod failure cleans up the bound socket via `Drop`.
+        let sock = Self {
+            listener,
+            path,
+            dev: meta.dev(),
+            ino: meta.ino(),
+        };
+        std::fs::set_permissions(&sock.path, Permissions::from_mode(0o600))
+            .map_err(|e| format!("设置控制 socket 权限失败（{}）：{e}", sock.path.display()))?;
+        Ok(sock)
     }
 
     pub fn path(&self) -> &Path {
@@ -120,7 +286,13 @@ impl ControlSocket {
 
 impl Drop for ControlSocket {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if let Ok(meta) = std::fs::symlink_metadata(&self.path)
+            && meta.file_type().is_socket()
+            && meta.dev() == self.dev
+            && meta.ino() == self.ino
+        {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -192,6 +364,22 @@ async fn read_bounded_line(
 }
 
 pub async fn handle_connection(stream: UnixStream, ctx: ControlCtx) {
+    match stream.peer_cred() {
+        Ok(cred) if cred.uid() == current_euid() => {}
+        Ok(cred) => {
+            tracing::warn!(
+                "rejecting control socket connection from uid {} (expected {})",
+                cred.uid(),
+                current_euid()
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("rejecting control socket connection: peer_cred failed: {e}");
+            return;
+        }
+    }
+
     let (read_half, mut writer) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
@@ -219,7 +407,13 @@ pub async fn handle_connection(stream: UnixStream, ctx: ControlCtx) {
                 let _ = write_json_line(&mut writer, &json!({ "error": "缺少设备 ID" })).await;
                 return;
             };
-            match ctx.security.remove_device(&id) {
+            let sec = Arc::clone(&ctx.security);
+            let remove_id = id.clone();
+            let res = tokio::task::spawn_blocking(move || sec.remove_device(&remove_id))
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r);
+            match res {
                 Ok((Some(dev), _)) => {
                     let _ = write_json_line(
                         &mut writer,
@@ -250,6 +444,19 @@ pub async fn handle_connection(stream: UnixStream, ctx: ControlCtx) {
     }
 }
 
+/// Cancels `offer_id` on deadline and then resolves its oneshot outcome so a redemption that
+/// committed right at the boundary still reports `Paired`.
+async fn on_pair_deadline(
+    security: &Arc<LanSecurity>,
+    offer_id: &str,
+    outcome: &mut oneshot::Receiver<PairOutcome>,
+) -> PairOutcome {
+    let sec = Arc::clone(security);
+    let id = offer_id.to_owned();
+    let _ = tokio::task::spawn_blocking(move || sec.cancel_pairing(&id)).await;
+    outcome.await.unwrap_or(PairOutcome::Expired)
+}
+
 async fn handle_pair(
     reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -261,18 +468,21 @@ async fn handle_pair(
         let _ = write_json_line(writer, &json!({ "error": "没有可用的局域网地址。" })).await;
         return;
     }
-    let cert = match ctx.security.ensure_cert() {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = write_json_line(writer, &json!({ "error": e })).await;
-            return;
+    let cert = {
+        let sec = Arc::clone(&ctx.security);
+        match tokio::task::spawn_blocking(move || sec.ensure_cert())
+            .await
+            .map_err(|e| format!("准备 TLS 证书失败：{e}"))
+            .and_then(|r| r)
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = write_json_line(writer, &json!({ "error": e })).await;
+                return;
+            }
         }
     };
-    let started = match ctx.security.start_pairing_with_ttl(
-        Instant::now(),
-        chrono::Utc::now().timestamp_millis(),
-        ctx.pairing_ttl,
-    ) {
+    let started = match ctx.security.start_pairing_ttl(ctx.pairing_ttl) {
         Ok(o) => o,
         Err(e) => {
             let _ = write_json_line(writer, &json!({ "error": e })).await;
@@ -298,26 +508,32 @@ async fn handle_pair(
 
     let mut disconnect_buf = [0u8; 16];
     let deadline = tokio::time::Instant::from_std(started.deadline);
-    tokio::select! {
-        res = started.outcome => match res {
-            Ok(PairOutcome::Paired(dev)) => {
-                let _ = write_json_line(
-                    writer,
-                    &json!({ "paired": { "id": dev.id, "name": dev.name } }),
-                )
-                .await;
-            }
-            Ok(PairOutcome::Expired) | Err(_) => {
-                let _ = write_json_line(writer, &json!({ "expired": true })).await;
-            }
-        },
+    let mut outcome = started.outcome;
+    let final_outcome = tokio::select! {
+        biased;
+        res = &mut outcome => res.unwrap_or(PairOutcome::Expired),
         _ = tokio::time::sleep_until(deadline) => {
-            ctx.security.cancel_pairing(&started.id);
-            let _ = write_json_line(writer, &json!({ "expired": true })).await;
+            on_pair_deadline(&ctx.security, &started.id, &mut outcome).await
         }
         // Client disconnected (e.g. Ctrl-C) or sent unexpected trailing bytes: cancel its own offer.
         _ = reader.read(&mut disconnect_buf) => {
-            ctx.security.cancel_pairing(&started.id);
+            let sec = Arc::clone(&ctx.security);
+            let id = started.id;
+            let _ = tokio::task::spawn_blocking(move || sec.cancel_pairing(&id)).await;
+            return;
+        }
+    };
+
+    match final_outcome {
+        PairOutcome::Paired(dev) => {
+            let _ = write_json_line(
+                writer,
+                &json!({ "paired": { "id": dev.id, "name": dev.name } }),
+            )
+            .await;
+        }
+        PairOutcome::Expired => {
+            let _ = write_json_line(writer, &json!({ "expired": true })).await;
         }
     }
 }
@@ -365,6 +581,7 @@ pub fn format_device_line(dev: &PairedDevice) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::time::Instant;
 
     use super::*;
     use crate::lan::security::RedeemError;
@@ -426,8 +643,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn control_socket_pair_supersede_disconnect_devices_unpair_and_limits() {
         let dir = tempfile::tempdir().unwrap();
-        let _lock = lock_state_dir(dir.path()).unwrap();
         let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+        // LanSecurity::open already holds daemon.lock on dir.
+        assert!(lock_state_dir(dir.path()).is_err());
         sec.ensure_cert().unwrap();
 
         let sock = Arc::new(ControlSocket::bind(dir.path()).unwrap());
@@ -559,5 +777,112 @@ mod tests {
         std::fs::write(dir.path().join(SOCKET_FILE), "not a socket").unwrap();
         let err = ControlSocket::bind(dir.path()).err().unwrap();
         assert!(err.contains("不是 socket"), "{err}");
+    }
+
+    #[test]
+    fn rejects_symlink_state_dir_and_overlong_socket_path() {
+        let parent = tempfile::tempdir().unwrap();
+        let real = parent.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = parent.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let err = lock_state_dir(&link).err().unwrap();
+        assert!(err.contains("符号链接"), "{err}");
+        // Trailing slash must not bypass the symlink check.
+        let with_slash = PathBuf::from(format!("{}/", link.display()));
+        let err = lock_state_dir(&with_slash).err().unwrap();
+        assert!(err.contains("符号链接"), "{err}");
+
+        // Socket path length check: exact limit passes, one byte over fails with expected message.
+        let suffix_len = SOCKET_FILE.len() + 1; // "/control.sock"
+        let exact_dir = PathBuf::from(format!(
+            "/{}",
+            "a".repeat(MAX_SOCKET_PATH_BYTES - suffix_len - 1)
+        ));
+        assert_eq!(
+            check_socket_path_len(&exact_dir)
+                .unwrap()
+                .as_os_str()
+                .as_bytes()
+                .len(),
+            MAX_SOCKET_PATH_BYTES
+        );
+        let too_long_dir = PathBuf::from(format!("/{}", "a".repeat(MAX_SOCKET_PATH_BYTES)));
+        let err = check_socket_path_len(&too_long_dir).unwrap_err();
+        assert!(
+            err.contains(&format!(
+                "状态目录的路径太长：control.sock 的路径超过 {MAX_SOCKET_PATH_BYTES} 字节"
+            )),
+            "{err}"
+        );
+        assert!(err.contains("--state-dir"), "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn control_socket_drop_only_removes_bound_inode_and_verifies_peer_uid() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock1 = ControlSocket::bind(dir.path()).unwrap();
+        let sock_path = sock1.path().to_path_buf();
+
+        // CLI peer uid check passes against our own process's listener.
+        let client = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+        verify_peer_euid(&client).unwrap();
+        drop(client);
+
+        // Replace `control.sock` with a second socket (different inode); dropping `sock1` must leave `sock2` intact.
+        let sock2 = ControlSocket::bind(dir.path()).unwrap();
+        let ino2 = std::fs::symlink_metadata(&sock_path).unwrap().ino();
+        drop(sock1);
+        assert!(sock_path.exists());
+        assert_eq!(std::fs::symlink_metadata(&sock_path).unwrap().ino(), ino2);
+
+        drop(sock2);
+        assert!(!sock_path.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pair_deadline_reports_paired_if_already_redeemed_and_expired_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let sec = Arc::new(LanSecurity::open(dir.path().to_path_buf()).unwrap());
+
+        // Case 1: redemption committed before deadline branch acquires lock -> reports `Paired`.
+        let mut o1 = sec.start_pairing().unwrap();
+        let redeemed = sec.redeem(&o1.key, "Boundary iPhone").unwrap();
+        let res1 = on_pair_deadline(&sec, &o1.id, &mut o1.outcome).await;
+        assert_eq!(res1, PairOutcome::Paired(redeemed.device));
+
+        // Case 2: unredeemed offer at deadline -> cancelled and reports `Expired`.
+        let mut o2 = sec.start_pairing().unwrap();
+        let res2 = on_pair_deadline(&sec, &o2.id, &mut o2.outcome).await;
+        assert_eq!(res2, PairOutcome::Expired);
+        assert!(matches!(
+            sec.redeem(&o2.key, "Too Late"),
+            Err(RedeemError::Expired)
+        ));
+
+        // Case 3: end-to-end control socket expiration sends `{"expired": true}`.
+        sec.ensure_cert().unwrap();
+        let sock = Arc::new(ControlSocket::bind(dir.path()).unwrap());
+        let sock_path = sock.path().to_path_buf();
+        let ctx = ControlCtx {
+            security: Arc::clone(&sec),
+            port: 38471,
+            listening: Arc::new(|| vec!["192.168.1.20:38471".into()]),
+            first_line_timeout: Duration::from_secs(2),
+            pairing_ttl: Duration::from_millis(50),
+        };
+        let server = {
+            let sock = Arc::clone(&sock);
+            tokio::spawn(async move { sock.serve(ctx).await })
+        };
+        let (r, mut w) = UnixStream::connect(&sock_path).await.unwrap().into_split();
+        let mut r = BufReader::new(r);
+        w.write_all(b"{\"cmd\":\"pair\"}\n").await.unwrap();
+        let _first = read_json_line(&mut r).await;
+        let second = read_json_line(&mut r).await;
+        assert_eq!(second, json!({ "expired": true }));
+        server.abort();
+        let _ = server.await;
     }
 }

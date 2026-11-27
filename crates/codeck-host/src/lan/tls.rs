@@ -1,23 +1,27 @@
 //! Self-signed TLS certificate persistence and the axum [`TlsListener`] for non-loopback LAN listeners.
 
+use std::collections::HashMap;
 use std::future::Future;
-use std::io::{self, Write};
-use std::net::SocketAddr;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::io::{self, IoSlice, Read, Write};
+use std::net::{IpAddr, SocketAddr};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use base64::Engine;
 use chrono::Datelike;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use parking_lot::Mutex;
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
@@ -29,6 +33,10 @@ const KEY_FILE: &str = "key.pem";
 const CERT_VALID_DAYS: u64 = 3653;
 /// Cap concurrent in-flight TLS handshakes so stalled peers cannot exhaust file descriptors.
 const MAX_HANDSHAKES: usize = 64;
+/// Cap total active connections (handshaking + established) on a TLS listener.
+pub const MAX_CONNECTIONS: usize = 256;
+/// Cap active connections (handshaking + established) from one source IP on a TLS listener.
+pub const MAX_CONNECTIONS_PER_IP: usize = 32;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -64,8 +72,17 @@ impl HostCert {
         let tls_dir = dir.join(TLS_DIR);
         match std::fs::symlink_metadata(&tls_dir) {
             Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(format!("TLS 证书目录不能是符号链接：{}", tls_dir.display()));
+                }
                 if !meta.is_dir() {
                     return Err(format!("TLS 证书路径不是目录：{}", tls_dir.display()));
+                }
+                if meta.uid() != current_euid() {
+                    return Err(format!(
+                        "TLS 证书目录的属主不是当前用户：{}",
+                        tls_dir.display()
+                    ));
                 }
                 Self::load_from_dir(&tls_dir)
             }
@@ -84,8 +101,8 @@ impl HostCert {
     fn load_from_dir(tls_dir: &Path) -> Result<Self, String> {
         let cert_path = tls_dir.join(CERT_FILE);
         let key_path = tls_dir.join(KEY_FILE);
-        let cert_pem = read_pem_file(&cert_path, "证书")?;
-        let key_pem = read_pem_file(&key_path, "私钥")?;
+        let cert_pem = read_pem_file(&cert_path, "证书", false)?;
+        let key_pem = read_pem_file(&key_path, "私钥", true)?;
         Self::from_pem(&cert_pem, &key_pem)
     }
 
@@ -148,14 +165,48 @@ impl HostCert {
     }
 }
 
-fn read_pem_file(path: &Path, label: &str) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|e| {
-        if e.kind() == io::ErrorKind::NotFound {
-            format!("缺少 TLS {label}文件：{}", path.display())
-        } else {
-            format!("读取 TLS {label}失败（{}）：{e}", path.display())
+fn current_euid() -> u32 {
+    // SAFETY: `geteuid` has no preconditions.
+    unsafe { libc::geteuid() }
+}
+
+fn read_pem_file(path: &Path, label: &str, require_0600: bool) -> Result<Vec<u8>, String> {
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                format!("缺少 TLS {label}文件：{}", path.display())
+            } else if e.raw_os_error() == Some(libc::ELOOP) {
+                format!("TLS {label}不能是符号链接：{}", path.display())
+            } else {
+                format!("读取 TLS {label}失败（{}）：{e}", path.display())
+            }
+        })?;
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("检查 TLS {label}失败（{}）：{e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("TLS {label}不是普通文件：{}", path.display()));
+    }
+    if meta.uid() != current_euid() {
+        return Err(format!("TLS {label}的属主不是当前用户：{}", path.display()));
+    }
+    if require_0600 {
+        let mode = meta.permissions().mode() & 0o777;
+        if (mode & !0o600) != 0 {
+            return Err(format!(
+                "TLS {label}权限过宽（当前 {:04o}，要求不超过 0600）：{}",
+                mode,
+                path.display()
+            ));
         }
-    })
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)
+        .map_err(|e| format!("读取 TLS {label}失败（{}）：{e}", path.display()))?;
+    Ok(buf)
 }
 
 fn write_file(path: &Path, bytes: &[u8], mode: u32, label: &str) -> Result<(), String> {
@@ -208,8 +259,108 @@ fn build_server_config(
     Ok(Arc::new(cfg))
 }
 
-type HandshakeFuture =
-    Pin<Box<dyn Future<Output = Option<(TlsStream<TcpStream>, SocketAddr)>> + Send>>;
+struct ConnLimits {
+    max_total: usize,
+    max_per_ip: usize,
+    counts: Mutex<ConnCounts>,
+}
+
+#[derive(Default)]
+struct ConnCounts {
+    total: usize,
+    per_ip: HashMap<IpAddr, usize>,
+}
+
+struct ConnGuard {
+    limits: Arc<ConnLimits>,
+    ip: IpAddr,
+}
+
+impl ConnLimits {
+    fn new(max_total: usize, max_per_ip: usize) -> Arc<Self> {
+        Arc::new(Self {
+            max_total,
+            max_per_ip,
+            counts: Mutex::new(ConnCounts::default()),
+        })
+    }
+
+    fn try_acquire(self: &Arc<Self>, ip: IpAddr) -> Option<ConnGuard> {
+        let ip = ip.to_canonical();
+        let mut counts = self.counts.lock();
+        let cur_ip = counts.per_ip.get(&ip).copied().unwrap_or(0);
+        if counts.total >= self.max_total || cur_ip >= self.max_per_ip {
+            return None;
+        }
+        counts.total += 1;
+        *counts.per_ip.entry(ip).or_insert(0) += 1;
+        Some(ConnGuard {
+            limits: Arc::clone(self),
+            ip,
+        })
+    }
+}
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        let mut counts = self.limits.counts.lock();
+        counts.total = counts.total.saturating_sub(1);
+        if let Some(c) = counts.per_ip.get_mut(&self.ip) {
+            *c -= 1;
+            if *c == 0 {
+                counts.per_ip.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// A [`TlsStream`] whose lifetime holds a connection-limit permit until dropped.
+pub struct TrackedTlsStream {
+    inner: TlsStream<TcpStream>,
+    _guard: ConnGuard,
+}
+
+impl AsyncRead for TrackedTlsStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TrackedTlsStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+}
+
+type HandshakeFuture = Pin<Box<dyn Future<Output = Option<(TrackedTlsStream, SocketAddr)>> + Send>>;
 
 /// An [`axum::serve::Listener`] that performs TLS handshakes concurrently inside `accept()` without
 /// spawning a background task, so dropping the listener frees the TCP socket and cancels in-flight handshakes.
@@ -217,20 +368,31 @@ pub struct TlsListener {
     tcp: TcpListener,
     acceptor: TlsAcceptor,
     handshakes: FuturesUnordered<HandshakeFuture>,
+    limits: Arc<ConnLimits>,
 }
 
 impl TlsListener {
     pub fn new(tcp: TcpListener, config: Arc<ServerConfig>) -> Self {
+        Self::with_limits(tcp, config, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP)
+    }
+
+    pub fn with_limits(
+        tcp: TcpListener,
+        config: Arc<ServerConfig>,
+        max_connections: usize,
+        max_per_ip: usize,
+    ) -> Self {
         Self {
             tcp,
             acceptor: TlsAcceptor::from(config),
             handshakes: FuturesUnordered::new(),
+            limits: ConnLimits::new(max_connections, max_per_ip),
         }
     }
 }
 
 impl axum::serve::Listener for TlsListener {
-    type Io = TlsStream<TcpStream>;
+    type Io = TrackedTlsStream;
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
@@ -245,10 +407,15 @@ impl axum::serve::Listener for TlsListener {
                 res = self.tcp.accept(), if self.handshakes.len() < MAX_HANDSHAKES => {
                     match res {
                         Ok((stream, peer)) => {
+                            let Some(guard) = self.limits.try_acquire(peer.ip()) else {
+                                tracing::debug!("dropping connection from {peer}: connection limit reached");
+                                drop(stream);
+                                continue;
+                            };
                             let acceptor = self.acceptor.clone();
                             self.handshakes.push(Box::pin(async move {
                                 match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
-                                    Ok(Ok(tls)) => Some((tls, peer)),
+                                    Ok(Ok(tls)) => Some((TrackedTlsStream { inner: tls, _guard: guard }, peer)),
                                     Ok(Err(e)) => {
                                         tracing::debug!("tls handshake from {peer} failed: {e}");
                                         None
@@ -341,5 +508,57 @@ mod tests {
         let err = HostCert::load_or_create(dir.path()).unwrap_err();
         assert!(err.contains("不匹配") || err.contains("无效"), "{err}");
         assert_eq!(std::fs::read(&cert_path).unwrap(), orig_cert_pem);
+    }
+
+    #[test]
+    fn rejects_wide_key_permissions_and_symlinks_without_modifying() {
+        let dir = tempfile::tempdir().unwrap();
+        let _orig = HostCert::load_or_create(dir.path()).unwrap();
+        let tls_dir = dir.path().join("tls");
+        let key_path = tls_dir.join("key.pem");
+
+        // Key permissions wider than 0600 must error and stay untouched.
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let err = HostCert::load_or_create(dir.path()).unwrap_err();
+        assert!(err.contains("权限过宽") && err.contains("0600"), "{err}");
+        assert_eq!(
+            std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+
+        // Symlinked key.pem must be rejected.
+        let real_key = dir.path().join("real-key.pem");
+        std::fs::rename(&key_path, &real_key).unwrap();
+        std::fs::set_permissions(&real_key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&real_key, &key_path).unwrap();
+        let err = HostCert::load_or_create(dir.path()).unwrap_err();
+        assert!(err.contains("符号链接"), "{err}");
+
+        // Symlinked tls directory must be rejected.
+        let link_root = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&tls_dir, link_root.path().join("tls")).unwrap();
+        let err = HostCert::load_or_create(link_root.path()).unwrap_err();
+        assert!(err.contains("符号链接"), "{err}");
+    }
+
+    #[test]
+    fn conn_limits_enforce_per_ip_and_total_and_release_on_drop() {
+        let limits = ConnLimits::new(3, 2);
+        let ip_a = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 10));
+        let ip_b = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 11));
+
+        let g1 = limits.try_acquire(ip_a).unwrap();
+        let g2 = limits.try_acquire(ip_a).unwrap();
+        assert!(limits.try_acquire(ip_a).is_none());
+
+        // Another IP still gets a slot until total limit is reached.
+        let g3 = limits.try_acquire(ip_b).unwrap();
+        assert!(limits.try_acquire(ip_b).is_none());
+
+        drop(g1);
+        let _g4 = limits.try_acquire(ip_a).unwrap();
+        drop(g2);
+        drop(g3);
+        let _g5 = limits.try_acquire(ip_b).unwrap();
     }
 }

@@ -82,13 +82,16 @@ pub(crate) struct LanService {
     enabled: AtomicBool,
     /// Serializes turning it on and off.
     running: tokio::sync::Mutex<Option<Running>>,
-    /// Device table, active pairing offer, and lazily loaded TLS certificate.
-    security: Mutex<Option<Arc<LanSecurity>>>,
+    /// Device table, active pairing offer, exclusive state-dir lock, and lazily loaded TLS cert.
+    /// Serialized with an async mutex so concurrent callers never race to flock `daemon.lock` twice.
+    security: tokio::sync::Mutex<Option<Arc<LanSecurity>>>,
 }
 
 struct Running {
     gate: Gate,
     status: Arc<Mutex<LanStatus>>,
+    /// Bound addresses in interface/listening order for pairing offers.
+    ordered_addresses: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
 }
 
@@ -149,7 +152,7 @@ impl Host {
                 self.ccrpc.keep_watching(hub, self.events.clone());
             }
         } else if !on && let Some(r) = running.take() {
-            if let Some(sec) = self.lan.security.lock().as_ref() {
+            if let Some(sec) = self.lan.security.lock().await.as_ref() {
                 sec.cancel_any_pairing();
             }
             r.gate.close();
@@ -164,8 +167,9 @@ impl Host {
 
     /// Opens (and caches) this Host's [`LanSecurity`] without touching the TLS certificate.
     pub async fn lan_security(&self) -> Result<Arc<LanSecurity>, String> {
-        if let Some(sec) = self.lan.security.lock().clone() {
-            return Ok(sec);
+        let mut slot = self.lan.security.lock().await;
+        if let Some(sec) = slot.as_ref() {
+            return Ok(Arc::clone(sec));
         }
         let dir = self
             .config
@@ -178,8 +182,8 @@ impl Host {
             .await
             .map_err(|e| format!("加载设备列表失败：{e}"))??;
         let sec = Arc::new(sec);
-        let mut slot = self.lan.security.lock();
-        Ok(Arc::clone(slot.get_or_insert(sec)))
+        *slot = Some(Arc::clone(&sec));
+        Ok(sec)
     }
 
     pub async fn lan_pair_start(&self) -> CmdResult<PairingOffer> {
@@ -190,7 +194,7 @@ impl Host {
         let Some(r) = running.as_ref() else {
             return Err(relay::invalid("先打开局域网访问。"));
         };
-        let addresses = r.status.lock().addresses.clone();
+        let addresses = r.ordered_addresses.lock().clone();
         if pairing::private_ipv4_addrs(&addresses).is_empty() {
             return Err(relay::invalid("没有可用的局域网地址。"));
         }
@@ -209,7 +213,7 @@ impl Host {
     }
 
     pub async fn lan_pair_cancel(&self, id: String) -> CmdResult<()> {
-        if let Some(sec) = self.lan.security.lock().clone() {
+        if let Some(sec) = self.lan.security.lock().await.as_ref() {
             sec.cancel_pairing(&id);
         }
         Ok(())
@@ -256,6 +260,7 @@ impl Host {
             Running {
                 gate: gate.clone(),
                 status,
+                ordered_addresses: Arc::default(),
                 task,
             }
         };
@@ -286,6 +291,7 @@ impl Host {
             Box::new(move |s, sec| server::router(ctx.with_security(sec), s)),
             Some(security),
         );
+        let ordered_addresses = serving.listening_handle();
         let status = Arc::new(Mutex::new(LanStatus {
             enabled: true,
             ..LanStatus::default()
@@ -307,6 +313,11 @@ impl Host {
                 serving.stop().await;
             })
         };
-        Running { gate, status, task }
+        Running {
+            gate,
+            status,
+            ordered_addresses,
+            task,
+        }
     }
 }

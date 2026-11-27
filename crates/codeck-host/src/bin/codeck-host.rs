@@ -209,11 +209,13 @@ fn fail(msg: impl std::fmt::Display) -> ! {
 }
 
 fn connect_control(state_dir: &Path) -> UnixStream {
-    let sock_path = state_dir.join(control::SOCKET_FILE);
-    UnixStream::connect(&sock_path).unwrap_or_else(|_| {
+    let sock_path = control::check_socket_path_len(state_dir).unwrap_or_else(|e| fail(e));
+    let stream = UnixStream::connect(&sock_path).unwrap_or_else(|_| {
         eprintln!("codeck-host 没有在运行（{}）", state_dir.display());
         std::process::exit(1);
-    })
+    });
+    control::verify_peer_euid(&stream).unwrap_or_else(|e| fail(e));
+    stream
 }
 
 fn send_request(stream: &mut UnixStream, req: &Value) {
@@ -368,13 +370,11 @@ fn run_daemon(args: Args) {
     }
     let state_dir = args.state_dir.unwrap_or_else(default_state_dir);
     let web_dir = args.web_dir.unwrap_or_else(default_web_dir);
-    // Lock state dir (0700 + flock) before opening storage or binding control.sock.
-    let _daemon_lock = control::lock_state_dir(&state_dir).unwrap_or_else(|e| fail(e));
+    // Check control.sock path length before locking or binding listeners.
+    control::check_socket_path_len(&state_dir).unwrap_or_else(|e| fail(e));
 
-    let sec = Arc::new(
-        security::LanSecurity::open(state_dir.clone())
-            .unwrap_or_else(|e| fail(format!("加载设备列表失败：{e}"))),
-    );
+    // Validates state_dir (lstat, 0700, owner), acquires daemon.lock, and loads devices.json.
+    let sec = Arc::new(security::LanSecurity::open(state_dir.clone()).unwrap_or_else(|e| fail(e)));
     let serving_security = if needs_tls_cert(follow_network, &subnets) {
         let cert = sec
             .ensure_cert()
@@ -417,27 +417,52 @@ fn run_daemon(args: Args) {
         .enable_all()
         .build()
         .unwrap_or_else(|e| fail(e));
-    runtime.block_on(async move {
+    let run_res: Result<(), String> = runtime.block_on(async move {
         let port = args.port.unwrap_or(DEFAULT_PORT);
-        let control_sock = control::ControlSocket::bind(&state_dir).unwrap_or_else(|e| fail(e));
         let mut serving = server::Serving::new(
             port,
             Box::new(move |s, s_sec| server::router(ctx.with_security(s_sec), s)),
             serving_security,
         );
-        let listening = serving.listening_handle();
-        let control_ctx =
-            control::ControlCtx::new(sec, port, Arc::new(move || listening.lock().clone()));
-
         for subnet in subnets {
-            serving
-                .start(subnet)
-                .await
-                .unwrap_or_else(|e| fail(format!("监听不了 {}:{port}：{e}", subnet.addr)));
+            if let Err(e) = serving.start(subnet).await {
+                serving.stop().await;
+                return Err(format!("监听不了 {}:{port}：{e}", subnet.addr));
+            }
         }
 
+        // Bind control.sock only after initial listeners succeed so bind failures never leave a stale socket.
+        let control_sock = match control::ControlSocket::bind(&state_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                serving.stop().await;
+                return Err(e);
+            }
+        };
+        let listening = serving.listening_handle();
+        let control_ctx = control::ControlCtx::new(
+            Arc::clone(&sec),
+            port,
+            Arc::new(move || listening.lock().clone()),
+        );
+
+        let mut term =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(t) => t,
+                Err(e) => {
+                    drop(control_sock);
+                    serving.stop().await;
+                    return Err(e.to_string());
+                }
+            };
+
         {
-            let shutdown = shutdown_signal();
+            let shutdown = async {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            };
             tokio::pin!(shutdown);
             let control_loop = control_sock.serve(control_ctx);
             tokio::pin!(control_loop);
@@ -465,20 +490,16 @@ fn run_daemon(args: Args) {
             }
         }
         serving.stop().await;
-        // Removes `control.sock` before `std::process::exit(0)` bypasses destructors in `main`.
+        // Drop `control.sock` before releasing `daemon.lock` (held by `sec`) and before `process::exit`.
         drop(control_sock);
+        drop(sec);
+        Ok(())
     });
     host.shutdown();
-    std::process::exit(0);
-}
-
-async fn shutdown_signal() {
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .unwrap_or_else(|e| fail(e));
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = term.recv() => {}
+    if let Err(e) = run_res {
+        fail(e);
     }
+    std::process::exit(0);
 }
 
 #[cfg(test)]
