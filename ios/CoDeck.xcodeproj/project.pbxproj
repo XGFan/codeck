@@ -44,6 +44,7 @@
 		BF816CAC50F7DE0DFD2ABE60 /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426363E591C7CE4F384DCB16 /* SessionListView.swift */; };
 		C65395F9A93602A1F7DFCC26 /* HostAddressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD76453ECCDE56E30BC94B4 /* HostAddressTests.swift */; };
 		CFF704E41F3658FCC08E19ED /* conn-state.json in Resources */ = {isa = PBXBuildFile; fileRef = 6038BBB5CF24E6DA3BDF4254 /* conn-state.json */; };
+		DC5994C4C673746B4A507532 /* SchemeBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EC9C5EF23F98E630FCA4AC3 /* SchemeBridgeTests.swift */; };
 		E05F982CC6F1D28E3E8865FD /* QuestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 557FE8D6A4D5690D07F672D0 /* QuestionCard.swift */; };
 		ED7174E33AE65B09BDA0752D /* TranscriptWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B90D535658EB962E3C2DD6C /* TranscriptWebView.swift */; };
 		EDA3EF5BAAFC38CD1989DC81 /* CoDeckApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A979F887BFBD8FA0BC26A15 /* CoDeckApp.swift */; };
@@ -93,6 +94,7 @@
 		71816A0F56920685504EF6C5 /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
 		7BAA813CE401CAE301F72D11 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7CD6036A6E8C713DC5A0611A /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		7EC9C5EF23F98E630FCA4AC3 /* SchemeBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeBridgeTests.swift; sourceTree = "<group>"; };
 		7F944B4E9C554E17FFA8E849 /* ConnectedBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectedBar.swift; sourceTree = "<group>"; };
 		8087ECA08B6DE7AF26618941 /* Style.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Style.swift; sourceTree = "<group>"; };
 		81170205CCD09EBB56974A68 /* HostSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSetupView.swift; sourceTree = "<group>"; };
@@ -136,6 +138,7 @@
 				5F6DCC3466DE3237F6142193 /* DecodingTests.swift */,
 				EAD76453ECCDE56E30BC94B4 /* HostAddressTests.swift */,
 				EB20BFCAD7AB4EE656952F61 /* RelativeTimeTests.swift */,
+				7EC9C5EF23F98E630FCA4AC3 /* SchemeBridgeTests.swift */,
 				3A95F12C37B0D308BCCF917B /* SessionPageTests.swift */,
 				1E716972406A73D6BB8F31D4 /* SessionSectionsTests.swift */,
 				CE92D985DB0C10C16B0CB9F9 /* StartFlowTests.swift */,
@@ -318,7 +321,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					31F46F4AE51143DDECF5FDB7 = {
 						ProvisioningStyle = Automatic;
@@ -374,6 +377,7 @@
 				58E081E12BE11800F2E6DE74 /* DecodingTests.swift in Sources */,
 				C65395F9A93602A1F7DFCC26 /* HostAddressTests.swift in Sources */,
 				B01B4E83E5F20E9804AA7E17 /* RelativeTimeTests.swift in Sources */,
+				DC5994C4C673746B4A507532 /* SchemeBridgeTests.swift in Sources */,
 				48A38857D0D73A80FA6089D2 /* SessionPageTests.swift in Sources */,
 				700F4E4023B69750A26A89AB /* SessionSectionsTests.swift in Sources */,
 				0800620991B5552657A9ACF6 /* StartFlowTests.swift in Sources */,
