@@ -28,11 +28,6 @@ async fn dispatches_json_calls_and_refuses_local_methods_remotely() {
     let root = tempfile::tempdir().unwrap();
     copy_dir(&fixtures::fixture_dir("basic"), root.path());
     let state = tempfile::tempdir().unwrap();
-    // SAFETY: the only test in this binary, before Host::start reads the environment.
-    unsafe {
-        std::env::set_var("CODECK_AGY_ROOT", state.path().join("__agy"));
-        std::env::set_var("CODECK_HAA_HOME", state.path().join("__haa"));
-    }
     let host = Host::start(
         HostConfig {
             cache_dir: state.path().join("cache"),
@@ -40,6 +35,8 @@ async fn dispatches_json_calls_and_refuses_local_methods_remotely() {
             ccrpc_logs: Some(state.path().join("logs")),
             images: Some(state.path().join("images")),
             data_root: Some(root.path().to_path_buf()),
+            agy_root: state.path().join("__agy"),
+            haa_home: state.path().join("__haa"),
             refresh_prices: false,
             ..HostConfig::desktop()
         },

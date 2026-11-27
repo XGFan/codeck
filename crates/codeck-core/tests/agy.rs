@@ -876,3 +876,125 @@ fn diagnostics_uses_agy_unknowns_and_filters_per_agent_without_fake_versions() {
     // agy must not fabricate empty or synthetic entries in `versions`.
     assert!(d.versions.iter().all(|v| !v.version.is_empty()));
 }
+
+#[test]
+fn agy_live_probe_merges_into_list_detail_poll_and_is_live_skipping_missing_jsonl() {
+    use codeck_core::model::{LiveState, LiveStatus};
+    use std::sync::{Arc, Mutex};
+
+    let claude = tempfile::tempdir().unwrap();
+    let agy = fixture_root("agy");
+    let cache = tempfile::tempdir().unwrap();
+    let missing_jsonl_id = "00000000-0000-5000-8000-000000000000";
+
+    let holders = Arc::new(Mutex::new(BTreeMap::from([
+        (AGY_TUI.to_owned(), 4242u32),
+        (missing_jsonl_id.to_owned(), 9999u32),
+    ])));
+    let probe_holders = Arc::clone(&holders);
+
+    let engine = open_engine_with_agy(claude.path(), agy.path(), cache.path())
+        .with_agy_live_probe(move |_| probe_holders.lock().unwrap().clone());
+    engine.scan_all(&|_| {}).unwrap();
+
+    let want = LiveState {
+        status: LiveStatus::Unknown,
+        raw_status: None,
+        waiting_for: None,
+        pid: Some(4242),
+    };
+
+    // list_sessions and get_session attach agy Live (status Unknown, pid set).
+    let listed = engine.list_sessions(&SessionQuery::default()).unwrap();
+    let tui_summary = listed.iter().find(|s| s.id == AGY_TUI).unwrap();
+    assert_eq!(tui_summary.live.as_ref(), Some(&want));
+    let short_summary = listed.iter().find(|s| s.id == AGY_SHORT).unwrap();
+    assert_eq!(short_summary.live, None);
+    assert_eq!(
+        engine.get_session(AGY_TUI).unwrap().summary.live.as_ref(),
+        Some(&want)
+    );
+
+    // live_now, poll_live and is_live include AGY_TUI and exclude the holder with no JSONL yet.
+    let now = engine.live_now().unwrap();
+    assert_eq!(now.len(), 1);
+    assert_eq!(now[0].session_id, AGY_TUI);
+    assert_eq!(now[0].state, want);
+
+    let first_poll = engine.poll_live().unwrap().expect("initial live snapshot");
+    assert_eq!(first_poll.live, now);
+    assert_eq!(engine.poll_live().unwrap(), None, "unchanged snapshot");
+
+    assert!(engine.is_live(AGY_TUI));
+    assert!(!engine.is_live(AGY_SHORT));
+    assert!(!engine.is_live(missing_jsonl_id));
+
+    // Once the holder drops the lock, poll_live reports empty and is_live flips to false.
+    holders.lock().unwrap().clear();
+    let cleared = engine.poll_live().unwrap().expect("live cleared");
+    assert!(cleared.live.is_empty());
+    assert!(!engine.is_live(AGY_TUI));
+}
+
+#[test]
+fn haa_worker_ownership_from_fixture_attaches_to_list_and_detail() {
+    use codeck_core::model::HaaWorker;
+
+    let claude = fixture_root("basic");
+    let agy = fixture_root("agy");
+    let haa_fixture = common::fixture_dir("haa");
+
+    // 1. With the haa fixture: list & detail populate owner, name, and latest task title.
+    let cache = tempfile::tempdir().unwrap();
+    let engine = Engine::open(EngineConfig {
+        data_root: claude.path().to_path_buf(),
+        data_root_source: DataRootSource::Settings,
+        agy_root: agy.path().to_path_buf(),
+        haa_home: haa_fixture,
+        cache_dir: cache.path().to_path_buf(),
+    })
+    .unwrap();
+    engine.scan_all(&|_| {}).unwrap();
+
+    let expected = HaaWorker {
+        owner_session_id: Some(ids::BASIC.to_owned()),
+        name: Some("agy-fixer".to_owned()),
+        task_title: Some("implement agy live and haa ownership".to_owned()),
+    };
+    let listed = engine.list_sessions(&SessionQuery::default()).unwrap();
+    let by_id: BTreeMap<String, Option<HaaWorker>> =
+        listed.into_iter().map(|s| (s.id, s.haa_worker)).collect();
+    assert_eq!(by_id[AGY_HAA_WORKER], Some(expected.clone()));
+    assert_eq!(by_id[AGY_TUI], None);
+    assert_eq!(by_id[AGY_SHORT], None);
+    assert_eq!(by_id[ids::BASIC], None);
+    assert_eq!(
+        engine
+            .get_session(AGY_HAA_WORKER)
+            .unwrap()
+            .summary
+            .haa_worker,
+        Some(expected)
+    );
+
+    // 2. Without haa files: sessions.haa_worker = 1 still surfaces an empty HaaWorker marker.
+    let cache_empty = tempfile::tempdir().unwrap();
+    let engine_no_haa = open_engine_with_agy(claude.path(), agy.path(), cache_empty.path());
+    engine_no_haa.scan_all(&|_| {}).unwrap();
+    assert_eq!(
+        engine_no_haa
+            .get_session(AGY_HAA_WORKER)
+            .unwrap()
+            .summary
+            .haa_worker,
+        Some(HaaWorker::default())
+    );
+    assert_eq!(
+        engine_no_haa
+            .get_session(AGY_TUI)
+            .unwrap()
+            .summary
+            .haa_worker,
+        None
+    );
+}

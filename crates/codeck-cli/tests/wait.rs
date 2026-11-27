@@ -24,6 +24,8 @@ fn wait(root: &Path, timeout: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_codeck"))
         .env("HOME", home.path())
         .env("CLAUDE_CONFIG_DIR", root)
+        .env("CODECK_AGY_ROOT", home.path().join("__agy"))
+        .env("CODECK_HAA_HOME", home.path().join("__haa"))
         .args([
             "--cache-dir",
             "/no/such/cache",
@@ -118,4 +120,40 @@ fn notices_a_session_that_stops_working() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(parsed(&out)["status"], "idle");
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn wait_rejects_agy_session_as_unsupported_without_touching_index() {
+    let claude = tempfile::tempdir().unwrap();
+    let agy = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let agy_sid = "830e3bc5-0957-5b0b-a5dd-d340b130039e";
+    let transcript = agy
+        .path()
+        .join("brain")
+        .join(agy_sid)
+        .join(".system_generated/logs/transcript_full.jsonl");
+    fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+    fs::write(&transcript, "{}\n").unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_codeck"))
+        .env("HOME", home.path())
+        .env("CLAUDE_CONFIG_DIR", claude.path())
+        .env("CODECK_AGY_ROOT", agy.path())
+        .env("CODECK_HAA_HOME", home.path().join("__haa"))
+        .args([
+            "--cache-dir",
+            "/no/such/cache",
+            "wait",
+            agy_sid,
+            "--timeout",
+            "30",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(err["code"], "unsupported");
+    assert_eq!(err["message"], "agy 的 Session 不支持 wait");
 }

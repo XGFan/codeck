@@ -66,6 +66,15 @@ pub enum Agent {
     Agy,
 }
 
+/// Ownership metadata for an agy Session started by haa as a Worker.
+#[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HaaWorker {
+    pub owner_session_id: Option<SessionId>,
+    pub name: Option<String>,
+    pub task_title: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -98,6 +107,8 @@ pub struct SessionSummary {
     pub primary_model: Option<String>,
     /// Projects whose files an edit tool (main or Subagent) wrote, `project_id` included if edited.
     pub edited_project_ids: Vec<ProjectId>,
+    /// Present when this Session is a haa Worker; fields are filled from `~/.haa` when available.
+    pub haa_worker: Option<HaaWorker>,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]

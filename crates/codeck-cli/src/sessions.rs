@@ -1,4 +1,4 @@
-use codeck_core::model::{SessionQuery, SessionSort};
+use codeck_core::model::{Agent, SessionQuery, SessionSort};
 use serde::Serialize;
 
 use crate::args::Parsed;
@@ -19,6 +19,7 @@ pub struct Output {
 #[serde(rename_all = "camelCase")]
 struct Item {
     session_id: String,
+    agent: Agent,
     title: String,
     project: Option<String>,
     status: &'static str,
@@ -55,6 +56,7 @@ pub fn run(cx: &Context, a: &Parsed) -> Result<Output, CliError> {
         .into_iter()
         .take(limit)
         .map(|s| Item {
+            agent: s.agent,
             status: common::status_word(s.live.as_ref()),
             waiting_for: s.live.and_then(|l| l.waiting_for),
             project: projects.get(&s.project_id).cloned(),

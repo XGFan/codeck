@@ -51,6 +51,8 @@ async fn desktop_pairing_commands_lifecycle() {
             ccrpc_logs: Some(dir.path().join("logs")),
             images: Some(dir.path().join("images")),
             data_root: Some(dir.path().join("root")),
+            agy_root: dir.path().join("__agy"),
+            haa_home: dir.path().join("__haa"),
             refresh_prices: false,
             lan: Some(LanConfig {
                 events,
@@ -249,6 +251,8 @@ async fn desktop_lan_reports_lock_conflict_and_does_not_listen() {
             ccrpc_logs: Some(dir.path().join("logs")),
             images: Some(dir.path().join("images")),
             data_root: Some(dir.path().join("root")),
+            agy_root: dir.path().join("__agy"),
+            haa_home: dir.path().join("__haa"),
             refresh_prices: false,
             lan: Some(LanConfig {
                 events,

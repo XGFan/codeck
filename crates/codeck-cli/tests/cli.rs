@@ -211,3 +211,62 @@ fn code_mode_lists_the_code_and_the_calls_it_made() {
     );
     assert!(full.contains("port = 8080"), "{full}");
 }
+
+#[test]
+fn sessions_reports_agent_and_show_renders_agy_transcript() {
+    let claude = common::fixture_root("basic");
+    let agy = common::fixture_root("agy");
+    let cache = tempfile::tempdir().unwrap();
+    let haa = common::engine::test_haa_home(cache.path());
+    let agy_short = "830e3bc5-0957-5b0b-a5dd-d340b130039e";
+    let agy_tui = "8c54e127-d8c4-55e2-9034-566dac2ca233";
+
+    {
+        let engine = common::engine::open_engine_with_agy(claude.path(), agy.path(), cache.path());
+        engine.scan_all(&|_| {}).unwrap();
+    }
+
+    let run_agy = |args: &[&str]| {
+        let home = tempfile::tempdir().unwrap();
+        Command::new(env!("CARGO_BIN_EXE_codeck"))
+            .env("HOME", home.path())
+            .env("CLAUDE_CONFIG_DIR", claude.path())
+            .env("CODECK_AGY_ROOT", agy.path())
+            .env("CODECK_HAA_HOME", &haa)
+            .arg("--cache-dir")
+            .arg(cache.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // `sessions` JSON includes `agent` for both Claude Code and agy sessions.
+    let out = run_agy(&["sessions"]);
+    assert!(out.status.success(), "{out:?}");
+    let listed: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let sessions = listed["sessions"].as_array().unwrap();
+    let agent_of = |sid: &str| {
+        sessions
+            .iter()
+            .find(|s| s["sessionId"] == sid)
+            .and_then(|s| s["agent"].as_str())
+    };
+    assert_eq!(agent_of(ids::BASIC), Some("claude"));
+    assert_eq!(agent_of(agy_short), Some("agy"));
+    assert_eq!(agent_of(agy_tui), Some("agy"));
+
+    // `show <agy id>` prints translated user prompt (without wrapper tags) and answer.
+    let show_out = run_agy(&["show", agy_short]);
+    assert!(show_out.status.success(), "{show_out:?}");
+    let page = String::from_utf8(show_out.stdout).unwrap();
+    assert!(page.contains("[1] 用户：nostrud dolore lorem m"), "{page}");
+    assert!(page.contains("回答：ei"), "{page}");
+    assert!(!page.contains("<ADDITIONAL_METADATA>"), "{page}");
+
+    // `show` also renders translated tool calls (e.g. `run_command` -> `Bash` -> `运行 ...`).
+    let tui_out = run_agy(&["show", agy_tui]);
+    assert!(tui_out.status.success(), "{tui_out:?}");
+    let tui_page = String::from_utf8(tui_out.stdout).unwrap();
+    assert!(tui_page.contains("工具："), "{tui_page}");
+    assert!(tui_page.contains("运行 "), "{tui_page}");
+}

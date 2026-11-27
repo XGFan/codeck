@@ -82,14 +82,21 @@ pub fn channel() -> (JobSender, Receiver<Job>, Arc<AtomicBool>) {
     )
 }
 
+/// Paths carried by the worker so `SwapRoot` opens the replacement Engine with the same
+/// agy/haa/cache/probe directories as startup.
+pub struct WorkerPaths {
+    pub agy_root: PathBuf,
+    pub haa_home: PathBuf,
+    pub cache_dir: PathBuf,
+    pub ignore_live_cwd: Option<PathBuf>,
+}
+
 /// Spawns the worker and the timer: it polls Live Sessions itself (process files only, no index:
 /// it neither waits behind indexing nor interrupts it) and queues periodic rescans.
-/// `cache_dir` is where an Engine opened by `SwapRoot` keeps its index.
 pub fn spawn(
     state: Arc<AppState>,
     sink: EventSink,
-    cache_dir: PathBuf,
-    ignore_live_cwd: Option<PathBuf>,
+    paths: WorkerPaths,
     rx: Receiver<Job>,
     backlog_cancel: Arc<AtomicBool>,
 ) {
@@ -119,8 +126,7 @@ pub fn spawn(
             Worker {
                 state,
                 sink,
-                cache_dir,
-                ignore_live_cwd,
+                paths,
                 queue: Queue::new(rx, backlog_cancel.clone()),
                 jobs,
                 backlog_cancel,
@@ -227,8 +233,7 @@ impl Queue {
 struct Worker {
     state: Arc<AppState>,
     sink: EventSink,
-    cache_dir: PathBuf,
-    ignore_live_cwd: Option<PathBuf>,
+    paths: WorkerPaths,
     queue: Queue,
     jobs: JobSender,
     backlog_cancel: Arc<AtomicBool>,
@@ -321,8 +326,10 @@ impl Worker {
         wanted.data_root = data_root.clone();
         let opened = open_engine(
             wanted.data_root.as_deref().map(std::path::Path::new),
-            self.cache_dir.clone(),
-            self.ignore_live_cwd.clone(),
+            self.paths.agy_root.clone(),
+            self.paths.haa_home.clone(),
+            self.paths.cache_dir.clone(),
+            self.paths.ignore_live_cwd.clone(),
         )
         .and_then(|engine| {
             settings::update(|s| s.data_root = data_root).map_err(CoreError::from)?;
@@ -355,8 +362,10 @@ impl Worker {
 
     fn restart_watcher(&mut self, engine: &Engine) {
         self.watcher = None;
-        let root = PathBuf::from(engine.app_info().data_root);
-        self.watcher = watcher::start(&root, self.jobs.clone());
+        let info = engine.app_info();
+        let root = PathBuf::from(info.data_root);
+        let agy_root = PathBuf::from(info.agy_root);
+        self.watcher = watcher::start(&root, &agy_root, self.jobs.clone());
         if let Some(w) = &self.watcher {
             tracing::info!("watching {} dirs under {}", w.watched, root.display());
         }

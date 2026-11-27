@@ -1,0 +1,17 @@
+{
+  "seq": 2,
+  "workers": [
+    {
+      "id": "u1",
+      "name": "agy-fixer",
+      "owner": "86d20d64-9fdd-5e64-aae4-93895b13068d",
+      "sessionId": "c23ef150-997c-55e8-8dc2-3debd3f67351"
+    },
+    {
+      "id": "u2",
+      "name": "agy-live-worker",
+      "owner": "86d20d64-9fdd-5e64-aae4-93895b13068d",
+      "sessionId": "11111111-2222-5333-8444-555555555555"
+    }
+  ]
+}

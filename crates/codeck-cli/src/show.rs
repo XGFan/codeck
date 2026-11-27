@@ -6,7 +6,6 @@ use codeck_core::model::{
     SessionDetail, ToolDetailRequest, ToolPart, TranscriptRequest, TranscriptScope,
 };
 use codeck_core::{CoreError, Engine};
-use transcript::live;
 use transcript::model::{AssistantBlock, NodeBody, PromptOrigin, ToolCall, Transcript};
 
 use crate::args::Parsed;
@@ -44,7 +43,6 @@ pub fn run(cx: &Context, a: &Parsed) -> Result<String, CliError> {
         return Err(CliError::usage("--full 需要同时给 --turn"));
     }
     let engine = cx.engine()?;
-    let root = cx.data_root().path;
     let (id, detail) = resolve(&engine, id)?;
     let scope = match a.value("--agent") {
         Some(agent_id) => TranscriptScope::Subagent {
@@ -61,7 +59,7 @@ pub fn run(cx: &Context, a: &Parsed) -> Result<String, CliError> {
     let all = turns::split(&t);
     let is_agent = matches!(scope, TranscriptScope::Subagent { .. });
 
-    let mut out = header(&engine, &root, &id, detail.as_ref(), &t, &all);
+    let mut out = header(&engine, &id, detail.as_ref(), &t, &all);
     match wanted_turn {
         Some(n) => {
             let Some(turn) = all.iter().find(|x| u64::from(x.number) == n) else {
@@ -119,19 +117,23 @@ fn real_turns(all: &[Turn<'_>]) -> usize {
 
 fn header(
     engine: &Engine,
-    root: &std::path::Path,
     id: &str,
     detail: Option<&SessionDetail>,
     t: &Transcript,
     all: &[Turn<'_>],
 ) -> String {
-    let status = match detail {
-        Some(d) => common::status_word(d.summary.live.as_ref()),
+    let live_fallback;
+    let live = match detail {
+        Some(d) => d.summary.live.as_ref(),
         None => {
-            let pfs = live::read_process_files(&codeck_core::paths::sessions_dir(root));
-            common::status_word(live::detect(&pfs).get(id))
+            live_fallback = engine
+                .live_now()
+                .ok()
+                .and_then(|v| v.into_iter().find(|e| e.session_id == id).map(|e| e.state));
+            live_fallback.as_ref()
         }
     };
+    let status = common::status_word(live);
     let mut line = format!("session {id}  status={status}  turns={}", real_turns(all));
     if let Some(d) = detail {
         let _ = write!(line, "  project={}", d.project_path);

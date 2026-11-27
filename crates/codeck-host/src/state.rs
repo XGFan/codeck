@@ -15,9 +15,11 @@ pub struct AppState {
 }
 
 /// Opens the Engine (index in `cache_dir`) on the data root resolved from `data_root` (the settings'
-/// override) > `$CLAUDE_CONFIG_DIR` > `~/.claude`.
+/// override) > `$CLAUDE_CONFIG_DIR` > `~/.claude`, using the supplied `agy_root` and `haa_home`.
 pub fn open_engine(
     data_root: Option<&Path>,
+    agy_root: PathBuf,
+    haa_home: PathBuf,
     cache_dir: PathBuf,
     ignore_live_cwd: Option<PathBuf>,
 ) -> CoreResult<Engine> {
@@ -25,8 +27,8 @@ pub fn open_engine(
     let engine = Engine::open(EngineConfig {
         data_root: root.path,
         data_root_source: root.source,
-        agy_root: paths::resolve_agy_root(),
-        haa_home: paths::resolve_haa_home(),
+        agy_root,
+        haa_home,
         cache_dir,
     })?;
     Ok(engine.with_ignored_live_cwd(ignore_live_cwd))

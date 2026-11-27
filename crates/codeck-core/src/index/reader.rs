@@ -12,8 +12,8 @@ use super::writer::{
 };
 use crate::error::CoreResult;
 use crate::model::{
-    Drill, FileRole, ForkChild, ForkOrigin, ModelCost, ProjectSummary, SessionQuery, SessionSort,
-    SessionSummary, TokenTotals,
+    Drill, FileRole, ForkChild, ForkOrigin, HaaWorker, ModelCost, ProjectSummary, SessionQuery,
+    SessionSort, SessionSummary, TokenTotals,
 };
 use crate::scan::FileSource;
 use crate::stats::{self, billed_tokens_sql};
@@ -187,7 +187,7 @@ fn summary_select(where_sql: &str) -> String {
             (SELECT json_group_array(sp.project_id) FROM session_projects sp WHERE sp.session_id = b.id),
             (SELECT max(m.ts_ms) FROM messages m
                 WHERE m.session_id = b.id AND m.agent_id = '' AND m.role = {MSG_PROMPT}),
-            b.agent
+            b.agent, b.haa_worker
          FROM b LEFT JOIN sessions o ON o.id = b.origin",
         origin = origin_expr("s")
     )
@@ -200,6 +200,7 @@ fn summary_from_row(r: &Row) -> rusqlite::Result<SessionSummary> {
         .get::<_, Option<i64>>(4)?
         .map_or(last_active, |v| v as f64);
     let agent: String = r.get(22)?;
+    let is_haa_worker = r.get::<_, i64>(23)? != 0;
     Ok(SessionSummary {
         id: r.get(0)?,
         agent: agent_from_db(&agent),
@@ -235,6 +236,7 @@ fn summary_from_row(r: &Row) -> rusqlite::Result<SessionSummary> {
         },
         primary_model: r.get(14)?,
         edited_project_ids: serde_json::from_str(&r.get::<_, String>(20)?).unwrap_or_default(),
+        haa_worker: is_haa_worker.then(HaaWorker::default),
     })
 }
 

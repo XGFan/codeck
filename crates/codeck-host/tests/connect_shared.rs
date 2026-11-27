@@ -47,6 +47,8 @@ async fn connect_replaces_a_connection_whose_session_ended() {
             ccrpc_logs: Some(dir.path().join("logs")),
             images: Some(dir.path().join("images")),
             data_root: Some(dir.path().join("root")),
+            agy_root: dir.path().join("__agy"),
+            haa_home: dir.path().join("__haa"),
             refresh_prices: false,
             track_connect: true,
             ..HostConfig::desktop()

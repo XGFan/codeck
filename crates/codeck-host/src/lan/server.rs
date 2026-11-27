@@ -1043,6 +1043,8 @@ mod tests {
                 ccrpc_logs: Some(state.path().join("logs/ccrpc")),
                 images: Some(state.path().join("images")),
                 data_root: Some(root.path().to_path_buf()),
+                agy_root: state.path().join("__agy"),
+                haa_home: state.path().join("__haa"),
                 refresh_prices: false,
                 ..HostConfig::desktop()
             },
@@ -1259,6 +1261,8 @@ mod tests {
                 ccrpc_logs: Some(dir.path().join("logs")),
                 images: Some(dir.path().join("images")),
                 data_root: Some(dir.path().join("root")),
+                agy_root: dir.path().join("__agy"),
+                haa_home: dir.path().join("__haa"),
                 refresh_prices: false,
                 ..HostConfig::desktop()
             },

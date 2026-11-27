@@ -34,6 +34,10 @@ pub fn run(cx: &Context, a: &Parsed) -> Result<(Output, i32), CliError> {
         .number("--timeout", Some(DEFAULT_TIMEOUT_SECS))?
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
         .min(MAX_TIMEOUT_SECS);
+    let agy_root = paths::resolve_agy_root();
+    if transcript::agy::transcript_path(&agy_root, id).is_file() {
+        return Err(CliError::new("unsupported", "agy 的 Session 不支持 wait"));
+    }
     let root = &cx.data_root().path;
     let result = wait(root, id, Duration::from_secs(secs));
     // No process file also describes an id that never existed; a caller must not read that as finished.

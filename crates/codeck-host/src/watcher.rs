@@ -1,10 +1,11 @@
-//! FSEvents watcher (notify-debouncer-full, 400 ms) on `<root>/projects` and `<root>/sessions`,
-//! including external symlink targets, mapping paths back to Sessions.
+//! FSEvents watcher (notify-debouncer-full, 400 ms) on Claude Code's `<root>/projects` and
+//! `<root>/sessions` (including external symlink targets) and agy's `<agy_root>/brain` and
+//! `<agy_root>/cache`, mapping paths back to Sessions.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use codeck_core::paths;
+use codeck_core::{agy, paths};
 use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
@@ -19,7 +20,7 @@ pub struct Watcher {
     pub watched: usize,
 }
 
-/// Where relevant paths may come from and how to map them back under `<root>/projects`.
+/// Where relevant paths may come from and how to map them back under `<root>/projects` or `<agy_root>`.
 #[derive(Debug, Clone)]
 pub struct PathMapper {
     /// `<root>/projects`, raw and canonical (FSEvents reports real paths).
@@ -27,10 +28,12 @@ pub struct PathMapper {
     sessions: Vec<PathBuf>,
     /// (canonical symlink target outside `projects`, symlink path inside raw `projects`).
     links: Vec<(PathBuf, PathBuf)>,
+    /// agy data root, raw and canonical (FSEvents reports real paths).
+    agy_roots: Vec<PathBuf>,
 }
 
 impl PathMapper {
-    pub fn new(root: &Path, links: Vec<(PathBuf, PathBuf)>) -> Self {
+    pub fn new(root: &Path, agy_root: &Path, links: Vec<(PathBuf, PathBuf)>) -> Self {
         let both = |p: PathBuf| {
             let mut v = vec![p.clone()];
             if let Ok(c) = p.canonicalize()
@@ -44,11 +47,14 @@ impl PathMapper {
             projects: both(paths::projects_dir(root)),
             sessions: both(paths::sessions_dir(root)),
             links,
+            agy_roots: both(agy_root.to_path_buf()),
         }
     }
 
     /// Maps a changed path to the path the engine should look at: a path under the raw
-    /// `<root>/projects` (also for symlinked targets) or a `<root>/sessions/*.json` file.
+    /// `<root>/projects` (also for symlinked targets), a `<root>/sessions/*.json` file, or an agy
+    /// transcript (`brain/<id>/.system_generated/logs/transcript_full.jsonl`) / metadata
+    /// (`cache/conversation_metadata.json`) file under the raw `<agy_root>`.
     /// Returns `None` for everything else.
     pub fn map(&self, path: &Path) -> Option<PathBuf> {
         let raw_projects = &self.projects[0];
@@ -68,6 +74,16 @@ impl PathMapper {
                     && rel.extension().is_some_and(|e| e == "json")
                     && !is_hidden(rel);
                 return is_json.then(|| self.sessions[0].join(rel));
+            }
+        }
+        if let Some(raw_agy) = self.agy_roots.first() {
+            for agy_root in &self.agy_roots {
+                if let Some(sid) = agy::session_of_transcript(agy_root, path) {
+                    return Some(agy::transcript_path(raw_agy, &sid));
+                }
+                if path == agy::metadata_path(agy_root) {
+                    return Some(agy::metadata_path(raw_agy));
+                }
             }
         }
         None
@@ -157,9 +173,9 @@ pub fn external_links(root: &Path) -> Vec<(PathBuf, PathBuf)> {
 
 /// Starts watching; debounced batches become `Job::Fs`. Directories that cannot be watched
 /// (e.g. a missing root) are logged and skipped.
-pub fn start(root: &Path, jobs: JobSender) -> Option<Watcher> {
+pub fn start(root: &Path, agy_root: &Path, jobs: JobSender) -> Option<Watcher> {
     let links = external_links(root);
-    let mapper = PathMapper::new(root, links.clone());
+    let mapper = PathMapper::new(root, agy_root, links.clone());
     let mut debouncer =
         match new_debouncer(DEBOUNCE, None, move |res: DebounceEventResult| match res {
             Ok(events) => {
@@ -203,11 +219,23 @@ pub fn start(root: &Path, jobs: JobSender) -> Option<Watcher> {
             }
         };
     let mut watched = 0;
-    let dirs = [paths::projects_dir(root), paths::sessions_dir(root)]
-        .into_iter()
-        .chain(links.into_iter().map(|(target, _)| target));
-    for dir in dirs {
-        match debouncer.watch(&dir, RecursiveMode::Recursive) {
+    let mut dirs: Vec<(PathBuf, RecursiveMode)> = vec![
+        (paths::projects_dir(root), RecursiveMode::Recursive),
+        (paths::sessions_dir(root), RecursiveMode::Recursive),
+    ];
+    dirs.extend(
+        links
+            .into_iter()
+            .map(|(target, _)| (target, RecursiveMode::Recursive)),
+    );
+    if agy_root.is_dir() {
+        dirs.push((agy::brain_dir(agy_root), RecursiveMode::Recursive));
+        if let Some(cache_dir) = agy::metadata_path(agy_root).parent() {
+            dirs.push((cache_dir.to_path_buf(), RecursiveMode::NonRecursive));
+        }
+    }
+    for (dir, mode) in dirs {
+        match debouncer.watch(&dir, mode) {
             Ok(()) => watched += 1,
             Err(e) => tracing::warn!("cannot watch {}: {e}", dir.display()),
         }
@@ -227,6 +255,7 @@ mod tests {
             projects: vec!["/r/projects".into()],
             sessions: vec!["/r/sessions".into()],
             links: vec![("/ext/proj-a".into(), "/r/projects/-Users-a".into())],
+            agy_roots: vec!["/agy".into(), "/private/agy".into()],
         }
     }
 
@@ -322,5 +351,33 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].0, ext.join("p").canonicalize().unwrap());
         assert_eq!(links[0].1, root.join("projects/outer"));
+    }
+
+    #[test]
+    fn agy_transcript_and_metadata_map_without_hidden_dir_filter() {
+        assert_eq!(
+            m("/agy/brain/s1/.system_generated/logs/transcript_full.jsonl").as_deref(),
+            Some("/agy/brain/s1/.system_generated/logs/transcript_full.jsonl")
+        );
+        assert_eq!(
+            m("/private/agy/brain/s1/.system_generated/logs/transcript_full.jsonl").as_deref(),
+            Some("/agy/brain/s1/.system_generated/logs/transcript_full.jsonl")
+        );
+        assert_eq!(
+            m("/agy/cache/conversation_metadata.json").as_deref(),
+            Some("/agy/cache/conversation_metadata.json")
+        );
+        assert_eq!(
+            m("/private/agy/cache/conversation_metadata.json").as_deref(),
+            Some("/agy/cache/conversation_metadata.json")
+        );
+        assert_eq!(m("/agy/conversations/s1.db"), None);
+        assert_eq!(m("/agy/presence/s1.lock"), None);
+        assert_eq!(m("/agy/cache/other.json"), None);
+        assert_eq!(
+            m("/agy/brain/s1/.system_generated/logs/transcript.jsonl"),
+            None
+        );
+        assert_eq!(m("/agy/brain/s1/notes.jsonl"), None);
     }
 }

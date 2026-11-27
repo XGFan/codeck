@@ -54,6 +54,10 @@ pub struct HostConfig {
     pub images: Option<PathBuf>,
     /// Data root over the settings' (`--data-root`); `None` = settings > `$CLAUDE_CONFIG_DIR` > `~/.claude`.
     pub data_root: Option<PathBuf>,
+    /// Read-only agy data root (ADR-0018); defaults to `$CODECK_AGY_ROOT` > `~/.gemini/antigravity-cli`.
+    pub agy_root: PathBuf,
+    /// Read-only haa home directory; defaults to `$CODECK_HAA_HOME` > `~/.haa`.
+    pub haa_home: PathBuf,
     /// `reveal_session_file`; `None` = not available on this Host.
     pub reveal_path: Option<PathAction>,
     /// `ccrpc_open_analyzer_records`; `None` = not available on this Host.
@@ -80,6 +84,8 @@ impl HostConfig {
             ccrpc_logs: None,
             images: None,
             data_root: None,
+            agy_root: paths::resolve_agy_root(),
+            haa_home: paths::resolve_haa_home(),
             reveal_path: None,
             open_path: None,
             track_connect: false,
@@ -123,6 +129,8 @@ impl Host {
         };
         let engine = open_engine(
             data_root.as_deref(),
+            config.agy_root.clone(),
+            config.haa_home.clone(),
             config.cache_dir.clone(),
             probe_cwd.clone(),
         )?;
@@ -131,8 +139,12 @@ impl Host {
         worker::spawn(
             state.clone(),
             events.clone(),
-            config.cache_dir.clone(),
-            probe_cwd.clone(),
+            worker::WorkerPaths {
+                agy_root: config.agy_root.clone(),
+                haa_home: config.haa_home.clone(),
+                cache_dir: config.cache_dir.clone(),
+                ignore_live_cwd: probe_cwd.clone(),
+            },
             rx,
             backlog_cancel,
         );
