@@ -799,7 +799,14 @@ fn run_agy(mut args: impl Iterator<Item = String>) {
         out
     };
     assert!(
-        !resolved(&out_dir).starts_with(resolved(&source)),
+        !out_dir
+            .components()
+            .any(|c| c == std::path::Component::ParentDir),
+        "--out must not contain .."
+    );
+    let out_dir = resolved(&out_dir);
+    assert!(
+        !out_dir.starts_with(resolved(&source)),
         "--out must be outside --source"
     );
 
