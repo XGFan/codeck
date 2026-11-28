@@ -7,7 +7,7 @@ use crate::engine::SidecarState;
 use crate::engine::session_cache::read_head;
 use crate::index::reader::FileRecord;
 use crate::model::FileRole;
-use crate::scan::{FileSource, ScanResult, ScannedFile, SidecarFile};
+use crate::scan::{ScanResult, ScannedFile, SidecarFile};
 
 /// Bytes parsed per write transaction during a sync.
 const BATCH_BYTES: u64 = 256 << 20;
@@ -70,10 +70,6 @@ pub(super) fn classify(f: &ScannedFile, row: &FileRecord) -> FileAction {
     }
     if f.size == row.size && f.mtime_ns == row.mtime_ns {
         return FileAction::Unchanged;
-    }
-    // agy files can overwrite an earlier `step_index` in later lines, so any change reparses.
-    if f.source == FileSource::Agy {
-        return FileAction::Reparse;
     }
     match read_head(&f.path, row.head.len()) {
         Ok(head) if head == row.head => {}
@@ -444,24 +440,5 @@ mod tests {
         prev.get_mut(&scan.sidecars[0].path).unwrap().2 = "old".into();
         let (dirty, _) = diff_sidecars(Some(&prev), &scan, &db);
         assert_eq!(dirty, ["a".to_owned(), "old".to_owned()].into());
-    }
-
-    #[test]
-    fn classify_reparses_agy_on_any_stat_change() {
-        let mut f = file("agy-1", "transcript_full.jsonl", 10);
-        f.source = FileSource::Agy;
-        let r = row(&f, 1);
-        assert!(matches!(classify(&f, &r), FileAction::Unchanged));
-
-        // Even a pure append (size grew, head unchanged) must Reparse, never Append.
-        let mut grown = f.clone();
-        grown.size = 20;
-        grown.mtime_ns = 20;
-        assert!(matches!(classify(&grown, &r), FileAction::Reparse));
-
-        // Same size with changed mtime also Reparses rather than StatOnly.
-        let mut touched = f;
-        touched.mtime_ns = 30;
-        assert!(matches!(classify(&touched, &r), FileAction::Reparse));
     }
 }

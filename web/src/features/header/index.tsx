@@ -1,4 +1,4 @@
-import { Bug, ChevronLeft, Copy, Ellipsis, FolderOpen, Info } from "lucide-react";
+import { Bug, Copy, Ellipsis, FolderOpen, Info } from "lucide-react";
 import { useEffect, useRef } from "react";
 import {
   DropdownMenu,
@@ -26,7 +26,7 @@ import { api } from "@/ipc";
 import type { LiveState, ModelCost } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatCost, formatDuration, formatRelative, formatTokens } from "@/lib/format";
-import { useAllSessions, useSession } from "@/queries";
+import { useSession } from "@/queries";
 import { useUi } from "@/state/ui";
 
 /** Hover text of the cost: per model (main + Subagents), then what was left out. */
@@ -38,11 +38,8 @@ function costBreakdown(costs: ModelCost[], unpriced: number): string {
 
 export function SessionHeader() {
   const sessionId = useUi((s) => s.sessionId);
-  const selectSession = useUi((s) => s.selectSession);
   const inset = useLeadingInset();
   const { data: d, error, isStale } = useSession(sessionId);
-  const worker = d?.summary.haaWorker ?? null;
-  const { data: allSessions } = useAllSessions(Boolean(worker?.ownerSessionId));
   // A superseded Session (moved to the background, its conversation copied on) opens as the one carrying it on: on
   // fresh data only (a cached detail may predate it being shown again), and never straight back to the Session just
   // left that way (a cycle); a Session superseded while open after a redirect is followed on.
@@ -85,11 +82,6 @@ export function SessionHeader() {
   }
 
   const s = d.summary;
-  const isAgy = s.agent === "agy";
-  const owner =
-    worker?.ownerSessionId && allSessions
-      ? (allSessions.find((x) => x.id === worker.ownerSessionId && x.haaWorker == null) ?? null)
-      : null;
   const t = s.tokens;
   const project = d.projectPath.split("/").filter(Boolean).pop() ?? d.projectPath;
 
@@ -99,36 +91,15 @@ export function SessionHeader() {
       data-tauri-drag-region="deep"
       className={cn("flex shrink-0 flex-col gap-1.5 border-b border-border py-2.5 pr-5 pl-6", inset)}
     >
-      {worker && (
-        <div data-testid="worker-crumb" className="flex min-w-0 items-center gap-1.5 text-[12px] text-secondary">
-          {owner && (
-            <>
-              <button
-                type="button"
-                onClick={() => selectSession(owner.id)}
-                className="flex min-w-0 max-w-[60%] items-center gap-0.5 text-accent outline-none hover:underline focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                <ChevronLeft size={13} strokeWidth={2} className="shrink-0" aria-hidden />
-                <span className="truncate">{owner.title}</span>
-              </button>
-              <span aria-hidden>›</span>
-            </>
-          )}
-          <span className="shrink-0">haa Worker</span>
-          {worker.name && <span className="shrink-0 font-mono text-agy">{worker.name}</span>}
-        </div>
-      )}
       <div className="flex flex-wrap items-center gap-2.5">
         <h1 className="m-0 min-w-60 flex-1 truncate text-[15px] font-[650]">{s.title}</h1>
-        {!isAgy && <ForkPending sessionId={sessionId} />}
-        {!isAgy && (
-          <ConnectButton
-            key={sessionId}
-            sessionId={sessionId}
-            resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }}
-          />
-        )}
-        <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} readOnly={isAgy} />
+        <ForkPending sessionId={sessionId} />
+        <ConnectButton
+          key={sessionId}
+          sessionId={sessionId}
+          resume={{ cwd: d.cwd, cwdMissing: d.cwdMissing, live: s.live != null }}
+        />
+        <MoreMenu sessionId={sessionId} resumeCommand={d.resumeCommand} />
       </div>
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-0.5 text-[12px] text-secondary">
         <StateWord sessionId={sessionId} live={s.live} lastActiveMs={s.lastActiveMs} />
@@ -136,16 +107,9 @@ export function SessionHeader() {
           {project}
           {s.gitBranch && <span className="text-secondary"> · {s.gitBranch}</span>}
         </span>
-        {isAgy && <span className="text-agy">{s.primaryModel ? `agy · ${s.primaryModel}` : "agy"}</span>}
-        <span data-testid="session-cost" title={isAgy ? undefined : costBreakdown(d.modelCosts, s.unpricedMessages)}>
-          {isAgy ? (
-            "Cost 未记录"
-          ) : (
-            <>
-              Cost {formatCost(s.cost)}
-              {s.unpricedMessages > 0 && "+"}
-            </>
-          )}
+        <span data-testid="session-cost" title={costBreakdown(d.modelCosts, s.unpricedMessages)}>
+          Cost {formatCost(s.cost)}
+          {s.unpricedMessages > 0 && "+"}
         </span>
         <span>{formatDuration(d.durationMs)}</span>
         <span>{s.messageCount} 条消息</span>
@@ -233,15 +197,7 @@ function StateWord({
  * the connection's debug info while connected. A Session not in the index yet (`resumeCommand` null) has only the
  * connection's items.
  */
-function MoreMenu({
-  sessionId,
-  resumeCommand,
-  readOnly = false,
-}: {
-  sessionId: string;
-  resumeCommand: string | null;
-  readOnly?: boolean;
-}) {
+function MoreMenu({ sessionId, resumeCommand }: { sessionId: string; resumeCommand: string | null }) {
   const showHidden = useUi((s) => s.showHidden);
   const setShowHidden = useUi((s) => s.setShowHidden);
   const debug = useConnectDebugInfo(sessionId);
@@ -258,14 +214,14 @@ function MoreMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" data-testid="header-menu">
-        {!readOnly && <ConnectMenuItems sessionId={sessionId} separated={resumeCommand != null || debug != null} />}
+        <ConnectMenuItems sessionId={sessionId} separated={resumeCommand != null || debug != null} />
         {resumeCommand != null && (
           <>
             <DropdownMenuCheckboxItem checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)}>
               显示系统消息
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
-            {!readOnly && <ForkMenuItem sessionId={sessionId} />}
+            <ForkMenuItem sessionId={sessionId} />
             <DropdownMenuItem onSelect={() => void api.copyText(resumeCommand)}>
               <Copy size={13} strokeWidth={1.5} aria-hidden />
               复制 Resume 命令
@@ -279,7 +235,7 @@ function MoreMenu({
             </DropdownMenuItem>
           </>
         )}
-        {!readOnly && debug && (
+        {debug && (
           <DropdownMenuItem onSelect={() => void api.copyText(debug)}>
             <Bug size={13} strokeWidth={1.5} aria-hidden />
             复制排查信息

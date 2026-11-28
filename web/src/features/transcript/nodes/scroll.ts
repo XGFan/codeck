@@ -72,7 +72,7 @@ export interface TranscriptCtx {
   openAgent: (agentId: string) => void;
   /** Innermost Subagent Run shown in the panel (`null` when the panel is closed or showing a haa Worker). */
   activeAgentId: string | null;
-  /** Opens a haa Worker's agy Session in the right panel. */
+  /** Opens a haa Worker's conversation in the right panel. */
   openWorker: (workerSessionId: string) => void;
   /** Worker Session id currently shown in the right panel (`null` otherwise). */
   activeWorkerId: string | null;

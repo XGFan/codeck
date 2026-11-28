@@ -16,26 +16,16 @@ use std::collections::{BTreeSet, HashMap};
 use rusqlite::Connection;
 
 use crate::error::CoreResult;
-use crate::index::schema::{
-    DIAG_BLOCK, DIAG_ENTRY, DIAG_MESSAGE, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL, SOURCE_AGY, SOURCE_CLAUDE,
-};
+use crate::index::schema::{DIAG_BLOCK, DIAG_ENTRY, DIAG_MESSAGE, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL};
 use crate::model::{Diagnostics, FileFailure, NameCount, VersionStat};
-use transcript::{agy, known};
+use transcript::known;
 
-fn is_known(source: &str, cat: i64, name: &str) -> bool {
-    match source {
-        SOURCE_CLAUDE => match cat {
-            DIAG_ENTRY => known::is_known_entry_type(name),
-            DIAG_BLOCK => known::is_known_block_type(name),
-            DIAG_SYSTEM_SUBTYPE => known::is_known_system_subtype(name),
-            DIAG_TOOL => known::is_known_tool(name),
-            _ => false,
-        },
-        SOURCE_AGY => match cat {
-            DIAG_ENTRY => agy::is_known_step_type(name),
-            DIAG_TOOL => agy::is_known_tool(name),
-            _ => false,
-        },
+fn is_known(cat: i64, name: &str) -> bool {
+    match cat {
+        DIAG_ENTRY => known::is_known_entry_type(name),
+        DIAG_BLOCK => known::is_known_block_type(name),
+        DIAG_SYSTEM_SUBTYPE => known::is_known_system_subtype(name),
+        DIAG_TOOL => known::is_known_tool(name),
         _ => false,
     }
 }
@@ -95,23 +85,21 @@ pub fn compute(conn: &Connection) -> CoreResult<Diagnostics> {
     }
 
     // Unknown names, per category, with the versions they were seen in.
-    // Joined to `files.source` so each agent's known-name list only filters its own rows.
     let mut names: HashMap<(i64, String), (u32, BTreeSet<String>)> = HashMap::new();
     let mut st = conn.prepare(
-        "SELECT d.category, d.name, d.version, f.source, sum(d.count)
+        "SELECT d.category, d.name, d.version, sum(d.count)
          FROM diag_counts d
          JOIN files f ON f.id = d.file_id
-         GROUP BY d.category, d.name, d.version, f.source",
+         GROUP BY d.category, d.name, d.version",
     )?;
     let mut rows = st.query([])?;
     while let Some(r) = rows.next()? {
         let (cat, name): (i64, String) = (r.get(0)?, r.get(1)?);
         let version: String = r.get(2)?;
-        let source: String = r.get(3)?;
-        if is_known(&source, cat, &name) {
+        if is_known(cat, &name) {
             continue;
         }
-        let count: u32 = r.get(4)?;
+        let count: u32 = r.get(3)?;
         let e = names.entry((cat, name)).or_default();
         e.0 += count;
         if !version.is_empty() {

@@ -1,11 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { HaaWorker } from "../src/ipc/protocol/haa";
 import { disableAutoConnect, pick } from "./connect-helpers";
-import { RICH_TITLE } from "./helpers";
+import { openSession, reveal, RICH_TITLE } from "./helpers";
 
 const REDIS_TITLE = "排查 Redis 连接池泄漏";
+const FORK_ORIGIN_TITLE = "重构认证模块：拆分 token 校验与会话存储";
 const REDIS_ID = "91d5be38-0004-4000-8000-000000000004";
 const RICH_ID = "7f3a9c10-0001-4000-8000-000000000001";
+const AGY_RATE_LIMIT_WORKER_ID = "a6a10001-0012-4000-8000-000000000012";
 const AGY_WORKER_WEB_ID = "a6a10003-0014-4000-8000-000000000014";
 const CODEX_WORKER_ID = "01a21cbf-0000-7000-8000-0000000000c1";
 const PI_WORKER_ID = "haa-0000a001-0000-4000-8000-0000000000p1";
@@ -333,7 +335,7 @@ test("已 Connect：状态条在请求与输入框之上，焦点在状态条上
     .toEqual(["allow"]);
 });
 
-test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 pi 的从文件读，agy 的对话不在列表里、或没有 sessionId 的行不能点", async ({
+test("Worker 的行点开右侧面板看它的对话、再点收起；agy、codex 与 pi 都按 ID 读取，只有已关联且后端可识别的行能点", async ({
   page,
 }) => {
   await page.goto("/");
@@ -347,6 +349,7 @@ test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 
       state: "running",
       model: "agy/gemini-4-neon-high",
       tokens: 500,
+      tasks: 1,
       title: "补齐侧栏与 E2E",
       startedAt: Date.now() - 5_000,
       sessionId: AGY_WORKER_WEB_ID,
@@ -374,12 +377,12 @@ test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 
     {
       id: "w-4",
       owner: RICH_ID,
-      name: "agy-gone",
+      name: "unknown-worker",
       state: "dormant",
-      model: "agy/gemini-4-neon-high",
+      model: "unknown/model",
       tokens: 0,
       tasks: 1,
-      sessionId: "conv-not-listed",
+      sessionId: "conv-unknown-backend",
     },
     { id: "w-5", owner: RICH_ID, name: "codex-old", state: "dead", model: "codex/gpt-6.2-sol", tokens: 0, tasks: 1 },
   ]);
@@ -391,7 +394,7 @@ test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 
   await expect(agyRow).toHaveAttribute("role", "button");
   await expect(codexRow).toHaveAttribute("role", "button");
   await expect(row("pi-research")).toHaveAttribute("role", "button");
-  await expect(row("agy-gone")).not.toHaveAttribute("role", "button");
+  await expect(row("unknown-worker")).not.toHaveAttribute("role", "button");
   await expect(row("codex-old")).not.toHaveAttribute("role", "button");
 
   await agyRow.click();
@@ -401,18 +404,20 @@ test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 
   await expect(panel.getByTestId("panel-transcript")).toContainText(
     "已完成侧栏分组、头部返回行与 E2E 用例，所有测试通过。",
   );
+  await expect(panel.getByTestId("panel-meta")).toContainText("1 个 Task");
+  await expect(panel.getByRole("button", { name: "单独打开" })).toHaveCount(0);
   await expect(agyRow).toHaveAttribute("data-open", "true");
   await expect(agyRow).toHaveAttribute("aria-pressed", "true");
   await assertAlignedNoOverflow(page);
 
   // A row whose conversation is not readable does nothing; the open row closes the panel again.
-  await row("agy-gone").click();
+  await row("unknown-worker").click();
   await expect(panel.getByTestId("crumb")).toHaveText("haa Worker · agy-web");
   await agyRow.click();
   await expect(panel).toHaveCount(0);
   await expect(agyRow).not.toHaveAttribute("data-open");
 
-  // A codex Worker's conversation is not a listed Session: read from its file, what the panel says comes from haa.
+  // The panel reads the conversation file by id and displays metadata from haa.
   await codexRow.click();
   await expect(panel.getByTestId("crumb")).toHaveText("haa Worker · codex-review");
   await expect(panel.getByTestId("panel-meta")).toContainText("codex · gpt-6.2-sol:high");
@@ -433,6 +438,124 @@ test("Worker 的行点开右侧面板看它的对话、再点收起；codex 与 
   await agyRow.focus();
   await page.keyboard.press("Enter");
   await expect(panel).toBeVisible();
+});
+
+test("agy Worker 面板中译过的工具调用显示为命令 / 读文件 / 编辑行，展开详情看到原工具名与参数", async ({ page }) => {
+  await page.goto("/");
+  await open(page, RICH_TITLE);
+  await waitReady(page);
+  await emitWorkers(page, [
+    {
+      id: "w-rate-limit",
+      owner: RICH_ID,
+      name: "worker-agy",
+      state: "idle",
+      model: "agy/gemini-4-neon-high",
+      tokens: 0,
+      tasks: 1,
+      sessionId: AGY_RATE_LIMIT_WORKER_ID,
+    },
+  ]);
+  await page.getByTestId("haa-worker").filter({ hasText: "worker-agy" }).click();
+  const transcript = page.getByTestId("panel-transcript");
+  const folded = transcript.locator('[data-testid="turn-fold"][aria-expanded="false"]');
+  await folded.first().click();
+  await folded.first().click();
+
+  const read = transcript.locator('[data-tool="Read"]').filter({ hasText: "rate_limit.rs" }).first();
+  await reveal(transcript, read, "top");
+  await expect(read).toContainText("读取");
+  await read.getByRole("button").first().click();
+  await expect(read.getByTestId("code-view").first()).toContainText("check_burst");
+  const readOrig = read.getByTestId("agy-original");
+  await expect(readOrig).toContainText("read_file");
+  await expect(readOrig).toContainText('"StartLine": 1');
+
+  const edit = transcript.locator('[data-tool="Edit"]').filter({ hasText: "rate_limit.rs" }).first();
+  await reveal(transcript, edit, "top");
+  await expect(edit).toContainText("编辑");
+  await edit.getByRole("button").first().click();
+  await expect(edit.locator('[data-diff="add"]')).toContainText("InvalidBurst");
+  const editOrig = edit.getByTestId("agy-original");
+  await expect(editOrig).toContainText("edit_file");
+  await expect(editOrig).toContainText('"Replacement"');
+
+  const bash = transcript
+    .locator('[data-tool="Bash"]')
+    .filter({ hasText: "cargo test -p lumen-api rate_limit" })
+    .first();
+  await reveal(transcript, bash, "top");
+  await expect(bash).toContainText("运行");
+  await bash.getByRole("button").first().click();
+  await expect(bash.getByTestId("terminal")).toContainText("6 passed");
+  const bashOrig = bash.getByTestId("agy-original");
+  await expect(bashOrig).toContainText("run_command");
+  await expect(bashOrig).toContainText('"WaitMsBeforeAsync": 5000');
+
+  // Untranslated agy tools render generically without an agy-original section.
+  const generic = transcript.locator('[data-tool="manage_task"]').first();
+  await reveal(transcript, generic, "top");
+  await generic.getByRole("button").first().click();
+  await expect(generic).toContainText("No running tasks");
+  await expect(generic.getByTestId("agy-original")).toHaveCount(0);
+});
+
+test("派活 Session 显示 haa Worker Task 卡片，agy 对话在右侧面板按 ID 读取", async ({ page }) => {
+  await openSession(page, FORK_ORIGIN_TITLE, { folded: true });
+
+  const cards = page.getByTestId("haa-task-card");
+  await expect(cards).toHaveCount(4);
+
+  const webCard = cards.filter({ hasText: "agy-web" });
+  const oldCard = cards.filter({ hasText: "agy-old" });
+  const liveCard = cards.filter({ hasText: "agy-live" });
+
+  await expect(webCard.getByTestId("haa-task-open")).toHaveText("查看完整过程 →");
+  await expect(liveCard.getByTestId("haa-task-open")).toHaveText("查看完整过程 →");
+  await expect(oldCard.getByTestId("haa-task-open")).toHaveCount(0);
+  await expect(oldCard).toContainText("对话未关联");
+  await expect(oldCard).toContainText("失败");
+
+  await webCard.getByTestId("haa-task-open").click();
+  await expect(webCard).toContainText("正在右侧查看");
+  const panel = page.getByTestId("worker-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("panel-breadcrumb")).toContainText("主对话");
+  await expect(panel.getByTestId("panel-breadcrumb")).toContainText("agy-web");
+  await expect(panel.getByTestId("panel-meta")).toContainText("agy · gemini-4-neon-high");
+  await expect(panel.getByTestId("panel-meta")).toContainText("1 个 Task");
+  await expect(panel.getByTestId("panel-meta")).toContainText("3 分 12 秒");
+  await expect(panel.getByTestId("panel-meta")).toContainText("Cost 未记录");
+  await expect(panel.getByRole("button", { name: "单独打开" })).toHaveCount(0);
+  await expect(panel.getByTestId("panel-transcript")).toContainText(
+    "已完成侧栏分组、头部返回行与 E2E 用例，所有测试通过。",
+  );
+
+  await panel.getByRole("button", { name: "关闭面板" }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(webCard.getByTestId("haa-task-open")).toBeVisible();
+});
+
+test("codex Worker 的 Task 卡片（旧记录，模型名不带后端）也能在右侧面板看完整过程：从 codex 的记录读，没有单独打开", async ({
+  page,
+}) => {
+  await openSession(page, FORK_ORIGIN_TITLE, { folded: true });
+  const card = page.getByTestId("haa-task-card").filter({ hasText: "codex-review" });
+  await expect(card).toContainText("gpt-6.2-sol");
+  await card.getByTestId("haa-task-open").click();
+  await expect(card).toContainText("正在右侧查看");
+  const panel = page.getByTestId("worker-panel");
+  await expect(panel.getByTestId("panel-breadcrumb")).toContainText("codex-review");
+  // An old record: its model has no backend, the backend comes from the version field.
+  await expect(panel.getByTestId("panel-meta")).toContainText("codex · gpt-6.2-sol");
+  await expect(panel.getByTestId("panel-meta")).toContainText("1 个 Task");
+  await expect(panel.getByRole("button", { name: "单独打开" })).toHaveCount(0);
+  const transcript = panel.getByTestId("panel-transcript");
+  await expect(transcript).toContainText("评审完成：没有阻塞问题，已提交 Result。");
+  // A file change opens as a diff.
+  await transcript.getByTestId("turn-fold").click();
+  await transcript.getByText("HaaBar.tsx").first().click();
+  await expect(transcript).toContainText("if (!open) return;");
 });
 
 test("Ended 之后状态条消失且不再启动", async ({ page }) => {

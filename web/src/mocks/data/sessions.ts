@@ -1,31 +1,6 @@
-import type {
-  Agent,
-  HaaTask,
-  HaaWorker,
-  LiveState,
-  Node,
-  SessionSummary,
-  TitleSource,
-  TokenTotals,
-} from "@/ipc/bindings";
+import type { HaaTask, LiveState, Node, SessionSummary, TitleSource, TokenTotals } from "@/ipc/bindings";
 import { asstNode, call, costOf, DAY, HOUR, MIN, NOW, sumTok, tok, userNode } from "./builders";
-import {
-  AGY_ENDED_ID,
-  AGY_ENDED_TITLE,
-  AGY_LIVE_ID,
-  AGY_LIVE_TITLE,
-  AGY_WORKER_LIVE_ID,
-  AGY_WORKER_LIVE_TITLE,
-  AGY_WORKER_UNLINKED_ID,
-  AGY_WORKER_UNLINKED_TITLE,
-  AGY_WORKER_WEB_ID,
-  AGY_WORKER_WEB_TITLE,
-  agyEndedNodes,
-  agyLiveNodes,
-  agyWorkerLiveNodes,
-  agyWorkerUnlinkedNodes,
-  agyWorkerWebNodes,
-} from "./agy";
+import { AGY_WORKER_LIVE_ID, AGY_WORKER_WEB_ID } from "./agy";
 import { HOMELAB, LUMEN, ORBIT } from "./projects";
 import { CODE_MODE_ID, CODE_MODE_TITLE, codeModeNodes } from "./codeMode";
 import { RICH_ID, richMain, richSubagents } from "./rich";
@@ -46,11 +21,6 @@ export const IDS = {
   homelabLonghorn: sid(9),
   untitled: sid(10),
   codeMode: CODE_MODE_ID,
-  agyLive: AGY_LIVE_ID,
-  agyEnded: AGY_ENDED_ID,
-  agyWorkerWeb: AGY_WORKER_WEB_ID,
-  agyWorkerLive: AGY_WORKER_LIVE_ID,
-  agyWorkerUnlinked: AGY_WORKER_UNLINKED_ID,
 };
 
 interface Turn {
@@ -67,8 +37,6 @@ interface Turn {
 
 interface Def {
   id: string;
-  agent?: Agent;
-  haaWorker?: HaaWorker | null;
   projectId: string;
   /** Projects an edit tool wrote to (`projectId` included if edited). */
   editedProjectIds?: string[];
@@ -323,97 +291,6 @@ const defs: Def[] = [
     tokens: tok(300, 120, 0, 0),
     turns: [],
   },
-  {
-    id: IDS.agyLive,
-    agent: "agy",
-    haaWorker: {
-      ownerSessionId: IDS.rich,
-      name: "worker-agy",
-      taskTitle: "补齐限流中间件边界测试",
-    },
-    projectId: HOMELAB,
-    title: AGY_LIVE_TITLE,
-    titleSource: "firstPrompt",
-    createdAgo: 2 * HOUR,
-    lastActiveAgo: 15 * MIN,
-    gitBranch: "feat/rate-limit",
-    live: live("busy", 52104),
-    model: "gemini-4-neon-high",
-    tokens: tok(18_400, 4_200, 0, 0),
-    turns: [],
-  },
-  {
-    id: IDS.agyEnded,
-    agent: "agy",
-    haaWorker: null,
-    projectId: HOMELAB,
-    title: AGY_ENDED_TITLE,
-    titleSource: "firstPrompt",
-    createdAgo: 5 * DAY,
-    lastActiveAgo: 5 * DAY - 20 * MIN,
-    gitBranch: "main",
-    live: null,
-    model: "gemini-4-neon-high",
-    tokens: tok(6_200, 1_900, 0, 0),
-    turns: [],
-  },
-  {
-    id: IDS.agyWorkerWeb,
-    agent: "agy",
-    haaWorker: {
-      ownerSessionId: IDS.forkOrigin,
-      name: "agy-web",
-      taskTitle: "补齐侧栏与 E2E",
-    },
-    projectId: LUMEN,
-    title: AGY_WORKER_WEB_TITLE,
-    titleSource: "firstPrompt",
-    createdAgo: 2 * DAY - 15 * MIN,
-    lastActiveAgo: 2 * DAY - 25 * MIN,
-    gitBranch: "refactor/auth",
-    live: null,
-    model: "gemini-4-neon-high",
-    tokens: tok(4_100, 1_200, 0, 0),
-    turns: [],
-  },
-  {
-    id: IDS.agyWorkerLive,
-    agent: "agy",
-    haaWorker: {
-      ownerSessionId: IDS.forkOrigin,
-      name: "agy-live",
-      taskTitle: "联调 Live 与 haa 集成",
-    },
-    projectId: LUMEN,
-    title: AGY_WORKER_LIVE_TITLE,
-    titleSource: "firstPrompt",
-    createdAgo: 2 * DAY - 5 * MIN,
-    lastActiveAgo: 2 * DAY - 12 * MIN,
-    gitBranch: "refactor/auth",
-    live: null,
-    model: "gemini-4-neon-high",
-    tokens: tok(3_500, 980, 0, 0),
-    turns: [],
-  },
-  {
-    id: IDS.agyWorkerUnlinked,
-    agent: "agy",
-    haaWorker: {
-      ownerSessionId: null,
-      name: "agy-solo",
-      taskTitle: "独立排查索引日志",
-    },
-    projectId: HOMELAB,
-    title: AGY_WORKER_UNLINKED_TITLE,
-    titleSource: "firstPrompt",
-    createdAgo: 7 * DAY,
-    lastActiveAgo: 7 * DAY - 15 * MIN,
-    gitBranch: "main",
-    live: null,
-    model: "gemini-4-neon-high",
-    tokens: tok(2_800, 820, 0, 0),
-    turns: [],
-  },
 ];
 
 /** Main + Subagent cost of the rich session (each run at its own model's rate). */
@@ -484,16 +361,6 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     nodes = richMain;
   } else if (d.id === IDS.codeMode) {
     nodes = codeModeNodes(created);
-  } else if (d.id === IDS.agyLive) {
-    nodes = agyLiveNodes(created);
-  } else if (d.id === IDS.agyEnded) {
-    nodes = agyEndedNodes(created);
-  } else if (d.id === IDS.agyWorkerWeb) {
-    nodes = agyWorkerWebNodes(created);
-  } else if (d.id === IDS.agyWorkerLive) {
-    nodes = agyWorkerLiveNodes(created);
-  } else if (d.id === IDS.agyWorkerUnlinked) {
-    nodes = agyWorkerUnlinkedNodes(created);
   } else if (d.forkOf) {
     const inheritedNodes = turnNodes("fo", NOW - originDef.createdAgo, originDef.turns).slice(
       0,
@@ -517,8 +384,6 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
       : nodes.filter((n) => !(n.body.kind === "userPrompt" && n.body.origin.kind === "commandOutput")).length;
   const summary: SessionSummary = {
     id: d.id,
-    agent: d.agent ?? "claude",
-    haaWorker: d.haaWorker ?? null,
     projectId: d.projectId,
     title: d.title,
     titleSource: d.titleSource,
@@ -540,9 +405,7 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
     tokens: d.id === IDS.rich ? richTokens : d.tokens,
     ...(d.id === IDS.rich
       ? richCost()
-      : d.agent === "agy"
-        ? { cost: 0, unpricedMessages: 0 }
-        : { cost: costOf(d.model, d.tokens) ?? 0, unpricedMessages: costOf(d.model, d.tokens) == null ? 1 : 0 }),
+      : { cost: costOf(d.model, d.tokens) ?? 0, unpricedMessages: costOf(d.model, d.tokens) == null ? 1 : 0 }),
     gitBranch: d.gitBranch,
     live: d.live,
     forkOrigin: d.forkOf
@@ -556,7 +419,7 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
       ? [
           {
             worker: "agy-web",
-            sessionId: IDS.agyWorkerWeb,
+            sessionId: AGY_WORKER_WEB_ID,
             title: "补齐侧栏与 E2E",
             task: "把侧栏的 Worker 收进派活的 Session，补上单测与 E2E。",
             status: "done",
@@ -578,7 +441,7 @@ export const sessionData: MockSessionData[] = defs.map((d) => {
           },
           {
             worker: "agy-live",
-            sessionId: IDS.agyWorkerLive,
+            sessionId: AGY_WORKER_LIVE_ID,
             title: "联调 Live 与 haa 集成",
             task: "核对 Live 面板和 haa Worker 关联逻辑的边界情况。",
             status: "done",

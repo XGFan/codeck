@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bot, ChevronDown, ChevronRight, Ellipsis, GripVertical, Plus, SquarePen } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, GripVertical, Plus, SquarePen } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
@@ -32,11 +32,9 @@ import {
   moveEntry,
   RECENT_CHROME,
   RECENT_KEY,
-  RECENT_UNLINKED_KEY,
   recentRoom,
   reveal,
   ROW_PX,
-  workerKey,
   type Group,
   type Item,
   type Sidebar,
@@ -167,13 +165,10 @@ export function SidebarColumn({ data, middle }: { data: SidebarData; middle?: (s
   const height = useHeight(bodyRef);
   const live = sidebar?.live ?? [];
   const recent = sidebar?.recent ?? [];
-  const unlinked = sidebar?.unlinked ?? [];
   const recentOpen = isOpen(expanded, RECENT_KEY);
-  const unlinkedOpen = isOpen(expanded, RECENT_UNLINKED_KEY);
   const recentRows = useUi((s) => s.recentRows);
   const setRecentRows = useUi((s) => s.setRecentRows);
-  const recentDisplayRows = recent.length + (unlinked.length > 0 ? 1 + (unlinkedOpen ? unlinked.length : 0) : 0);
-  const rows = fitRows(height, live.length, recentDisplayRows, recentOpen, recentRows);
+  const rows = fitRows(height, live.length, recent.length, recentOpen, recentRows);
 
   // Rows are buttons, not text to copy: no selection highlight when dragging or double-clicking over them.
   return (
@@ -198,12 +193,9 @@ export function SidebarColumn({ data, middle }: { data: SidebarData; middle?: (s
         <div className={cn("flex min-h-0 flex-1 flex-col", live.length > 0 && "border-t border-border")}>
           {middle ? middle(sel) : <ProjectList data={data} sel={sel} />}
         </div>
-        {recentDisplayRows > 0 && (
+        {recent.length > 0 && (
           <RecentPanel
             sessions={recent}
-            unlinked={unlinked}
-            unlinkedOpen={unlinkedOpen}
-            onToggleUnlinked={() => setExpanded({ [RECENT_UNLINKED_KEY]: !unlinkedOpen })}
             rows={rows.recent}
             room={recentRoom(height, live.length ? rows.live : 0)}
             onResize={setRecentRows}
@@ -282,17 +274,9 @@ function LivePanel({
   );
 }
 
-type RecentItem =
-  | { kind: "row"; key: string; s: SideSession }
-  | { kind: "unlinkedToggle"; key: string; count: number }
-  | { kind: "worker"; key: string; s: SideSession };
-
-/** 「Recent」: every non-Worker Session that is not Live, plus unlinked haa Workers folded at the end. */
+/** 「Recent」: indexed Sessions that are no longer Live. */
 function RecentPanel({
   sessions,
-  unlinked,
-  unlinkedOpen,
-  onToggleUnlinked,
   rows,
   room,
   onResize,
@@ -302,9 +286,6 @@ function RecentPanel({
   sel,
 }: {
   sessions: SideSession[];
-  unlinked: SideSession[];
-  unlinkedOpen: boolean;
-  onToggleUnlinked: () => void;
   rows: number;
   /** The most rows there is room for. */
   room: number;
@@ -315,25 +296,15 @@ function RecentPanel({
   names: Map<string, string>;
   sel: Selection;
 }) {
-  const items = useMemo<RecentItem[]>(() => {
-    const out: RecentItem[] = sessions.map((s) => ({ kind: "row", key: s.id, s }));
-    if (unlinked.length > 0) {
-      out.push({ kind: "unlinkedToggle", key: RECENT_UNLINKED_KEY, count: unlinked.length });
-      if (unlinkedOpen) {
-        for (const s of unlinked) out.push({ kind: "worker", key: s.id, s });
-      }
-    }
-    return out;
-  }, [sessions, unlinked, unlinkedOpen]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: open ? items.length : 0,
+    count: open ? sessions.length : 0,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_PX,
-    getItemKey: (i) => items[i]!.key,
+    getItemKey: (i) => sessions[i]!.id,
     overscan: 8,
   });
-  const ids = items.flatMap((it) => (it.kind === "unlinkedToggle" ? [] : [it.s.id]));
+  const ids = sessions.map((s) => s.id);
   return (
     <section
       aria-label="Recent"
@@ -364,44 +335,27 @@ function RecentPanel({
           tabIndex={0}
           role="listbox"
           aria-label="Recent Session"
-          onKeyDown={arrowKeys(ids, sel, (n) => {
-            const i = items.findIndex((it) => it.kind !== "unlinkedToggle" && it.s.id === ids[n]);
-            if (i >= 0) virtualizer.scrollToIndex(i, { align: "auto" });
-          })}
+          onKeyDown={arrowKeys(ids, sel, (n) => virtualizer.scrollToIndex(n, { align: "auto" }))}
           className="min-h-0 flex-1 overflow-y-auto px-[6px] pb-[4px] outline-none"
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((v) => {
-              const it = items[v.index]!;
+              const s = sessions[v.index]!;
               return (
                 <div
                   key={v.key}
                   className="absolute top-0 left-0 w-full"
                   style={{ transform: `translateY(${v.start}px)` }}
                 >
-                  {it.kind === "unlinkedToggle" ? (
-                    <button
-                      type="button"
-                      data-testid="unlinked-toggle"
-                      aria-expanded={unlinkedOpen}
-                      onClick={onToggleUnlinked}
-                      className={cn(ROW, "pl-[10px] text-[12px] text-secondary")}
-                    >
-                      <Chevron open={unlinkedOpen} />
-                      <span className="min-w-0 flex-1 truncate">未关联的 haa Worker（{formatCount(it.count)}）</span>
-                    </button>
-                  ) : (
-                    <Row
-                      s={it.s}
-                      depth={0}
-                      worker={it.kind === "worker"}
-                      tag={it.s.projectId ? (names.get(it.s.projectId) ?? null) : null}
-                      plainTag
-                      testId={it.kind === "worker" ? "worker-row" : "recent-row"}
-                      selected={it.s.id === sel.sessionId}
-                      onOpen={sel.pick}
-                    />
-                  )}
+                  <Row
+                    s={s}
+                    depth={0}
+                    tag={s.projectId ? (names.get(s.projectId) ?? null) : null}
+                    plainTag
+                    testId="recent-row"
+                    selected={s.id === sel.sessionId}
+                    onOpen={sel.pick}
+                  />
                 </div>
               );
             })}
@@ -465,7 +419,6 @@ function RowsHandle({ rows, room, onResize }: { rows: number; room: number; onRe
 const HEIGHT: Record<Item["kind"], number> = {
   group: ROW_PX,
   row: ROW_PX,
-  worker: ROW_PX,
   more: ROW_PX,
   sub: ROW_PX,
   subsRest: ROW_PX,
@@ -527,15 +480,15 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
   useEffect(() => {
     const id = pending.current;
     if (!id || id !== sessionId) return;
-    const i = items.findIndex((it) => (it.kind === "row" || it.kind === "worker") && it.s.id === id);
+    const i = items.findIndex((it) => it.kind === "row" && it.s.id === id);
     if (i < 0) return;
     pending.current = null;
     virtualizer.scrollToIndex(i, { align: "auto" });
   }, [items, sessionId, virtualizer, pending]);
 
-  const rowIds = items.flatMap((it) => (it.kind === "row" || it.kind === "worker" ? [it.s.id] : []));
+  const rowIds = items.flatMap((it) => (it.kind === "row" ? [it.s.id] : []));
   const onKeyDown = arrowKeys(rowIds, sel, (n) => {
-    const i = items.findIndex((it) => (it.kind === "row" || it.kind === "worker") && it.s.id === rowIds[n]);
+    const i = items.findIndex((it) => it.kind === "row" && it.s.id === rowIds[n]);
     if (i >= 0) virtualizer.scrollToIndex(i, { align: "auto" });
   });
 
@@ -648,30 +601,13 @@ function ProjectList({ data, sel }: { data: SidebarData; sel: Selection }) {
             onRemove={() => remove(it.g)}
           />
         );
-      case "row": {
-        const wk = workerKey(it.s.id);
-        const workersOpen = it.s.workers.length > 0 && isOpen(expanded, wk);
+      case "row":
         return (
           <Row
             s={it.s}
             depth={it.depth}
             tag={null}
             testId="session-row"
-            selected={it.s.id === sessionId}
-            onOpen={pick}
-            workersOpen={workersOpen}
-            onToggleWorkers={it.s.workers.length > 0 ? () => toggle(wk, workersOpen) : undefined}
-          />
-        );
-      }
-      case "worker":
-        return (
-          <Row
-            s={it.s}
-            depth={it.depth}
-            worker
-            tag={null}
-            testId="worker-row"
             selected={it.s.id === sessionId}
             onOpen={pick}
           />
@@ -941,7 +877,6 @@ function GroupHeader({
 export function Row({
   s,
   depth,
-  worker = false,
   tag,
   plainTag = false,
   time = true,
@@ -949,14 +884,10 @@ export function Row({
   testId,
   selected,
   onOpen,
-  workersOpen = false,
-  onToggleWorkers,
 }: {
   s: SideSession;
   /** 0: a flat list; 1, 2: in a group, in a sub-group. */
   depth: 0 | 1 | 2;
-  /** Indented haa Worker row showing the Worker name prefix. */
-  worker?: boolean;
   tag: string | null;
   /** The tag as plain grey text (a list where every row has one) instead of a chip. */
   plainTag?: boolean;
@@ -967,25 +898,13 @@ export function Row({
   testId: string;
   selected: boolean;
   onOpen: (id: string) => void;
-  workersOpen?: boolean;
-  onToggleWorkers?: () => void;
 }) {
   const chip = s.pending ? (s.cwd?.split("/").filter(Boolean).pop() ?? null) : plainTag ? null : tag;
   const done = useDone(s.id) && s.live != null;
   // The Host's cache refresh shows a `/btw` panel for a moment: no one is waiting.
   const keeping = useAttentionStore((st) => isKeeping(st.keeping, s.id));
   const live = keeping && s.live === "waiting" ? "idle" : s.live;
-  const indent = worker
-    ? depth === 2
-      ? "pl-[62px]"
-      : depth === 1
-        ? "pl-[46px]"
-        : "pl-[26px]"
-    : depth === 2
-      ? "pl-[46px]"
-      : depth === 1
-        ? "pl-[30px]"
-        : "pl-[10px]";
+  const indent = depth === 2 ? "pl-[46px]" : depth === 1 ? "pl-[30px]" : "pl-[10px]";
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -1011,18 +930,7 @@ export function Row({
           ) : (
             dotSlot && <span className="w-2 shrink-0" aria-hidden />
           )}
-          {worker && s.workerName && (
-            <span className="w-[72px] shrink-0 truncate font-mono text-[11px] text-agy">{s.workerName}</span>
-          )}
           <span className="min-w-0 flex-1 truncate">{s.title}</span>
-          {s.agent === "agy" && !s.isWorker && (
-            <span
-              data-testid="agy-tag"
-              className="shrink-0 rounded border border-agy-border bg-agy-bg px-1 text-[11px] leading-[15px] font-semibold text-agy"
-            >
-              agy
-            </span>
-          )}
           {live === "waiting" && (
             <span
               data-testid="waiting-tag"
@@ -1039,28 +947,6 @@ export function Row({
               已完成
             </span>
           )}
-          {s.workers.length > 0 &&
-            (onToggleWorkers ? (
-              <button
-                type="button"
-                data-testid="worker-toggle"
-                aria-expanded={workersOpen}
-                aria-label={workersOpen ? "收起 haa Worker" : `显示 ${s.workers.length} 个 haa Worker`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleWorkers();
-                }}
-                className="flex shrink-0 items-center gap-[3px] rounded px-1 py-0.5 text-[11px] font-medium text-agy tabular-nums outline-none hover:bg-agy-bg focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                <Bot size={12} strokeWidth={1.8} aria-hidden />
-                {s.workers.length}
-              </button>
-            ) : (
-              <span className="flex shrink-0 items-center gap-[3px] text-[11px] font-medium text-agy tabular-nums">
-                <Bot size={12} strokeWidth={1.8} aria-hidden />
-                {s.workers.length}
-              </span>
-            ))}
           {chip && (
             <span className="max-w-[110px] shrink-0 truncate rounded bg-text/8 px-[5px] text-[11px] text-secondary">
               {chip}

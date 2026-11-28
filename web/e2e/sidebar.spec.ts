@@ -28,7 +28,7 @@ test("侧栏三块：Live 列出 Live Session，Project 按添加的顺序分组
 
   const live = page.getByTestId("live-row");
   // The Session open in clay but not indexed yet comes first, then by the latest user input.
-  await expect(live).toHaveCount(4);
+  await expect(live).toHaveCount(3);
   await expect(live.nth(0)).toContainText("新 Session");
   await expect(live.nth(1)).toContainText(RICH_TITLE);
   await expect(live.nth(1)).toContainText("lumen-api");
@@ -37,9 +37,9 @@ test("侧栏三块：Live 列出 Live Session，Project 按添加的顺序分组
   await expect(live.nth(2).getByTestId("waiting-tag")).toHaveText("等待作答");
   const waitingRow = page.getByTestId("session-row").filter({ hasText: "优化首页首屏加载" });
   await expect(waitingRow.getByTestId("waiting-tag")).toBeVisible();
-  // One row per Session in the groups; 「Recent」 has the 10 that are not Live.
+  // One row per Session in the groups; 「Recent」 has the 9 that are not Live.
   await expect(page.getByTestId("session-row").filter({ hasText: RICH_TITLE })).toHaveCount(1);
-  await expect(page.getByTestId("recent-toggle")).toContainText("10");
+  await expect(page.getByTestId("recent-toggle")).toContainText("9");
   await expect(page.getByTestId("recent-row").filter({ hasText: RICH_TITLE })).toHaveCount(0);
   await expect(page.getByTestId("recent-row").first()).toContainText("认证模块重构");
 
@@ -295,7 +295,7 @@ test("⌘K 按 Project 筛选时只替换中间的 Project，Live 与 Recent 保
   await expect(page.getByTestId("sidebar-group")).toHaveCount(0);
   // Started in orbit-web but editing lumen-api: listed, tagged with where it started.
   await expect(page.getByTestId("session-row").filter({ hasText: "迁移表单校验到 zod" })).toContainText("orbit-web");
-  await expect(page.getByTestId("live-row")).toHaveCount(4);
+  await expect(page.getByTestId("live-row")).toHaveCount(3);
   await expect(page.getByTestId("recent-toggle")).toBeVisible();
   await page.getByRole("button", { name: "清除 Project 筛选" }).click();
   await expect(page.getByTestId("sidebar-group")).toHaveCount(3);
@@ -365,8 +365,8 @@ test("首次启动自动打开「添加 Project」；取消后没有组，Sessio
   await dialog.getByRole("button", { name: "取消" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId("sidebar-group")).toHaveCount(0);
-  await expect(page.getByTestId("live-row")).toHaveCount(4);
-  await expect(page.getByTestId("recent-toggle")).toContainText("10");
+  await expect(page.getByTestId("live-row")).toHaveCount(3);
+  await expect(page.getByTestId("recent-toggle")).toContainText("9");
 });
 
 test.describe(() => {

@@ -1,11 +1,13 @@
-//! A haa Worker's conversation on codex or pi: not indexed, read by its Session id from the agent's
-//! own file when shown (transcript, tool details), and re-read when that file grows.
+//! Reads haa Worker conversations by id from the backend files for transcript and tool details.
+
+mod common;
+
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 
 use codeck_core::model::{
-    DataRootSource, NodeBody, SessionQuery, ToolDetailRequest, ToolPart, TranscriptRequest,
-    TranscriptScope,
+    AssistantBlock, DataRootSource, NodeBody, SessionQuery, ToolDetailRequest, ToolPart,
+    TranscriptRequest, TranscriptScope,
 };
 use codeck_core::{CoreError, Engine, EngineConfig};
 use serde_json::{Value, json};
@@ -130,4 +132,57 @@ fn worker_conversations_on_codex_and_pi_are_read_by_id() {
         .unwrap();
     drop(f);
     assert_eq!(prompts(&engine, CODEX), ["评审", "再看"]);
+}
+
+#[test]
+fn agy_worker_conversation_is_read_by_id() {
+    let claude = common::fixture_root("basic");
+    let agy = common::fixture_root("agy");
+    let cache = tempfile::tempdir().unwrap();
+    let engine = common::engine::open_engine_with_agy(claude.path(), agy.path(), cache.path());
+    engine.scan_all(&|_| {}).unwrap();
+
+    let id = "c23ef150-997c-55e8-8dc2-3debd3f67351";
+    let sessions = engine.list_sessions(&SessionQuery::default()).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, common::ids::BASIC);
+    assert!(matches!(
+        engine.get_session(id),
+        Err(CoreError::NotFound(_))
+    ));
+
+    let transcript = engine.get_transcript(&req(id)).unwrap();
+    let calls: Vec<_> = transcript
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.body {
+            NodeBody::Assistant { blocks, .. } => Some(blocks),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|block| match block {
+            AssistantBlock::ToolCall(call) if call.result.is_some() => Some(call),
+            _ => None,
+        })
+        .collect();
+    for (name, original) in [
+        ("Bash", "run_command"),
+        ("Read", "read_file"),
+        ("Edit", "edit_file"),
+    ] {
+        let call = calls
+            .iter()
+            .find(|call| call.name == name)
+            .unwrap_or_else(|| panic!("expected {name} with its result"));
+        let detail = engine
+            .get_tool_detail(&ToolDetailRequest {
+                session_id: id.to_owned(),
+                scope: TranscriptScope::Main,
+                tool_use_id: call.tool_use_id.clone(),
+                part: ToolPart::Input,
+            })
+            .unwrap();
+        let input: Value = serde_json::from_str(&detail.text).unwrap();
+        assert_eq!(input["agyOriginal"]["name"], original);
+    }
 }

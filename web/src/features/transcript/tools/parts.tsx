@@ -168,9 +168,9 @@ function AgyOriginal({ nodeId, call }: { nodeId: string; call: ToolCall }) {
   const ctx = useToolCtx(nodeId);
   // serde sorts keys, so a translated agy call's (possibly truncated) input starts with this key:
   // other tools never fetch their full input here.
-  const isAgy = call.inputJson.startsWith('{"agyOriginal"');
-  const { input } = useFullInput(call, ctx, isAgy);
-  const orig = isAgy ? parseAgyOriginal(input) : null;
+  const hasOriginal = call.inputJson.startsWith('{"agyOriginal"');
+  const { input } = useFullInput(call, ctx, hasOriginal);
+  const orig = hasOriginal ? parseAgyOriginal(input) : null;
   const origArgs = orig?.args;
   const pretty = useMemo(() => (origArgs !== undefined ? prettyJson(JSON.stringify(origArgs)) : ""), [origArgs]);
   if (!orig) return null;

@@ -1391,47 +1391,6 @@ fn agy_scenario_shapes() {
             .join(".system_generated/logs/transcript_full.jsonl")
     };
 
-    // Metadata contains exactly the three fixture sessions with consistent IDs and NumSteps.
-    let meta: Value = serde_json::from_str(
-        &fs::read_to_string(agy.join("cache/conversation_metadata.json")).unwrap(),
-    )
-    .unwrap();
-    let convs = meta["conversations"].as_object().unwrap();
-    assert_eq!(convs.len(), 3);
-    for &(sid, want_steps, ..) in AGY_FACTS {
-        let entry = &convs[sid];
-        assert_eq!(s(&entry["summary"], "ID"), sid);
-        assert_eq!(
-            entry["summary"]["NumSteps"].as_u64(),
-            Some(want_steps as u64)
-        );
-        let uris = entry["summary"]["WorkspaceURIs"].as_array().unwrap();
-        assert!(!uris.is_empty(), "{sid} workspaces");
-        for u in uris {
-            assert!(
-                u.as_str().unwrap().starts_with("file:///Users/dev/"),
-                "{sid} non-dev workspace uri: {u}"
-            );
-        }
-    }
-    let haa_uris: Vec<&str> = convs[AGY_HAA_ID]["summary"]["WorkspaceURIs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
-    assert!(
-        haa_uris
-            .iter()
-            .all(|u| *u == "file:///Users/dev/.haa" || u.starts_with("file:///Users/dev/.haa/")),
-        "haa worker workspaces: {haa_uris:?}"
-    );
-
-    // One stale empty presence lock matching the TUI session ID.
-    let lock = agy.join("presence").join(format!("{AGY_TUI_ID}.lock"));
-    assert!(lock.is_file());
-    assert_eq!(fs::metadata(&lock).unwrap().len(), 0);
-
     // TUI session: tags, system lead-in, command approval, ask_question, denied ERROR, RUNNING, dup indices.
     let (tui, _) = read_jsonl(&agy_file(AGY_TUI_ID));
     let first_user = s(&tui[0].1, "content");
@@ -1530,19 +1489,7 @@ fn fixture_root_copies_every_scenario() {
             RootKind::Claude => assert!(root.path().join("projects").is_dir(), "{scn}"),
             RootKind::Agy => {
                 assert!(root.path().join("brain").is_dir(), "{scn}");
-                assert!(
-                    root.path()
-                        .join("cache/conversation_metadata.json")
-                        .is_file(),
-                    "{scn}"
-                );
-                assert!(
-                    root.path()
-                        .join("presence")
-                        .join(format!("{AGY_TUI_ID}.lock"))
-                        .is_file(),
-                    "{scn} lock"
-                );
+                assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1, "{scn}");
                 // Confirm dot-prefixed `.system_generated` dirs and JSONL transcripts are copied.
                 let mut agy_count = 0usize;
                 for &(rel_path, want_lines, want_bad) in FILES {

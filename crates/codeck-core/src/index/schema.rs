@@ -1,11 +1,10 @@
 //! DDL and schema version.
 
 /// `PRAGMA user_version`; any mismatch deletes and recreates the index.
-pub const SCHEMA_VERSION: u32 = 15;
+pub const SCHEMA_VERSION: u32 = 16;
 
-/// `files.source` and `sessions.agent`.
+/// `files.source`.
 pub const SOURCE_CLAUDE: &str = "claude";
-pub const SOURCE_AGY: &str = "agy";
 
 /// `files.role`.
 pub const ROLE_MAIN: i64 = 0;
@@ -51,8 +50,7 @@ CREATE TABLE sessions (
   git_branch TEXT, primary_model TEXT, models_json TEXT NOT NULL DEFAULT '[]', versions_json TEXT NOT NULL DEFAULT '[]',
   leaf_uuid TEXT, root_uuid TEXT, fork_origin_id TEXT, fork_point_uuid TEXT, is_empty INTEGER NOT NULL DEFAULT 0,
   dup_uuids INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, unpriced INTEGER NOT NULL DEFAULT 0,
-  continued_in_id TEXT, superseded INTEGER NOT NULL DEFAULT 0,
-  agent TEXT NOT NULL DEFAULT 'claude', haa_worker INTEGER NOT NULL DEFAULT 0, agy_meta INTEGER);
+  continued_in_id TEXT, superseded INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX sessions_project_active ON sessions(project_id, last_active_ms DESC);
 CREATE INDEX sessions_root ON sessions(root_uuid);
 CREATE INDEX sessions_continued_in ON sessions(continued_in_id) WHERE continued_in_id IS NOT NULL;

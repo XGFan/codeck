@@ -1,6 +1,6 @@
 # CoDeck
 
-macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session；也能只读地阅读 agy（Antigravity CLI）的对话（不进全文搜索与统计，不能 Connect）。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
+macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的历史 Session，并能 Connect ToH clay 里正在运行的 Session；haa 派出的 Worker 在 agy（Antigravity CLI）、codex、pi 上的对话，也能在派活的 Session 里只读地查看。名字合写了 code、co-deck（与终端共显）和 deck；显示名写作 CoDeck，代码与路径里用小写 `codeck`。
 
 - **侧栏按 Project 分组**：顶部固定的 Live 列出正在运行的 Session；中间只列你添加的 Project，顺序由你拖动排定，组里的 Session 按你最后一次输入排序，AI 回复不会让它们跳动；像 `~/Project/<公司>` 这样装着多个仓库的目录可以「收拢子 Project」，子仓库成为它下面的子组；底部固定的 Recent 按时间列出其余所有 Session，没添加的 Project 的也在这里。
 - **找得到**：⌘K 一个搜索框同时查 Project、Session（标题、Project、分支，即时）和对话内容（全文索引，中英文子串匹配、`"短语"`、`-排除词`）；选 Project 可筛选列表或限定搜索范围；命中直接跳到对应消息，包括 Subagent 内部和已回退的分支。在工作区根目录启动、改动横跨多个仓库的 Session 会出现在它改过的每个仓库下。
@@ -56,7 +56,7 @@ macOS 桌面应用：搜索和阅读 Claude Code 留在本机 `~/.claude` 下的
 
 从 Finder / Dock 启动的应用读不到 shell 里的环境变量，如果使用了 `CLAUDE_CONFIG_DIR`，请在「设置 → 数据」（⌘,）中填写路径。
 
-agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有 agy 的 Session；开发时可用环境变量 `CODECK_AGY_ROOT` 换掉，haa 的目录（haa Worker 的归属）用 `CODECK_HAA_HOME`，haa 的 codex、pi Worker 的对话所在的目录用 `CODECK_CODEX_ROOT`（默认 `~/.codex`）、`CODECK_PI_ROOT`（默认 `~/.pi/agent`）。
+haa Worker 的对话所在的目录：agy 的 `~/.gemini/antigravity-cli`、codex 的 `~/.codex`、pi 的 `~/.pi/agent`，开发时可用环境变量 `CODECK_AGY_ROOT`、`CODECK_CODEX_ROOT`、`CODECK_PI_ROOT` 换掉；haa 的目录（Task 记录）用 `CODECK_HAA_HOME`。
 
 ## 环境要求
 
@@ -64,7 +64,7 @@ agy 的数据目录固定为 `~/.gemini/antigravity-cli`，不存在时就没有
 - Rust 1.91+（`rustup`）、Xcode Command Line Tools
 - Node 22+ 与 pnpm
 - Connect（可选）：ToH（clay 后端）与 ccrpc；ccrpc 依次取 `CODECK_CCRPC`、`~/.local/bin/ccrpc`、PATH 里的 `ccrpc`，插件用 `ccrpc plugin install` 安装（见 [crates/ccrpc](crates/ccrpc)）
-- haa（可选）：装了 haa 时，Live 或已连接的 Session 在输入区上方显示它名下的 haa Worker，agy、codex、pi 的 Worker 点开在右侧看它的对话（codex、pi 的从它们自己的记录现读，不进列表与搜索）；haa 依次取 `CODECK_HAA`、`~/.local/bin/haa`、PATH 里的 `haa`，需要支持 `haa ls --all --json --watch` 的版本
+- haa（可选）：装了 haa 时，Live 或已连接的 Session 在输入区上方显示它名下的 haa Worker，agy、codex、pi 的 Worker 点开在右侧看它的对话（从它们自己的记录现读，不进列表与搜索）；haa 依次取 `CODECK_HAA`、`~/.local/bin/haa`、PATH 里的 `haa`，需要支持 `haa ls --all --json --watch` 的版本
 
 ## 开发
 
@@ -169,7 +169,7 @@ ditto "target/aarch64-apple-darwin/release/bundle/macos/CoDeck.app" "/Applicatio
 | `codeck sessions [--project P] [--live] [--limit N]` | 列出 Session，带 Live 状态与 Agent |
 | `codeck search "词" [--project P] [--limit N]` | 全文搜索，语法同 ⌘K，命中带 sessionId 与轮次 |
 | `codeck show <id> [--turn N] [--full] [--agent ID]` | 紧凑文本形式的对话，默认 Main Line |
-| `codeck wait <id> [--timeout 秒]` | 等到 Session 变成 idle、waiting 或结束；超时退出码 124；agy 的 Session 不支持 |
+| `codeck wait <id> [--timeout 秒]` | 等到 Session 变成 idle、waiting 或结束；超时退出码 124 |
 | `codeck new --cwd DIR` | 新建 Session，提示词从 stdin 读，发出后放手；输出里的 `url` 在 CoDeck 里打开它 |
 
 索引只读打开，版本或数据目录不一致时报错，不会改动它；桌面没开时索引不更新，结果里的 `indexedAt` 说明数据有多新。`--project P` 收 Project 的路径。全局选项 `--cache-dir DIR` 指定索引所在目录，默认桌面的 `~/Library/Caches/dev.joy.codeck/`，在 daemon 的 Host 上指向 `<状态目录>/cache`。

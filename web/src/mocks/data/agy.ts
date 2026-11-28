@@ -8,19 +8,12 @@ const agyCall: typeof call = (toolUseId, name, input, result, o) => {
 };
 
 export const AGY_LIVE_ID = "a6a10001-0012-4000-8000-000000000012";
-export const AGY_LIVE_TITLE = "agy：检查限流中间件的边界用例";
-
-export const AGY_ENDED_ID = "a6a10002-0013-4000-8000-000000000013";
-export const AGY_ENDED_TITLE = "agy：整理 Flux 部署清单说明";
 
 export const AGY_WORKER_WEB_ID = "a6a10003-0014-4000-8000-000000000014";
-export const AGY_WORKER_WEB_TITLE = "Agy Session Frontend And E2E";
 
 export const AGY_WORKER_LIVE_ID = "a6a10004-0015-4000-8000-000000000015";
-export const AGY_WORKER_LIVE_TITLE = "Agy Live And Haa Integration";
 
 export const AGY_WORKER_UNLINKED_ID = "a6a10005-0016-4000-8000-000000000016";
-export const AGY_WORKER_UNLINKED_TITLE = "Agy Standalone Log Audit";
 
 const RATE_LIMIT_PATH = "/Users/dev/Developer/lumen-api/src/middleware/rate_limit.rs";
 
@@ -105,52 +98,6 @@ export function agyLiveNodes(start: number): Node[] {
       ],
       { model: "gemini-4-neon-high" },
     ),
-  ];
-}
-
-export function agyEndedNodes(start: number): Node[] {
-  const at = (m: number) => start + m * MIN;
-  return [
-    userNode("agy-e-u0", at(0), "整理一下 Flux 部署清单里的镜像更新说明。"),
-    asstNode(
-      "agy-e-a0",
-      at(0.5),
-      [
-        agyCall(
-          "agy-e-tu1",
-          "Read",
-          {
-            file_path: "/Users/dev/Developer/homelab-infra/clusters/prod/image-policy.yaml",
-            agyOriginal: {
-              name: "read_file",
-              args: { Path: "/Users/dev/Developer/homelab-infra/clusters/prod/image-policy.yaml" },
-            },
-          },
-          { text: "     1\tapiVersion: image.toolkit.fluxcd.io/v1beta2\n     2\tkind: ImagePolicy" },
-        ),
-        agyCall(
-          "agy-e-tu2",
-          "Bash",
-          {
-            command: "flux get images policy -A",
-            description: "Inspect Flux image policies",
-            agyOriginal: {
-              name: "run_command",
-              args: {
-                CommandLine: "flux get images policy -A",
-                WaitMsBeforeAsync: 5000,
-                toolSummary: "Inspect Flux image policies",
-              },
-            },
-          },
-          { text: "flux-system\tkestrel-cli\t1.4.2" },
-        ),
-        text("已核对 `image-policy.yaml`，当前只跟踪 `1.x` 语义版本。"),
-      ],
-      { model: "gemini-4-neon-high" },
-    ),
-    userNode("agy-e-u1", at(5), "好的，这样就够了。"),
-    asstNode("agy-e-a1", at(5.3), [text("收到，有需要再处理。")], { model: "gemini-4-neon-high" }),
   ];
 }
 

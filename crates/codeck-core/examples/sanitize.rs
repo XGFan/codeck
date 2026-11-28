@@ -8,7 +8,7 @@
 //!
 //! Usage (Antigravity CLI):
 //!   cargo run -p codeck-core --example sanitize -- --agy --source <agy_root> --out <dir>
-//!       --ids <id1,id2,...> [--lock <id>] [--cap 160]
+//!       --ids <id1,id2,...> [--cap 160]
 //!
 //! Claude Code mode writes to stdout, one JSON document per line. Lines that do not parse are
 //! skipped with a warning on stderr. Rules:
@@ -19,15 +19,13 @@
 //! - `cwd` is replaced by `--cwd`, `persistedOutputPath` keeps only its basename;
 //! - text inside `<persisted-output>` and a few structural tags keeps the tags and ids.
 //!
-//! Agy mode reads `<source>/brain/<id>/.system_generated/logs/transcript_full.jsonl` and
-//! `<source>/cache/conversation_metadata.json` read-only and writes a sanitized mini agy data root
-//! into `--out` with deterministically remapped conversation IDs, `/Users/dev/...` paths
-//! (`~/.haa` -> `/Users/dev/.haa`), preserved structural tags/headers/tool names/arg keys, and
-//! an optional empty `presence/<remapped_id>.lock` file.
+//! Agy mode writes sanitized brain/<id>/.system_generated/logs/transcript_full.jsonl files
+//! with remapped conversation IDs, /Users/dev/… paths and preserved structural tags.
 
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Write;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 const KEEP_KEYS: &[&str] = &[
@@ -335,7 +333,6 @@ fn parse_ranges(spec: &str) -> Vec<(usize, usize)> {
 
 const AGY_SYS_LEAD: &str = "The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.";
 const AGY_KEEP_STEP_KEYS: &[&str] = &["source", "type", "status", "created_at", "model"];
-const AGY_KEEP_META_KEYS: &[&str] = &["UpdatedAt", "AppDataDir", "ProjectID", "last_modified_time"];
 
 fn remap_uuid(id: &str) -> String {
     let hi = fnv(id);
@@ -689,66 +686,10 @@ fn sanitize_agy_step(v: &Value, id_map: &HashMap<String, String>, cfg: &Cfg) -> 
     Value::Object(out)
 }
 
-fn sanitize_agy_meta_entry(
-    v: &Value,
-    mapped_id: &str,
-    id_map: &HashMap<String, String>,
-    cfg: &Cfg,
-) -> Value {
-    let Some(m) = v.as_object() else {
-        return v.clone();
-    };
-    let mut out = Map::new();
-    for (k, x) in m {
-        let v2 = match (k.as_str(), x) {
-            ("summary", Value::Object(sm)) => {
-                let mut sout = Map::new();
-                for (sk, sx) in sm {
-                    let sv = match (sk.as_str(), sx) {
-                        ("ID", Value::String(_)) => Value::String(mapped_id.to_string()),
-                        ("WorkspaceURIs", Value::Array(uris)) => Value::Array(
-                            uris.iter()
-                                .map(|u| match u.as_str() {
-                                    Some(s) => Value::String(sanitize_agy_path(s, id_map)),
-                                    None => u.clone(),
-                                })
-                                .collect(),
-                        ),
-                        ("CloudProject", Value::Object(cp)) => {
-                            let mut cp_out = Map::new();
-                            for (ck, cv) in cp {
-                                let v = match cv.as_str() {
-                                    Some("") => Value::String(String::new()),
-                                    Some(s) => Value::String(scramble_text(s, cfg)),
-                                    None => cv.clone(),
-                                };
-                                cp_out.insert(ck.clone(), v);
-                            }
-                            Value::Object(cp_out)
-                        }
-                        (key, Value::String(_)) if AGY_KEEP_META_KEYS.contains(&key) => sx.clone(),
-                        (_, Value::String(s)) if s.is_empty() => Value::String(String::new()),
-                        (_, Value::String(s)) => Value::String(scramble_text(s, cfg)),
-                        _ => sx.clone(),
-                    };
-                    sout.insert(sk.clone(), sv);
-                }
-                Value::Object(sout)
-            }
-            (key, Value::String(_)) if AGY_KEEP_META_KEYS.contains(&key) => x.clone(),
-            (_, Value::String(s)) => Value::String(scramble_text(s, cfg)),
-            _ => x.clone(),
-        };
-        out.insert(k.clone(), v2);
-    }
-    Value::Object(out)
-}
-
 fn run_agy(mut args: impl Iterator<Item = String>) {
     let mut source: Option<PathBuf> = None;
     let mut out_dir: Option<PathBuf> = None;
     let mut ids: Vec<String> = Vec::new();
-    let mut lock_id: Option<String> = None;
     let mut cfg = Cfg {
         cwd: "/Users/dev/code/app".into(),
         cap: 160,
@@ -766,7 +707,6 @@ fn run_agy(mut args: impl Iterator<Item = String>) {
                     .map(str::to_string)
                     .collect();
             }
-            "--lock" => lock_id = Some(val),
             "--cap" => cfg.cap = val.parse().expect("cap"),
             other => panic!("unknown flag {other}"),
         }
@@ -818,16 +758,12 @@ fn run_agy(mut args: impl Iterator<Item = String>) {
     // Sanitize each selected transcript (strictly read-only on source).
     for orig in &ids {
         let mapped = &id_map[orig];
-        let src_path = source
-            .join("brain")
-            .join(orig)
-            .join(".system_generated/logs/transcript_full.jsonl");
-        let text = std::fs::read_to_string(&src_path)
+        let src_path = transcript::agy::transcript_path(&source, orig);
+        let mut text = String::new();
+        File::open(&src_path)
+            .and_then(|mut file| file.read_to_string(&mut text))
             .unwrap_or_else(|e| panic!("read {}: {e}", src_path.display()));
-        let dst_path = out_dir
-            .join("brain")
-            .join(mapped)
-            .join(".system_generated/logs/transcript_full.jsonl");
+        let dst_path = transcript::agy::transcript_path(&out_dir, mapped);
         std::fs::create_dir_all(dst_path.parent().unwrap()).expect("mkdir brain");
         let mut buf = String::new();
         for (i, line) in text.lines().enumerate() {
@@ -844,56 +780,12 @@ fn run_agy(mut args: impl Iterator<Item = String>) {
         std::fs::write(&dst_path, buf).expect("write transcript");
         eprintln!("{orig} -> {mapped}");
     }
-
-    // Sanitize conversation_metadata.json (only entries for the selected ids).
-    let meta_src = source.join("cache/conversation_metadata.json");
-    let meta_raw: Value = serde_json::from_str(
-        &std::fs::read_to_string(&meta_src)
-            .unwrap_or_else(|e| panic!("read {}: {e}", meta_src.display())),
-    )
-    .expect("parse conversation_metadata.json");
-    let src_convs = meta_raw
-        .get("conversations")
-        .and_then(Value::as_object)
-        .expect("conversations object");
-    let mut convs_out: BTreeMap<String, Value> = BTreeMap::new();
-    for orig in &ids {
-        let mapped = &id_map[orig];
-        let entry = src_convs
-            .get(orig)
-            .unwrap_or_else(|| panic!("metadata missing entry for {orig}"));
-        convs_out.insert(
-            mapped.clone(),
-            sanitize_agy_meta_entry(entry, mapped, &id_map, &cfg),
-        );
-    }
-    let meta_dst = out_dir.join("cache/conversation_metadata.json");
-    std::fs::create_dir_all(meta_dst.parent().unwrap()).expect("mkdir cache");
-    let mut convs_map = Map::new();
-    for (k, v) in convs_out {
-        convs_map.insert(k, v);
-    }
-    let mut root_meta = Map::new();
-    root_meta.insert("conversations".into(), Value::Object(convs_map));
-    let meta_json =
-        serde_json::to_string_pretty(&Value::Object(root_meta)).expect("format metadata");
-    std::fs::write(&meta_dst, format!("{meta_json}\n")).expect("write metadata");
-
-    // Optionally write one stale empty presence lock file (does not read real locks).
-    if let Some(lock_orig) = lock_id {
-        let mapped = id_map
-            .get(&lock_orig)
-            .unwrap_or_else(|| panic!("--lock id {lock_orig} must be in --ids"));
-        let lock_dst = out_dir.join("presence").join(format!("{mapped}.lock"));
-        std::fs::create_dir_all(lock_dst.parent().unwrap()).expect("mkdir presence");
-        std::fs::write(&lock_dst, b"").expect("write lock");
-    }
 }
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let first = args.next().expect(
-        "usage: sanitize <input> [--lines a-b,c] [--uuids a,b] [--uuid-file f] [--cwd p] [--cap n]\n       sanitize --agy --source <agy_root> --out <dir> --ids <id1,id2,...> [--lock <id>] [--cap n]",
+        "usage: sanitize <input> [--lines a-b,c] [--uuids a,b] [--uuid-file f] [--cwd p] [--cap n]\n       sanitize --agy --source <agy_root> --out <dir> --ids <id1,id2,...> [--cap n]",
     );
     if first == "--agy" {
         run_agy(args);

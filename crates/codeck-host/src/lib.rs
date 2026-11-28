@@ -56,7 +56,7 @@ pub struct HostConfig {
     pub images: Option<PathBuf>,
     /// Data root over the settings' (`--data-root`); `None` = settings > `$CLAUDE_CONFIG_DIR` > `~/.claude`.
     pub data_root: Option<PathBuf>,
-    /// Read-only agy data root (ADR-0018); defaults to `$CODECK_AGY_ROOT` > `~/.gemini/antigravity-cli`.
+    /// Read-only agy data root, for haa Worker conversations read by id (ADR-0021); defaults to `$CODECK_AGY_ROOT` > `~/.gemini/antigravity-cli`.
     pub agy_root: PathBuf,
     /// Read-only haa home directory; defaults to `$CODECK_HAA_HOME` > `~/.haa`.
     pub haa_home: PathBuf,

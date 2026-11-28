@@ -1,10 +1,17 @@
 import type { Node } from "@/ipc/bindings";
-import { asstNode, call, MIN, NOW, text, userNode } from "./builders";
+import { asstNode, call, DAY, HOUR, MIN, NOW, text, userNode } from "./builders";
 
-/**
- * Conversations of haa Workers that ran on codex and pi. Like the backend's, they are not Sessions of the list: the
- * mock reads them by id (`getTranscript`, `getToolDetail`), and `getSession` does not know them.
- */
+import {
+  AGY_LIVE_ID,
+  AGY_WORKER_LIVE_ID,
+  AGY_WORKER_UNLINKED_ID,
+  AGY_WORKER_WEB_ID,
+  agyLiveNodes,
+  agyWorkerLiveNodes,
+  agyWorkerUnlinkedNodes,
+  agyWorkerWebNodes,
+} from "./agy";
+
 export const CODEX_WORKER_ID = "01a21cbf-0000-7000-8000-0000000000c1";
 export const PI_WORKER_ID = "haa-0000a001-0000-4000-8000-0000000000p1";
 
@@ -86,7 +93,12 @@ const piNodes: Node[] = [
   ),
 ];
 
+/** Mock backend conversation files, keyed by Worker id for transcript and tool-detail reads. */
 export const workerFiles = new Map<string, Node[]>([
+  [AGY_LIVE_ID, agyLiveNodes(NOW - 2 * HOUR)],
+  [AGY_WORKER_WEB_ID, agyWorkerWebNodes(NOW - 2 * DAY + 15 * MIN)],
+  [AGY_WORKER_LIVE_ID, agyWorkerLiveNodes(NOW - 2 * DAY + 5 * MIN)],
+  [AGY_WORKER_UNLINKED_ID, agyWorkerUnlinkedNodes(NOW - 7 * DAY)],
   [CODEX_WORKER_ID, codexNodes],
   [PI_WORKER_ID, piNodes],
 ]);

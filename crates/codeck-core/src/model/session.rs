@@ -57,24 +57,6 @@ pub struct SessionQuery {
     pub drill: Option<Drill>,
 }
 
-/// Which coding agent produced a Session.
-#[derive(Serialize, Deserialize, Type, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Agent {
-    #[default]
-    Claude,
-    Agy,
-}
-
-/// Ownership metadata for an agy Session started by haa as a Worker.
-#[derive(Serialize, Deserialize, Type, Clone, Debug, Default, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct HaaWorker {
-    pub owner_session_id: Option<SessionId>,
-    pub name: Option<String>,
-    pub task_title: Option<String>,
-}
-
 /// One completed haa Worker Task dispatched by a Main Session (`<haa_home>/usage.jsonl`).
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -91,8 +73,7 @@ pub struct HaaTask {
     pub status: Option<String>,
     /// Full model identifier used by the Worker.
     pub model: Option<String>,
-    /// Backend that ran the Task: `agy`, `codex` or `pi` (a codex or pi Worker's conversation is
-    /// read by `session_id` from the backend's own records, ADR-0020).
+    /// Backend that ran the Task: `agy`, `codex` or `pi`.
     pub backend: String,
     /// Task completion time in unix-epoch milliseconds (parsed from `ts`).
     #[specta(type = Number)]
@@ -106,7 +87,6 @@ pub struct HaaTask {
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
     pub id: SessionId,
-    pub agent: Agent,
     pub project_id: ProjectId,
     pub title: String,
     pub title_source: TitleSource,
@@ -134,8 +114,6 @@ pub struct SessionSummary {
     pub primary_model: Option<String>,
     /// Projects whose files an edit tool (main or Subagent) wrote, `project_id` included if edited.
     pub edited_project_ids: Vec<ProjectId>,
-    /// Present when this Session is a haa Worker; fields are filled from `~/.haa` when available.
-    pub haa_worker: Option<HaaWorker>,
 }
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
@@ -179,7 +157,7 @@ pub struct SessionDetail {
     /// conversation copied there): the app opens that one instead. `None` for a listed Session.
     pub superseded_by: Option<String>,
     pub failed_lines: u32,
-    /// `claude --resume <id>` or `agy --conversation <id>`.
+    /// `claude --resume <id>`.
     pub resume_command: String,
     /// haa Worker Tasks owned by this Session, ordered by `ended_ms` ascending.
     pub haa_tasks: Vec<HaaTask>,

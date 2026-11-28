@@ -84,21 +84,18 @@ describe("shortModelName", () => {
 });
 
 describe("workerBackend and readsWorkerById", () => {
-  it("reads the backend before the first slash; codex and pi Workers are read by id", () => {
+  it("reads the backend before the first slash; agy, codex, and pi Workers are read by id", () => {
     expect(workerBackend("pi/agent-gateway/deepseek-v4.1-flash")).toBe("pi");
     expect(workerBackend("gpt-6.2-sol")).toBeNull();
     expect(workerBackend(undefined)).toBeNull();
     expect(readsWorkerById("codex/gpt-6.2-sol:high")).toBe(true);
     expect(readsWorkerById("pi/agent-gateway/deepseek-v4.1-flash")).toBe(true);
-    expect(readsWorkerById("agy/gemini-4-neon-high")).toBe(false);
+    expect(readsWorkerById("agy/gemini-4-neon-high")).toBe(true);
     // Older haa wrote the model without its backend.
     expect(readsWorkerById("agent-gateway/deepseek-v4.1-flash")).toBe(false);
-    expect([isReadById("codex"), isReadById("pi"), isReadById("agy"), isReadById(null)]).toEqual([
-      true,
-      true,
-      false,
-      false,
-    ]);
+    expect([isReadById("codex"), isReadById("pi"), isReadById("agy"), isReadById("unknown"), isReadById(null)]).toEqual(
+      [true, true, true, false, false],
+    );
   });
 });
 

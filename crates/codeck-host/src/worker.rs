@@ -367,8 +367,7 @@ impl Worker {
         self.watcher = None;
         let info = engine.app_info();
         let root = PathBuf::from(info.data_root);
-        let agy_root = PathBuf::from(info.agy_root);
-        self.watcher = watcher::start(&root, &agy_root, self.jobs.clone());
+        self.watcher = watcher::start(&root, self.jobs.clone());
         if let Some(w) = &self.watcher {
             tracing::info!("watching {} dirs under {}", w.watched, root.display());
         }

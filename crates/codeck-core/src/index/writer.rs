@@ -14,13 +14,12 @@ use serde::Deserialize;
 
 use super::schema::{
     DIAG_BLOCK, DIAG_ENTRY, DIAG_MESSAGE, DIAG_SYSTEM_SUBTYPE, DIAG_TOOL, MSG_ASSISTANT,
-    MSG_PROMPT, ROLE_MAIN, ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT, SOURCE_AGY, SOURCE_CLAUDE,
+    MSG_PROMPT, ROLE_MAIN, ROLE_SUBAGENT, ROLE_WORKFLOW_SUBAGENT, SOURCE_CLAUDE,
 };
 use crate::error::CoreResult;
-use crate::model::{Agent, FileRole, TitleSource, TokenTotals};
+use crate::model::{FileRole, TitleSource, TokenTotals};
 use crate::project;
 use crate::scan::FileSource;
-use transcript::agy::UnknownKind;
 use transcript::known;
 use transcript::parse::EntryRecord;
 use transcript::raw::{RawEntry, decode_str, lenient};
@@ -28,32 +27,15 @@ use transcript::raw::{RawEntry, decode_str, lenient};
 pub fn source_to_db(source: FileSource) -> &'static str {
     match source {
         FileSource::Claude => SOURCE_CLAUDE,
-        FileSource::Agy => SOURCE_AGY,
-        // Never indexed (read by Session id for display only).
+        // Worker conversations are read by id for display only.
+        FileSource::Agy => "agy",
         FileSource::Codex => "codex",
         FileSource::Pi => "pi",
     }
 }
 
-pub fn source_from_db(v: &str) -> FileSource {
-    match v {
-        SOURCE_AGY => FileSource::Agy,
-        _ => FileSource::Claude,
-    }
-}
-
-pub fn agent_to_db(agent: Agent) -> &'static str {
-    match agent {
-        Agent::Claude => SOURCE_CLAUDE,
-        Agent::Agy => SOURCE_AGY,
-    }
-}
-
-pub fn agent_from_db(v: &str) -> Agent {
-    match v {
-        SOURCE_AGY => Agent::Agy,
-        _ => Agent::Claude,
-    }
+pub fn source_from_db(_source: &str) -> FileSource {
+    FileSource::Claude
 }
 
 pub fn role_to_db(role: FileRole) -> i64 {
@@ -135,81 +117,48 @@ pub struct FileRows {
 
 /// Derives the metadata rows of Claude Code `records` (light parse).
 pub fn extract_rows<'a>(records: impl IntoIterator<Item = &'a EntryRecord>) -> FileRows {
-    extract_rows_inner(records, true)
-}
-
-/// Derives the metadata rows of adapted agy `records`; diagnostics come solely from agy's own
-/// `unknown` counts (original step types and tool names, no fabricated version).
-pub fn extract_agy_rows<'a>(
-    records: impl IntoIterator<Item = &'a EntryRecord>,
-    unknown: &[(UnknownKind, String, u32)],
-) -> FileRows {
-    let mut rows = extract_rows_inner(records, false);
-    for (kind, name, count) in unknown {
-        let cat = match kind {
-            UnknownKind::StepType => DIAG_ENTRY,
-            UnknownKind::Tool => DIAG_TOOL,
-        };
-        *rows
-            .diag
-            .entry((cat, name.clone(), String::new()))
-            .or_default() += i64::from(*count);
-    }
-    rows
-}
-
-fn extract_rows_inner<'a>(
-    records: impl IntoIterator<Item = &'a EntryRecord>,
-    collect_diag: bool,
-) -> FileRows {
     let mut rows = FileRows::default();
     let mut msg_index: HashMap<String, usize> = HashMap::new();
     for rec in records {
         let e = &rec.entry;
         let ts = e.timestamp_ms().map(|t| t as i64);
-        let version = if collect_diag {
-            e.version.clone().unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let version = e.version.clone().unwrap_or_default();
         let ty = e.entry_type();
-        if collect_diag {
-            if !ty.is_empty() && !known::is_known_entry_type(ty) {
+        if !ty.is_empty() && !known::is_known_entry_type(ty) {
+            *rows
+                .diag
+                .entry((DIAG_ENTRY, ty.to_owned(), version.clone()))
+                .or_default() += 1;
+        }
+        if let Some(mark) = transcript::assemble::prompt::unrecognized_mark(e) {
+            *rows
+                .diag
+                .entry((DIAG_MESSAGE, mark, version.clone()))
+                .or_default() += 1;
+        }
+        // Code Mode: an event kind not known here is a message not recognized too.
+        for mark in transcript::assemble::code_mode::unrecognized_events(e) {
+            *rows
+                .diag
+                .entry((DIAG_MESSAGE, mark, version.clone()))
+                .or_default() += 1;
+        }
+        if ty == "system"
+            && let Some(sub) = e.subtype.as_deref()
+            && !known::is_known_system_subtype(sub)
+        {
+            *rows
+                .diag
+                .entry((DIAG_SYSTEM_SUBTYPE, sub.to_owned(), version.clone()))
+                .or_default() += 1;
+        }
+        for b in e.blocks() {
+            let bt = b.block_type();
+            if !bt.is_empty() && !known::is_known_block_type(bt) {
                 *rows
                     .diag
-                    .entry((DIAG_ENTRY, ty.to_owned(), version.clone()))
+                    .entry((DIAG_BLOCK, bt.to_owned(), version.clone()))
                     .or_default() += 1;
-            }
-            if let Some(mark) = transcript::assemble::prompt::unrecognized_mark(e) {
-                *rows
-                    .diag
-                    .entry((DIAG_MESSAGE, mark, version.clone()))
-                    .or_default() += 1;
-            }
-            // Code Mode: an event kind not known here is a message not recognized too.
-            for mark in transcript::assemble::code_mode::unrecognized_events(e) {
-                *rows
-                    .diag
-                    .entry((DIAG_MESSAGE, mark, version.clone()))
-                    .or_default() += 1;
-            }
-            if ty == "system"
-                && let Some(sub) = e.subtype.as_deref()
-                && !known::is_known_system_subtype(sub)
-            {
-                *rows
-                    .diag
-                    .entry((DIAG_SYSTEM_SUBTYPE, sub.to_owned(), version.clone()))
-                    .or_default() += 1;
-            }
-            for b in e.blocks() {
-                let bt = b.block_type();
-                if !bt.is_empty() && !known::is_known_block_type(bt) {
-                    *rows
-                        .diag
-                        .entry((DIAG_BLOCK, bt.to_owned(), version.clone()))
-                        .or_default() += 1;
-                }
             }
         }
         match ty {
@@ -224,7 +173,7 @@ fn extract_rows_inner<'a>(
                     let (Some(id), Some(name)) = (b.id.as_ref(), b.name.as_ref()) else {
                         continue;
                     };
-                    if collect_diag && !known::is_known_tool(name) {
+                    if !known::is_known_tool(name) {
                         *rows
                             .diag
                             .entry((DIAG_TOOL, name.clone(), version.clone()))
@@ -440,8 +389,8 @@ pub fn rebill(conn: &Connection, sessions: Option<&HashSet<String>>) -> CoreResu
                     coalesce(sum(out_tok) FILTER (WHERE agent_id = ''), 0),
                     coalesce(sum(cr_tok) FILTER (WHERE agent_id = ''), 0),
                     coalesce(sum(cc_tok) FILTER (WHERE agent_id = ''), 0),
-                    CASE WHEN sessions.agent = '{SOURCE_CLAUDE}' THEN coalesce(sum(cost), 0) ELSE 0 END,
-                    CASE WHEN sessions.agent = '{SOURCE_CLAUDE}' THEN count(*) FILTER (WHERE cost IS NULL AND {billed}) ELSE 0 END
+                    coalesce(sum(cost), 0),
+                    count(*) FILTER (WHERE cost IS NULL AND {billed})
                 FROM messages m WHERE m.session_id = sessions.id AND m.role = {MSG_ASSISTANT}
                     AND m.billed = 1){session_scope}",
             billed = crate::stats::billed_tokens_sql()
@@ -475,13 +424,12 @@ pub fn set_rebill_pending(conn: &Connection, pending: bool) -> CoreResult<()> {
 }
 
 /// Recomputes every Claude Code message's cost with the current price table, then every session's
-/// totals (agy messages stay unpriced).
+/// totals.
 pub fn reprice_all(conn: &Connection) -> CoreResult<()> {
     conn.execute(
         &format!(
             "UPDATE messages SET cost = {COST_EXPR}
-             WHERE role = {MSG_ASSISTANT}
-               AND session_id IN (SELECT id FROM sessions WHERE agent = '{SOURCE_CLAUDE}')"
+             WHERE role = {MSG_ASSISTANT}"
         ),
         [],
     )?;
@@ -596,30 +544,21 @@ pub struct FileWrite<'a> {
     pub first_error: Option<&'a str>,
 }
 
-/// Inserts or updates a `files` row by path and returns its id. For Claude Code files,
-/// `text_offset` is never touched on update (phase 2 owns it); agy files are excluded from FTS, so
-/// `text_offset` is written equal to `parsed_offset`.
+/// Inserts or updates a `files` row by path and returns its id. Phase 2 owns `text_offset`.
 pub fn write_file(conn: &Connection, f: &FileWrite) -> CoreResult<i64> {
-    let text_offset = if f.source == FileSource::Agy {
-        f.parsed_offset as i64
-    } else {
-        0
-    };
     let id = conn
-        .prepare_cached(&format!(
+        .prepare_cached(
             "INSERT INTO files(path, dev, ino, source, role, session_id, agent_id, size, mtime_ns,
                 head, parsed_offset, text_offset, line_count, failed_lines, first_error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?13, ?14)
              ON CONFLICT(path) DO UPDATE SET dev=excluded.dev, ino=excluded.ino,
                 source=excluded.source, role=excluded.role, session_id=excluded.session_id,
                 agent_id=excluded.agent_id, size=excluded.size, mtime_ns=excluded.mtime_ns,
                 head=excluded.head, parsed_offset=excluded.parsed_offset,
-                text_offset=CASE WHEN excluded.source = '{SOURCE_AGY}' THEN excluded.parsed_offset
-                    ELSE files.text_offset END,
                 line_count=excluded.line_count, failed_lines=excluded.failed_lines,
                 first_error=excluded.first_error
-             RETURNING id"
-        ))?
+             RETURNING id",
+        )?
         .query_row(
             params![
                 f.path,
@@ -633,7 +572,6 @@ pub fn write_file(conn: &Connection, f: &FileWrite) -> CoreResult<i64> {
                 f.mtime_ns,
                 f.head,
                 f.parsed_offset as i64,
-                text_offset,
                 f.line_count as i64,
                 f.failed_lines as i64,
                 f.first_error,
@@ -656,7 +594,6 @@ pub fn write_rows(
     file_id: i64,
     session_id: &str,
     agent_id: &str,
-    source: FileSource,
     rows: &FileRows,
 ) -> CoreResult<()> {
     let mut st = conn.prepare_cached(
@@ -670,7 +607,7 @@ pub fn write_rows(
             logged_cost=max(coalesce(logged_cost, excluded.logged_cost), coalesce(excluded.logged_cost, logged_cost)),
             model=coalesce(model, excluded.model)",
     )?;
-    // Priced after the upsert, on the tokens merged with earlier fragments (Claude Code only).
+    // Priced after the upsert, on the tokens merged with earlier fragments.
     let mut price = conn.prepare_cached(&format!(
         "UPDATE messages SET cost = {COST_EXPR} WHERE session_id = ?1 AND agent_id = ?2 AND key = ?3"
     ))?;
@@ -690,7 +627,7 @@ pub fn write_rows(
             m.fast,
             m.logged_cost,
         ])?;
-        if m.role == MSG_ASSISTANT && source == FileSource::Claude {
+        if m.role == MSG_ASSISTANT {
             price.execute(params![session_id, agent_id, m.key])?;
         }
     }
@@ -852,10 +789,6 @@ pub struct SessionRow {
     pub is_empty: bool,
     /// Duplicate uuids within a single file (first occurrence wins), from assembly.
     pub dup_uuids: u32,
-    pub agent: Agent,
-    pub haa_worker: bool,
-    /// agy metadata fingerprint (bit pattern of `Meta.fingerprint`), `None` when absent or Claude.
-    pub agy_meta: Option<i64>,
 }
 
 pub fn write_session(conn: &Connection, s: &SessionRow) -> CoreResult<()> {
@@ -864,10 +797,9 @@ pub fn write_session(conn: &Connection, s: &SessionRow) -> CoreResult<()> {
             last_active_ms, duration_ms, message_count, tool_call_count, subagent_count,
             in_tok, out_tok, cr_tok, cc_tok, main_in_tok, main_out_tok, main_cr_tok, main_cc_tok,
             git_branch, primary_model, models_json, versions_json, leaf_uuid, root_uuid,
-            fork_origin_id, fork_point_uuid, is_empty, dup_uuids, continued_in_id,
-            agent, haa_worker, agy_meta)
+            fork_origin_id, fork_point_uuid, is_empty, dup_uuids, continued_in_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)",
+            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
     )?
     .execute(params![
         s.id,
@@ -901,9 +833,6 @@ pub fn write_session(conn: &Connection, s: &SessionRow) -> CoreResult<()> {
         s.is_empty,
         s.dup_uuids,
         s.continued_in_id,
-        agent_to_db(s.agent),
-        s.haa_worker,
-        s.agy_meta,
     ])?;
     Ok(())
 }

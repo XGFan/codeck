@@ -213,7 +213,7 @@ fn code_mode_lists_the_code_and_the_calls_it_made() {
 }
 
 #[test]
-fn sessions_reports_agent_and_show_renders_agy_transcript() {
+fn agy_is_read_by_show_and_absent_from_sessions() {
     let claude = common::fixture_root("basic");
     let agy = common::fixture_root("agy");
     let cache = tempfile::tempdir().unwrap();
@@ -233,6 +233,8 @@ fn sessions_reports_agent_and_show_renders_agy_transcript() {
             .env("CLAUDE_CONFIG_DIR", claude.path())
             .env("CODECK_AGY_ROOT", agy.path())
             .env("CODECK_HAA_HOME", &haa)
+            .env("CODECK_CODEX_ROOT", home.path().join("__codex"))
+            .env("CODECK_PI_ROOT", home.path().join("__pi"))
             .arg("--cache-dir")
             .arg(cache.path())
             .args(args)
@@ -240,20 +242,12 @@ fn sessions_reports_agent_and_show_renders_agy_transcript() {
             .unwrap()
     };
 
-    // `sessions` JSON includes `agent` for both Claude Code and agy sessions.
     let out = run_agy(&["sessions"]);
     assert!(out.status.success(), "{out:?}");
     let listed: Value = serde_json::from_slice(&out.stdout).unwrap();
     let sessions = listed["sessions"].as_array().unwrap();
-    let agent_of = |sid: &str| {
-        sessions
-            .iter()
-            .find(|s| s["sessionId"] == sid)
-            .and_then(|s| s["agent"].as_str())
-    };
-    assert_eq!(agent_of(ids::BASIC), Some("claude"));
-    assert_eq!(agent_of(agy_short), Some("agy"));
-    assert_eq!(agent_of(agy_tui), Some("agy"));
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["sessionId"], ids::BASIC);
 
     // `show <agy id>` prints translated user prompt (without wrapper tags) and answer.
     let show_out = run_agy(&["show", agy_short]);

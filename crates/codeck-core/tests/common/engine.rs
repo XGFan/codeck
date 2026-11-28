@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use super::{copy_dir_all, fixture_dir, fixture_root};
 
 /// Isolated (absent) agy root tied to `cache`, so tests never read the host's `~/.gemini/antigravity-cli`
-/// while reopens against the same `cache` agree on `meta.agy_root`.
+/// when looking up Worker transcripts.
 pub fn test_agy_root(cache: &Path) -> PathBuf {
     cache.join("__agy")
 }

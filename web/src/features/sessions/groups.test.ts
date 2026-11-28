@@ -11,12 +11,10 @@ import {
   reveal,
   subKey,
   suggested,
-  workerKey,
 } from "./groups";
 
 const NOW = Date.UTC(2026, 10, 6, 12);
 const MIN = 60_000;
-const HOUR = 60 * MIN;
 const DAY = 24 * 60 * MIN;
 
 const project = (path: string, lastActiveMs = NOW): ProjectSummary => ({
@@ -35,8 +33,6 @@ const session = (
   extra: Partial<SessionSummary> = {},
 ): SessionSummary => ({
   id,
-  agent: "claude",
-  haaWorker: null,
   projectId,
   title: id,
   titleSource: "ai",
@@ -121,62 +117,6 @@ describe("buildSidebar", () => {
     expect(ids(sb.groups[0]!.sessions)).toEqual(["p1", "a1", "a2"]);
     expect(sb.groups[0]!.live).toBe("waiting");
   });
-
-  it("folds haa Workers under their owner, excludes them from groups and Recent, routes unlinked non-Live to unlinked, and keeps Live Workers in Live", () => {
-    const worker = (
-      id: string,
-      ownerSessionId: string | null,
-      lastPromptMs: number,
-      extra: Partial<SessionSummary> = {},
-    ) =>
-      session(id, "/a", lastPromptMs, {
-        agent: "agy",
-        haaWorker: { ownerSessionId, name: `name-${id}`, taskTitle: null },
-        ...extra,
-      });
-    const sb = buildSidebar(
-      [
-        session("owner", "/a", NOW - 3 * DAY),
-        worker("w-old", "owner", NOW - 2 * DAY),
-        worker("w-new", "owner", NOW - DAY),
-        // Live Worker linked to owner: appears in both owner.workers and Live, never in group totals/live.
-        worker("w-live-linked", "owner", NOW - MIN, { live: live("waiting") }),
-        // Unlinked cases: null owner, missing owner, owner is itself a Worker.
-        worker("w-null", null, NOW - 4 * DAY),
-        worker("w-missing", "no-such-id", NOW - 2 * HOUR),
-        worker("w-of-worker", "w-old", NOW - 5 * DAY),
-        // Unlinked + Live: stays in Live, does not enter unlinked.
-        worker("w-live-unlinked", null, NOW - 2 * MIN, { live: live("busy") }),
-        // Worker in a nested sub-project must not create a sub-group either.
-        worker("w-sub", null, NOW - 6 * DAY, { projectId: `${W}/y` }),
-      ],
-      [],
-      projects,
-      [{ path: "/a" }, { path: W, nest: true }],
-      NOW,
-    );
-
-    const groupA = sb.groups[0]!;
-    expect(ids(groupA.sessions)).toEqual(["owner"]);
-    expect(groupA.total).toBe(1);
-    expect(groupA.lastMs).toBe(NOW - 3 * DAY);
-    expect(groupA.live).toBeNull();
-    expect(sb.groups[1]!.subs).toEqual([]);
-
-    const ownerRow = groupA.sessions[0]!;
-    expect(ownerRow.isWorker).toBe(false);
-    expect(ownerRow.workerName).toBeNull();
-    expect(ids(ownerRow.workers)).toEqual(["w-live-linked", "w-new", "w-old"]);
-    expect(ownerRow.workers.map((w) => [w.agent, w.isWorker, w.workerName])).toEqual([
-      ["agy", true, "name-w-live-linked"],
-      ["agy", true, "name-w-new"],
-      ["agy", true, "name-w-old"],
-    ]);
-
-    expect(ids(sb.recent)).toEqual(["owner"]);
-    expect(ids(sb.live)).toEqual(["w-live-linked", "w-live-unlinked"]);
-    expect(ids(sb.unlinked)).toEqual(["w-missing", "w-null", "w-of-worker", "w-sub"]);
-  });
 });
 
 describe("flatten", () => {
@@ -204,41 +144,6 @@ describe("flatten", () => {
 
   it("lists the group headers alone while one is dragged", () => {
     expect(flatten(sb, {}, {}, true).map((i) => i.kind)).toEqual(["group", "group"]);
-  });
-
-  it("inserts worker items right after their owner only when its w: key is open", () => {
-    const withWorkers = buildSidebar(
-      [
-        session("a0", "/a", NOW - MIN),
-        session("w1", "/a", NOW - 2 * MIN, {
-          agent: "agy",
-          haaWorker: { ownerSessionId: "a0", name: "w1", taskTitle: null },
-        }),
-        session("w2", "/a", NOW, { agent: "agy", haaWorker: { ownerSessionId: "a0", name: "w2", taskTitle: null } }),
-        session("y1", `${W}/y`, NOW - DAY),
-        session("wy", `${W}/y`, NOW - HOUR, {
-          agent: "agy",
-          haaWorker: { ownerSessionId: "y1", name: "wy", taskTitle: null },
-        }),
-      ],
-      [],
-      projects,
-      [{ path: "/a" }, { path: W, nest: true }],
-      NOW,
-    );
-    // Collapsed by default.
-    expect(flatten(withWorkers, {}, {}).filter((i) => i.kind === "worker")).toEqual([]);
-    // Expanded under both depth 1 (group) and depth 2 (sub-group).
-    const openItems = flatten(
-      withWorkers,
-      { [workerKey("a0")]: true, [subKey(W, `${W}/y`)]: true, [workerKey("y1")]: true },
-      {},
-    );
-    expect(openItems.filter((i) => i.kind === "worker").map((i) => [i.s.id, i.depth])).toEqual([
-      ["w2", 1],
-      ["w1", 1],
-      ["wy", 2],
-    ]);
   });
 });
 
@@ -298,42 +203,6 @@ describe("reveal", () => {
   it("does nothing for a row already shown or an unknown Session", () => {
     expect(reveal(sb, "a0", {}, {})).toBeNull();
     expect(reveal(sb, "nope", {}, {})).toBeNull();
-  });
-
-  it("reveals a linked Worker by opening its owner's groups, w: key, and expanding limits if needed", () => {
-    const sbWithWorkers = buildSidebar(
-      [
-        ...sessions,
-        session("w-a6", "/a", NOW, {
-          agent: "agy",
-          haaWorker: { ownerSessionId: "a6", name: "w-a6", taskTitle: null },
-        }),
-        session("w-old", `${W}/old`, NOW, {
-          agent: "agy",
-          haaWorker: { ownerSessionId: "old1", name: "w-old", taskTitle: null },
-        }),
-        session("w-unlinked", "/a", NOW, {
-          agent: "agy",
-          haaWorker: { ownerSessionId: null, name: "w-unlinked", taskTitle: null },
-        }),
-      ],
-      [],
-      projects,
-      [{ path: "/a" }, { path: W, nest: true }],
-      NOW,
-    );
-    expect(reveal(sbWithWorkers, "w-a6", { [groupKey("/a")]: false }, {})).toEqual({
-      open: [groupKey("/a"), workerKey("a6")],
-      limits: { [groupKey("/a")]: 7 },
-    });
-    expect(reveal(sbWithWorkers, "w-old", {}, {})).toEqual({
-      open: [restKey(W), subKey(W, `${W}/old`), workerKey("old1")],
-      limits: {},
-    });
-    // Already open and within limits: nothing to do.
-    expect(reveal(sbWithWorkers, "w-a6", { [workerKey("a6")]: true }, { [groupKey("/a")]: 7 })).toBeNull();
-    // Unlinked Worker has no row in Project list.
-    expect(reveal(sbWithWorkers, "w-unlinked", {}, {})).toBeNull();
   });
 });
 

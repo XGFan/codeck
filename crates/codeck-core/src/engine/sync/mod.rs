@@ -5,50 +5,32 @@ mod compute;
 mod plan;
 mod write;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::Ordering;
 
 use rayon::prelude::*;
-use transcript::agy;
 
 use super::session_cache::CachedSession;
 use super::{ChangeSet, Engine};
 use crate::error::CoreResult;
 use crate::index::{reader, writer};
 use crate::model::{FileRole, IndexPhase, IndexStatus};
-use crate::scan::FileSource;
 use crate::{project, scan};
-use compute::{AgyEnv, SessionWork, compute_session};
+use compute::{SessionWork, compute_session};
 use plan::{SessionPlan, batches, diff_sidecars, plan_sync};
 use write::{rebill_changed, session_exists, update_superseded, write_work};
 
 /// Scope of an index sync.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum SyncScope {
-    /// Scan both roots in full.
+    /// Scan the data root in full.
     Full,
-    /// Scan only `sessions` on the Claude Code side; on the agy side, scan all of `agy_root`
-    /// when `agy_all` is set (e.g. `conversation_metadata.json` changed) or only `sessions`.
-    Scoped {
-        sessions: BTreeSet<String>,
-        agy_all: bool,
-    },
-}
-
-fn read_agy_metadata(agy_root: &Path) -> HashMap<String, agy::Meta> {
-    match agy::read_metadata(&agy::metadata_path(agy_root)) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-        Err(e) => {
-            tracing::warn!(error = %e, "读取 agy metadata 失败");
-            HashMap::new()
-        }
-    }
+    /// Scan only the specified Sessions.
+    Scoped(BTreeSet<String>),
 }
 
 impl Engine {
-    /// `scope`: what changed (a filesystem batch); both roots are scanned in full without a scope,
+    /// `scope`: what changed (a filesystem batch); the data root is scanned in full without a scope,
     /// before the first sync (no sidecar state to diff against yet) and after a failed sync.
     pub(super) fn sync(
         &self,
@@ -80,10 +62,7 @@ impl Engine {
                     if moved.is_empty() {
                         break;
                     }
-                    let pass_scope = SyncScope::Scoped {
-                        sessions: std::mem::take(&mut moved),
-                        agy_all: false,
-                    };
+                    let pass_scope = SyncScope::Scoped(std::mem::take(&mut moved));
                     match self.sync_locked(p, keep_cache, &pass_scope) {
                         Ok((more, next)) => {
                             cs.changed.extend(more.changed);
@@ -121,30 +100,18 @@ impl Engine {
         scope: &SyncScope,
     ) -> CoreResult<(ChangeSet, BTreeSet<String>)> {
         let p: &dyn Fn(&IndexStatus) = p.unwrap_or(&|_| {});
-        let agy_meta = read_agy_metadata(&self.cfg.agy_root);
-        let haa_repos = crate::haa::worktree_repos(&self.cfg.haa_home);
-        let agy_env = AgyEnv {
-            root: &self.cfg.agy_root,
-            haa_home: &self.cfg.haa_home,
-            haa_repos: &haa_repos,
-        };
-        let (mut scan, db_files, claude_scope, stored_fps) = match scope {
-            SyncScope::Scoped { sessions, agy_all } => {
-                let (scan, db, widened) = self.scan_scope(sessions, *agy_all)?;
-                let fps = self
-                    .index
-                    .read(|c| reader::agy_meta_fingerprints(c, (!agy_all).then_some(&widened)))?;
-                (scan, db, Some(widened), fps)
+        let (mut scan, db_files, scanned_scope) = match scope {
+            SyncScope::Scoped(sessions) => {
+                let (scan, db, widened) = self.scan_scope(sessions)?;
+                (scan, db, Some(widened))
             }
             SyncScope::Full => (
-                scan::scan_roots(&self.cfg.data_root, &self.cfg.agy_root),
+                scan::scan_root(&self.cfg.data_root),
                 self.index.read(reader::all_files)?,
                 None,
-                self.index
-                    .read(|c| reader::agy_meta_fingerprints(c, None))?,
             ),
         };
-        let claude_scope = claude_scope.as_ref();
+        let scanned_scope = scanned_scope.as_ref();
         let adopt_before = self.index.read(reader::adoptions)?;
         let mains: HashSet<&String> = scan
             .files
@@ -160,7 +127,7 @@ impl Engine {
         scan::adopt(&mut scan.files, &mut scan.sidecars, &adopt);
         let (sidecar_dirty, sidecar_now) = {
             let prev = self.sidecar_state.lock();
-            match (claude_scope, prev.as_ref()) {
+            match (scanned_scope, prev.as_ref()) {
                 (Some(s), Some(prev)) => {
                     let prev = prev
                         .iter()
@@ -172,19 +139,7 @@ impl Engine {
                 _ => diff_sidecars(prev.as_ref(), &scan, &db_files),
             }
         };
-        let mut recompute_dirty = sidecar_dirty;
-        for f in scan.files.iter().filter(|f| f.source == FileSource::Agy) {
-            let cur_fp = agy_meta
-                .get(&f.session_id)
-                .map(|m| compute::agy_fingerprint(m, &haa_repos));
-            if stored_fps
-                .get(&f.session_id)
-                .is_some_and(|&stored| stored != cur_fp)
-            {
-                recompute_dirty.insert(f.session_id.clone());
-            }
-        }
-        let (plans, removed, moved) = plan_sync(&scan, db_files, &recompute_dirty);
+        let (plans, removed, moved) = plan_sync(&scan, db_files, &sidecar_dirty);
         let with_text = self.index.read(|c| {
             reader::sessions_with_text(c, plans.iter().filter(|p| !p.reparse).map(|p| &p.sid))
         })?;
@@ -239,18 +194,9 @@ impl Engine {
                     batch
                         .into_iter()
                         .map(|plan| {
-                            // An agy metadata-only recompute does not alter the transcript; leave
-                            // any assembled display cache entry intact.
-                            let meta_only = !plan.reparse
-                                && plan.ingest.is_empty()
-                                && plan.current.iter().all(|f| f.source == FileSource::Agy);
-                            if meta_only {
-                                (plan, None, false)
-                            } else {
-                                let cached = cache.take(&plan.sid);
-                                let keep = keep_cache || cached.is_some();
-                                (plan, cached, keep)
-                            }
+                            let cached = cache.take(&plan.sid);
+                            let keep = keep_cache || cached.is_some();
+                            (plan, cached, keep)
                         })
                         .collect()
                 };
@@ -263,8 +209,7 @@ impl Engine {
                     .into_par_iter()
                     .map(|(plan, cached, keep)| {
                         let need_main_set = !plan.reparse && with_text.contains(&plan.sid);
-                        let meta = agy_meta.get(&plan.sid);
-                        compute_session(plan, cached, keep, need_main_set, meta, &agy_env)
+                        compute_session(plan, cached, keep, need_main_set)
                     })
                     .collect();
                 let (files_done, bytes_done) = works.iter().fold((0u32, 0u64), |(f, b), w| {
@@ -334,7 +279,7 @@ impl Engine {
         result?;
         {
             let mut state = self.sidecar_state.lock();
-            match (claude_scope, state.as_mut()) {
+            match (scanned_scope, state.as_mut()) {
                 (Some(s), Some(state)) => {
                     state.retain(|_, v| !s.contains(&v.2));
                     state.extend(sidecar_now);
@@ -362,12 +307,9 @@ impl Engine {
     /// those linked by `continued-in`, the owner of each scanned agent file's row, and the
     /// session whose directory holds each agent file the rows of `scope` record (a file adopted
     /// by a session the links no longer reach). Also returns the `files` rows of the final scope.
-    /// When `agy_all` is true, every file under `agy_root` (and every agy row in `files`) is
-    /// included alongside the scoped Claude Code sessions.
     fn scan_scope(
         &self,
         scope: &BTreeSet<String>,
-        agy_all: bool,
     ) -> CoreResult<(scan::ScanResult, Vec<reader::FileRecord>, BTreeSet<String>)> {
         let mut scope = if scope.is_empty() {
             BTreeSet::new()
@@ -375,25 +317,9 @@ impl Engine {
             self.index.read(|c| reader::with_continued(c, scope))?
         };
         let mut tries = 0;
-        let (mut found, mut db) = loop {
-            let found = if agy_all {
-                if scope.is_empty() {
-                    scan::ScanResult::default()
-                } else {
-                    scan::scan_sessions(&self.cfg.data_root, &scope)
-                }
-            } else {
-                scan::scan_sessions_in_roots(&self.cfg.data_root, &self.cfg.agy_root, &scope)
-            };
-            let db = if scope.is_empty() {
-                Vec::new()
-            } else {
-                let mut rows = self.index.read(|c| reader::files_of_sessions(c, &scope))?;
-                if agy_all {
-                    rows.retain(|r| r.source == FileSource::Claude);
-                }
-                rows
-            };
+        let (found, db) = loop {
+            let found = scan::scan_sessions(&self.cfg.data_root, &scope);
+            let db = self.index.read(|c| reader::files_of_sessions(c, &scope))?;
             let scanned: HashSet<&std::path::Path> =
                 found.files.iter().map(|f| f.path.as_path()).collect();
             let agent_paths: Vec<String> = found
@@ -427,15 +353,6 @@ impl Engine {
             scope.extend(more);
             scope = self.index.read(|c| reader::with_continued(c, &scope))?;
         };
-        if agy_all {
-            found
-                .files
-                .extend(scan::scan_agy_root(&self.cfg.agy_root).files);
-            db.extend(
-                self.index
-                    .read(|c| reader::files_of_source(c, FileSource::Agy))?,
-            );
-        }
         Ok((found, db, scope))
     }
 }

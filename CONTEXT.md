@@ -5,23 +5,23 @@
 ## Language
 
 **Session**:
-一次 Claude Code 或 agy 对话，以 session ID（agy 的是 conversation id）为唯一身份；无论它的记录文件在磁盘上出现几份，都只算一个 Session。
+一次 Claude Code 对话，以 session ID 为唯一身份；无论它的记录文件在磁盘上出现几份，都只算一个 Session。
 _Avoid_: 会话文件, conversation, chat, transcript（指整体时）
 
 **Agent**:
-产生 Session 的编程助手：`claude`（Claude Code）或 `agy`（Antigravity CLI）。每个 Session 恰有一个 Agent，由它所在的数据目录决定（ADR-0018）。haa 在 codex、pi 上的 Worker 对话不是 Session，也就没有 Agent，只在 Worker 面板里看（ADR-0020，三者的对照见 docs/agent-integrations.md）。
-_Avoid_: 来源, source, CLI（指这一层时）；不要和 Subagent Run、Claude Code 的 Agent 工具混用
+haa Worker 跑在其上的编程助手：`agy`（Antigravity CLI）、`codex` 或 `pi`（haa 叫它 backend）。它们的对话不是 Session，只在派活 Session 的 Worker 面板里按 id 看（ADR-0020、ADR-0021，三者的对照见 docs/agent-integrations.md）。
+_Avoid_: 来源, source, CLI（指这一层时）；不要和 Subagent Run、Claude Code 的 Agent 工具、haa 的 Agent（Worker 的角色，如 fixer）混用
 
 **Project**:
 一个 git 仓库（worktree 归入主仓库），不在仓库里的目录则是该目录本身；以解析符号链接后的路径为身份，而非 `~/.claude/projects/` 下的目录名。一个 Session 属于它启动时所在的 Project，以及它改动过文件的每个 Project。
 _Avoid_: 项目目录, workspace, folder
 
 **Live Session**:
-仍有 Claude Code 进程在运行、可能继续追加内容的 Session；agy 的 Session 在有 agy 进程打开着它的 presence 锁（那个 TUI 当前打开着这个对话）时是 Live，状态未知。其余 Session 视为已结束。侧栏顶部列出它们的那一块就叫「Live」；iPhone 列表把它们分在「等你处理」与「进行中」两段。
+仍有 Claude Code 进程在运行、可能继续追加内容的 Session。其余 Session 视为已结束。侧栏顶部列出它们的那一块就叫「Live」；iPhone 列表把它们分在「等你处理」与「进行中」两段。
 _Avoid_: 活跃会话, active session, 进行中的会话, 运行中 / Running（指侧栏那一块时）
 
 **Connect**:
-经 ccrpc 连上一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，从此可以在应用里向它发提示词、作答审批与提问。agy 的 Session 暂不能 Connect（ADR-0018）。
+经 ccrpc 连上一个在 ToH clay 里运行、装了 ccrpc 插件的 Live Session，从此可以在应用里向它发提示词、作答审批与提问。
 _Avoid_: 驾驶, attach（ToH 的 attach 指把终端接到 Pane）, 接管
 
 **Connected Session**:
@@ -77,7 +77,7 @@ Session 在 agents 页面转入后台（Move to Background）时 Claude Code 新
 _Avoid_: Fork（不是分出去的另一条路）, 副本, Resume（Resume 不产生新 Session）
 
 **Cost**:
-按 API 公开单价估算的花费（美元），由每条 assistant 消息的模型和 token 算出；同一次 API 调用出现在多个 Session 中时只计一次，归入最早的那个 Session（被接替的除外）。它是估算值，不是实际账单（订阅用户并不按此付费）。agy 的 Session 不计 Cost（界面写「未记录」）。界面与文档里一律写 Cost。
+按 API 公开单价估算的花费（美元），由每条 assistant 消息的模型和 token 算出；同一次 API 调用出现在多个 Session 中时只计一次，归入最早的那个 Session（被接替的除外）。它是估算值，不是实际账单（订阅用户并不按此付费）。haa Worker 在 agy、codex、pi 上的对话不计 Cost（界面写「未记录」）。界面与文档里一律写 Cost。
 _Avoid_: API 金额（「API」有歧义）, 金额, 费用, 花费, 账单
 
 **额度**（Plan Usage）:

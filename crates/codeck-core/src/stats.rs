@@ -26,7 +26,7 @@ use chrono::{Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use rusqlite::{Connection, params_from_iter};
 
 use crate::error::CoreResult;
-use crate::index::schema::{MSG_ASSISTANT, SOURCE_CLAUDE};
+use crate::index::schema::MSG_ASSISTANT;
 use crate::model::{
     DailyModelTokens, HourModelUsage, HourUsage, SessionUsage, Stats, StatsOverview, StatsRequest,
     TimeRange, TimeSpan,
@@ -111,10 +111,8 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
 
     let (non_empty, sessions_meta): (HashSet<String>, HashMap<String, SessionRow>) =
         if want_single_day {
-            let mut st = conn.prepare(&format!(
-                "SELECT id, title, is_empty, superseded, continued_in_id FROM sessions
-                 WHERE agent = '{SOURCE_CLAUDE}'"
-            ))?;
+            let mut st = conn
+                .prepare("SELECT id, title, is_empty, superseded, continued_in_id FROM sessions")?;
             let rows = st.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -129,9 +127,7 @@ pub fn compute(conn: &Connection, r: &StatsRequest) -> CoreResult<Stats> {
             let meta: HashMap<String, SessionRow> = rows.collect::<Result<_, _>>()?;
             (HashSet::new(), meta)
         } else {
-            let mut st = conn.prepare(&format!(
-                "SELECT id FROM sessions WHERE is_empty = 0 AND agent = '{SOURCE_CLAUDE}'"
-            ))?;
+            let mut st = conn.prepare("SELECT id FROM sessions WHERE is_empty = 0")?;
             let rows = st.query_map([], |row| row.get(0))?;
             (rows.collect::<Result<_, _>>()?, HashMap::new())
         };

@@ -587,14 +587,6 @@ function DataTab() {
           </form>
         </div>
       </Row>
-      <Row label="agy 数据目录" testId="set-agy-root">
-        <div className="flex flex-col gap-1">
-          <code data-testid="set-agy-root-path" className="break-all font-mono text-[13px]">
-            {info.agyRoot}
-          </code>
-          {!info.agyRootExists && <div className="text-[12px] text-error">该目录不存在</div>}
-        </div>
-      </Row>
       <Row label="缓存目录" testId="set-cache">
         <code className="break-all font-mono text-[13px]">{info.cacheDir}</code>
       </Row>

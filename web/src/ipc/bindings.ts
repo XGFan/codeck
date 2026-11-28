@@ -150,9 +150,6 @@ export const events = {
 };
 
 /* Types */
-/**  Which coding agent produced a Session. */
-export type Agent = "claude" | "agy";
-
 /**
  *  ccrpc's screen analyzer (an Anthropic Messages endpoint): what 「设置 › ccrpc」 saved, and what the next
  *  ccrpc will get (settings over the login shell's `CCRPC_ANALYZER_*`).
@@ -207,8 +204,6 @@ export type AppInfo = {
 	dataRoot: string,
 	dataRootSource: DataRootSource,
 	dataRootExists: boolean,
-	agyRoot: string,
-	agyRootExists: boolean,
 	cacheDir: string,
 	schemaVersion: number,
 };
@@ -422,10 +417,7 @@ export type HaaTask = {
 	status: string | null,
 	/**  Full model identifier used by the Worker. */
 	model: string | null,
-	/**
-	 *  Backend that ran the Task: `agy`, `codex` or `pi` (a codex or pi Worker's conversation is
-	 *  read by `session_id` from the backend's own records, ADR-0020).
-	 */
+	/**  Backend that ran the Task: `agy`, `codex` or `pi`. */
 	backend: string,
 	/**  Task completion time in unix-epoch milliseconds (parsed from `ts`). */
 	endedMs: number,
@@ -437,13 +429,6 @@ export type HaaTask = {
 export type HaaWatchEndedEvent = {
 	id: number,
 	message: string,
-};
-
-/**  Ownership metadata for an agy Session started by haa as a Worker. */
-export type HaaWorker = {
-	ownerSessionId: string | null,
-	name: string | null,
-	taskTitle: string | null,
 };
 
 /**  `haa ls --all --json --watch` (instance `id`) printed the Worker list again: its JSON array as printed. */
@@ -868,7 +853,7 @@ export type SessionDetail = {
 	 */
 	supersededBy: string | null,
 	failedLines: number,
-	/**  `claude --resume <id>` or `agy --conversation <id>`. */
+	/**  `claude --resume <id>`. */
 	resumeCommand: string,
 	/**  haa Worker Tasks owned by this Session, ordered by `ended_ms` ascending. */
 	haaTasks: HaaTask[],
@@ -891,7 +876,6 @@ export type SessionSort = "lastActive" | "created" | "messages" |
 
 export type SessionSummary = {
 	id: string,
-	agent: Agent,
 	projectId: string,
 	title: string,
 	titleSource: TitleSource,
@@ -917,8 +901,6 @@ export type SessionSummary = {
 	primaryModel: string | null,
 	/**  Projects whose files an edit tool (main or Subagent) wrote, `project_id` included if edited. */
 	editedProjectIds: string[],
-	/**  Present when this Session is a haa Worker; fields are filled from `~/.haa` when available. */
-	haaWorker: HaaWorker | null,
 };
 
 /**  Per-session cost, request count, and active spans within a single-day range. */

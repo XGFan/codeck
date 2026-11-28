@@ -488,7 +488,6 @@ function sessionDetail(sessionId: string): SessionDetail {
   const s = summaryOf(sessionId);
   const p = projectBase.find((x) => x.id === s.projectId)!;
   const isRich = sessionId === RICH_ID;
-  const isAgy = s.agent === "agy";
   const sub = isRich ? sumTok(...richSubagents.map((a) => a.tokens)) : tok(0, 0);
   return {
     summary: s,
@@ -509,40 +508,30 @@ function sessionDetail(sessionId: string): SessionDetail {
       cacheCreation: s.tokens.cacheCreation - sub.cacheCreation,
     },
     tokensSubagents: sub,
-    modelCosts: isAgy
-      ? []
-      : isRich
-        ? richModelCosts()
-        : s.primaryModel
-          ? [{ model: s.primaryModel, cost: s.cost, unpricedMessages: s.unpricedMessages }]
-          : s.unpricedMessages
-            ? [{ model: "unknown", cost: 0, unpricedMessages: s.unpricedMessages }]
-            : [],
-    versions: isAgy ? [] : ["2.1.91"],
-    files: isAgy
-      ? [
-          {
-            path: `/Users/dev/.gemini/antigravity-cli/brain/${sessionId}/.system_generated/logs/transcript.jsonl`,
-            size: 42_180,
-            role: "main",
-          },
-        ]
-      : [
-          { path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}.jsonl`, size: 1_482_112, role: "main" },
-          ...(isRich
-            ? richSubagents.map((a) => ({
-                path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}/subagents/agent-${a.agentId}.jsonl`,
-                size: 48_210,
-                role: a.workflowRunId ? ("workflowSubagent" as const) : ("subagent" as const),
-              }))
-            : []),
-        ],
+    modelCosts: isRich
+      ? richModelCosts()
+      : s.primaryModel
+        ? [{ model: s.primaryModel, cost: s.cost, unpricedMessages: s.unpricedMessages }]
+        : s.unpricedMessages
+          ? [{ model: "unknown", cost: 0, unpricedMessages: s.unpricedMessages }]
+          : [],
+    versions: ["2.1.91"],
+    files: [
+      { path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}.jsonl`, size: 1_482_112, role: "main" },
+      ...(isRich
+        ? richSubagents.map((a) => ({
+            path: `/Users/dev/.claude/projects/${s.projectId}/${sessionId}/subagents/agent-${a.agentId}.jsonl`,
+            size: 48_210,
+            role: a.workflowRunId ? ("workflowSubagent" as const) : ("subagent" as const),
+          }))
+        : []),
+    ],
     forks: sessionData
       .filter((x) => x.forkOf?.id === sessionId && !supersededBy.has(x.summary.id))
       .map((x) => ({ sessionId: x.summary.id, title: x.summary.title, createdMs: x.summary.createdMs })),
     supersededBy: supersededBy.get(sessionId) ?? null,
     failedLines: 0,
-    resumeCommand: isAgy ? `agy --conversation ${sessionId}` : `claude --resume ${sessionId}`,
+    resumeCommand: `claude --resume ${sessionId}`,
     haaTasks: findData(sessionId).haaTasks,
   };
 }

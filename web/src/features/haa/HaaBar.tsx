@@ -1,8 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/format";
-import { useAllSessions } from "@/queries";
 import { parseWorkerPanelId, useUi, workerPanelId } from "@/state/ui";
 import { HAA_KEY } from "@/features/transcript/keys";
 import type { HaaWorker, HaaWorkerState } from "@/ipc/protocol/haa";
@@ -191,7 +190,7 @@ function WorkerRow({
 }
 
 /**
- * Aligned status table for the haa Workers owned by `sessionId`; an agy Worker's row opens its conversation in the
+ * Aligned status table for the haa Workers owned by `sessionId`; a linked Worker's row opens its conversation in the
  * right panel. Renders nothing when the Session has no haa Workers.
  */
 export function HaaBar({ sessionId }: { sessionId: string | null }) {
@@ -204,14 +203,11 @@ export function HaaBar({ sessionId }: { sessionId: string | null }) {
   const toggleExpanded = useUi((s) => s.toggleExpanded);
   const toggle = () => toggleExpanded(HAA_KEY);
 
-  // A row opens its conversation: an agy Worker's once its Session is listed, a codex or pi Worker's from its file.
   const panelWorker = useUi((s) => parseWorkerPanelId(s.panelStack[s.panelStack.length - 1]));
   const setPanelStack = useUi((s) => s.setPanelStack);
-  const { data: allSessions } = useAllSessions(own.some((w) => w.sessionId != null));
-  const listed = useMemo(() => new Set(allSessions?.map((s) => s.id)), [allSessions]);
   const onOpenFor = (w: HaaWorker) => {
     const sid = w.sessionId;
-    if (sid == null || !(listed.has(sid) || readsWorkerById(w.model))) return undefined;
+    if (!sid || !readsWorkerById(w.model)) return undefined;
     return () => setPanelStack(panelWorker === sid ? [] : [workerPanelId(sid)]);
   };
 

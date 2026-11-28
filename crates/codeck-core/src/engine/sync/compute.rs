@@ -1,9 +1,8 @@
 //! Per-session compute: reads and parses a dirty session's files (no DB access).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use transcript::agy;
 use transcript::assemble::{self, SessionAggregates};
 
 use super::plan::{Ingest, SessionPlan};
@@ -12,9 +11,9 @@ use crate::engine::session_cache::{
 };
 use crate::index::schema::HEAD_LEN;
 use crate::index::writer::{self, AgentRow, FileRows, ProjectRow};
-use crate::model::{Agent, FileRole, TitleSource};
+use crate::model::FileRole;
 use crate::project;
-use crate::scan::{FileSource, ScannedFile, SidecarKind};
+use crate::scan::{ScannedFile, SidecarKind};
 
 // -------------------------------------------------------------------- per-session compute
 
@@ -33,9 +32,6 @@ pub(super) struct SessionSummaryOut {
     pub(super) project: ProjectRow,
     /// Newest main-file mtime (ms), used when no entry has a timestamp.
     pub(super) mtime_ms: f64,
-    pub(super) agent: Agent,
-    pub(super) haa_worker: bool,
-    pub(super) agy_meta: Option<i64>,
 }
 
 pub(super) struct SessionWork {
@@ -53,58 +49,13 @@ pub(super) struct SessionWork {
     pub(super) bytes: u64,
 }
 
-/// The repo haa recorded for the worktree an agy Session ran in (its first workspace), if any.
-pub(super) fn worktree_repo<'a>(
-    meta: &agy::Meta,
-    repos: &'a HashMap<PathBuf, PathBuf>,
-) -> Option<&'a Path> {
-    meta.workspaces
-        .first()
-        .and_then(|w| repos.get(w))
-        .map(PathBuf::as_path)
-}
-
-/// `sessions.agy_meta`: the metadata fingerprint, folded (FNV-1a) with the repo haa recorded for its
-/// worktree, so a worktree record arriving later re-projects the Session. Unchanged for the rest.
-pub(super) fn agy_fingerprint(meta: &agy::Meta, repos: &HashMap<PathBuf, PathBuf>) -> i64 {
-    let Some(repo) = worktree_repo(meta, repos) else {
-        return meta.fingerprint as i64;
-    };
-    let mut h: u64 = 0xcbf29ce484222325;
-    for &b in meta
-        .fingerprint
-        .to_le_bytes()
-        .iter()
-        .chain(repo.as_os_str().as_encoded_bytes())
-    {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h as i64
-}
-
-/// What an agy Session's summary reads besides its own files: the data root (the Project when it has
-/// no workspace), haa's home (Worker detection) and haa's worktree records.
-pub(super) struct AgyEnv<'a> {
-    pub(super) root: &'a Path,
-    pub(super) haa_home: &'a Path,
-    pub(super) haa_repos: &'a HashMap<PathBuf, PathBuf>,
-}
-
 /// Reads and parses a dirty session's files (no DB access; runs on the rayon pool).
 pub(super) fn compute_session(
     plan: SessionPlan,
     cached: Option<CachedSession>,
     keep: bool,
     need_main_set: bool,
-    agy_meta: Option<&agy::Meta>,
-    agy: &AgyEnv,
 ) -> SessionWork {
-    let &AgyEnv {
-        root: agy_root,
-        haa_home,
-        haa_repos,
-    } = agy;
     let mut work = SessionWork {
         bytes: plan.ingest_bytes(),
         sid: plan.sid.clone(),
@@ -151,29 +102,13 @@ pub(super) fn compute_session(
         if let Some(ing) = ingest.get(f.path.as_path())
             && let Ok(head) = read_head(&f.path, HEAD_LEN)
         {
-            let rows = match f.source {
-                FileSource::Claude => {
-                    writer::extract_rows(lf.records.iter().filter(|r| r.offset >= ing.from))
-                }
-                // Codex and pi files are never indexed; grouped with agy for completeness.
-                FileSource::Agy | FileSource::Codex | FileSource::Pi => {
-                    let unknown = st.agy.as_ref().map_or(&[][..], |a| a.unknown.as_slice());
-                    writer::extract_agy_rows(
-                        lf.records.iter().filter(|r| r.offset >= ing.from),
-                        unknown,
-                    )
-                }
-            };
+            let rows = writer::extract_rows(lf.records.iter().filter(|r| r.offset >= ing.from));
             work.files.push(FileOut {
                 file: f.clone(),
                 rows,
                 head,
                 parsed_offset: st.consumed,
-                // agy records are deduplicated by step index: count physical lines instead.
-                line_count: match f.source {
-                    FileSource::Agy | FileSource::Codex | FileSource::Pi => u64::from(st.lines),
-                    FileSource::Claude => lf.records.len() as u64 + u64::from(st.failed),
-                },
+                line_count: lf.records.len() as u64 + u64::from(st.failed),
                 failed_lines: u64::from(st.failed),
                 first_error: st.first_error.clone(),
             });
@@ -240,55 +175,19 @@ pub(super) fn compute_session(
         if need_main_set {
             work.main_set = Some(assemble::tree::main_set(&skeleton));
         }
-        let is_agy = main.first().is_some_and(|f| f.source == FileSource::Agy);
         let mtime_ms = main.iter().map(|f| f.mtime_ns).max().unwrap_or(0) as f64 / 1e6;
-        let (agent, haa_worker, agy_meta_fp, project) = if is_agy {
-            let repo = agy_meta.and_then(|m| worktree_repo(m, haa_repos));
-            if let Some(title) = agy_meta.and_then(|m| m.title.as_deref()) {
-                agg.title = assemble::prompt::truncate_chars(title, assemble::prompt::TITLE_CHARS);
-                agg.title_source = TitleSource::Ai;
-            }
-            let cwd = agy_meta
-                .and_then(|m| m.workspaces.first())
-                .map(|p| p.to_string_lossy().into_owned());
-            let mut resolver = project::Resolver::default();
-            let project = if let Some(repo) = repo {
-                // A haa worktree (deleted once merged): the repo haa created it in.
-                resolver.start_project(Some(&repo.to_string_lossy()), &main[0].path)
-            } else if cwd.is_some() {
-                resolver.start_project(cwd.as_deref(), &main[0].path)
-            } else {
-                // No workspace: fall back to the agy data root itself (not `<root>/brain/.../logs`).
-                let root =
-                    std::fs::canonicalize(agy_root).unwrap_or_else(|_| agy_root.to_path_buf());
-                resolver.start_project(None, &root.join("_"))
-            };
-            agg.cwd = cwd;
-            let uses_haa_tools = states
+        let cwd = agg.cwd.clone().or_else(|| {
+            loaded
                 .iter()
-                .any(|st| st.agy.as_ref().is_some_and(|a| a.uses_haa_tools));
-            let haa_worker =
-                agy_meta.is_some_and(|m| agy::is_haa_workspace(m, haa_home)) || uses_haa_tools;
-            let fp = agy_meta.map(|m| agy_fingerprint(m, haa_repos));
-            (Agent::Agy, haa_worker, fp, project)
-        } else {
-            let cwd = agg.cwd.clone().or_else(|| {
-                loaded
-                    .iter()
-                    .flat_map(|f| &f.records)
-                    .find_map(|r| r.entry.cwd.clone())
-            });
-            let project = project::Resolver::default().start_project(cwd.as_deref(), &main[0].path);
-            agg.cwd = cwd;
-            (Agent::Claude, false, None, project)
-        };
+                .flat_map(|f| &f.records)
+                .find_map(|r| r.entry.cwd.clone())
+        });
+        let project = project::Resolver::default().start_project(cwd.as_deref(), &main[0].path);
+        agg.cwd = cwd;
         work.summary = Some(SessionSummaryOut {
             project,
             agg,
             mtime_ms,
-            agent,
-            haa_worker,
-            agy_meta: agy_meta_fp,
         });
     }
     if keep && !loaded.is_empty() {

@@ -1,24 +1,8 @@
-//! Reading and adapting agy (Antigravity CLI) on-disk transcripts and metadata.
+//! Read and translate agy (Antigravity CLI) Worker transcripts.
 //!
-//! This is the only file in the repository that knows agy's raw on-disk format: step JSONL
-//! layout, wrapper tags (`<USER_REQUEST>`, `<SYSTEM_MESSAGE>`), tool schemas, `file://`
-//! workspace URIs, and `conversation_metadata.json`. Downstream assembly, indexing, ⌘F, CLI
-//! and the UI operate on the adapted Claude Code [`EntryRecord`]s and [`Meta`].
-//!
-//! Public entry points and their callers:
-//! - [`brain_dir`], [`transcript_path`], [`session_of_transcript`], [`metadata_path`],
-//!   [`presence_dir`], [`session_of_presence`]: `codeck-core` (scanner, engine, live process
-//!   detection), `codeck-host` (file watcher), `codeck-cli` (`show`, `wait`).
-//! - [`parse`], [`read`], [`AgyFile`], [`Step`], [`AgyToolCall`]: `codeck-core` (unified file
-//!   loader / session cache) and `transcript` tests.
-//! - [`adapt`], [`Adapted`], [`UnknownKind`]: `codeck-core` (unified file loader, diagnostics,
-//!   haa Worker detection).
-//! - [`parse_metadata`], [`read_metadata`], [`Meta`], [`is_haa_workspace`]: `codeck-core`
-//!   (sync fingerprint comparison, session summary, haa Worker detection).
-//! - [`KNOWN_STEP_TYPES`], [`KNOWN_TOOLS`], [`is_known_step_type`], [`is_known_tool`]:
-//!   diagnostics and tests.
+//! agy steps become Claude Code [`EntryRecord`]s for shared transcript assembly and rendering.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -30,44 +14,6 @@ use serde_json::{Map, Value, json};
 use crate::known;
 use crate::parse::EntryRecord;
 use crate::raw::{RawEntry, lenient};
-
-/// agy step `type` values handled by [`adapt`].
-pub const KNOWN_STEP_TYPES: &[&str] = &[
-    "USER_INPUT",
-    "PLANNER_RESPONSE",
-    "GENERIC",
-    "SYSTEM_MESSAGE",
-    "ERROR_MESSAGE",
-];
-
-/// Built-in agy tool names. `mcp_*` tools are also recognized (see [`is_known_tool`]).
-pub const KNOWN_TOOLS: &[&str] = &[
-    "run_command",
-    "read_file",
-    "edit_file",
-    "write_file",
-    "update_steps",
-    "search_web",
-    "ask_question",
-    "manage_task",
-    "invoke_subagent",
-    "define_subagent",
-    "manage_subagents",
-    "schedule",
-    "send_message",
-    "list_resources",
-    "read_resource",
-    "run_workflow",
-    "swarm",
-];
-
-pub fn is_known_step_type(step_type: &str) -> bool {
-    KNOWN_STEP_TYPES.contains(&step_type)
-}
-
-pub fn is_known_tool(name: &str) -> bool {
-    name.starts_with("mcp_") || KNOWN_TOOLS.contains(&name)
-}
 
 // ---- on-disk layout ----
 
@@ -91,6 +37,15 @@ pub fn transcript_path(root: &Path, id: &str) -> PathBuf {
         .join("transcript_full.jsonl")
 }
 
+/// Finds the transcript file for a valid conversation id.
+pub fn find_transcript(root: &Path, id: &str) -> Option<PathBuf> {
+    if !is_conversation_id(id) {
+        return None;
+    }
+    let path = transcript_path(root, id);
+    path.is_file().then_some(path)
+}
+
 /// Conversation id of a transcript path under `root`, if it matches [`transcript_path`].
 pub fn session_of_transcript(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(brain_dir(root)).ok()?;
@@ -110,31 +65,6 @@ pub fn session_of_transcript(root: &Path, path: &Path) -> Option<String> {
         }
     }
     comps.next().is_none().then(|| id.to_owned())
-}
-
-/// `<root>/cache/conversation_metadata.json`.
-pub fn metadata_path(root: &Path) -> PathBuf {
-    root.join("cache").join("conversation_metadata.json")
-}
-
-/// `<root>/presence`: `<id>.lock` files held open by running agy processes.
-pub fn presence_dir(root: &Path) -> PathBuf {
-    root.join("presence")
-}
-
-/// Conversation id of a presence lock path under `root` (`<root>/presence/<id>.lock`).
-pub fn session_of_presence(root: &Path, path: &Path) -> Option<String> {
-    let rel = path.strip_prefix(presence_dir(root)).ok()?;
-    let mut comps = rel.components();
-    let name = match comps.next()? {
-        Component::Normal(s) => s.to_str()?,
-        _ => return None,
-    };
-    if comps.next().is_some() {
-        return None;
-    }
-    let id = name.strip_suffix(".lock")?;
-    is_conversation_id(id).then(|| id.to_owned())
 }
 
 // ---- transcript parsing ----
@@ -300,32 +230,17 @@ pub fn read(path: &Path) -> io::Result<AgyFile> {
 
 // ---- adaptation to Claude Code RawEntry ----
 
-/// Kind of unrecognized agy item reported for Diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum UnknownKind {
-    StepType,
-    Tool,
-}
-
 /// Result of translating an [`AgyFile`] into Claude Code [`EntryRecord`]s.
 #[derive(Debug, Default)]
 pub struct Adapted {
     pub records: Vec<EntryRecord>,
-    /// Unrecognized agy step types and tool names (by original agy name) with occurrence counts.
-    pub unknown: Vec<(UnknownKind, String, u32)>,
-    /// `true` when any tool call used an `mcp_haa_*` or `mcp_paaa_*` tool.
-    pub uses_haa_tools: bool,
 }
 
 /// Translates `file` into a straight `parentUuid`-chained sequence of Claude Code [`EntryRecord`]s.
 ///
-/// Each record is constructed as Claude Code JSON and deserialized through [`RawEntry`] so
-/// downstream assembly behaves identically to Claude Code transcripts. `cwd` and titles are not
-/// emitted (they come from session-level metadata).
+/// Each record is constructed as Claude Code JSON and deserialized through [`RawEntry`] for downstream assembly.
 pub fn adapt(conv_id: &str, file: &AgyFile) -> Adapted {
     let mut records = Vec::with_capacity(file.steps.len());
-    let mut unknown_counts: BTreeMap<(UnknownKind, String), u32> = BTreeMap::new();
-    let mut uses_haa_tools = false;
     let mut prev_uuid: Option<String> = None;
     let mut pending_calls: VecDeque<String> = VecDeque::new();
 
@@ -375,14 +290,6 @@ pub fn adapt(conv_id: &str, file: &AgyFile) -> Adapted {
                 }
                 for (k, tc) in step.tool_calls.iter().enumerate() {
                     let raw_name = tc.name.as_deref().unwrap_or("");
-                    if raw_name.starts_with("mcp_haa_") || raw_name.starts_with("mcp_paaa_") {
-                        uses_haa_tools = true;
-                    }
-                    if !raw_name.is_empty() && !is_known_tool(raw_name) {
-                        *unknown_counts
-                            .entry((UnknownKind::Tool, raw_name.to_owned()))
-                            .or_insert(0) += 1;
-                    }
                     let tool_id = make_uuid(conv_id, step.index, k as u32 + 1);
                     pending_calls.push_back(tool_id.clone());
                     let (name, input) = translate_tool(raw_name, tc.args.as_ref());
@@ -481,14 +388,6 @@ pub fn adapt(conv_id: &str, file: &AgyFile) -> Adapted {
             }
             other => {
                 let raw_type = other.unwrap_or("").to_owned();
-                let diag_name = if raw_type.is_empty() {
-                    "<missing>".to_owned()
-                } else {
-                    raw_type.clone()
-                };
-                *unknown_counts
-                    .entry((UnknownKind::StepType, diag_name))
-                    .or_insert(0) += 1;
                 // Ensure the emitted entry type is also unrecognized by Claude Code assembly so it
                 // renders as `NodeBody::Unknown` and reads back the raw line at `step.offset`.
                 let emitted_type = if raw_type.is_empty() {
@@ -512,16 +411,7 @@ pub fn adapt(conv_id: &str, file: &AgyFile) -> Adapted {
         prev_uuid = Some(uuid);
     }
 
-    let unknown = unknown_counts
-        .into_iter()
-        .map(|((kind, name), count)| (kind, name, count))
-        .collect();
-
-    Adapted {
-        records,
-        unknown,
-        uses_haa_tools,
-    }
+    Adapted { records }
 }
 
 /// Extracts the text between `<USER_REQUEST>` and the last `</USER_REQUEST>`, dropping trailing
@@ -710,156 +600,6 @@ fn translate_tool(raw_name: &str, raw_args: Option<&Value>) -> (String, Value) {
 /// Deterministic UUID (version 5 / RFC 4122 layout) derived from `(conv_id, step_index, sub)`.
 fn make_uuid(conv_id: &str, step_index: u64, sub: u32) -> String {
     crate::foreign::derived_uuid(b"codeck-agy-v1\0", conv_id, step_index, sub)
-}
-
-// ---- conversation_metadata.json ----
-
-/// Session-level metadata from agy's `cache/conversation_metadata.json`.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Meta {
-    pub title: Option<String>,
-    pub workspaces: Vec<PathBuf>,
-    /// Deterministic hash computed solely from the raw `Title` and `WorkspaceURIs` fields.
-    pub fingerprint: u64,
-}
-
-#[derive(Deserialize)]
-struct RawMetaFile {
-    #[serde(default, deserialize_with = "lenient::object")]
-    conversations: Option<HashMap<String, Value>>,
-}
-
-/// Parses agy's `conversation_metadata.json`. Unparseable input yields an empty map.
-pub fn parse_metadata(buf: &[u8]) -> HashMap<String, Meta> {
-    let Ok(parsed) = serde_json::from_slice::<RawMetaFile>(buf) else {
-        return HashMap::new();
-    };
-    let Some(conversations) = parsed.conversations else {
-        return HashMap::new();
-    };
-    let mut out = HashMap::with_capacity(conversations.len());
-    for (id, entry) in conversations {
-        let summary = entry.get("summary").and_then(Value::as_object);
-        let raw_title = summary.and_then(|s| s.get("Title")).and_then(Value::as_str);
-        let raw_uris: Vec<String> = summary
-            .and_then(|s| s.get("WorkspaceURIs"))
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let fingerprint = meta_fingerprint(raw_title, &raw_uris);
-        let title = raw_title
-            .map(|t| t.trim().to_owned())
-            .filter(|t| !t.is_empty());
-        let workspaces = raw_uris.iter().filter_map(|u| decode_file_uri(u)).collect();
-        out.insert(
-            id,
-            Meta {
-                title,
-                workspaces,
-                fingerprint,
-            },
-        );
-    }
-    out
-}
-
-/// Reads and parses agy's `conversation_metadata.json` (strictly read-only).
-pub fn read_metadata(path: &Path) -> io::Result<HashMap<String, Meta>> {
-    let mut file = File::open(path)?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-    Ok(parse_metadata(&buf))
-}
-
-/// `true` when any workspace of `meta` lies under `haa_home` or its sibling `.paaa` directory.
-pub fn is_haa_workspace(meta: &Meta, haa_home: &Path) -> bool {
-    if haa_home.as_os_str().is_empty() {
-        return false;
-    }
-    let paaa_home = haa_home.parent().map(|p| p.join(".paaa"));
-    meta.workspaces.iter().any(|ws| {
-        ws.starts_with(haa_home) || paaa_home.as_ref().is_some_and(|paaa| ws.starts_with(paaa))
-    })
-}
-
-/// Decodes a local `file://` URI (including percent-escapes) into a `PathBuf`.
-fn decode_file_uri(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    let path_part = if rest.starts_with('/') {
-        rest
-    } else if let Some(after_host) = rest.strip_prefix("localhost")
-        && after_host.starts_with('/')
-    {
-        after_host
-    } else {
-        return None;
-    };
-
-    let bytes = path_part.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            if i + 2 >= bytes.len() {
-                return None;
-            }
-            let hi = hex_val(bytes[i + 1])?;
-            let lo = hex_val(bytes[i + 2])?;
-            let b = (hi << 4) | lo;
-            if b == 0 {
-                return None;
-            }
-            out.push(b);
-            i += 3;
-        } else {
-            if bytes[i] == 0 {
-                return None;
-            }
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok().map(PathBuf::from)
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// Deterministic FNV-1a 64-bit hash over raw `Title` and raw `WorkspaceURIs` only.
-fn meta_fingerprint(raw_title: Option<&str>, raw_uris: &[String]) -> u64 {
-    const OFFSET: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
-    let mut h = OFFSET;
-    let mut feed = |bytes: &[u8]| {
-        for &b in bytes {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(PRIME);
-        }
-    };
-    match raw_title {
-        Some(t) => {
-            feed(&[1]);
-            feed(&(t.len() as u64).to_le_bytes());
-            feed(t.as_bytes());
-        }
-        None => feed(&[0]),
-    }
-    feed(&(raw_uris.len() as u64).to_le_bytes());
-    for u in raw_uris {
-        feed(&(u.len() as u64).to_le_bytes());
-        feed(u.as_bytes());
-    }
-    h
 }
 
 // ---- lenient deserializers for agy fields ----

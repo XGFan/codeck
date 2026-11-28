@@ -213,14 +213,13 @@ Only `agent-*.jsonl` count as agent transcripts; `journal.jsonl` and `*.meta.jso
 
 ## agy
 
-Mini **Antigravity CLI (`agy`)** data root (`brain/<id>/.system_generated/logs/transcript_full.jsonl`, `cache/conversation_metadata.json`, `presence/<id>.lock`), sanitized from three real agy sessions via `examples/sanitize.rs --agy` (conversation IDs deterministically remapped across JSONL, metadata, and lock file; paths rewritten under `/Users/dev/...`, with `~/.haa` mapped to `/Users/dev/.haa`). Rebuild with:
+Mini **Antigravity CLI (`agy`)** data root (`brain/<id>/.system_generated/logs/transcript_full.jsonl`), sanitized from three real agy sessions via `examples/sanitize.rs --agy` (conversation IDs deterministically remapped in JSONL; paths rewritten under `/Users/dev/...`, with `~/.haa` mapped to `/Users/dev/.haa`). Rebuild with:
 
 ```
 cargo run -p codeck-core --example sanitize -- --agy \
   --source ~/.gemini/antigravity-cli \
   --out crates/codeck-core/tests/fixtures/agy \
-  --ids ff5e3db2-2257-4a0e-be22-48bc88fcb481,57278fd3-4571-4cfc-86be-08922770d620,0538034a-c5e6-4a09-b4da-c35b57fb671c \
-  --lock ff5e3db2-2257-4a0e-be22-48bc88fcb481
+  --ids ff5e3db2-2257-4a0e-be22-48bc88fcb481,57278fd3-4571-4cfc-86be-08922770d620,0538034a-c5e6-4a09-b4da-c35b57fb671c
 ```
 
 Counting rules: *steps* = unique `step_index` values; *dup steps* = repeated `step_index` occurrences (last line wins); *replies w/ tools* = deduplicated `PLANNER_RESPONSE` steps with non-empty `tool_calls`; *tokens in/out/cr* = sum over deduplicated steps (`input_tokens` / `output_tokens` / `cache_read_tokens`).
@@ -232,6 +231,5 @@ Counting rules: *steps* = unique `step_index` values; *dup steps* = repeated `st
 | haa worker | `c23ef150…/.system_generated/logs/transcript_full.jsonl` | 39 | 0 | 39 | 0 | 13 | 18 | 66486 / 16360 / 477979 |
 
 - **short** (`830e3bc5-0957-5b0b-a5dd-d340b130039e`): 2-step session (`USER_INPUT` with `<USER_REQUEST>`, `<ADDITIONAL_METADATA>`, `<USER_SETTINGS_CHANGE>` + `PLANNER_RESPONSE`), no tool calls.
-- **tui** (`8c54e127-d8c4-55e2-9034-566dac2ca233`): interactive TUI session with command approval (`run_command`, `Command exited with code 0.`), question (`ask_question`), permission denial (`GENERIC` with `status:"ERROR"` and `error`), background tasks (`status:"RUNNING"` with `Tool is running as a background task` + completion/cancellation `SYSTEM_MESSAGE`), and 4 overwritten `step_index` values (`43`–`46`). Has a stale empty lock at `presence/8c54e127-d8c4-55e2-9034-566dac2ca233.lock`.
-- **haa worker** (`c23ef150-997c-55e8-8dc2-3debd3f67351`): haa Worker with workspaces under `file:///Users/dev/.haa` (`worktrees/wt-…`, `agy-hooks`, `.haa`), `thinking`, parallel tool calls (`run_command`, `read_file`, `write_file`, `edit_file`, `mcp_haa_report`), truncated output previews, and a `RUNNING` background command.
-- `cache/conversation_metadata.json` holds entries for these three sessions only, matching `summary.ID` and `summary.NumSteps`.
+- **tui** (`8c54e127-d8c4-55e2-9034-566dac2ca233`): interactive TUI session with command approval (`run_command`, `Command exited with code 0.`), question (`ask_question`), permission denial (`GENERIC` with `status:"ERROR"` and `error`), background tasks (`status:"RUNNING"` with `Tool is running as a background task` + completion/cancellation `SYSTEM_MESSAGE`), and 4 overwritten `step_index` values (`43`–`46`).
+- **haa worker** (`c23ef150-997c-55e8-8dc2-3debd3f67351`): haa Worker, `thinking`, parallel tool calls (`run_command`, `read_file`, `write_file`, `edit_file`, `mcp_haa_report`), truncated output previews, and a `RUNNING` background command.

@@ -21,7 +21,7 @@ pub use fixtures::{FIXTURES, fixture_dir, ids};
 pub enum RootKind {
     /// Claude Code data root (`projects/…`, `sessions/…`).
     Claude,
-    /// Antigravity CLI data root (`brain/…`, `cache/…`, `presence/…`).
+    /// Antigravity CLI data root (`brain/…`).
     Agy,
 }
 

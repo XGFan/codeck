@@ -75,7 +75,7 @@ impl Engine {
         if main.is_empty() && self.index.is_read_only() {
             // Nothing keeps this index up to date: a Session too new for it is read from its file.
             let sids = BTreeSet::from([sid.to_owned()]);
-            main = scan::scan_sessions_in_roots(&self.cfg.data_root, &self.cfg.agy_root, &sids)
+            main = scan::scan_sessions(&self.cfg.data_root, &sids)
                 .files
                 .into_iter()
                 .filter(|f| f.role == FileRole::Main)
@@ -88,7 +88,7 @@ impl Engine {
             return Err(CoreError::NotFound("该 Session".into()));
         }
         sort_main(&mut main);
-        // agy Sessions have no `<project dir>/<sid>/` sidecar or Subagent directory.
+        // Worker conversations have no `<project dir>/<sid>/` sidecar or Subagent directory.
         let mut dirs: Vec<PathBuf> = Vec::new();
         for f in main.iter().filter(|f| f.source == FileSource::Claude) {
             if let Some(d) = f.path.parent().map(|p| p.join(sid))
@@ -172,11 +172,14 @@ impl Engine {
         })
     }
 
-    /// A haa Worker's conversation on codex or pi, which the index does not hold: the agent's own file
-    /// for this Session id (`transcript::codex` / `transcript::pi` know where it lives).
+    /// Finds a haa Worker conversation by id in the backend files.
     fn raw_worker_file(&self, sid: &str) -> Option<ScannedFile> {
-        let (path, source) = transcript::codex::find_rollout(&self.cfg.codex_root, sid)
-            .map(|p| (p, FileSource::Codex))
+        let (path, source) = transcript::agy::find_transcript(&self.cfg.agy_root, sid)
+            .map(|p| (p, FileSource::Agy))
+            .or_else(|| {
+                transcript::codex::find_rollout(&self.cfg.codex_root, sid)
+                    .map(|p| (p, FileSource::Codex))
+            })
             .or_else(|| {
                 transcript::pi::find_session(&self.cfg.pi_root, sid).map(|p| (p, FileSource::Pi))
             })?;
@@ -357,16 +360,6 @@ impl<K: PartialEq, V> Lru<K, V> {
     }
 }
 
-/// Extra facts produced when adapting an agy transcript (diagnostics and haa Worker detection).
-#[allow(dead_code)]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct AgyLoad {
-    /// Unrecognized agy step types and tool names (by original agy name) with occurrence counts.
-    pub(super) unknown: Vec<(transcript::agy::UnknownKind, String, u32)>,
-    /// `true` when any tool call used an `mcp_haa_*` or `mcp_paaa_*` tool.
-    pub(super) uses_haa_tools: bool,
-}
-
 /// Parse state of one cached file (extended in place while a Claude Code file only grows).
 #[derive(Clone, Debug)]
 pub(super) struct FileState {
@@ -381,9 +374,6 @@ pub(super) struct FileState {
     pub(super) first_error: Option<String>,
     /// First ≤ [`HEAD_LEN`] bytes, to detect an in-place rewrite.
     pub(super) head: Vec<u8>,
-    /// Populated when the file was loaded from an agy transcript.
-    #[allow(dead_code)]
-    pub(super) agy: Option<AgyLoad>,
 }
 
 impl FileState {
@@ -513,7 +503,6 @@ pub(super) fn load_fresh(f: &ScannedFile) -> io::Result<(FileState, LoadedFile)>
                     failed: chunk.failed,
                     first_error: chunk.first_error,
                     head,
-                    agy: None,
                 },
                 LoadedFile {
                     path: f.path.clone(),
@@ -536,10 +525,6 @@ pub(super) fn load_fresh(f: &ScannedFile) -> io::Result<(FileState, LoadedFile)>
                     failed: parsed.failed,
                     first_error: parsed.first_error,
                     head,
-                    agy: Some(AgyLoad {
-                        unknown: adapted.unknown,
-                        uses_haa_tools: adapted.uses_haa_tools,
-                    }),
                 },
                 LoadedFile {
                     path: f.path.clone(),
@@ -565,7 +550,6 @@ pub(super) fn load_fresh(f: &ScannedFile) -> io::Result<(FileState, LoadedFile)>
                     failed: chunk.failed,
                     first_error: chunk.first_error,
                     head,
-                    agy: None,
                 },
                 LoadedFile {
                     path: f.path.clone(),
@@ -688,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn agy_load_one_returns_extras_and_always_rereads_in_full() {
+    fn agy_load_one_rereads_in_full() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("transcript_full.jsonl");
         let initial = concat!(
@@ -716,18 +700,7 @@ mod tests {
 
         let (st1, lf1) = load_one(&make_scanned(), None).unwrap();
         assert_eq!(lf1.records.len(), 2);
-        let agy1 = st1.agy.as_ref().expect("agy load info");
-        assert!(agy1.uses_haa_tools);
-        assert_eq!(
-            agy1.unknown,
-            vec![(
-                transcript::agy::UnknownKind::Tool,
-                "brand_new_tool".to_owned(),
-                1
-            )]
-        );
-
-        // Append a line overriding step_index 0: agy must re-read in full rather than extend_loaded.
+        // Append a line overriding step_index 0: agy must re-read in full to replace the earlier record.
         let appended = format!(
             "{initial}{}\n",
             r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-27T00:00:00Z","content":"<USER_REQUEST>revised prompt</USER_REQUEST>"}"#

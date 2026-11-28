@@ -32,14 +32,14 @@ use crate::index::schema::SCHEMA_VERSION;
 use crate::index::writer;
 use crate::index::{Index, text};
 use crate::model::{
-    Agent, AppInfo, DataRootSource, Diagnostics, FileRole, FindRequest, FindResult, ImageData,
+    AppInfo, DataRootSource, Diagnostics, FileRole, FindRequest, FindResult, ImageData,
     ImageRequest, IndexPhase, IndexStatus, JumpRequest, JumpTarget, LiveChanged, LiveEntry,
-    LiveState, LiveStatus, ProjectSummary, SearchRequest, SearchResponse, SessionDetail,
-    SessionQuery, SessionSummary, SourceFile, Stats, StatsRequest, TokenTotals, ToolDetail,
-    ToolDetailRequest, Transcript, TranscriptRequest, TranscriptScope,
+    LiveState, ProjectSummary, SearchRequest, SearchResponse, SessionDetail, SessionQuery,
+    SessionSummary, SourceFile, Stats, StatsRequest, TokenTotals, ToolDetail, ToolDetailRequest,
+    Transcript, TranscriptRequest, TranscriptScope,
 };
 use crate::paths::{index_db_path, prices_cache_path, projects_dir, sessions_dir};
-use crate::{agy_live, diag, haa, search, stats};
+use crate::{diag, haa, search, stats};
 use session_cache::{CachedSession, FileState, Lru};
 use sync::SyncScope;
 
@@ -53,7 +53,7 @@ pub struct EngineConfig {
     /// Read-only Claude Code data root (ADR-0002).
     pub data_root: PathBuf,
     pub data_root_source: DataRootSource,
-    /// Read-only agy data root (ADR-0002, ADR-0018); recorded even when absent.
+    /// Read-only agy Worker conversation root.
     pub agy_root: PathBuf,
     /// Read-only haa home directory (`~/.haa`), for haa Worker detection and ownership.
     pub haa_home: PathBuf,
@@ -74,9 +74,6 @@ pub struct ChangeSet {
     /// A session appeared, disappeared or became (non-)empty, or a project row was added/removed.
     pub projects_changed: bool,
 }
-
-/// Function probing `<agy_root>/presence/*.lock` holders (`session_id -> pid`).
-type AgyLiveProbe = Box<dyn Fn(&Path) -> BTreeMap<String, u32> + Send + Sync>;
 
 pub struct Engine {
     cfg: EngineConfig,
@@ -100,8 +97,6 @@ pub struct Engine {
     /// Canonical working directory whose process files are excluded from Live Session detection
     /// (the Host's private `plan-usage` probe directory).
     ignore_live_cwd: Option<PathBuf>,
-    /// Probing function for live agy Sessions; defaults to [`agy_live::presence_holders`].
-    agy_live_probe: AgyLiveProbe,
 }
 
 /// Sidecar path → (size, mtime, session id).
@@ -110,36 +105,17 @@ type SidecarState = HashMap<PathBuf, (u64, i64, String)>;
 /// Derives the [`SyncScope`] of a filesystem batch:
 /// - Claude Code `projects/<dir>/<sid>.jsonl` or `projects/<dir>/<sid>/…` (ignoring `<root>/sessions`)
 ///   names `<sid>`.
-/// - agy `brain/<id>/.system_generated/logs/transcript_full.jsonl` names `<id>`.
-/// - agy `cache/conversation_metadata.json` widens the agy side to a full agy-root diff
-///   (stat-unchanged files are not re-read; only metadata fingerprints are compared).
 /// - Any other path (or no recognized paths) falls back to [`SyncScope::Full`].
 ///
 /// Changes no batch reports are caught by the next full scan: after a failed sync, after a
 /// watcher error (the worker queues a Rescan), and at the latest by the periodic Rescan, the
 /// last resort.
-fn changed_sessions(root: &Path, agy_root: &Path, paths: &[PathBuf]) -> SyncScope {
+fn changed_sessions(root: &Path, paths: &[PathBuf]) -> SyncScope {
     let projects = projects_dir(root);
     let real_projects = projects.canonicalize().ok();
     let sessions = sessions_dir(root);
-    let real_agy = agy_root.canonicalize().ok();
-    let meta_path = transcript::agy::metadata_path(agy_root);
-    let real_meta_path = real_agy.as_deref().map(transcript::agy::metadata_path);
     let mut out = BTreeSet::new();
-    let mut agy_all = false;
     for p in paths.iter().filter(|p| !p.starts_with(&sessions)) {
-        if *p == meta_path || real_meta_path.as_deref() == Some(p.as_path()) {
-            agy_all = true;
-            continue;
-        }
-        if let Some(sid) = transcript::agy::session_of_transcript(agy_root, p).or_else(|| {
-            real_agy
-                .as_deref()
-                .and_then(|r| transcript::agy::session_of_transcript(r, p))
-        }) {
-            out.insert(sid);
-            continue;
-        }
         let Some(rel) = p
             .strip_prefix(&projects)
             .ok()
@@ -167,13 +143,10 @@ fn changed_sessions(root: &Path, agy_root: &Path, paths: &[PathBuf]) -> SyncScop
         };
         out.insert(sid.to_owned());
     }
-    if out.is_empty() && !agy_all {
+    if out.is_empty() {
         SyncScope::Full
     } else {
-        SyncScope::Scoped {
-            sessions: out,
-            agy_all,
-        }
+        SyncScope::Scoped(out)
     }
 }
 
@@ -196,7 +169,6 @@ impl Engine {
         let index = Index::open(
             &index_db_path(&cfg.cache_dir),
             &cfg.data_root,
-            &cfg.agy_root,
             prices.clone(),
         )?;
         Self::over(cfg, index, prices)
@@ -206,11 +178,7 @@ impl Engine {
     /// (see [`Index::open_read_only`]). No sync, watcher or price download: the index stays as the
     /// last writer left it. A Session it does not know is read straight from its file.
     pub fn open_read_only(cfg: EngineConfig) -> CoreResult<Self> {
-        let index = Index::open_read_only(
-            &index_db_path(&cfg.cache_dir),
-            &cfg.data_root,
-            &cfg.agy_root,
-        )?;
+        let index = Index::open_read_only(&index_db_path(&cfg.cache_dir), &cfg.data_root)?;
         let prices = Arc::new(RwLock::new(PriceTable::embedded()));
         Self::over(cfg, index, prices)
     }
@@ -235,7 +203,6 @@ impl Engine {
             sidecar_state: Mutex::new(None),
             full_scan_next: AtomicBool::new(false),
             ignore_live_cwd: None,
-            agy_live_probe: Box::new(agy_live::presence_holders),
         })
     }
 
@@ -245,23 +212,12 @@ impl Engine {
         self
     }
 
-    /// Replaces agy presence-lock probing (defaults to [`agy_live::presence_holders`]), for tests.
-    pub fn with_agy_live_probe(
-        mut self,
-        probe: impl Fn(&Path) -> BTreeMap<String, u32> + Send + Sync + 'static,
-    ) -> Self {
-        self.agy_live_probe = Box::new(probe);
-        self
-    }
-
     pub fn app_info(&self) -> AppInfo {
         AppInfo {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             data_root: self.cfg.data_root.display().to_string(),
             data_root_source: self.cfg.data_root_source,
             data_root_exists: self.cfg.data_root.is_dir(),
-            agy_root: self.cfg.agy_root.display().to_string(),
-            agy_root_exists: self.cfg.agy_root.is_dir(),
             cache_dir: self.cfg.cache_dir.display().to_string(),
             schema_version: SCHEMA_VERSION,
         }
@@ -348,7 +304,7 @@ impl Engine {
         if !paths.is_empty() && paths.iter().all(|p| p.starts_with(&sessions)) {
             return Ok(ChangeSet::default());
         }
-        let scope = changed_sessions(&self.cfg.data_root, &self.cfg.agy_root, paths);
+        let scope = changed_sessions(&self.cfg.data_root, paths);
         self.sync(None, true, scope)
     }
 
@@ -436,7 +392,6 @@ impl Engine {
         for s in &mut rows {
             s.live = live.get(&s.id).cloned();
         }
-        self.attach_haa(&mut rows);
         Ok(rows)
     }
 
@@ -455,22 +410,14 @@ impl Engine {
         })?;
         let mut summary = row.summary;
         summary.live = live.get(id).cloned();
-        self.attach_haa(std::slice::from_mut(&mut summary));
         let tokens_subagents = TokenTotals {
             input: summary.tokens.input - row.tokens_main.input,
             output: summary.tokens.output - row.tokens_main.output,
             cache_read: summary.tokens.cache_read - row.tokens_main.cache_read,
             cache_creation: summary.tokens.cache_creation - row.tokens_main.cache_creation,
         };
-        let resume_command = match summary.agent {
-            Agent::Claude => format!("claude --resume {}", shell_quote(id)),
-            Agent::Agy => format!("agy --conversation {}", shell_quote(id)),
-        };
-        let haa_tasks = if summary.agent == Agent::Claude {
-            self.haa.lock().tasks_for(&self.cfg.haa_home, id).to_vec()
-        } else {
-            Vec::new()
-        };
+        let resume_command = format!("claude --resume {}", shell_quote(id));
+        let haa_tasks = self.haa.lock().tasks_for(&self.cfg.haa_home, id).to_vec();
         Ok(SessionDetail {
             summary,
             cwd_missing: row.cwd.as_deref().is_some_and(|c| !Path::new(c).is_dir()),
@@ -586,14 +533,6 @@ impl Engine {
         pfs
     }
 
-    /// Live agy Sessions (`session_id -> pid`) whose transcript JSONL already exists on disk.
-    fn agy_live_holders(&self) -> BTreeMap<String, u32> {
-        let mut holders = (self.agy_live_probe)(&self.cfg.agy_root);
-        holders
-            .retain(|sid, _| transcript::agy::transcript_path(&self.cfg.agy_root, sid).is_file());
-        holders
-    }
-
     fn live_map(&self) -> CoreResult<BTreeMap<String, LiveState>> {
         let pfs = self.read_process_files();
         let mut live = live::detect(&pfs);
@@ -603,43 +542,13 @@ impl Engine {
             .index
             .read(|c| reader::superseded_among(c, live.keys()))?;
         live.retain(|id, _| !superseded.contains(id));
-        for (sid, pid) in self.agy_live_holders() {
-            live.entry(sid).or_insert(LiveState {
-                status: LiveStatus::Unknown,
-                raw_status: None,
-                waiting_for: None,
-                pid: Some(pid),
-            });
-        }
         Ok(live)
     }
 
-    /// Whether a Claude Code or agy process is running `session_id` now (read afresh, not the last poll).
+    /// Whether a Claude Code process is running `session_id` now (read afresh, not the last poll).
     pub fn is_live(&self, session_id: &str) -> bool {
         let pfs = self.read_process_files();
-        if live::detect(&pfs).contains_key(session_id) {
-            return true;
-        }
-        self.agy_live_holders().contains_key(session_id)
-    }
-
-    /// Fills `haa_worker` ownership fields from `<haa_home>` for agy Sessions.
-    fn attach_haa(&self, summaries: &mut [SessionSummary]) {
-        if !summaries
-            .iter()
-            .any(|s| s.agent == Agent::Agy || s.haa_worker.is_some())
-        {
-            return;
-        }
-        let mut cache = self.haa.lock();
-        let map = cache.entries(&self.cfg.haa_home);
-        for s in summaries {
-            if s.agent == Agent::Agy
-                && let Some(info) = map.get(&s.id)
-            {
-                s.haa_worker = Some(info.clone());
-            }
-        }
+        live::detect(&pfs).contains_key(session_id)
     }
 
     // ---------------------------------------------------------------- status
@@ -714,11 +623,6 @@ mod tests {
         assert!(cache_dir.is_dir());
         let info = engine.app_info();
         assert!(!info.data_root_exists);
-        assert_eq!(
-            info.agy_root,
-            tmp.path().join("missing-agy").display().to_string()
-        );
-        assert!(!info.agy_root_exists);
         assert_eq!(info.schema_version, SCHEMA_VERSION);
         assert_eq!(engine.scan_all(&|_| {}).unwrap(), ChangeSet::default());
     }

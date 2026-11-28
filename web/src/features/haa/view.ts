@@ -72,17 +72,14 @@ export function workerBackend(model: string | null | undefined): string | null {
   return i > 0 ? model!.slice(0, i) : null;
 }
 
-/**
- * A codex or pi Worker: CoDeck reads its conversation from the agent's own file by Session id, so it opens although it
- * is not in the Session list (an agy Worker's opens once its Session is listed).
- */
+/** Whether the model names a backend whose Worker conversations can be read by id. */
 export function readsWorkerById(model: string | null | undefined): boolean {
   return isReadById(workerBackend(model));
 }
 
 /** A backend whose Workers' conversations CoDeck reads by Session id from the backend's own records. */
 export function isReadById(backend: string | null | undefined): boolean {
-  return backend === "codex" || backend === "pi";
+  return backend === "agy" || backend === "codex" || backend === "pi";
 }
 
 /** Returns the part after the last `/` in a model identifier. */

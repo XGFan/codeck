@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 use crate::model::FileRole;
 use crate::paths::projects_dir;
-use transcript::agy;
 use transcript::layout::{self, AgentFile};
 
 /// Which agent's data root a transcript file comes from.
@@ -101,57 +100,6 @@ pub fn scan_root(root: &Path) -> ScanResult {
     out
 }
 
-/// Walks `<agy_root>/brain/<id>/.system_generated/logs/transcript_full.jsonl`. Missing or
-/// unreadable entries are skipped.
-pub fn scan_agy_root(root: &Path) -> ScanResult {
-    let mut out = ScanResult::default();
-    let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
-    scan_agy_root_into(root, &mut seen_files, &mut out);
-    out
-}
-
-/// Walks both the Claude Code root and the agy root, deduplicating files by `(dev, ino)`.
-pub fn scan_roots(claude_root: &Path, agy_root: &Path) -> ScanResult {
-    let mut out = ScanResult::default();
-    let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
-    for dir in project_dirs(claude_root) {
-        scan_project_dir(&dir, &mut seen_files, &mut out);
-    }
-    scan_agy_root_into(agy_root, &mut seen_files, &mut out);
-    out
-}
-
-fn scan_agy_root_into(root: &Path, seen_files: &mut HashSet<(u64, u64)>, out: &mut ScanResult) {
-    let Ok(entries) = read_dir_sorted(&agy::brain_dir(root)) else {
-        return;
-    };
-    for entry in entries {
-        let Some(sid) = entry.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !fs::metadata(&entry).is_ok_and(|m| m.is_dir()) {
-            continue;
-        }
-        let path = agy::transcript_path(root, sid);
-        let Ok(md) = fs::metadata(&path) else {
-            continue;
-        };
-        if !md.is_file() || !seen_files.insert((md.dev(), md.ino())) {
-            continue;
-        }
-        let real = fs::canonicalize(&path).unwrap_or(path);
-        out.files.push(scanned(
-            real,
-            &md,
-            FileSource::Agy,
-            FileRole::Main,
-            sid,
-            None,
-            None,
-        ));
-    }
-}
-
 /// [`scan_root`] limited to the sessions `sids`: their main files and session dirs in every
 /// project dir (a session's files may sit in more than one).
 ///
@@ -161,27 +109,6 @@ pub fn scan_sessions(root: &Path, sids: &BTreeSet<String>) -> ScanResult {
     let mut out = ScanResult::default();
     let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
     scan_claude_sessions_into(root, sids, &mut seen_files, &mut out);
-    out
-}
-
-/// [`scan_agy_root`] limited to the sessions `sids`.
-pub fn scan_agy_sessions(root: &Path, sids: &BTreeSet<String>) -> ScanResult {
-    let mut out = ScanResult::default();
-    let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
-    scan_agy_sessions_into(root, sids, &mut seen_files, &mut out);
-    out
-}
-
-/// Scans only `sids` across both the Claude Code root and the agy root.
-pub fn scan_sessions_in_roots(
-    claude_root: &Path,
-    agy_root: &Path,
-    sids: &BTreeSet<String>,
-) -> ScanResult {
-    let mut out = ScanResult::default();
-    let mut seen_files: HashSet<(u64, u64)> = HashSet::new();
-    scan_claude_sessions_into(claude_root, sids, &mut seen_files, &mut out);
-    scan_agy_sessions_into(agy_root, sids, &mut seen_files, &mut out);
     out
 }
 
@@ -216,35 +143,6 @@ fn scan_claude_sessions_into(
                     None,
                 ));
             }
-        }
-    }
-}
-
-fn scan_agy_sessions_into(
-    root: &Path,
-    sids: &BTreeSet<String>,
-    seen_files: &mut HashSet<(u64, u64)>,
-    out: &mut ScanResult,
-) {
-    for sid in sids {
-        let path = agy::transcript_path(root, sid);
-        if agy::session_of_transcript(root, &path).as_deref() != Some(sid.as_str()) {
-            continue;
-        }
-        let Ok(md) = fs::metadata(&path) else {
-            continue;
-        };
-        if md.is_file() && seen_files.insert((md.dev(), md.ino())) {
-            let real = fs::canonicalize(&path).unwrap_or(path);
-            out.files.push(scanned(
-                real,
-                &md,
-                FileSource::Agy,
-                FileRole::Main,
-                sid,
-                None,
-                None,
-            ));
         }
     }
 }

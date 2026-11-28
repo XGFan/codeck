@@ -1,13 +1,11 @@
 //! Integration tests for `transcript::agy`: path layout, parsing, adaptation, full assembly
-//! through `assemble::assemble` + `assemble::transcript`, metadata decoding, and a real-data probe.
-use std::collections::BTreeMap;
+//! through `assemble::assemble` + `assemble::transcript`, and a real-data probe.
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use transcript::agy::{
-    self, UnknownKind, adapt, brain_dir, is_haa_workspace, metadata_path, parse, parse_metadata,
-    presence_dir, read, read_metadata, session_of_presence, session_of_transcript, transcript_path,
+    self, adapt, brain_dir, find_transcript, parse, read, session_of_transcript, transcript_path,
 };
 use transcript::assemble::{
     AssembledSession, LoadedFile, SessionSidecar, assemble, summarize, transcript,
@@ -82,12 +80,6 @@ fn assemble_agy(
 fn layout_paths_and_session_extraction() {
     let root = Path::new("/data/agy");
     assert_eq!(brain_dir(root), PathBuf::from("/data/agy/brain"));
-    assert_eq!(
-        metadata_path(root),
-        PathBuf::from("/data/agy/cache/conversation_metadata.json")
-    );
-    assert_eq!(presence_dir(root), PathBuf::from("/data/agy/presence"));
-
     let tp = transcript_path(root, "conv-123");
     assert_eq!(
         tp,
@@ -113,24 +105,6 @@ fn layout_paths_and_session_extraction() {
             root,
             Path::new("/other/brain/conv-123/.system_generated/logs/transcript_full.jsonl")
         ),
-        None
-    );
-
-    let lock = presence_dir(root).join("conv-123.lock");
-    assert_eq!(
-        session_of_presence(root, &lock).as_deref(),
-        Some("conv-123")
-    );
-    assert_eq!(
-        session_of_presence(root, &presence_dir(root).join(".lock")),
-        None
-    );
-    assert_eq!(
-        session_of_presence(root, &presence_dir(root).join("sub/conv-123.lock")),
-        None
-    );
-    assert_eq!(
-        session_of_presence(root, &presence_dir(root).join("conv-123.txt")),
         None
     );
 }
@@ -318,15 +292,6 @@ fn adapts_all_step_types_tools_and_assembles_into_transcript_nodes() {
 
     assert_eq!(parsed.failed, 0);
     assert_eq!(adapted.records.len(), lines.len());
-    assert!(adapted.uses_haa_tools);
-    assert_eq!(
-        adapted.unknown,
-        vec![
-            (UnknownKind::StepType, "FUTURE_STEP".to_owned(), 1),
-            (UnknownKind::Tool, "mystery_tool".to_owned(), 1),
-        ]
-    );
-
     // Deterministic UUIDs, straight parentUuid chain, sessionId set, no cwd or title.
     let adapted_again = adapt(conv_id, &parsed);
     for (i, (a, b)) in adapted
@@ -556,7 +521,6 @@ fn overwritten_old_index_followed_by_valid_step_and_partial_tail() {
     );
     assert_eq!(parsed.steps[1].line_no, 4);
     assert_eq!(adapted.records.len(), 4);
-    assert!(!adapted.uses_haa_tools);
 
     let t = main_t(&session, false);
     assert_eq!(t.nodes.len(), 4);
@@ -582,112 +546,6 @@ fn overwritten_old_index_followed_by_valid_step_and_partial_tail() {
         NodeBody::UserPrompt { text, .. } => assert_eq!(text, "after overwrite"),
         other => panic!("expected UserPrompt for step 3, got {other:?}"),
     }
-}
-
-#[test]
-fn metadata_parsing_file_uri_decoding_fingerprint_and_haa_workspace() {
-    let base = json!({
-        "conversations": {
-            "c1": {
-                "summary": {
-                    "Title": "  My Session  ",
-                    "WorkspaceURIs": [
-                        "file:///Users/dev/My%20Project",
-                        "file:///Users/dev/%E4%B8%AD%E6%96%87/a+b",
-                        "file://localhost/Users/dev/local",
-                        "file:///Users/dev/bad%ZZ",
-                        "file:///Users/dev/trunc%2",
-                        "file:///Users/dev/nul%00path",
-                        "file://remote-host/share",
-                        "https://example.com/repo"
-                    ],
-                    "StepCount": 10
-                }
-            },
-            "c2": {
-                "summary": {
-                    "Title": "   ",
-                    "WorkspaceURIs": []
-                }
-            },
-            "c3": {
-                "summary": {
-                    "WorkspaceURIs": ["file:///Users/dev/.haa/agy-hooks"]
-                }
-            },
-            "c4": {
-                "summary": {
-                    "WorkspaceURIs": ["file:///Users/dev/.paaa/worktrees/w1"]
-                }
-            },
-            "c5": {
-                "summary": {
-                    "WorkspaceURIs": ["file:///Users/dev/.haa-other/proj"]
-                }
-            }
-        }
-    });
-
-    let dir = tempfile::tempdir().unwrap();
-    let p = dir.path().join("conversation_metadata.json");
-    fs::write(&p, serde_json::to_vec(&base).unwrap()).unwrap();
-    let m1 = read_metadata(&p).unwrap();
-
-    let c1 = &m1["c1"];
-    assert_eq!(c1.title.as_deref(), Some("My Session"));
-    assert_eq!(
-        c1.workspaces,
-        vec![
-            PathBuf::from("/Users/dev/My Project"),
-            PathBuf::from("/Users/dev/中文/a+b"),
-            PathBuf::from("/Users/dev/local"),
-        ]
-    );
-    assert_eq!(m1["c2"].title, None);
-    assert!(m1["c2"].workspaces.is_empty());
-
-    // Fingerprint ignores unrelated summary fields and changes when Title or WorkspaceURIs change.
-    let mut same_fields = base.clone();
-    same_fields["conversations"]["c1"]["summary"]["StepCount"] = json!(999);
-    same_fields["conversations"]["c1"]["summary"]["Extra"] = json!("ignored");
-    let m2 = parse_metadata(&serde_json::to_vec(&same_fields).unwrap());
-    assert_eq!(m1["c1"].fingerprint, m2["c1"].fingerprint);
-
-    let mut title_changed = base.clone();
-    title_changed["conversations"]["c1"]["summary"]["Title"] = json!("Renamed");
-    let m3 = parse_metadata(&serde_json::to_vec(&title_changed).unwrap());
-    assert_ne!(m1["c1"].fingerprint, m3["c1"].fingerprint);
-
-    let mut ws_changed = base.clone();
-    ws_changed["conversations"]["c1"]["summary"]["WorkspaceURIs"] =
-        json!(["file:///Users/dev/other"]);
-    let m4 = parse_metadata(&serde_json::to_vec(&ws_changed).unwrap());
-    assert_ne!(m1["c1"].fingerprint, m4["c1"].fingerprint);
-
-    // haa workspace check: under haa_home or sibling .paaa, not prefix-similar sibling.
-    let haa_home = Path::new("/Users/dev/.haa");
-    assert!(!is_haa_workspace(&m1["c1"], haa_home));
-    assert!(is_haa_workspace(&m1["c3"], haa_home));
-    assert!(is_haa_workspace(&m1["c4"], haa_home));
-    assert!(!is_haa_workspace(&m1["c5"], haa_home));
-}
-
-#[test]
-fn haa_tools_detection_covers_haa_and_paaa_prefixes() {
-    let make = |tool: &str| {
-        let line = json!({
-            "step_index": 0,
-            "type": "PLANNER_RESPONSE",
-            "tool_calls": [{"name": tool, "args": {}}]
-        });
-        adapt("c", &parse(format!("{line}\n").as_bytes()))
-    };
-    assert!(make("mcp_haa_report").uses_haa_tools);
-    assert!(make("mcp_haa_report").unknown.is_empty());
-    assert!(make("mcp_paaa_ask").uses_haa_tools);
-    assert!(make("mcp_paaa_ask").unknown.is_empty());
-    assert!(!make("mcp_github_search").uses_haa_tools);
-    assert!(make("mcp_github_search").unknown.is_empty());
 }
 
 #[test]
@@ -721,7 +579,6 @@ fn real_agy_data_probe() {
     let mut total_failed = 0u64;
     let mut total_calls = 0u64;
     let mut paired_calls = 0u64;
-    let mut unknown_totals: BTreeMap<(UnknownKind, String), u64> = BTreeMap::new();
 
     for (id, path) in &files {
         let parsed = read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
@@ -736,10 +593,6 @@ fn real_agy_data_probe() {
         total_failed += u64::from(parsed.failed);
 
         let adapted = adapt(id, &parsed);
-        for (kind, name, count) in adapted.unknown {
-            *unknown_totals.entry((kind, name)).or_insert(0) += u64::from(count);
-        }
-
         let loaded = LoadedFile {
             path: path.clone(),
             role: FileRole::Main,
@@ -763,18 +616,13 @@ fn real_agy_data_probe() {
         (paired_calls as f64 / total_calls as f64) * 100.0
     };
     eprintln!(
-        "agy probe: files={}, failed_lines={}, unknown_kinds={}, tool_calls={}/{} ({:.2}% paired)",
+        "agy probe: files={}, failed_lines={}, tool_calls={}/{} ({:.2}% paired)",
         files.len(),
         total_failed,
-        unknown_totals.len(),
         paired_calls,
         total_calls,
         rate
     );
-    for ((kind, name), count) in &unknown_totals {
-        eprintln!("  unknown {kind:?}: {name} x {count}");
-    }
-
     assert_eq!(
         total_failed, 0,
         "expected 0 failed complete lines across real agy transcripts"
@@ -782,25 +630,18 @@ fn real_agy_data_probe() {
 }
 
 #[test]
-fn ids_from_lock_names_and_paths_must_be_one_plain_component() {
-    use std::path::Path;
-    let root = Path::new("/r");
-    assert!(transcript::agy::is_conversation_id(
-        "8c54e127-d8c4-55e2-9034-566dac2ca233"
-    ));
-    for bad in ["", ".", "..", "a/b", "a\\b"] {
-        assert!(!transcript::agy::is_conversation_id(bad), "{bad:?}");
+fn find_transcript_requires_a_plain_id_and_an_existing_file() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    for bad in ["", ".", "..", "a/b", "a\\b", "a\0b"] {
+        assert!(!agy::is_conversation_id(bad), "{bad:?}");
+        assert_eq!(find_transcript(root, bad), None);
     }
-    assert_eq!(
-        transcript::agy::session_of_presence(root, Path::new("/r/presence/..lock")),
-        None
-    );
-    assert_eq!(
-        transcript::agy::session_of_presence(root, Path::new("/r/presence/...lock")),
-        None
-    );
-    assert_eq!(
-        transcript::agy::session_of_presence(root, Path::new("/r/presence/abc.lock")).as_deref(),
-        Some("abc")
-    );
+    let path = transcript_path(root, "conv-123");
+    assert_eq!(find_transcript(root, "conv-123"), None);
+    fs::create_dir_all(&path).unwrap();
+    assert_eq!(find_transcript(root, "conv-123"), None);
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, "").unwrap();
+    assert_eq!(find_transcript(root, "conv-123"), Some(path));
 }

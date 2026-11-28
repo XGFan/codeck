@@ -2,7 +2,6 @@ import { Bot, Check, X } from "lucide-react";
 import type { HaaTask } from "@/ipc/bindings";
 import { cn } from "@/lib/cn";
 import { formatDuration } from "@/lib/format";
-import { useAllSessions } from "@/queries";
 import { isReadById } from "@/features/haa/view";
 import { useTranscriptCtx } from "./scroll";
 
@@ -54,11 +53,8 @@ function TaskStatus({ status }: { status: string }) {
 /** Card for one completed haa Worker Task, styled after `SubagentCard`. */
 export function HaaTaskCard({ task }: { task: HaaTask }) {
   const { activeWorkerId, openWorker } = useTranscriptCtx();
-  // A codex or pi Worker's conversation is read from its file; an agy Worker's must be in the Session list.
-  const byId = isReadById(task.backend);
-  const { data: allSessions } = useAllSessions(canOpenPanel && Boolean(task.sessionId) && !byId);
-  const hasSession = task.sessionId != null && (byId || (allSessions?.some((s) => s.id === task.sessionId) ?? false));
-  const active = task.sessionId != null && activeWorkerId === task.sessionId;
+  const sessionId = isReadById(task.backend) ? task.sessionId : null;
+  const active = Boolean(sessionId) && activeWorkerId === sessionId;
   const heading = task.title ?? task.task ?? "";
   const meta = [lastModelSegment(task.model), formatDuration(task.durationMs, "detail")].filter(Boolean).join(" · ");
 
@@ -92,22 +88,22 @@ export function HaaTaskCard({ task }: { task: HaaTask }) {
       {canOpenPanel && (
         <div className="flex items-center gap-3 text-[12px]">
           <span className="flex-1" />
-          {hasSession ? (
+          {sessionId ? (
             active ? (
               <span className="font-semibold text-accent">正在右侧查看</span>
             ) : (
               <button
                 type="button"
                 data-testid="haa-task-open"
-                onClick={() => openWorker(task.sessionId!)}
+                onClick={() => openWorker(sessionId)}
                 className="font-semibold text-accent hover:underline"
               >
                 查看完整过程 →
               </button>
             )
-          ) : !task.sessionId || allSessions !== undefined ? (
+          ) : (
             <span className="text-secondary">对话未关联</span>
-          ) : null}
+          )}
         </div>
       )}
     </div>

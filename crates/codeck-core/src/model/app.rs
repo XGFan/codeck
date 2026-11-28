@@ -20,8 +20,6 @@ pub struct AppInfo {
     pub data_root: String,
     pub data_root_source: DataRootSource,
     pub data_root_exists: bool,
-    pub agy_root: String,
-    pub agy_root_exists: bool,
     pub cache_dir: String,
     pub schema_version: u32,
 }

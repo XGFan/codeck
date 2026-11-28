@@ -115,14 +115,12 @@ pub(super) fn write_work(
             },
         )?;
         // Phase 2: text docs for `[text_offset, parsed_offset)` are extracted by
-        // `index::text::index_pending`; Claude Code `text_offset` stays untouched here while agy
-        // files are written with `text_offset = parsed_offset` (never entering FTS).
+        // `index::text::index_pending`.
         writer::write_rows(
             conn,
             id,
             &w.sid,
             f.file.agent_id.as_deref().unwrap_or(""),
-            f.file.source,
             &f.rows,
         )?;
     }
@@ -169,9 +167,6 @@ pub(super) fn write_work(
         continued_in_id: a.continued_in_id.clone(),
         is_empty: a.is_empty,
         dup_uuids: a.duplicate_uuids,
-        agent: s.agent,
-        haa_worker: s.haa_worker,
-        agy_meta: s.agy_meta,
     };
     writer::write_session(conn, &row)?;
     if writer::write_project(conn, &s.project)?

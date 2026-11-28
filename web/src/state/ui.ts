@@ -56,7 +56,7 @@ export const MAIN_SCOPE: TranscriptScope = { kind: "main" };
 
 const WORKER_PANEL_PREFIX = "haa:";
 
-/** Builds a `panelStack` entry for viewing a haa Worker's agy Session in the right panel. */
+/** Builds a `panelStack` entry for viewing a haa Worker's conversation in the right panel. */
 export const workerPanelId = (sessionId: string) => `${WORKER_PANEL_PREFIX}${sessionId}`;
 
 /** Extracts the Worker Session id from a `panelStack` entry, or `null` when it is a Subagent Run id. */
