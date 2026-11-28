@@ -16,7 +16,7 @@ use crate::events::{
     AttentionEvent, CcrpcClosingEvent, CcrpcExitEvent, CcrpcLineEvent, CcrpcLsEndedEvent,
     CcrpcLsEvent, CcrpcRemoteConnEvent, HaaWatchEndedEvent, HaaWorkersEvent, IndexStatusEvent,
     KeepAliveEvent, LanDevicesEvent, LiveChangedEvent, NotificationClickEvent, PricesChangedEvent,
-    SessionsChangedEvent,
+    SessionsChangedEvent, WorkerFilesChangedEvent,
 };
 
 /// The single source of commands and events, shared by the app and the bindings export.
@@ -39,7 +39,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             KeepAliveEvent,
             LanDevicesEvent,
             AttentionEvent,
-            NotificationClickEvent
+            NotificationClickEvent,
+            WorkerFilesChangedEvent
         ])
         .error_handling(ErrorHandlingMode::Throw)
 }
@@ -192,6 +193,9 @@ fn sink(handle: tauri::AppHandle) -> codeck_host::EventSink {
             }
             .emit(&handle),
             HostEvent::Attention { done } => AttentionEvent { done }.emit(&handle),
+            HostEvent::WorkerFilesChanged { session_ids } => {
+                WorkerFilesChangedEvent { session_ids }.emit(&handle)
+            }
             HostEvent::LanDevices {
                 devices,
                 paired_offer,
@@ -334,6 +338,14 @@ fn host_events_match_the_typed_events() {
         },
         AttentionEvent {
             done: vec!["s".into()],
+        },
+    );
+    same(
+        HostEvent::WorkerFilesChanged {
+            session_ids: vec!["w".into()],
+        },
+        WorkerFilesChangedEvent {
+            session_ids: vec!["w".into()],
         },
     );
     let dev = codeck_host::lan::PairedDevice {

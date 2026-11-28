@@ -60,7 +60,7 @@ import { workerFiles } from "@/mocks/data/haaWorkers";
 
 const LATENCY_MS = 30;
 
-type EventName = "sessionsChanged" | "liveChanged" | "indexStatus" | "pricesChanged" | "openUrl";
+type EventName = "sessionsChanged" | "liveChanged" | "indexStatus" | "pricesChanged" | "openUrl" | "workerFilesChanged";
 
 declare global {
   interface Window {
@@ -174,6 +174,7 @@ const listeners: { [K in EventName]: Set<(p: never) => void> } = {
   indexStatus: new Set(),
   pricesChanged: new Set(),
   openUrl: new Set(),
+  workerFilesChanged: new Set(),
 };
 
 function dispatch(name: EventName, payload: unknown) {
@@ -182,7 +183,7 @@ function dispatch(name: EventName, payload: unknown) {
 
 function normalizeEventName(name: string): EventName {
   const n = name.replace(/-event$/, "").replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
-  if (n === "sessionsChanged" || n === "liveChanged" || n === "indexStatus") return n;
+  if (n === "sessionsChanged" || n === "liveChanged" || n === "indexStatus" || n === "workerFilesChanged") return n;
   throw new Error(`unknown mock event: ${name}`);
 }
 
@@ -194,7 +195,7 @@ const findData = (sessionId: string) => {
 
 function mainNodes(sessionId: string): Node[] {
   const file = workerFiles.get(sessionId);
-  if (file) return file;
+  if (file) return [...file, ...(appended.get(sessionId) ?? [])];
   const nodes = [...findData(sessionId).nodes, ...(appended.get(sessionId) ?? [])];
   const fork = forks.get(sessionId);
   const at = fork ? nodes.findIndex((n) => n.id === fork.at) : -1;
@@ -610,7 +611,7 @@ export function createMockApi(): Api {
       dispatch("liveChanged", liveSnapshot());
     },
     appendNode(sessionId, node) {
-      findData(sessionId);
+      if (!workerFiles.has(sessionId)) findData(sessionId);
       appended.set(sessionId, [...(appended.get(sessionId) ?? []), node]);
       revisions.set(sessionId, (revisions.get(sessionId) ?? 0) + 1);
     },
@@ -743,6 +744,7 @@ export function createMockApi(): Api {
     onIndexStatus: (cb) => subscribe("indexStatus", cb),
     onSessionsChanged: (cb) => subscribe<SessionsChanged>("sessionsChanged", cb),
     onLiveChanged: (cb) => subscribe("liveChanged", cb),
+    onWorkerFilesChanged: (cb) => subscribe<{ sessionIds: string[] }>("workerFilesChanged", (p) => cb(p.sessionIds)),
     onPricesChanged: (cb) => subscribe("pricesChanged", cb),
     onOpenUrl: (cb) => subscribe("openUrl", cb),
     // A browser has no window theme: the page follows `data-theme` alone.

@@ -56,6 +56,10 @@ pub enum HostEvent {
     },
     /// The 「已完成」 Sessions changed (`attention`). Only for the desktop window; never forwarded to LAN clients.
     Attention { done: Vec<String> },
+    /// The files of these haa Worker conversations (agy, codex, pi; read by id, ADR-0021) changed, after a
+    /// debounced filesystem batch: a Worker panel showing one re-reads it. Only for the desktop window (the
+    /// iPhone has no Worker panel); never forwarded to LAN clients.
+    WorkerFilesChanged { session_ids: Vec<String> },
     /// The paired LAN device list changed (a device paired or was removed). Only for the desktop window; never
     /// forwarded to LAN clients.
     LanDevices {
@@ -89,6 +93,7 @@ impl HostEvent {
             HostEvent::HaaWatchEnded { .. } => "haa-watch-ended-event",
             HostEvent::KeepAlive { .. } => "keep-alive-event",
             HostEvent::Attention { .. } => "attention-event",
+            HostEvent::WorkerFilesChanged { .. } => "worker-files-changed-event",
             HostEvent::LanDevices { .. } => "lan-devices-event",
         }
     }
@@ -123,6 +128,9 @@ impl HostEvent {
                 error,
             } => Ok(json!({ "sessionId": session_id, "active": active, "error": error })),
             HostEvent::Attention { done } => Ok(json!({ "done": done })),
+            HostEvent::WorkerFilesChanged { session_ids } => {
+                Ok(json!({ "sessionIds": session_ids }))
+            }
             HostEvent::LanDevices {
                 devices,
                 paired_offer,

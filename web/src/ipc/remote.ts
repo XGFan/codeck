@@ -308,6 +308,7 @@ export function createRemoteApi(target: string | RemoteTransport): RemoteApi {
     onLanDevices: () => Promise.resolve(() => {}),
     haaWatch: () => desktopOnly("haa Worker 状态"),
     onHaaWorkers: () => Promise.resolve(() => {}),
+    onWorkerFilesChanged: () => Promise.resolve(() => {}),
     onHaaWatchEnded: () => Promise.resolve(() => {}),
     getPlanUsage: () => desktopOnly("订阅额度"),
     onResync(cb) {

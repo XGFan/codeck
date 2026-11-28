@@ -9,7 +9,7 @@
 //! `ls` → `LS`), others keep their name. Entry types it does not know show as unrecognized entries.
 //!
 //! Callers: `codeck-core`'s display cache ([`find_session`], [`read`]), for a Session id that is
-//! not in the index.
+//! not in the index; `codeck-host`'s file watcher ([`session_of_path`]), to follow a running Worker.
 
 use std::collections::HashMap;
 use std::io;
@@ -47,6 +47,18 @@ pub fn find_session(root: &Path, id: &str) -> Option<PathBuf> {
                     .is_some_and(|n| n.ends_with(&suffix))
             })
         })
+}
+
+/// The session id of a session file under `root` (`sessions/<dir>/<time>_<id>.jsonl`); `None` for
+/// any other path.
+pub fn session_of_path(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root.join("sessions")).ok()?;
+    if rel.components().count() != 2 {
+        return None;
+    }
+    let stem = rel.file_name()?.to_str()?.strip_suffix(".jsonl")?;
+    let (_, id) = stem.split_once('_')?;
+    foreign::is_plain_id(id).then(|| id.to_owned())
 }
 
 /// Reads `path` (opened read-only) and adapts it; also returns the `\n` count consumed.

@@ -33,6 +33,7 @@ export function createRealApi(): Api {
     onIndexStatus: (cb) => events.indexStatusEvent.listen((e) => cb(e.payload)),
     onSessionsChanged: (cb) => events.sessionsChangedEvent.listen((e) => cb(e.payload)),
     onLiveChanged: (cb) => events.liveChangedEvent.listen((e) => cb(e.payload)),
+    onWorkerFilesChanged: (cb) => events.workerFilesChangedEvent.listen((e) => cb(e.payload.sessionIds)),
     onPricesChanged: (cb) => events.pricesChangedEvent.listen(() => cb()),
     onOpenUrl: async (cb) => {
       const unlisten = await onOpenUrl(cb);

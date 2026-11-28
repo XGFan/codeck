@@ -69,6 +69,14 @@ pub struct HaaWorkersEvent {
     pub workers: String,
 }
 
+/// The files of these haa Worker conversations (agy, codex, pi; read by id) changed: a Worker panel showing one
+/// re-reads it.
+#[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerFilesChangedEvent {
+    pub session_ids: Vec<String>,
+}
+
 /// The Host starts (`active`) or ends refreshing a Session's prompt cache (a `/btw` of its own); `error` is why the
 /// refresh failed. Meanwhile the Session's Live state says waiting.
 #[derive(Serialize, Deserialize, Type, Event, Clone, Debug)]

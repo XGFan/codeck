@@ -75,6 +75,8 @@ export interface Api {
   onIndexStatus(cb: (payload: IndexStatusEvent) => void): Promise<Unlisten>;
   onSessionsChanged(cb: (payload: SessionsChanged) => void): Promise<Unlisten>;
   onLiveChanged(cb: (payload: LiveChanged) => void): Promise<Unlisten>;
+  /** The files of these haa Worker conversations changed (desktop only: the Host watches the backends' directories). */
+  onWorkerFilesChanged(cb: (sessionIds: string[]) => void): Promise<Unlisten>;
   onPricesChanged(cb: () => void): Promise<Unlisten>;
   /** `codeck://` links opened in the system, including the one the app was launched with. */
   onOpenUrl(cb: (urls: string[]) => void): Promise<Unlisten>;

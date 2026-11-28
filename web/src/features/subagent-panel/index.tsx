@@ -11,9 +11,6 @@ import { runState } from "@/features/transcript/runState";
 import { useHaa } from "@/features/haa/store";
 import { isActiveWorker, shortModelName, workerBackend } from "@/features/haa/view";
 
-/** How often a running haa Worker's conversation is re-read (the index does not follow its file). */
-const WORKER_FILE_REFETCH_MS = 2000;
-
 const crumbLabel = (run: SubagentRun | undefined, id: string) =>
   run ? [run.agentType ?? run.name, run.description].filter(Boolean).join(" · ") || id : id;
 
@@ -40,8 +37,12 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
     () => ({ sessionId: workerSessionId, scope: MAIN_SCOPE, branchChoices: [], includeHidden }),
     [workerSessionId, includeHidden],
   );
+  // The Host reports the Worker's file changing (`onWorkerFilesChanged`), and the conversation is read again: while it
+  // works, the panel stays at the bottom, and haa's one-line account of the current step fills the time until the
+  // backend writes the step down (codex writes a command only once it finishes).
   const following = haaWorker != null && isActiveWorker(haaWorker);
-  const { data, isPlaceholderData, error } = useTranscript(req, following ? WORKER_FILE_REFETCH_MS : undefined);
+  const doing = haaWorker?.state === "running" ? haaWorker.activity : undefined;
+  const { data, isPlaceholderData, error } = useTranscript(req);
 
   const lastTask = tasks.at(-1);
   const workerName = tasks[0]?.worker ?? haaWorker?.name;
@@ -110,11 +111,21 @@ function WorkerPanel({ ownerSessionId, workerSessionId }: { ownerSessionId: stri
           transcript={data}
           ready={!isPlaceholderData}
           scope={MAIN_SCOPE}
+          follow={following}
           inPanel
           testId="panel-transcript"
         />
       ) : (
         <div className="flex-1" />
+      )}
+      {doing && (
+        <div
+          data-testid="worker-activity"
+          title={doing}
+          className="shrink-0 truncate border-t border-border px-4 py-1.5 text-[12px] text-secondary"
+        >
+          正在做：{doing}
+        </div>
       )}
     </aside>
   );

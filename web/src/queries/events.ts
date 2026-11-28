@@ -92,6 +92,16 @@ export function useBackendEvents() {
         if (open && p.removed.includes(open)) useUi.getState().selectSession(null);
       }),
     );
+    // A Worker conversation is not in the index: its file changing is the only sign (agy rewrites a step once it
+    // finishes, so an expanded tool's detail is read again too).
+    keep(
+      api.onWorkerFilesChanged((ids) => {
+        for (const id of ids) {
+          follower.follow(id);
+          void qc.invalidateQueries({ queryKey: ["toolDetail", id] });
+        }
+      }),
+    );
     keep(
       api.onLiveChanged(() => {
         lists.run();

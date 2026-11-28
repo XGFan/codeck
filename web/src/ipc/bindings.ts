@@ -147,6 +147,7 @@ export const events = {
 	notificationClickEvent: makeEvent<NotificationClickEvent>("notification-click-event"),
 	pricesChangedEvent: makeEvent<PricesChangedEvent>("prices-changed-event"),
 	sessionsChangedEvent: makeEvent<SessionsChangedEvent>("sessions-changed-event"),
+	workerFilesChangedEvent: makeEvent<WorkerFilesChangedEvent>("worker-files-changed-event"),
 };
 
 /* Types */
@@ -1145,6 +1146,14 @@ export type VersionStat = {
 	failedLines: number,
 	unknownItems: number,
 	lastSeenMs: number,
+};
+
+/**
+ *  The files of these haa Worker conversations (agy, codex, pi; read by id) changed: a Worker panel showing one
+ *  re-reads it.
+ */
+export type WorkerFilesChangedEvent = {
+	sessionIds: string[],
 };
 
 export type WorkflowAgent = {

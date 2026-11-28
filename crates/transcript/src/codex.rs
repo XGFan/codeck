@@ -11,7 +11,8 @@
 //! it like any transcript. Item types it does not know show as unrecognized entries.
 //!
 //! Callers: `codeck-core`'s display cache ([`find_rollout`], [`read`]), for a Session id that is
-//! not in the index.
+//! not in the index; `codeck-host`'s file watcher ([`thread_of_path`], [`recent_rollouts`]), to follow a
+//! running Worker.
 
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -51,6 +52,48 @@ pub fn find_rollout(root: &Path, thread_id: &str) -> Option<PathBuf> {
     foreign::files(&root.join("archived_sessions"))
         .into_iter()
         .find(hit)
+}
+
+/// The rollouts in the `days` newest day directories under `<root>/sessions`: where a running
+/// thread's file is, to be checked by size and mtime (codex keeps it open while the thread runs, and
+/// FSEvents reports a write to an open file only once it is closed).
+pub fn recent_rollouts(root: &Path, days: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut left = days;
+    for y in foreign::subdirs(&root.join("sessions")).iter().rev() {
+        for m in foreign::subdirs(y).iter().rev() {
+            for d in foreign::subdirs(m).iter().rev() {
+                if left == 0 {
+                    return out;
+                }
+                left -= 1;
+                out.extend(foreign::files(d).into_iter().filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
+                }));
+            }
+        }
+    }
+    out
+}
+
+/// The thread id of a rollout path under `root`: `sessions/…/rollout-<time>-<thread id>.jsonl` (or
+/// `.jsonl.zst`), or the same name in `archived_sessions/`. `None` for any other path.
+pub fn thread_of_path(root: &Path, path: &Path) -> Option<String> {
+    if !(path.starts_with(root.join("sessions"))
+        || path.starts_with(root.join("archived_sessions")))
+    {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    let stem = name
+        .strip_suffix(".jsonl.zst")
+        .or_else(|| name.strip_suffix(".jsonl"))?;
+    // `<time>` is `YYYY-MM-DDTHH-MM-SS`, then `-`.
+    let rest = stem.strip_prefix("rollout-")?;
+    let id = rest.get(20..)?;
+    (rest.as_bytes()[19] == b'-' && foreign::is_plain_id(id)).then(|| id.to_owned())
 }
 
 /// Reads `path` (opened read-only; a `.zst` one decompressed) and adapts it; also returns the `\n`

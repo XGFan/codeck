@@ -135,7 +135,7 @@ export interface TranscriptListProps {
   /** False while react-query shows placeholder data for a different request; scroll requests wait for true. */
   ready: boolean;
   scope: TranscriptScope;
-  /** Start at the bottom and stay pinned while content grows (main transcript). */
+  /** Start at the bottom and stay pinned while content grows (main transcript; a working Worker's in the panel). */
   follow?: boolean;
   /** True when rendered inside the right-hand panel (e.g. a haa Worker's main conversation). */
   inPanel?: boolean;
@@ -294,8 +294,9 @@ export function TranscriptList({
               );
             })}
           </div>
-          {follow && (
-            // Room at the end for the floating input area (its height, kept in `--connect-h` by the panel).
+          {follow && !inPanel && (
+            // Room at the end for the floating input area (its height, kept in `--connect-h` by the panel), and the
+            // open Session's connection line: neither belongs to a Worker conversation followed in the right panel.
             <div
               ref={tailRef}
               className="mx-auto -mt-5 max-w-(--conv-w)"

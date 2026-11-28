@@ -440,6 +440,53 @@ test("Worker 的行点开右侧面板看它的对话、再点收起；agy、code
   await expect(panel).toBeVisible();
 });
 
+test("运行中的 Worker：文件一变面板就重读、停在底部，底部写它正在做的一步", async ({ page }) => {
+  await page.goto("/");
+  await open(page, RICH_TITLE);
+  await expect.poll(() => haaProbe(page)).toMatchObject({ watching: true, watchStarts: 1 });
+  const worker: HaaWorker = {
+    id: "w-pi",
+    owner: RICH_ID,
+    name: "pi-live",
+    state: "running",
+    model: "pi/agent-gateway/deepseek-v4.1-flash",
+    tokens: 100,
+    tasks: 1,
+    startedAt: Date.now() - 5_000,
+    sessionId: PI_WORKER_ID,
+    activity: "cargo test -p codeck-core",
+  };
+  await emitWorkers(page, [worker]);
+  await page.getByTestId("haa-worker").filter({ hasText: "pi-live" }).click();
+  const panel = page.getByTestId("worker-panel");
+  const scroller = panel.getByTestId("panel-transcript");
+  await expect(scroller.locator("[data-row]").first()).toBeVisible();
+  await expect(panel.getByTestId("worker-activity")).toHaveText("正在做：cargo test -p codeck-core");
+
+  await page.evaluate((sid) => {
+    window.__cvMock!.appendNode(sid, {
+      id: "e2e-worker-step",
+      timestampMs: Date.now(),
+      hidden: false,
+      inherited: false,
+      body: {
+        kind: "assistant",
+        messageId: "m-e2e-worker",
+        model: null,
+        usage: null,
+        isApiError: false,
+        blocks: [{ kind: "text", text: "Worker 刚写下的一步" }],
+      },
+    });
+    window.__cvMock!.emit("worker-files-changed-event", { sessionIds: [sid] });
+  }, PI_WORKER_ID);
+  await expect(panel.getByText("Worker 刚写下的一步")).toBeVisible();
+  await expect.poll(() => scroller.evaluate((e) => e.scrollHeight - e.scrollTop - e.clientHeight)).toBeLessThan(60);
+
+  await emitWorkers(page, [{ ...worker, state: "idle", activity: undefined }]);
+  await expect(panel.getByTestId("worker-activity")).toHaveCount(0);
+});
+
 test("agy Worker 面板中译过的工具调用显示为命令 / 读文件 / 编辑行，展开详情看到原工具名与参数", async ({ page }) => {
   await page.goto("/");
   await open(page, RICH_TITLE);

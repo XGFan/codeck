@@ -105,6 +105,7 @@ pub fn event_channel() -> (broadcast::Sender<Utf8Bytes>, EventSink) {
                     | HostEvent::HaaWatchEnded { .. }
                     | HostEvent::KeepAlive { .. }
                     | HostEvent::Attention { .. }
+                    | HostEvent::WorkerFilesChanged { .. }
                     | HostEvent::LanDevices { .. }
             )
         {

@@ -103,6 +103,18 @@ pub fn spawn(
     backlog_cancel: Arc<AtomicBool>,
 ) {
     let jobs = state.jobs.clone();
+    // The Worker conversations' directories never change, and each FSEvents watch takes a second or more:
+    // followed once, off the worker thread (which restarts its own watcher on every rescan), for good.
+    let roots = watcher::WorkerRoots {
+        agy: paths.agy_root.clone(),
+        codex: paths.codex_root.clone(),
+        pi: paths.pi_root.clone(),
+    };
+    let worker_files_sink = sink.clone();
+    std::thread::Builder::new()
+        .name("cv-worker-files".into())
+        .spawn(move || watcher::follow_workers(&roots, worker_files_sink))
+        .expect("spawn Worker file watcher thread");
     let (timer_state, timer_sink, timer_jobs) = (state.clone(), sink.clone(), jobs.clone());
     std::thread::Builder::new()
         .name("cv-timer".into())

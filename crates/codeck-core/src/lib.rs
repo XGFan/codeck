@@ -16,4 +16,4 @@ pub mod stats;
 
 pub use engine::{ChangeSet, Engine, EngineConfig};
 pub use error::{CoreError, CoreResult};
-pub use transcript::agy;
+pub use transcript::{agy, codex, pi};

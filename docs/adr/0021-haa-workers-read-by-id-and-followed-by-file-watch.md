@@ -4,7 +4,7 @@
 
 - **agy 的对话也不是 Session**：不扫描 `brain/`、不读 `conversation_metadata.json`、不进索引、列表、侧栏、搜索与统计，不看 presence 锁，没有整页视图与「复制 Resume 命令」；不是 haa 起的 agy 对话不再显示。`agy.rs` 的译法不变，Engine 在索引里找不到一个 id 时按 id 找 `brain/<id>/.system_generated/logs/transcript_full.jsonl`，与 codex、pi 并列。
 - **入口只有派活 Session 里的两处**：haa 状态条那一行与 Task 卡片，打开右侧面板。三个后端的 Worker 有 `sessionId` 就能打开；面板的指标行都取 haa 的（`<Agent> · 模型`、Task 个数与 Task 时长），没有「单独打开」。
-- **实时跟随看文件，不 Connect**：Host 监听三个后端的会话目录（agy 的 `brain/`，codex 的 `sessions/` 与 `archived_sessions/`，pi 的 `sessions/`），从变化的路径认出对话 id，发事件；打开着这个对话的面板随之重读，取代原来的每 2 秒重读。能多快看到一步，取决于后端什么时候写文件：agy 每个 step 都写（没跑完的命令先写成 `RUNNING`，之后追加一行覆盖），pi 每条消息结束时写，codex 只写已完成的 item（长命令跑完才出现）。Worker 运行中时，面板底部照 haa `ls` 的 `activity` 写「正在做：…」，补上这段空档。
+- **实时跟随看文件，不 Connect**：Host 监听三个后端的会话目录（agy 的 `brain/`，codex 的 `sessions/` 与 `archived_sessions/`，pi 的 `sessions/`），从变化的路径认出对话 id，发事件；打开着这个对话的面板随之重读，取代原来的每 2 秒重读。codex 跑着时一直开着 rollout，而 macOS 的 FSEvents 对开着的文件要到关闭时才报修改（实测），所以 Host 另外每秒按大小与修改时间检查 codex 最新两天目录里的 rollout。能多快看到一步，取决于后端什么时候写文件：agy 每个 step 都写（没跑完的命令先写成 `RUNNING`，之后追加一行覆盖），pi 每条消息结束时写，codex 只写已完成的 item（长命令跑完才出现）。Worker 运行中时，面板底部照 haa `ls` 的 `activity` 写「正在做：…」，补上这段空档。
 
 ## Considered Options
 
