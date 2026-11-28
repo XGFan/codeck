@@ -1,5 +1,7 @@
 # agy：历史读它的 JSONL，Connect 接它进程内的 language server，不走 ACP
 
+> 历史部分已由 ADR-0021 取代：agy 的对话不再是 Session，只作为 haa Worker 的对话按 id 现读。Connect 部分没有实现，搁置。
+
 CoDeck 同时支持 agy（Google 的 Antigravity CLI）。和 Claude Code 一样，Connect 的对象是人在终端里开着的那个 TUI，不另起无头进程，也不走 ACP。Session 多一个属性 **Agent**（`claude` 或 `agy`），agy 的 Session ID 就是它的 conversation id。以下依据 2026-11-27 对 agy 1.5.18 的实测。
 
 **历史只读 agy 落盘的文件**，数据根 `~/.gemini/antigravity-cli`：

@@ -1,5 +1,7 @@
 # haa 的 codex / pi Worker：只在面板里按 id 读它们自己的记录
 
+> ADR-0021 把 agy 的 Worker 也改成这种做法，并用文件监听取代下文的每 2 秒重读。
+
 要的只是在派活的 Session 里看 haa 派出去的 Worker 做了什么：状态条那一行、Task 卡片点开右侧面板。agy 的 Worker 早已是 Session（ADR-0018），codex、pi 的还看不到。haa 的 `ls` 与 `usage.jsonl` 的 Task 记录都带后端的 `sessionId`（codex 的 thread id、pi 的 session id），和两边自己记录文件的 id 一致。
 
 - **读后端自己的原始记录**：codex 的 rollout（`~/.codex/sessions/…/rollout-<时间>-<thread id>.jsonl`，旧的是 `.jsonl.zst`）、pi 的 session 文件（`~/.pi/agent/sessions/<目录>/<时间>_<id>.jsonl`），只读。格式只有 `crates/transcript/src/codex.rs`、`pi.rs` 知道，译成 Claude Code 的条目后照常组装（同 ADR-0018 的做法）。
