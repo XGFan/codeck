@@ -1,5 +1,7 @@
 # agy 的历史：只读接入
 
+> 已由 ADR-0021 取代：agy 的对话不再是 Session，和 codex、pi 一样只作为 haa Worker 的对话按 id 现读。下文是当时的设计，留作记录。
+
 CoDeck 现在只读 Claude Code 的数据（`~/.claude`）。这次把 agy（Antigravity CLI）的对话也作为 Session 接进来：列表、对话记录、⌘F、CLI 都能看，只读。路线见 ADR-0018；Connect 另做，不在这份设计里。
 
 ## 目标与边界
